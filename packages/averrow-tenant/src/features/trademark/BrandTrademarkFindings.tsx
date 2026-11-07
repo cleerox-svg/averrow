@@ -135,7 +135,7 @@ function AssetUploader({ brandId }: { brandId: string }) {
         value={assetType}
         onChange={(e) => setAssetType(e.target.value as 'logo' | 'wordmark' | 'combined')}
         style={{ colorScheme: resolvedTheme }}
-        className="rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-2.5 py-1.5 text-[12px] text-white/90 font-mono"
+        className="rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-primary/[0.40] focus:outline-none px-2.5 py-1.5 text-[12px] text-white/90 font-mono"
       >
         <option value="logo" className="bg-bg-card">Logo</option>
         <option value="wordmark" className="bg-bg-card">Wordmark</option>
@@ -145,7 +145,7 @@ function AssetUploader({ brandId }: { brandId: string }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Asset name (optional)"
-        className="flex-1 min-w-[140px] rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-2.5 py-1.5 text-[12px] text-white/90 placeholder:text-white/55"
+        className="flex-1 min-w-[140px] rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-primary/[0.40] focus:outline-none px-2.5 py-1.5 text-[12px] text-white/90 placeholder:text-white/55"
       />
       <input
         ref={fileRef}
@@ -158,7 +158,7 @@ function AssetUploader({ brandId }: { brandId: string }) {
         type="button"
         onClick={() => fileRef.current?.click()}
         disabled={upload.isPending}
-        className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-widest font-mono text-amber bg-amber/[0.08] hover:bg-amber/[0.16] border border-amber/[0.30] rounded px-3 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-widest font-mono text-primary-text bg-primary/[0.08] hover:bg-primary/[0.16] border border-primary/[0.30] rounded px-3 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <Upload size={12} /> {upload.isPending ? 'Uploading…' : 'Upload image'}
       </button>
@@ -266,7 +266,7 @@ function FindingRow({
             {a?.asset_name ?? 'Unmatched asset'}
           </div>
           <div className="text-[11px] text-white/55 font-mono mt-0.5 truncate">
-            <a href={f.found_url} target="_blank" rel="noopener noreferrer" className="hover:text-amber">
+            <a href={f.found_url} target="_blank" rel="noopener noreferrer" className="hover:text-primary">
               {f.found_url}
             </a>
           </div>
@@ -285,7 +285,7 @@ function FindingRow({
                 href={f.found_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-amber hover:underline ml-auto"
+                className="inline-flex items-center gap-1 text-primary-text hover:underline ml-auto"
               >
                 <ExternalLink size={11} /> open
               </a>

@@ -146,7 +146,7 @@ function ProfileRow({ profile: p }: { profile: SocialProfileRow }) {
               href={p.profile_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-amber hover:underline"
+              className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-primary-text hover:underline"
             >
               <ExternalLink size={10} /> open
             </a>
@@ -168,7 +168,7 @@ function Avatar({ src, fallback, verified }: { src: string | null; fallback: str
         </div>
       )}
       {verified && (
-        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-amber rounded-full flex items-center justify-center text-[10px] font-bold text-black border border-bg-card">
+        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-primary rounded-full flex items-center justify-center text-[10px] font-bold text-[color:var(--btn-primary-ink,#000)] border border-bg-card">
           ✓
         </div>
       )}

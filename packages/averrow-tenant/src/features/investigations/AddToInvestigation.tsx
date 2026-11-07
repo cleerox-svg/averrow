@@ -82,7 +82,7 @@ export function AddToInvestigation({ itemType, itemId, defaultTitle }: {
             ))}
           </div>
           <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/[0.06]">
-            <button type="button" onClick={() => setMode('new')} className="inline-flex items-center gap-1 text-[11px] font-mono text-amber hover:text-amber">
+            <button type="button" onClick={() => setMode('new')} className="inline-flex items-center gap-1 text-[11px] font-mono text-primary-text hover:text-primary">
               <Plus size={11} /> New case
             </button>
             <button type="button" onClick={() => setOpen(false)} className="text-[11px] font-mono text-white/55 hover:text-white/70">Cancel</button>
@@ -98,7 +98,7 @@ export function AddToInvestigation({ itemType, itemId, defaultTitle }: {
             onChange={(e) => setTitle(e.target.value)}
             placeholder="New investigation title…"
             autoFocus
-            className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40]"
+            className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-primary/[0.40]"
             onKeyDown={(e) => { if (e.key === 'Enter') createAndLink(); }}
           />
           <div className="flex items-center justify-between gap-2">
@@ -107,7 +107,7 @@ export function AddToInvestigation({ itemType, itemId, defaultTitle }: {
               type="button"
               disabled={!title.trim() || create.isPending}
               onClick={createAndLink}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold bg-amber/[0.14] text-amber border border-amber/[0.40] hover:bg-amber/[0.20] disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold bg-primary/[0.14] text-primary-text border border-primary/[0.40] hover:bg-primary/[0.20] disabled:opacity-50"
             >
               {create.isPending ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Create & add
             </button>

@@ -101,7 +101,7 @@ export function Alerts() {
       </header>
 
       {(brandFilter || typeFilter) && (
-        <div className="inline-flex items-center gap-2 rounded-lg border border-amber/[0.25] bg-amber/[0.06] px-3 py-1.5 text-[12px] text-amber/90">
+        <div className="inline-flex items-center gap-2 rounded-lg border border-primary/[0.25] bg-primary/[0.06] px-3 py-1.5 text-[12px] text-primary/90">
           <Filter size={12} />
           <span>
             Filtered{typeFilter && <> · {typeFilter.replace(/_/g, ' ')}</>}{brandFilter && <> · this brand</>}
@@ -186,7 +186,7 @@ function BulkToolbar({
       </label>
       {n > 0 && (
         <>
-          <span className="text-[11px] font-mono text-amber/90">· {n} selected</span>
+          <span className="text-[11px] font-mono text-primary/90">· {n} selected</span>
           <div className="flex items-center gap-1.5 ml-1">
             <button type="button" disabled={bulk.isPending} onClick={() => run({ status: 'acknowledged' })} className={btn}><Check size={11} /> Acknowledge</button>
             <button type="button" disabled={bulk.isPending} onClick={() => run({ status: 'resolved' })} className={btn}><ShieldCheck size={11} /> Resolve</button>
@@ -269,7 +269,7 @@ function FilterBar<T extends string>({
           className={cn(
             'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors',
             value === opt.key
-              ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+              ? 'bg-primary/[0.10] text-primary-text border-primary/[0.30]'
               : 'bg-white/[0.04] text-white/55 border-white/[0.08] hover:text-white/85',
           )}
         >
@@ -338,7 +338,7 @@ function AlertRow({ alert: a, canTriage, selected, onToggleSelect }: {
       </div>
 
       <h3 className="text-[15px] font-semibold mt-2 leading-snug">
-        <Link to={`/alerts/${a.id}`} className="text-white/90 hover:text-amber transition-colors">{a.title}</Link>
+        <Link to={`/alerts/${a.id}`} className="text-white/90 hover:text-primary transition-colors">{a.title}</Link>
       </h3>
       {a.summary && <p className="text-[12px] text-white/55 mt-1 leading-relaxed">{a.summary}</p>}
       <AiAssessmentPanel raw={a.ai_assessment} />
@@ -358,12 +358,12 @@ function Recommendations({ items }: { items: string[] }) {
   const [open, setOpen] = useState(false);
   const shown = open ? items : items.slice(0, 2);
   return (
-    <div className="mt-3 rounded-lg border border-amber/[0.16] bg-amber/[0.04] px-3 py-2.5">
-      <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-amber mb-1.5">Recommended actions</div>
+    <div className="mt-3 rounded-lg border border-primary/[0.16] bg-primary/[0.04] px-3 py-2.5">
+      <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-primary-text mb-1.5">Recommended actions</div>
       <ul className="space-y-1.5">
         {shown.map((r, i) => (
           <li key={i} className="flex gap-2 text-[11.5px] text-white/70 leading-relaxed">
-            <span className="text-amber flex-shrink-0 mt-[2px]">▸</span>
+            <span className="text-primary-text flex-shrink-0 mt-[2px]">▸</span>
             <span>{r}</span>
           </li>
         ))}
@@ -372,7 +372,7 @@ function Recommendations({ items }: { items: string[] }) {
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="mt-2 text-[10px] font-mono uppercase tracking-widest text-amber hover:text-amber"
+          className="mt-2 text-[10px] font-mono uppercase tracking-widest text-primary-text hover:text-primary"
         >
           {open ? 'show less' : `+${items.length - 2} more`}
         </button>

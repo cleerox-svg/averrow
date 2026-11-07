@@ -93,7 +93,7 @@ export function Executives() {
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2">
-            <UserCog size={18} className="text-amber" />
+            <UserCog size={18} className="text-primary-text" />
             <h1 className="text-[24px] font-bold text-white/90 tracking-tight">Executives</h1>
           </div>
           <p className="mt-1 text-sm text-white/55 max-w-2xl">
@@ -108,7 +108,7 @@ export function Executives() {
             onClick={() => { setShowCreate((v) => !v); setEditingId(null); }}
             aria-expanded={showCreate}
             aria-controls="create-executive-form"
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber text-[#0a0a0a] rounded-lg font-semibold text-sm hover:bg-amber-dim transition-colors whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-[color:var(--btn-primary-ink,#0a0a0a)] rounded-lg font-semibold text-sm hover:bg-primary-pressed transition-colors whitespace-nowrap"
           >
             <Plus size={14} /> {showCreate ? 'Cancel' : 'Register executive'}
           </button>
@@ -130,7 +130,7 @@ export function Executives() {
         <section className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
           <p className="text-white/55 text-sm">No brands assigned to your organization yet.</p>
           <p className="text-white/55 text-xs mt-1">
-            Contact <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
+            Contact <a className="text-primary-text hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
           </p>
         </section>
       )}
@@ -154,7 +154,7 @@ export function Executives() {
               className={[
                 'px-2.5 py-1 rounded-md text-[11px] font-mono border transition-colors',
                 brandFilter === 'all'
-                  ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+                  ? 'bg-primary/[0.10] text-primary-text border-primary/[0.30]'
                   : 'bg-white/[0.04] text-white/60 border-white/[0.08] hover:text-white/90',
               ].join(' ')}
             >
@@ -168,7 +168,7 @@ export function Executives() {
                 className={[
                   'px-2.5 py-1 rounded-md text-[11px] font-mono border transition-colors',
                   brandFilter === b.id
-                    ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+                    ? 'bg-primary/[0.10] text-primary-text border-primary/[0.30]'
                     : 'bg-white/[0.04] text-white/60 border-white/[0.08] hover:text-white/90',
                 ].join(' ')}
               >
@@ -283,7 +283,7 @@ function ExecutiveRow({
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-1">
             {showBrand && (
-              <span className="text-[11px] font-mono text-amber bg-amber/[0.06] border border-amber/[0.20] rounded px-1.5 py-0.5">
+              <span className="text-[11px] font-mono text-primary-text bg-primary/[0.06] border border-primary/[0.20] rounded px-1.5 py-0.5">
                 {brand?.name ?? executive.brand_id}
               </span>
             )}
@@ -301,7 +301,7 @@ function ExecutiveRow({
           {alertCount !== null && (
             <Link
               to={`/alerts?brand=${executive.brand_id}&type=${EXEC_ALERT_TYPE}`}
-              className="inline-flex items-center gap-1 text-[11px] font-mono text-white/55 hover:text-amber mt-1.5 transition-colors"
+              className="inline-flex items-center gap-1 text-[11px] font-mono text-white/55 hover:text-primary mt-1.5 transition-colors"
               title={
                 alertCountApprox
                   ? "Opens this brand's executive-impersonation alerts. Count is approximate — this brand has more than 100 such alerts, so per-executive counts may undercount (not exec-specific either — the alerts API has no per-executive filter)"
@@ -320,7 +320,7 @@ function ExecutiveRow({
             <button
               type="button"
               onClick={onEdit}
-              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/55 hover:text-amber hover:bg-amber/[0.10] transition-colors"
+              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/55 hover:text-primary hover:bg-primary/[0.10] transition-colors"
               title="Edit executive"
               aria-label="Edit executive"
             >
@@ -428,7 +428,7 @@ function ExecutiveForm({
     <form
       id={mode === 'create' ? 'create-executive-form' : undefined}
       onSubmit={handleSubmit}
-      className="rounded-xl border border-amber/[0.20] bg-amber/[0.03] p-5 space-y-4"
+      className="rounded-xl border border-primary/[0.20] bg-primary/[0.03] p-5 space-y-4"
     >
       <h2 className="text-sm font-semibold text-white/90">
         {mode === 'create' ? 'Register a new executive' : `Edit ${initial?.full_name ?? ''}`}
@@ -443,7 +443,7 @@ function ExecutiveForm({
             id="exec-brand"
             value={brandId}
             onChange={(e) => setBrandId(e.target.value)}
-            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 focus:border-amber focus:outline-none"
+            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 focus:border-primary focus:outline-none"
           >
             {brands.map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
@@ -458,7 +458,7 @@ function ExecutiveForm({
             id="exec-status"
             value={status}
             onChange={(e) => setStatus(e.target.value as 'active' | 'paused')}
-            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 focus:border-amber focus:outline-none"
+            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 focus:border-primary focus:outline-none"
           >
             <option value="active">Active — monitored</option>
             <option value="paused">Paused — kept, not scanned</option>
@@ -477,7 +477,7 @@ function ExecutiveForm({
             value={fullName}
             onChange={(e) => { setFullName(e.target.value); if (nameError) setNameError(null); }}
             placeholder="Jane Doe"
-            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
+            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-primary focus:outline-none"
           />
           {nameError && <p className="text-[11px] text-sev-critical mt-1">{nameError}</p>}
         </div>
@@ -491,7 +491,7 @@ function ExecutiveForm({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Chief Executive Officer"
-            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
+            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-primary focus:outline-none"
           />
         </div>
       </div>
@@ -507,7 +507,7 @@ function ExecutiveForm({
               <label
                 key={p}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
-                  on ? 'border-amber/[0.40] bg-amber/[0.06]' : 'border-white/[0.08] bg-bg-page hover:border-white/15'
+                  on ? 'border-primary/[0.40] bg-primary/[0.06]' : 'border-white/[0.08] bg-bg-page hover:border-white/15'
                 }`}
               >
                 <input type="checkbox" checked={on} onChange={() => togglePlatform(p)} className="accent-amber" />
@@ -533,7 +533,7 @@ function ExecutiveForm({
                 onChange={(e) => setHandle(p, e.target.value)}
                 placeholder="@handle"
                 aria-label={`${EXEC_PLATFORM_LABELS[p]} official handle`}
-                className="flex-1 min-w-0 rounded-md border border-white/[0.08] bg-bg-page px-2.5 py-1.5 text-[12px] text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
+                className="flex-1 min-w-0 rounded-md border border-white/[0.08] bg-bg-page px-2.5 py-1.5 text-[12px] text-white/90 placeholder-white/55 focus:border-primary focus:outline-none"
               />
             </div>
           ))}
@@ -550,7 +550,7 @@ function ExecutiveForm({
         <button
           type="submit"
           disabled={pending || !brandId}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber text-[#0a0a0a] rounded-lg font-semibold text-sm hover:bg-amber-dim disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-[color:var(--btn-primary-ink,#0a0a0a)] rounded-lg font-semibold text-sm hover:bg-primary-pressed disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
         >
           {pending ? 'Saving…' : mode === 'create' ? 'Register executive' : 'Save changes'}
         </button>

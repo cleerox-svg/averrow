@@ -112,7 +112,7 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
                 {user?.email}
               </div>
               {user?.organization && (
-                <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-amber mt-1.5">
+                <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-primary-text mt-1.5">
                   {user.organization.role} · {user.organization.plan}
                 </div>
               )}

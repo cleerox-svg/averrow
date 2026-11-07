@@ -136,7 +136,7 @@ function ManageBillingCard({ summary }: { summary: BillingSummary }) {
             type="button"
             onClick={openPortal}
             disabled={portal.isPending}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber text-[#0a0a0a] rounded-lg font-semibold text-sm hover:bg-amber-dim disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-[color:var(--btn-primary-ink,#0a0a0a)] rounded-lg font-semibold text-sm hover:bg-primary-pressed disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
           >
             {portal.isPending ? 'Opening…' : <>Manage in Stripe <ExternalLink size={14} /></>}
           </button>
@@ -155,8 +155,8 @@ function ManageBillingCard({ summary }: { summary: BillingSummary }) {
   // /scan + a sales conversation, and an internal admin sets the
   // plan_id. Show the support email as the next step.
   return (
-    <section className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-5">
-      <h2 className="text-sm font-semibold text-amber/95 mb-1">Start your subscription</h2>
+    <section className="rounded-xl border border-primary/[0.20] bg-primary/[0.04] p-5">
+      <h2 className="text-sm font-semibold text-primary/95 mb-1">Start your subscription</h2>
       <p className="text-[12px] text-white/65 mt-1 max-w-md leading-relaxed">
         You're not on a billed plan yet. Once your trial is approved, click the button below to subscribe.
       </p>
@@ -165,14 +165,14 @@ function ManageBillingCard({ summary }: { summary: BillingSummary }) {
           type="button"
           onClick={() => startCheckout(summary.plan!.id)}
           disabled={checkout.isPending}
-          className="inline-flex items-center gap-1.5 mt-3 px-4 py-2 bg-amber text-[#0a0a0a] rounded-lg font-semibold text-sm hover:bg-amber-dim disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+          className="inline-flex items-center gap-1.5 mt-3 px-4 py-2 bg-primary text-[color:var(--btn-primary-ink,#0a0a0a)] rounded-lg font-semibold text-sm hover:bg-primary-pressed disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
         >
           {checkout.isPending ? 'Opening Stripe…' : <>Subscribe — {summary.plan.display_name} <ExternalLink size={14} /></>}
         </button>
       )}
       {!summary.plan && (
         <p className="text-[12px] text-white/55 mt-3">
-          Contact <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to choose a plan.
+          Contact <a className="text-primary-text hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to choose a plan.
         </p>
       )}
       {checkout.error && (
@@ -233,7 +233,7 @@ function StatusCard({ summary }: { summary: BillingSummary }) {
         <div className="mt-4 pt-4 border-t border-white/[0.06]">
           <p className="text-[12px] text-white/55">
             Your organization isn't on a billed plan yet. Contact{' '}
-            <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to start your trial.
+            <a className="text-primary-text hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to start your trial.
           </p>
         </div>
       )}
@@ -361,7 +361,7 @@ function AdjustmentsCard({ summary }: { summary: BillingSummary }) {
       <ul className="space-y-1.5">
         {summary.active_overrides.map((o) => (
           <li key={o.id} className="text-[12px] text-white/65">
-            <span className="font-mono text-amber">
+            <span className="font-mono text-primary-text">
               {o.override_type === 'discount_percent'
                 ? `${o.discount_pct}% off`
                 : formatCents(o.custom_price_cents ?? 0)}

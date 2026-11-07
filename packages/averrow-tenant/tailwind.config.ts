@@ -66,7 +66,11 @@ const config: Config = {
         // Borders — theme-flippable
         'border-base':   'var(--border-base)',
         'border-strong': 'var(--border-strong)',
-        // Accents — constant across themes
+        // Accents — constant across themes. `amber` is a STATUS colour
+        // (warning / medium / pending, P3-2c): primary, active, selection,
+        // CTA, link and focus use the `primary` L2 colour above instead.
+        // Bare `text-amber` has a light-theme shim in tokens.css (-> --amber-text);
+        // its primary twin is `text-primary-text`, which matches it in both themes.
         'amber':      '#E5A832',
         'amber-dim':  '#B8821F',
         'red':        '#C83C3C',

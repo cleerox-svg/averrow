@@ -29,7 +29,7 @@ export function ThreatActor() {
       <header>
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Threat-Actor Intelligence</h1>
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
+          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-primary-text bg-primary/[0.10] border border-primary/[0.20] rounded px-2 py-1">
             Active
           </span>
         </div>

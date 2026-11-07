@@ -96,7 +96,7 @@ function Header({ takedown: t }: { takedown: TakedownDetailRow }) {
           href={t.target_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-amber hover:underline text-xs font-mono mt-4"
+          className="inline-flex items-center gap-1 text-primary-text hover:underline text-xs font-mono mt-4"
         >
           <ExternalLink size={11} /> {t.target_url}
         </a>
@@ -186,7 +186,7 @@ function SubmissionRow({ row: r }: { row: TakedownSubmissionAuditRow }) {
           {SUBMITTER_KIND_LABELS[r.submitter_kind] ?? r.submitter_kind}
         </span>
         {r.ticket_id && (
-          <span className="text-[11px] font-mono text-amber">
+          <span className="text-[11px] font-mono text-primary-text">
             ticket: {r.ticket_id}
           </span>
         )}

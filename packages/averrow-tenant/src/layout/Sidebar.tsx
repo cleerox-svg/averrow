@@ -38,7 +38,7 @@ const MODULE_PATHS: Record<ModuleKey, string> = {
 // min-h-11: 44px touch targets in the mobile drawer; desktop keeps its density.
 const NAV_BASE = 'flex items-center gap-3 px-3 py-2 min-h-11 md:min-h-0 rounded-lg text-[13px] transition-colors';
 const NAV_INACTIVE = 'text-white/55 hover:bg-white/[0.04] hover:text-white/85';
-const NAV_ACTIVE   = 'bg-amber/[0.10] text-amber border border-amber/[0.20]';
+const NAV_ACTIVE   = 'bg-primary/[0.10] text-primary-text border border-primary/[0.20]';
 
 function themeIconFor(theme: 'auto' | 'dark' | 'light') {
   if (theme === 'auto')  return Laptop;

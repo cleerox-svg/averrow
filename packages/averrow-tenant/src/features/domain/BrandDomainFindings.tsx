@@ -127,7 +127,7 @@ export function MaliciousDomainsSection({
         ? <TakedownStatusPill status={r.takedown_status} takedownId={r.takedown_id} />
         : !canTriage
           ? <span className="text-white/55 font-mono text-[11px]">—</span>
-        : <button type="button" onClick={() => setConfirmRow(r)} className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] hover:bg-amber/[0.12] border border-amber/[0.20] hover:border-amber/[0.40] rounded px-2 py-1 transition-colors">Request takedown</button> },
+        : <button type="button" onClick={() => setConfirmRow(r)} className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-primary-text bg-primary/[0.06] hover:bg-primary/[0.12] border border-primary/[0.20] hover:border-primary/[0.40] rounded px-2 py-1 transition-colors">Request takedown</button> },
   ];
 
   return (
@@ -147,7 +147,7 @@ export function MaliciousDomainsSection({
               {highCount} high
             </span>
           )}
-          <Link to={`/threats?brand=${brandId}`} className="text-amber hover:underline">
+          <Link to={`/threats?brand=${brandId}`} className="text-primary-text hover:underline">
             View all →
           </Link>
         </div>
@@ -240,7 +240,7 @@ function RequestTakedownDialog({
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
               rows={4}
-              className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-3 py-2 text-[12px] text-white/90 font-mono placeholder:text-white/55"
+              className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-primary/[0.40] focus:outline-none px-3 py-2 text-[12px] text-white/90 font-mono placeholder:text-white/55"
               placeholder="Optional — auto-generated from threat intel if left blank"
             />
             <p className="mt-1.5 text-[10px] font-mono text-white/55">
@@ -269,7 +269,7 @@ function RequestTakedownDialog({
             type="button"
             onClick={submit}
             disabled={mutation.isPending}
-            className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-widest font-mono text-amber bg-amber/[0.08] hover:bg-amber/[0.16] border border-amber/[0.30] hover:border-amber/[0.50] rounded px-3 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-widest font-mono text-primary-text bg-primary/[0.08] hover:bg-primary/[0.16] border border-primary/[0.30] hover:border-primary/[0.50] rounded px-3 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {mutation.isPending ? 'Submitting…' : 'Confirm request'}
           </button>
@@ -297,7 +297,7 @@ function SourceChip({ source }: { source: string }) {
   if (source === 'abuse_mailbox') {
     return (
       <span
-        className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-amber bg-amber/[0.08] border border-amber/[0.20] rounded px-1.5 py-0.5"
+        className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-primary-text bg-primary/[0.08] border border-primary/[0.20] rounded px-1.5 py-0.5"
         title="Reported via abuse mailbox — community-submitted phishing capture"
       >
         community report

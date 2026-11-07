@@ -50,7 +50,7 @@ export function AbuseMailbox() {
       <header>
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Abuse Mailbox</h1>
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
+          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-primary-text bg-primary/[0.10] border border-primary/[0.20] rounded px-2 py-1">
             Active
           </span>
         </div>
@@ -158,7 +158,7 @@ function AliasCard({ alias }: { alias: AbuseAlias | null }) {
           <Mail size={11} /> Forwarding alias not yet provisioned
         </div>
         <p className="text-[13px] text-white/75">
-          Your forwarding alias is still being set up. <a className="text-amber hover:underline" href="mailto:support@averrow.com">Contact support</a> to expedite.
+          Your forwarding alias is still being set up. <a className="text-primary-text hover:underline" href="mailto:support@averrow.com">Contact support</a> to expedite.
         </p>
       </div>
     );
@@ -180,7 +180,7 @@ function AliasCard({ alias }: { alias: AbuseAlias | null }) {
         <Mail size={11} /> Your forwarding alias
       </div>
       <div className="flex items-center gap-3 flex-wrap">
-        <code className="text-base font-mono text-amber bg-amber/[0.06] border border-amber/[0.20] rounded px-3 py-1.5">
+        <code className="text-base font-mono text-primary-text bg-primary/[0.06] border border-primary/[0.20] rounded px-3 py-1.5">
           {alias.alias}
         </code>
         <button
@@ -271,7 +271,7 @@ function BrandCard({
   onSelect: () => void;
 }) {
   const tone =
-    selected                       ? 'border-amber/[0.50]'        :
+    selected                       ? 'border-primary/[0.50]'        :
     b.messages_phishing + b.messages_malware > 0 ? 'border-sev-critical/[0.30]' :
     b.messages_spam > 0            ? 'border-amber/[0.30]'        :
                                      'border-white/[0.06]';
@@ -407,7 +407,7 @@ function MessageRow({ message: m, expanded, onToggle }: {
     <button
       type="button"
       onClick={onToggle}
-      className={`w-full text-left rounded-xl border bg-bg-card p-4 transition-all hover:bg-white/[0.02] ${tone} ${expanded ? 'ring-1 ring-amber/40' : ''}`}
+      className={`w-full text-left rounded-xl border bg-bg-card p-4 transition-all hover:bg-white/[0.02] ${tone} ${expanded ? 'ring-1 ring-primary/40' : ''}`}
     >
       <div className="flex items-center gap-2 flex-wrap mb-2">
         <SeverityPill level={m.severity} />
@@ -442,7 +442,7 @@ function MessageRow({ message: m, expanded, onToggle }: {
         {m.original_subject ?? <span className="italic text-white/55">(no subject)</span>}
       </div>
       <div className="text-[12px] text-white/75 mt-0.5">
-        from <span className="font-mono text-[var(--amber-text)]">{m.original_from ?? m.forwarded_by_email ?? 'unknown'}</span>
+        from <span className="font-mono text-[var(--primary-text)]">{m.original_from ?? m.forwarded_by_email ?? 'unknown'}</span>
         {m.original_from && m.forwarded_by_email && m.original_from !== m.forwarded_by_email && (
           <>
             {' '}· forwarded by <span className="font-mono text-white/90">{m.forwarded_by_email}</span>
@@ -490,7 +490,7 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
   const detailQ = useAbuseInboxMessageDetail(m.id);
   const detail = detailQ.data;
   return (
-    <article className="rounded-xl border bg-bg-card p-5 -mt-1 border-amber/30">
+    <article className="rounded-xl border bg-bg-card p-5 -mt-1 border-primary/30">
       <div className="mb-4">
         <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Subject</div>
         <div className="text-[14px] text-white/95 font-medium">
@@ -780,7 +780,7 @@ function TenantRawTabButton({
       onClick={onClick}
       className={`px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors border ${
         active
-          ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+          ? 'bg-primary/[0.10] text-primary-text border-primary/[0.30]'
           : 'bg-transparent text-white/65 border-transparent hover:text-white/85'
       }`}
     >
@@ -819,7 +819,7 @@ function TenantUrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boo
         {urls.map((u, i) => (
           <div key={`${u.url}-${i}`} className="px-3 py-2 flex items-center gap-2">
             {u.domain && (
-              <span className="text-[10px] font-mono uppercase tracking-wider text-amber min-w-0 shrink-0">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-primary-text min-w-0 shrink-0">
                 {u.domain}
               </span>
             )}
@@ -855,7 +855,7 @@ function TenantHeadersPanel({ entries, loading }: { entries: Array<[string, stri
           <tbody className="divide-y divide-white/[0.04]">
             {sorted.map(([k, v]) => (
               <tr key={k}>
-                <td className="align-top px-3 py-1.5 text-amber whitespace-nowrap">{k}</td>
+                <td className="align-top px-3 py-1.5 text-primary-text whitespace-nowrap">{k}</td>
                 <td className="align-top px-3 py-1.5 text-white/85 break-all">{v}</td>
               </tr>
             ))}
@@ -969,7 +969,7 @@ function TenantDetailField({ label, value, mono, accent, uppercase }: {
     <div>
       <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">{label}</div>
       <div
-        className={`text-[12px] break-all ${mono ? 'font-mono' : ''} ${uppercase ? 'uppercase' : ''} ${accent ? 'text-amber' : 'text-white/92'}`}
+        className={`text-[12px] break-all ${mono ? 'font-mono' : ''} ${uppercase ? 'uppercase' : ''} ${accent ? 'text-primary-text' : 'text-white/92'}`}
       >
         {value ?? <span className="text-white/55">—</span>}
       </div>
@@ -1034,7 +1034,7 @@ function NoBrands() {
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No brands assigned to your organization yet.</p>
       <p className="text-white/55 text-xs mt-1">
-        Contact <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
+        Contact <a className="text-primary-text hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
       </p>
     </div>
   );
@@ -1216,7 +1216,7 @@ function TenantInboxToolbar({
               onClick={() => onStatusTabChange(t.key)}
               className={`px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors border ${
                 active
-                  ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+                  ? 'bg-primary/[0.10] text-primary-text border-primary/[0.30]'
                   : 'bg-transparent text-white/65 border-transparent hover:text-white/85'
               }`}
             >
@@ -1233,7 +1233,7 @@ function TenantInboxToolbar({
           onClick={() => onClassFilterChange(null)}
           className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
             classFilter === null
-              ? 'border-amber/[0.40] text-amber bg-amber/[0.10]'
+              ? 'border-primary/[0.40] text-primary-text bg-primary/[0.10]'
               : 'border-white/[0.08] text-white/55 hover:text-white/85'
           }`}
         >
@@ -1250,7 +1250,7 @@ function TenantInboxToolbar({
               onClick={() => onClassFilterChange(active ? null : c.key)}
               className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
                 active
-                  ? 'border-amber/[0.40] text-amber bg-amber/[0.10]'
+                  ? 'border-primary/[0.40] text-primary-text bg-primary/[0.10]'
                   : 'border-white/[0.08] text-white/55 hover:text-white/85'
               }`}
             >
@@ -1263,7 +1263,7 @@ function TenantInboxToolbar({
           placeholder="Search subject / sender / alias…"
           value={searchText}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/55 focus:outline-none focus:border-amber/[0.40] min-w-[200px]"
+          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/55 focus:outline-none focus:border-primary/[0.40] min-w-[200px]"
         />
       </div>
     </div>
@@ -1330,7 +1330,7 @@ function EmptyMessages() {
         href="https://averrow.com/platform/abuse-mailbox#setup"
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1 text-amber hover:underline text-xs mt-3"
+        className="inline-flex items-center gap-1 text-primary-text hover:underline text-xs mt-3"
       >
         <ExternalLink size={11} /> setup guide
       </a>

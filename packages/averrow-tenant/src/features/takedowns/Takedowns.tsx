@@ -137,7 +137,7 @@ function FilterBar({
   update:  (patch: Partial<TakedownsFilters>) => void;
 }) {
   const pillOff = "text-white/55 bg-white/[0.04] border-white/[0.08] hover:border-white/[0.20]";
-  const pillOn  = "text-amber bg-amber/[0.10] border-amber/[0.30]";
+  const pillOn  = "text-primary-text bg-primary/[0.10] border-primary/[0.30]";
   const pill = (active: boolean) =>
     `inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-2 py-1 transition-colors cursor-pointer ${active ? pillOn : pillOff}`;
 
