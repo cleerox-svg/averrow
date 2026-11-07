@@ -55,8 +55,8 @@ const stats = [
 const timeline = [
   { day: "Day 0", title: "First lookalike seen", body: "A newly registered domain imitating Acme's payroll sign-in page is flagged for brand impersonation." },
   { day: "Day 1–2", title: "Cluster grouped", body: "Eight more lookalikes appear on the same hosting network and present the same TLS certificate. They are grouped into one operation, OP-2291, by the infrastructure they share." },
-  { day: "Day 3–4", title: "Operation widens", body: "A second hosting network comes online with three more domains. A fake HR-support social profile and a cloned “Acme Pay” app are linked to the same operation." },
-  { day: "Day 4", title: "Takedowns filed", body: "Evidence packages go to the registrars and hosting providers for the domains found so far; the social profile and the app are drafted with evidence, ready to file with each platform. Later domains are queued as they appear." },
+  { day: "Day 3–4", title: "Operation widens", body: "A second hosting network comes online with three more domains. A fake HR-support social profile and a cloned “Acme Pay” app also turn up and are reviewed alongside the operation." },
+  { day: "Day 4", title: "Takedowns requested", body: "Evidence packages go to the registrars and hosting providers for the domains found so far; the social profile and the app are drafted with evidence, ready to file with each platform. Later domains are queued as they appear." },
   { day: "Day 5–8", title: "First removals", body: "Eight domains are removed, starting with the original hosting network." },
   { day: "Day 9", title: "Report generated", body: "Four domain takedowns are pending a registrar response and two are queued. The social and app cases remain open." },
 ];
@@ -85,7 +85,7 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
 
 <Layout
   title="Sample Operation Report — Averrow"
-  description="An illustrative operation report: one phishing operation traced across 14 lookalike domains, shared hosting and certificate, a fake social profile and a cloned app, with a timeline and takedown status."
+  description="An illustrative operation report: one phishing operation traced across 14 lookalike domains, shared hosting and certificate, with a related fake social profile and cloned app, a timeline and takedown status."
 >
   <section class="rep-hero">
     <div class="container">
@@ -93,7 +93,7 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
         <strong>Illustrative example</strong> &middot; names, domains and infrastructure changed
       </p>
       <div class="rep-eyebrow">Sample operation report</div>
-      <h1>OP-2291: Payroll-portal phishing kit</h1>
+      <h1>OP-2291: Acme payroll sign-in impersonation</h1>
       <p class="rep-lede">
         One operation, traced from a single lookalike domain to the hosting, certificate, social
         profile and app behind it, with the takedown status for each. This is the kind of
@@ -120,8 +120,9 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
         Acme, a fictional payroll customer, was targeted by a credential-phishing operation built around
         a fake payroll sign-in. Fourteen lookalike domains were registered over eight days. They share two
         hosting networks and, for the first nine, one TLS certificate, which is what tied them into a single
-        operation rather than fourteen separate alerts. The same operation also runs a fake HR-support social
-        profile and a cloned &ldquo;Acme Pay&rdquo; app on a third-party store.
+        operation rather than fourteen separate alerts. A fake HR-support social profile and a cloned
+        &ldquo;Acme Pay&rdquo; app on a third-party store were found at the same time and are reviewed
+        alongside it; they are not part of the domain grouping.
       </p>
       <p>
         At the time of this report, {counts.Removed} of {indicators.length} domains have been removed, {counts.Pending}

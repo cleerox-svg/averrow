@@ -27,7 +27,7 @@ DKIM (DomainKeys Identified Mail) works differently. Instead of authorizing serv
 
 The gap that shows up constantly in practice: organizations run several email systems — Google Workspace or Microsoft 365 for internal mail, a marketing platform for campaigns, a transactional provider for receipts and password resets, sometimes a dedicated security gateway like Proofpoint or Mimecast layered on top. Each of these needs its own DKIM selector configured and published. It's common to find DKIM fully deployed for the primary mail provider and completely absent for two or three of the others — meaning a portion of legitimate outbound mail isn't authenticated at all, and more importantly, an attacker studying which of your systems lacks DKIM coverage knows exactly which sending path is easiest to spoof convincingly.
 
-This is why Averrow verifies DKIM across multiple enterprise selectors — 12 or more — rather than checking for a single record and calling the job done. A single-selector check can show "DKIM: present" while missing that half your actual sending infrastructure has no coverage.
+This is why a DKIM check should never stop at a single record. A single-record check can show "DKIM: present" while missing that half your actual sending infrastructure has no coverage. Averrow's email check looks for DKIM signing and flags what it can't find.
 
 ### DMARC: the policy that ties it together
 
@@ -47,7 +47,7 @@ This is also why email posture and lookalike-domain monitoring have to be read t
 
 A fully hardened setup has SPF covering every legitimate sending system with a hard fail for anything not listed, DKIM signatures active and passing across every provider that sends on your behalf — marketing platform, transactional provider, internal mail, and any security gateway layered in front of it — and DMARC enforced at `p=reject`, not just published at `p=none`.
 
-Averrow grades this whole picture on an A+ through F scale, factoring in SPF validity, multi-selector DKIM coverage, DMARC policy strength, and MX provider detection, and tracks the grade over time so a regression — a selector that silently expired, a DMARC policy someone relaxed during a migration and never restored — gets caught quickly rather than discovered months later.
+Averrow grades this whole picture on an A+ through F scale, factoring in SPF validity, DKIM signing, DMARC policy strength, and your mail provider, and tracks the grade over time so a regression — a selector that silently expired, a DMARC policy someone relaxed during a migration and never restored — gets caught quickly rather than discovered months later.
 
 ### Why brand protection has to watch this
 

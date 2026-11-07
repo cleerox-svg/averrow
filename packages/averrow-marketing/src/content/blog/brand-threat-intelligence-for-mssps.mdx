@@ -33,7 +33,7 @@ None of this replaces the network- and endpoint-centric work an MDR program alre
 
 The economics of adding a new service line only work if it can be delivered across a client book without a linear increase in analyst headcount. A few things matter here specifically for MSSPs evaluating whether to add this capability:
 
-**Multi-tenant from the ground up.** Managing brand exposure for dozens of client organizations needs to look like managing dozens of separate brand profiles inside one platform, not standing up separate instances or juggling separate logins per client.
+**Client separation.** Each client's alerts, takedowns and members need to stay isolated from every other client's. At Averrow, each client gets its own isolated organisation, set up by our team, with role-based access and an audit log. Today each login belongs to one organisation; a single login across several client organisations is on the roadmap and not available yet.
 
 **Fits the existing workflow.** Brand exposure events — alerts and takedown status changes — need to reach whatever reporting, SIEM, or ticketing workflow the MSSP already runs for clients, rather than requiring analysts to work inside a second dashboard all day. Averrow delivers webhooks for alert and takedown events, and Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow connectors, set up with our team.
 
