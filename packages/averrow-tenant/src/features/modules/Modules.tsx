@@ -223,11 +223,11 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
               <tr key={b.id} className="border-b border-white/[0.03] last:border-b-0 hover:bg-white/[0.02]">
                 <td className="px-4 py-2.5">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Link to={`/threats?brand=${b.id}`} className="font-medium text-white/90 hover:text-amber transition-colors">
+                    <Link to={`/threats?brand=${b.id}`} className="font-medium text-white/90 hover:text-primary transition-colors">
                       {b.name}
                     </Link>
                     {b.is_primary === 1 && (
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-primary-text bg-primary/[0.08] border border-primary/[0.25] rounded px-1.5 py-0.5">
                         Primary
                       </span>
                     )}
@@ -296,7 +296,7 @@ function ThreatTrend({ points }: { points: DashboardTrendPoint[] }) {
             >
               <div className="text-[10px] font-mono text-white/55 tabular-nums">{p.count}</div>
               <div
-                className="w-full rounded-sm bg-amber/[0.40] hover:bg-amber/[0.60] transition-colors"
+                className="w-full rounded-sm bg-primary/[0.40] hover:bg-primary/[0.60] transition-colors"
                 style={{ height: `${h}px` }}
               />
               <div className="text-[9px] font-mono text-white/55 uppercase tracking-wider">
@@ -317,7 +317,7 @@ function RecentAlerts({ alerts }: { alerts: DashboardRecentAlert[] }) {
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold text-white/90">Recent signals</h2>
-        <Link to="/alerts" className="text-[11px] font-mono text-amber hover:underline">View all →</Link>
+        <Link to="/alerts" className="text-[11px] font-mono text-primary-text hover:underline">View all →</Link>
       </div>
       <div className="space-y-2">
         {alerts.map((a) => {
@@ -362,7 +362,7 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
       className={cn(
         'block rounded-xl border bg-bg-card p-4 transition-colors',
         entitled
-          ? 'border-white/[0.06] hover:border-amber/[0.30]'
+          ? 'border-white/[0.06] hover:border-primary/[0.30]'
           : 'border-white/[0.04] hover:border-white/[0.10]',
       )}
     >
@@ -372,7 +372,7 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
           <p className="text-[11px] text-white/55 mt-1 leading-relaxed">{MODULE_DESCRIPTIONS[m.module_key]}</p>
         </div>
         {entitled ? (
-          <span className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-mono text-amber">
+          <span className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-mono text-primary-text">
             <CheckCircle2 size={11} />
             {trial ? 'Trial' : 'Active'}
           </span>
@@ -408,7 +408,7 @@ function AuthorizationBadge({ data }: { data: { signed: boolean; modules_covered
             Automated takedowns are running on your behalf within scope.
           </p>
         </div>
-        <Link to="/settings/takedown-authorization" className="text-[11px] font-mono text-amber hover:underline">
+        <Link to="/settings/takedown-authorization" className="text-[11px] font-mono text-primary-text hover:underline">
           Manage →
         </Link>
       </div>
@@ -422,7 +422,7 @@ function AuthorizationBadge({ data }: { data: { signed: boolean; modules_covered
           Without your signed authorization, takedowns can be detected but not submitted automatically.
         </p>
       </div>
-      <Link to="/settings/takedown-authorization" className="text-[11px] font-mono text-amber hover:underline">
+      <Link to="/settings/takedown-authorization" className="text-[11px] font-mono text-primary-text hover:underline">
         Sign →
       </Link>
     </div>
@@ -438,7 +438,7 @@ function NotAuthenticated() {
     <div className="max-w-md mx-auto py-16 text-center">
       <h1 className="text-xl font-semibold text-[var(--text-primary)] mb-2">Sign in required</h1>
       <p className="text-sm text-white/55">
-        Your session has expired. <a href="/v2/login" className="text-amber hover:underline">Sign in to continue</a>.
+        Your session has expired. <a href="/v2/login" className="text-primary-text hover:underline">Sign in to continue</a>.
       </p>
     </div>
   );
@@ -450,7 +450,7 @@ function NoOrg() {
       <h1 className="text-xl font-semibold text-[var(--text-primary)] mb-2">No organization yet</h1>
       <p className="text-sm text-white/55">
         Your account isn't bound to an organization. Contact your admin or{' '}
-        <a href="mailto:support@averrow.com" className="text-amber hover:underline">support@averrow.com</a>.
+        <a href="mailto:support@averrow.com" className="text-primary-text hover:underline">support@averrow.com</a>.
       </p>
     </div>
   );

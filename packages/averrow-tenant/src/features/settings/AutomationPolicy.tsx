@@ -112,7 +112,7 @@ function PostureDial({ posture }: { posture: AutomationMode }) {
               className={[
                 'flex-1 rounded-md border px-2 py-1.5 text-center text-[10px] font-mono uppercase tracking-wider transition-colors',
                 active
-                  ? 'bg-amber/[0.12] text-amber border-amber/[0.35]'
+                  ? 'bg-primary/[0.12] text-primary-text border-primary/[0.35]'
                   : 'bg-white/[0.02] text-white/55 border-white/[0.06]',
               ].join(' ')}
             >
@@ -238,7 +238,7 @@ function AdjustFooter({ canEdit, hasAuth }: { canEdit: boolean; hasAuth: boolean
       {canEdit ? (
         <Link
           to="/settings/takedown-authorization"
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber/[0.12] hover:bg-amber/[0.18] text-amber border border-amber/[0.35] rounded-lg font-semibold text-sm transition-colors whitespace-nowrap"
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary/[0.12] hover:bg-primary/[0.18] text-primary-text border border-primary/[0.35] rounded-lg font-semibold text-sm transition-colors whitespace-nowrap"
         >
           {hasAuth ? 'Manage authorization' : 'Authorize takedowns'} <ArrowRight size={14} />
         </Link>

@@ -93,7 +93,7 @@ export function InvestigationDetail() {
                     onClick={() => inv.status !== s && update.mutate({ status: s })}
                     className={[
                       'text-left px-2.5 py-1.5 rounded-md text-[12px] border transition-colors disabled:opacity-60',
-                      inv.status === s ? 'bg-amber/[0.10] text-amber border-amber/[0.30]' : 'bg-white/[0.03] text-white/60 border-white/[0.07] hover:text-white/90',
+                      inv.status === s ? 'bg-primary/[0.10] text-primary-text border-primary/[0.30]' : 'bg-white/[0.03] text-white/60 border-white/[0.07] hover:text-white/90',
                     ].join(' ')}
                   >
                     {INVESTIGATION_STATUS_LABELS[s]}
@@ -113,7 +113,7 @@ export function InvestigationDetail() {
                     onClick={() => inv.severity !== s && update.mutate({ severity: s })}
                     className={[
                       'px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-60',
-                      inv.severity === s ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
+                      inv.severity === s ? 'bg-primary/[0.12] text-primary-text border-primary/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
                     ].join(' ')}
                   >
                     {s}
@@ -239,13 +239,13 @@ function Notes({ investigationId, notes, canEdit }: {
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Add a note to the case timeline…"
             rows={2}
-            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-2 text-[12.5px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40] resize-none"
+            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-2 text-[12.5px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-primary/[0.40] resize-none"
           />
           <button
             type="button"
             disabled={!draft.trim() || add.isPending}
             onClick={submit}
-            className="px-3 py-2 rounded-md text-[12px] font-semibold bg-amber/[0.14] text-amber border border-amber/[0.40] hover:bg-amber/[0.20] disabled:opacity-50"
+            className="px-3 py-2 rounded-md text-[12px] font-semibold bg-primary/[0.14] text-primary-text border border-primary/[0.40] hover:bg-primary/[0.20] disabled:opacity-50"
           >
             {add.isPending ? <Loader2 size={13} className="animate-spin" /> : 'Add'}
           </button>
@@ -258,7 +258,7 @@ function Notes({ investigationId, notes, canEdit }: {
         <ol className="mt-3 space-y-3">
           {notes.map((n) => (
             <li key={n.id} className="flex gap-3">
-              <div className="mt-1 w-1.5 h-1.5 rounded-full bg-amber/70 flex-shrink-0" />
+              <div className="mt-1 w-1.5 h-1.5 rounded-full bg-primary/70 flex-shrink-0" />
               <div className="min-w-0">
                 <div className="text-[12.5px] text-white/80 whitespace-pre-wrap break-words">{n.body}</div>
                 <div className="text-[10px] font-mono text-white/55 mt-0.5">

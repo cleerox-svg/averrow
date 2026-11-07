@@ -156,7 +156,7 @@ function SignalRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean }
         <span className="ml-auto text-[10px] font-mono text-white/55">{a.brand_name}</span>
       </div>
       <div className="text-[13.5px] font-semibold leading-snug">
-        <Link to={`/alerts/${a.id}`} className="text-white/90 hover:text-amber transition-colors">{a.title}</Link>
+        <Link to={`/alerts/${a.id}`} className="text-white/90 hover:text-primary transition-colors">{a.title}</Link>
       </div>
       <div className="mt-2"><AssigneeControl alert={a} canTriage={canTriage} /></div>
       {canTriage && <AlertActions alert={a} />}
@@ -170,7 +170,7 @@ function HandledRow({ alert: a }: { alert: Alert }) {
       <CheckCircle2 size={14} className="text-green mt-0.5 flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="text-[12.5px] truncate">
-          <Link to={`/alerts/${a.id}`} className="text-white/80 hover:text-amber transition-colors">{a.title}</Link>
+          <Link to={`/alerts/${a.id}`} className="text-white/80 hover:text-primary transition-colors">{a.title}</Link>
         </div>
         <div className="text-[11px] text-white/55 mt-0.5 font-mono">
           {a.status.replace(/_/g, ' ')}{a.resolution_notes ? ` · ${a.resolution_notes}` : ''} · {a.brand_name}
@@ -215,7 +215,7 @@ function Muted({ children }: { children: React.ReactNode }) {
 
 function ViewAll({ to, label }: { to: string; label: string }) {
   return (
-    <Link to={to} className="inline-flex items-center gap-1 text-[11px] font-mono text-amber hover:text-amber pt-0.5">
+    <Link to={to} className="inline-flex items-center gap-1 text-[11px] font-mono text-primary-text hover:text-primary pt-0.5">
       {label} <ArrowRight size={11} />
     </Link>
   );

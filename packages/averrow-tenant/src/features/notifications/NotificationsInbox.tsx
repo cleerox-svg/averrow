@@ -99,7 +99,7 @@ function NotificationRow({ notification: n }: { notification: Notification }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
-            {isUnread && <span className="w-1.5 h-1.5 rounded-full bg-amber" aria-label="unread" />}
+            {isUnread && <span className="w-1.5 h-1.5 rounded-full bg-primary" aria-label="unread" />}
             <span className="text-[10px] font-mono uppercase tracking-wider text-white/55">
               {n.type.replace(/_/g, ' ')}
             </span>
@@ -109,7 +109,7 @@ function NotificationRow({ notification: n }: { notification: Notification }) {
           <h3 className="text-sm font-semibold text-white/90">{n.title}</h3>
           <p className="text-[12px] text-white/55 mt-1 leading-relaxed">{n.message}</p>
           {n.recommended_action && (
-            <p className="text-[11px] text-amber mt-2 font-mono">→ {n.recommended_action}</p>
+            <p className="text-[11px] text-primary-text mt-2 font-mono">→ {n.recommended_action}</p>
           )}
         </div>
         <span className="text-[10px] font-mono text-white/55 flex-shrink-0">

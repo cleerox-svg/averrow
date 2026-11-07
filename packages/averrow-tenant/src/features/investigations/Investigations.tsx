@@ -43,7 +43,7 @@ export function Investigations() {
           <button
             type="button"
             onClick={() => setCreating((c) => !c)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber/[0.14] hover:bg-amber/[0.20] text-amber border border-amber/[0.40] rounded-lg font-semibold text-sm transition-colors flex-shrink-0"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-primary/[0.14] hover:bg-primary/[0.20] text-primary-text border border-primary/[0.40] rounded-lg font-semibold text-sm transition-colors flex-shrink-0"
           >
             <Plus size={15} /> New investigation
           </button>
@@ -65,7 +65,7 @@ export function Investigations() {
               className={[
                 'px-2.5 py-1 rounded-md text-[11px] font-mono border transition-colors',
                 filter === f
-                  ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+                  ? 'bg-primary/[0.10] text-primary-text border-primary/[0.30]'
                   : 'bg-white/[0.04] text-white/55 border-white/[0.08] hover:text-white/85',
               ].join(' ')}
             >
@@ -141,14 +141,14 @@ function CreateForm({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <section className="rounded-xl border border-amber/[0.18] bg-amber/[0.03] p-4 space-y-3">
+    <section className="rounded-xl border border-primary/[0.18] bg-primary/[0.03] p-4 space-y-3">
       <input
         type="text"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="Investigation title — e.g. “Q2 payroll-phish campaign”"
         autoFocus
-        className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-3 py-2 text-[14px] text-white/90 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40]"
+        className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-3 py-2 text-[14px] text-white/90 placeholder:text-white/55 focus:outline-none focus:border-primary/[0.40]"
         onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
       />
       <textarea
@@ -156,7 +156,7 @@ function CreateForm({ onDone }: { onDone: () => void }) {
         onChange={(e) => setDescription(e.target.value)}
         placeholder="What ties these together? (optional)"
         rows={2}
-        className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-3 py-2 text-[12.5px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40] resize-none"
+        className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-3 py-2 text-[12.5px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-primary/[0.40] resize-none"
       />
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-1.5">
@@ -168,7 +168,7 @@ function CreateForm({ onDone }: { onDone: () => void }) {
               onClick={() => setSeverity(s)}
               className={[
                 'px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors',
-                severity === s ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
+                severity === s ? 'bg-primary/[0.12] text-primary-text border-primary/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
               ].join(' ')}
             >
               {s}
@@ -181,7 +181,7 @@ function CreateForm({ onDone }: { onDone: () => void }) {
             type="button"
             disabled={!title.trim() || create.isPending}
             onClick={submit}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-amber/[0.14] hover:bg-amber/[0.20] text-amber border border-amber/[0.40] rounded-lg font-semibold text-[13px] transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-primary/[0.14] hover:bg-primary/[0.20] text-primary-text border border-primary/[0.40] rounded-lg font-semibold text-[13px] transition-colors disabled:opacity-50"
           >
             {create.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Create
           </button>

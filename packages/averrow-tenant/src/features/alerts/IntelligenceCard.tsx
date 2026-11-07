@@ -99,7 +99,7 @@ export function IntelligenceCard() {
                   onClick={() => setTab(t.key)}
                   className={[
                     'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] transition-colors',
-                    on ? 'bg-amber/[0.10] text-amber' : 'text-white/55 hover:text-white/90 hover:bg-white/[0.04]',
+                    on ? 'bg-primary/[0.10] text-primary-text' : 'text-white/55 hover:text-white/90 hover:bg-white/[0.04]',
                   ].join(' ')}
                 >
                   <Icon size={13} />{t.label}
@@ -160,14 +160,14 @@ function OverviewTab({ alert }: { alert: Alert }) {
       )}
 
       {recs.length > 0 && (
-        <section className="rounded-xl border border-amber/[0.16] bg-amber/[0.04] p-4">
-          <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-amber mb-2 flex items-center gap-1.5">
+        <section className="rounded-xl border border-primary/[0.16] bg-primary/[0.04] p-4">
+          <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-primary-text mb-2 flex items-center gap-1.5">
             <Sparkles size={11} /> Recommended actions
           </div>
           <ul className="space-y-1.5">
             {recs.map((r, i) => (
               <li key={i} className="flex gap-2 text-[12px] text-white/75 leading-relaxed">
-                <span className="text-amber flex-shrink-0 mt-[2px]">▸</span><span>{r}</span>
+                <span className="text-primary-text flex-shrink-0 mt-[2px]">▸</span><span>{r}</span>
               </li>
             ))}
           </ul>
@@ -277,7 +277,7 @@ function ActivityTab({ alert }: { alert: Alert }) {
       <ol className="space-y-3">
         {events.map((e, i) => (
           <li key={i} className="flex gap-3">
-            <div className="mt-1 w-1.5 h-1.5 rounded-full bg-amber/70 flex-shrink-0" />
+            <div className="mt-1 w-1.5 h-1.5 rounded-full bg-primary/70 flex-shrink-0" />
             <div className="min-w-0">
               <div className="text-[12px] text-white/80">{e.label}</div>
               {e.at && <div className="text-[10px] font-mono text-white/55">{new Date(e.at).toLocaleString()}</div>}

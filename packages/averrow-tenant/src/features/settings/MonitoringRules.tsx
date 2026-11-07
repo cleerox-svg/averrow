@@ -56,7 +56,7 @@ export function MonitoringRules() {
                 className={[
                   'px-2.5 py-1 rounded-md text-[11px] font-mono border transition-colors',
                   brandId === b.id
-                    ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
+                    ? 'bg-primary/[0.10] text-primary-text border-primary/[0.30]'
                     : 'bg-white/[0.04] text-white/60 border-white/[0.08] hover:text-white/90',
                 ].join(' ')}
               >
@@ -116,7 +116,7 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
                 onClick={() => toggleSeverity(s)}
                 className={[
                   'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-60',
-                  on ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
+                  on ? 'bg-primary/[0.12] text-primary-text border-primary/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
                 ].join(' ')}
               >
                 {s}
@@ -142,7 +142,7 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
           disabled={!canEdit}
           value={cfg.auto_acknowledge_low_days}
           onChange={(e) => set('auto_acknowledge_low_days', Math.max(0, Math.min(365, parseInt(e.target.value || '0', 10))))}
-          className="w-24 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[13px] text-white/85 focus:outline-none focus:border-amber/[0.40] disabled:opacity-60"
+          className="w-24 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[13px] text-white/85 focus:outline-none focus:border-primary/[0.40] disabled:opacity-60"
         />
         <span className="ml-2 text-[12px] text-white/55">days</span>
       </Card>
@@ -156,7 +156,7 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
               disabled={!canEdit || !cfg.email_notifications}
               value={cfg.email_notification_threshold}
               onChange={(e) => set('email_notification_threshold', e.target.value)}
-              className="bg-white/[0.04] border border-white/[0.10] rounded-md px-2 py-1 text-[12px] text-white/85 focus:outline-none focus:border-amber/[0.40] disabled:opacity-50"
+              className="bg-white/[0.04] border border-white/[0.10] rounded-md px-2 py-1 text-[12px] text-white/85 focus:outline-none focus:border-primary/[0.40] disabled:opacity-50"
             >
               {SEVERITY_LEVELS.map((s) => <option key={s} value={s}>{s} and above</option>)}
             </select>
@@ -171,7 +171,7 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
             type="button"
             disabled={!dirty || update.isPending}
             onClick={() => cfg && update.mutate(cfg)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber/[0.14] hover:bg-amber/[0.20] text-amber border border-amber/[0.40] rounded-lg font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-default"
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary/[0.14] hover:bg-primary/[0.20] text-primary-text border border-primary/[0.40] rounded-lg font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-default"
           >
             {update.isPending ? 'Saving…' : 'Save rules'}
           </button>
@@ -246,7 +246,7 @@ function TagInput({ values, onChange, canEdit, placeholder }: {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKey}
             placeholder={placeholder}
-            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40]"
+            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-primary/[0.40]"
           />
           <button type="button" onClick={add} disabled={!draft.trim()} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-mono text-white/70 bg-white/[0.04] border border-white/[0.08] hover:text-white/95 disabled:opacity-40">
             <Plus size={11} /> Add

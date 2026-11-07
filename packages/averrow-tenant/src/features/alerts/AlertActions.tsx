@@ -132,7 +132,7 @@ export function AlertActions({ alert: a }: { alert: Alert }) {
               className={cn(
                 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50',
                 active
-                  ? 'bg-amber/[0.12] text-amber border-amber/[0.35]'
+                  ? 'bg-primary/[0.12] text-primary-text border-primary/[0.35]'
                   : 'bg-white/[0.04] text-white/60 border-white/[0.08] hover:text-white/90 hover:border-white/[0.18]',
               )}
             >
@@ -150,7 +150,7 @@ export function AlertActions({ alert: a }: { alert: Alert }) {
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder={`Disposition note (optional) — ${ACTION_META[pendingTerminal].label.toLowerCase()}`}
-            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40]"
+            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-primary/[0.40]"
             onKeyDown={(e) => { if (e.key === 'Enter') run(pendingTerminal, note.trim() || undefined); }}
             autoFocus
           />
@@ -158,7 +158,7 @@ export function AlertActions({ alert: a }: { alert: Alert }) {
             type="button"
             disabled={update.isPending}
             onClick={() => run(pendingTerminal, note.trim() || undefined)}
-            className="px-3 py-1.5 rounded-md text-[10px] font-mono uppercase tracking-wider border bg-amber/[0.12] text-amber border-amber/[0.35] hover:bg-amber/[0.18] disabled:opacity-50"
+            className="px-3 py-1.5 rounded-md text-[10px] font-mono uppercase tracking-wider border bg-primary/[0.12] text-primary-text border-primary/[0.35] hover:bg-primary/[0.18] disabled:opacity-50"
           >
             Confirm
           </button>

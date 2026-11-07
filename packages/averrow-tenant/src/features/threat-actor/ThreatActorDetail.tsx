@@ -65,7 +65,7 @@ function ProfileHeader({ actor: a }: { actor: ThreatActorProfile }) {
           </span>
         )}
         {a.affiliation && (
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] border border-amber/[0.20] rounded px-1.5 py-0.5">
+          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-primary-text bg-primary/[0.06] border border-primary/[0.20] rounded px-1.5 py-0.5">
             {a.affiliation}
           </span>
         )}
@@ -98,7 +98,7 @@ function ProfileHeader({ actor: a }: { actor: ThreatActorProfile }) {
           <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">primary TTPs</div>
           <div className="flex flex-wrap gap-1.5">
             {ttps.map((t) => (
-              <span key={t} className="text-[11px] font-mono text-amber bg-amber/[0.06] border border-amber/[0.15] rounded px-1.5 py-0.5">
+              <span key={t} className="text-[11px] font-mono text-primary-text bg-primary/[0.06] border border-primary/[0.15] rounded px-1.5 py-0.5">
                 {t}
               </span>
             ))}
@@ -199,7 +199,7 @@ function ThreatRow({ threat: t }: { threat: OrgThreatRow }) {
             href={t.malicious_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-amber hover:underline ml-auto"
+            className="inline-flex items-center gap-1 text-primary-text hover:underline ml-auto"
           >
             <ExternalLink size={11} /> open
           </a>

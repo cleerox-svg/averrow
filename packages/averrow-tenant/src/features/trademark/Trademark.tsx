@@ -27,7 +27,7 @@ export function Trademark() {
       <header>
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Trademark Infringement</h1>
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
+          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-primary-text bg-primary/[0.10] border border-primary/[0.20] rounded px-2 py-1">
             Active
           </span>
         </div>
@@ -152,7 +152,7 @@ function BrandCard({ brand: b }: { brand: TrademarkBrandSummary }) {
 
       {noAssets ? (
         <p className="text-[12px] text-white/55 mt-2">
-          Upload a logo or wordmark to start scanning. <span className="inline-flex items-center gap-1 text-amber"><ImageIcon size={11} /> add asset</span>
+          Upload a logo or wordmark to start scanning. <span className="inline-flex items-center gap-1 text-primary-text"><ImageIcon size={11} /> add asset</span>
         </p>
       ) : (
         <div className="grid grid-cols-3 gap-2 mt-3">
@@ -189,7 +189,7 @@ function NoBrands() {
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No brands assigned to your organization yet.</p>
       <p className="text-white/55 text-xs mt-1">
-        Contact <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
+        Contact <a className="text-primary-text hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
       </p>
     </div>
   );

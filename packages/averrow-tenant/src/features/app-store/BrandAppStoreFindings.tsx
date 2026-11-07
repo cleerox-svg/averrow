@@ -108,7 +108,7 @@ function ListingRow({ listing: l }: { listing: AppStoreListingRow }) {
                 href={l.app_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-amber hover:underline"
+                className="inline-flex items-center gap-1 text-primary-text hover:underline"
               >
                 <ExternalLink size={11} /> open
               </a>

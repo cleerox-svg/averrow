@@ -75,7 +75,7 @@ export function Settings() {
             )}
           </p>
         </div>
-        <Link to="/settings/members" className="text-[11px] font-mono text-amber hover:underline whitespace-nowrap">
+        <Link to="/settings/members" className="text-[11px] font-mono text-primary-text hover:underline whitespace-nowrap">
           Manage →
         </Link>
       </section>
@@ -98,7 +98,7 @@ export function Settings() {
             Sign once to let Averrow auto-submit takedown requests on your behalf. Coverage is per-module.
           </p>
         </div>
-        <Link to="/settings/takedown-authorization" className="text-[11px] font-mono text-amber hover:underline whitespace-nowrap">
+        <Link to="/settings/takedown-authorization" className="text-[11px] font-mono text-primary-text hover:underline whitespace-nowrap">
           Manage →
         </Link>
       </section>
@@ -110,7 +110,7 @@ export function Settings() {
             Plan, monthly total, active modules, and trial / billing status.
           </p>
         </div>
-        <Link to="/settings/billing" className="text-[11px] font-mono text-amber hover:underline whitespace-nowrap">
+        <Link to="/settings/billing" className="text-[11px] font-mono text-primary-text hover:underline whitespace-nowrap">
           View →
         </Link>
       </section>
@@ -402,13 +402,13 @@ function SignAuthorizationForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
-      <section className="rounded-xl border border-amber/[0.15] bg-amber/[0.03] p-5">
+      <section className="rounded-xl border border-primary/[0.15] bg-primary/[0.03] p-5">
         <div className="flex items-start gap-3">
-          <FileSignature className="text-amber flex-shrink-0 mt-0.5" size={18} />
+          <FileSignature className="text-primary-text flex-shrink-0 mt-0.5" size={18} />
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-semibold text-amber">{AGREEMENT_TITLE}</h2>
+            <h2 className="text-sm font-semibold text-primary-text">{AGREEMENT_TITLE}</h2>
             <p className="text-[12px] text-white/70 mt-1 leading-relaxed">{AGREEMENT_SUMMARY}</p>
-            <p className="text-[10px] font-mono uppercase tracking-wider text-amber mt-2">
+            <p className="text-[10px] font-mono uppercase tracking-wider text-primary-text mt-2">
               Agreement {AGREEMENT_VERSION}
             </p>
           </div>
@@ -423,7 +423,7 @@ function SignAuthorizationForm() {
           className="w-full flex items-center justify-between text-left"
         >
           <h3 className="text-sm font-semibold text-white/90">Full agreement</h3>
-          <span className="text-[11px] font-mono text-amber">{expanded ? 'Hide ▾' : 'Read ▸'}</span>
+          <span className="text-[11px] font-mono text-primary-text">{expanded ? 'Hide ▾' : 'Read ▸'}</span>
         </button>
         {expanded && (
           <div className="mt-4 space-y-4 max-h-[420px] overflow-y-auto pr-2">
@@ -458,7 +458,7 @@ function SignAuthorizationForm() {
                   key={m}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
                     on
-                      ? 'border-amber/[0.40] bg-amber/[0.06]'
+                      ? 'border-primary/[0.40] bg-primary/[0.06]'
                       : 'border-white/[0.08] bg-bg-page hover:border-white/[0.15]'
                   }`}
                 >
@@ -486,7 +486,7 @@ function SignAuthorizationForm() {
               placeholder="Unlimited"
               value={cap}
               onChange={(e) => setCap(e.target.value)}
-              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
+              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-primary focus:outline-none"
             />
             <p className="text-[10px] text-white/55 mt-1">Leave blank for unlimited.</p>
           </div>
@@ -501,7 +501,7 @@ function SignAuthorizationForm() {
               placeholder="Off"
               value={autoFollowup}
               onChange={(e) => setAutoFollowup(e.target.value)}
-              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
+              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-primary focus:outline-none"
             />
             <p className="text-[10px] text-white/55 mt-1">Re-submit after provider misses SLA.</p>
           </div>
@@ -514,7 +514,7 @@ function SignAuthorizationForm() {
           <select
             value={escalation}
             onChange={(e) => setEscalation(e.target.value as EscalationMode)}
-            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 focus:border-amber focus:outline-none"
+            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 focus:border-primary focus:outline-none"
           >
             <option value="auto_resubmit_on_pivot">{ESCALATION_LABELS.auto_resubmit_on_pivot}</option>
             <option value="manual_only">{ESCALATION_LABELS.manual_only}</option>
@@ -536,7 +536,7 @@ function SignAuthorizationForm() {
                   onClick={() => setMode(m)}
                   className={`rounded-lg border px-3 py-2 text-center transition-colors ${
                     on
-                      ? 'border-amber/[0.45] bg-amber/[0.10] text-amber'
+                      ? 'border-primary/[0.45] bg-primary/[0.10] text-primary-text'
                       : 'border-white/[0.08] bg-bg-page text-white/60 hover:border-white/[0.18]'
                   }`}
                 >
@@ -556,7 +556,7 @@ function SignAuthorizationForm() {
 
         {/* Semi-auto criteria — only when Semi-Auto is selected */}
         {mode === 'semi_auto' && (
-          <div className="space-y-4 rounded-lg border border-amber/[0.18] bg-amber/[0.03] p-4">
+          <div className="space-y-4 rounded-lg border border-primary/[0.18] bg-primary/[0.03] p-4">
             <p className="text-[11px] text-white/55 leading-relaxed">
               Choose what auto-submits without waiting for you. A takedown must match <strong className="text-white/80">all</strong> the
               criteria you set below to go out automatically.
@@ -591,7 +591,7 @@ function SignAuthorizationForm() {
       </section>
 
       {/* Consent + submit */}
-      <section className="rounded-xl border border-amber/[0.25] bg-amber/[0.04] p-5 space-y-4">
+      <section className="rounded-xl border border-primary/[0.25] bg-primary/[0.04] p-5 space-y-4">
         <label className="flex items-start gap-2.5 cursor-pointer">
           <input
             type="checkbox"
@@ -613,7 +613,7 @@ function SignAuthorizationForm() {
         <button
           type="submit"
           disabled={!agreed || sign.isPending || selectedModules.size === 0}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber text-[#0a0a0a] rounded-lg font-semibold text-sm hover:bg-amber-dim disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-[color:var(--btn-primary-ink,#0a0a0a)] rounded-lg font-semibold text-sm hover:bg-primary-pressed disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
         >
           {sign.isPending ? 'Signing…' : <><FileSignature size={14} /> Sign authorization</>}
         </button>
@@ -655,7 +655,7 @@ function ChipPicker({
               onClick={() => onToggle(o)}
               className={`rounded-full border px-3 py-1 text-[12px] transition-colors ${
                 on
-                  ? 'border-amber/[0.45] bg-amber/[0.12] text-amber'
+                  ? 'border-primary/[0.45] bg-primary/[0.12] text-primary-text'
                   : 'border-white/[0.10] bg-bg-page text-white/55 hover:border-white/[0.20]'
               }`}
             >

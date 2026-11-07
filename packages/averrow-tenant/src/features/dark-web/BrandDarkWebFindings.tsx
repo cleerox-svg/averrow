@@ -110,7 +110,7 @@ function MentionRow({ mention: m }: { mention: DarkWebMentionRow }) {
         <div className="flex items-center gap-1.5 flex-wrap mt-2">
           <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">matched</span>
           {matchedTerms.map((t) => (
-            <span key={t} className="text-[11px] font-mono text-amber bg-amber/[0.06] border border-amber/[0.15] rounded px-1.5 py-0.5">
+            <span key={t} className="text-[11px] font-mono text-primary-text bg-primary/[0.06] border border-primary/[0.15] rounded px-1.5 py-0.5">
               {t}
             </span>
           ))}
@@ -129,7 +129,7 @@ function MentionRow({ mention: m }: { mention: DarkWebMentionRow }) {
             href={m.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-amber hover:underline ml-auto"
+            className="inline-flex items-center gap-1 text-primary-text hover:underline ml-auto"
           >
             <ExternalLink size={11} /> view source
           </a>

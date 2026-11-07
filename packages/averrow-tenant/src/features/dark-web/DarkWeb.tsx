@@ -109,7 +109,7 @@ export function DarkWeb() {
       <header>
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Dark Web Monitoring</h1>
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
+          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-primary-text bg-primary/[0.10] border border-primary/[0.20] rounded px-2 py-1">
             Active
           </span>
         </div>
@@ -232,7 +232,7 @@ function SourceMixCard({ data, totalActive }: { data: Array<{ source: string; n:
                   <span className="font-mono text-white/60 tabular-nums">{d.n.toLocaleString()} · {pct}%</span>
                 </div>
                 <div className="mt-1 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
-                  <div className="h-full bg-amber/70" style={{ width: `${pct}%` }} />
+                  <div className="h-full bg-primary/70" style={{ width: `${pct}%` }} />
                 </div>
               </div>
             );
@@ -290,13 +290,13 @@ function SearchAndScopeCard({
         value={q}
         onChange={e => onQ(e.target.value)}
         placeholder="Search snippet, channel, brand…"
-        className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/55 focus:border-amber/40 focus:outline-none"
+        className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/55 focus:border-primary/40 focus:outline-none"
       />
       {hasFilters && (
         <button
           type="button"
           onClick={onReset}
-          className="mt-3 text-[11px] font-mono text-amber hover:underline"
+          className="mt-3 text-[11px] font-mono text-primary-text hover:underline"
         >
           Clear filters
         </button>
@@ -319,7 +319,7 @@ function FilterSelect({
       <select
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="h-7 px-2 rounded bg-black/30 border border-white/[0.08] text-[11px] text-white/85 font-mono focus:border-amber/40 focus:outline-none"
+        className="h-7 px-2 rounded bg-black/30 border border-white/[0.08] text-[11px] text-white/85 font-mono focus:border-primary/40 focus:outline-none"
       >
         {options.map(o => (
           <option key={o.value} value={o.value} className="bg-bg-card">{o.label}</option>
@@ -353,7 +353,7 @@ function SortableTh({
       <button
         type="button"
         onClick={() => onClick(sortKey)}
-        className={`inline-flex items-center gap-1 hover:text-white/85 ${active ? 'text-amber' : ''}`}
+        className={`inline-flex items-center gap-1 hover:text-white/85 ${active ? 'text-primary-text' : ''}`}
       >
         <span>{label}</span>
         {active && <span className="text-[9px]">{dir === 'asc' ? '↑' : '↓'}</span>}
@@ -379,7 +379,7 @@ function MentionRow({ m }: { m: DarkWebMentionWithBrand }) {
       </td>
       <td className="px-3 py-2.5 border-b border-white/[0.03]">
         {m.brand_id ? (
-          <Link to={`/modules/dark-web/brands/${m.brand_id}`} className="text-left hover:text-amber">
+          <Link to={`/modules/dark-web/brands/${m.brand_id}`} className="text-left hover:text-primary">
             <div className="text-sm text-white/90">{m.brand_name ?? m.brand_id}</div>
             {m.brand_domain && <div className="font-mono text-[10px] text-white/55">{m.brand_domain}</div>}
           </Link>
@@ -415,7 +415,7 @@ function MentionRow({ m }: { m: DarkWebMentionWithBrand }) {
             href={m.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 mt-1 text-[10px] text-amber hover:underline"
+            className="inline-flex items-center gap-1 mt-1 text-[10px] text-primary-text hover:underline"
           >
             <ExternalLink size={10} /> source
           </a>
