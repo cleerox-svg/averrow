@@ -31,7 +31,7 @@ import {
   APPEARANCE_PICKER_ENABLED, hydrateAppearanceFromAccount, useAppearance, useTheme, ACCENTS, BASES,
 } from '@averrow/shared/theme';
 import { AuthProvider, useAuth, type AuthHttpClient } from '@averrow/shared/auth';
-import { __resetAccountSyncForTests } from '../../../../shared/src/theme/accountSync';
+import { __resetAccountSyncForTests, hydratedUserId } from '../../../../shared/src/theme/accountSync';
 import { __resetAppearanceStoreForTests } from '../../../../shared/src/theme/useAppearance';
 import { ToastProvider } from '@averrow/shared/ui';
 import { installDomStubs, stubViewport } from '../../features/settings/settingsTestUtils';
@@ -262,12 +262,96 @@ describe('account hydration runs once per session', () => {
     expect(html.getAttribute('data-base')).toBe('navy');
   });
 
-  it('logout starts a new session (the next sign-in hydrates again)', async () => {
+  it('logout() itself ends the session: the next sign-in gets its own values', async () => {
     flags.enabled = true;
-    hydrateAppearanceFromAccount({ accent_preference: 'violet' });
+    const http = sequenceClient(
+      { id: 'uA', accent_preference: 'violet', base_preference: 'navy' },
+      { id: 'uB', accent_preference: 'mono', base_preference: 'graphite' },
+    );
+    function Logout() {
+      const { logout, refreshUser } = useAuth();
+      return (
+        <>
+          <button type="button" onClick={() => { void logout(); }}>logout</button>
+          <button type="button" onClick={() => { void refreshUser(); }}>signin</button>
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<AuthProvider httpClient={http} config={CONFIG}><Logout /></AuthProvider>);
+    await waitFor(() => expect(html.getAttribute('data-accent')).toBe('violet'));
+    await user.click(screen.getByText('logout'));
+    await waitFor(() => expect(http.post).toHaveBeenCalledWith('/api/auth/logout', {}));
+    await waitFor(() => expect(hydratedUserId()).toBeNull()); // logout() itself reset the session
+    await user.click(screen.getByText('signin')); // B signs in on the same tab, no reload
+    await waitFor(() => expect(html.getAttribute('data-accent')).toBe('mono'));
+    expect(html.getAttribute('data-base')).toBe('graphite');
+  });
+
+  it('the 401 path ends the session too', async () => {
+    flags.enabled = true;
+    let onAuthError: () => void = () => {};
+    const http = sequenceClient(
+      { id: 'uA', accent_preference: 'violet' },
+      { id: 'uB', accent_preference: 'lime' },
+    );
+    http.onAuthError = (cb) => { onAuthError = cb; };
+    const user = userEvent.setup();
+    render(<AuthProvider httpClient={http} config={CONFIG}><Refresh /></AuthProvider>);
+    await waitFor(() => expect(html.getAttribute('data-accent')).toBe('violet'));
+    act(() => onAuthError());
+    expect(hydratedUserId()).toBeNull();
+    await user.click(screen.getByText('refresh'));
+    await waitFor(() => expect(html.getAttribute('data-accent')).toBe('lime'));
+  });
+
+  it('a failed /me ends the session too', async () => {
+    flags.enabled = true;
+    const get = vi.fn()
+      .mockResolvedValueOnce({ success: true, data: { ...BASE_USER, id: 'uA', accent_preference: 'violet' } })
+      .mockResolvedValueOnce({ success: false, error: 'expired' })
+      .mockResolvedValue({ success: true, data: { ...BASE_USER, id: 'uA', accent_preference: 'mono' } });
+    const http: AuthHttpClient = {
+      getToken: () => 'tok', setTokens: () => {}, clearTokens: () => {}, onAuthError: () => {},
+      get: get as AuthHttpClient['get'], post: vi.fn().mockResolvedValue({ success: true }) as AuthHttpClient['post'],
+    };
+    const user = userEvent.setup();
+    render(<AuthProvider httpClient={http} config={CONFIG}><Refresh /></AuthProvider>);
+    await waitFor(() => expect(html.getAttribute('data-accent')).toBe('violet'));
+    await user.click(screen.getByText('refresh')); // non-success: signed out
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    expect(hydratedUserId()).toBeNull();
+    await user.click(screen.getByText('refresh')); // the SAME user signs in again: hydrates afresh
+    await waitFor(() => expect(html.getAttribute('data-accent')).toBe('mono'));
+  });
+
+  it('a different user id without a sign-out in between hydrates that user', () => {
+    flags.enabled = true;
+    hydrateAppearanceFromAccount({ id: 'uA', accent_preference: 'violet' });
+    hydrateAppearanceFromAccount({ id: 'uA', accent_preference: 'lime' }); // same user: ignored
+    expect(html.getAttribute('data-accent')).toBe('violet');
+    hydrateAppearanceFromAccount({ id: 'uB', accent_preference: 'mono' });
+    expect(html.getAttribute('data-accent')).toBe('mono');
+  });
+
+  it("A's save still in flight at sign-out neither reverts nor toasts in B's session", async () => {
+    flags.enabled = true;
+    hydrateAppearanceFromAccount({ id: 'uA', accent_preference: 'violet' });
+    let settle: (v: unknown) => void = () => {};
+    const patch = vi.fn().mockImplementationOnce(() => new Promise((r) => { settle = r; }))
+      .mockResolvedValue({ success: false });
+    const { user } = setup(patch);
+    await user.click(screen.getByRole('radio', { name: 'Lime' })); // A's pick, in flight
     const { resetAccountSyncSession } = await import('@averrow/shared/theme');
-    resetAccountSyncSession();
-    hydrateAppearanceFromAccount({ accent_preference: 'mono' });
+    act(() => resetAccountSyncSession()); // what AuthProvider does on sign-out
+    act(() => hydrateAppearanceFromAccount({ id: 'uB', accent_preference: 'mono' }));
+    expect(html.getAttribute('data-accent')).toBe('mono');
+    await act(async () => { settle({ success: false }); });
+    expect(html.getAttribute('data-accent')).toBe('mono');
+    expect(screen.queryByText(/Couldn't save your appearance/)).toBeNull();
+    // B's own failed pick reverts to B's account value, not A's.
+    await user.click(screen.getByRole('radio', { name: 'Indigo' }));
+    expect(await screen.findByText(/Couldn't save your appearance/)).toBeInTheDocument();
     expect(html.getAttribute('data-accent')).toBe('mono');
   });
 });
@@ -316,10 +400,11 @@ describe('theme_preference hydrates useTheme', () => {
     expect(html.getAttribute('data-theme')).toBe('light');
   });
 
-  it('ProfileSettings still PATCHes light/dark, and a later /me cannot undo it', async () => {
+  it('ProfileSettings still PATCHes light/dark, and the first /me after it cannot undo it', async () => {
+    // Fresh session (nothing hydrated yet), so only the local-pick mark keeps
+    // the account's older 'dark' from overwriting the user's 'light'.
     flags.enabled = true;
-    hydrateAppearanceFromAccount({ theme_preference: 'dark' });
-    expect(html.getAttribute('data-theme')).toBe('dark');
+    localStorage.setItem('averrow-theme', 'dark');
     const patch = vi.fn().mockResolvedValue({ success: true });
     function Host() {
       const { theme, setTheme } = useTheme();
@@ -329,7 +414,7 @@ describe('theme_preference hydrates useTheme', () => {
           apiClient={{ patch }}
           theme={theme}
           onThemeChange={setTheme}
-          onUserUpdated={async () => { hydrateAppearanceFromAccount({ theme_preference: 'dark' }); }}
+          onUserUpdated={async () => {}}
           onSignOut={() => {}}
         />
       );
@@ -337,9 +422,10 @@ describe('theme_preference hydrates useTheme', () => {
     render(<ToastProvider><Host /></ToastProvider>);
     await userEvent.setup().click(screen.getByRole('radio', { name: 'Light' }));
     expect(patch).toHaveBeenCalledWith('/api/profile', { theme_preference: 'light' });
-    await act(async () => { await Promise.resolve(); });
+    act(() => hydrateAppearanceFromAccount({ id: 'u1', theme_preference: 'dark', accent_preference: 'violet' }));
     expect(html.getAttribute('data-theme')).toBe('light');
     expect(localStorage.getItem('averrow-theme')).toBe('light');
+    expect(html.getAttribute('data-accent')).toBe('violet'); // the same hydration did run
   });
 });
 
@@ -376,9 +462,9 @@ describe('AppearanceSettings', () => {
     expect(patch).toHaveBeenCalledWith('/api/profile', { base_preference: 'navy' });
   });
 
-  it('reverts and toasts when the save fails', async () => {
-    localStorage.setItem('averrow-accent', 'lime');
-    html.setAttribute('data-accent', 'lime');
+  it('reverts to the account value and toasts when the save fails', async () => {
+    flags.enabled = true;
+    hydrateAppearanceFromAccount({ id: 'u1', accent_preference: 'lime' });
     const patch = vi.fn().mockResolvedValue({ success: false, error: 'nope' });
     const { user } = setup(patch);
     await user.click(screen.getByRole('radio', { name: 'Mono' }));
@@ -389,6 +475,8 @@ describe('AppearanceSettings', () => {
   });
 
   it('a rejected request also reverts', async () => {
+    flags.enabled = true;
+    hydrateAppearanceFromAccount({ id: 'u1', base_preference: null });
     const patch = vi.fn().mockRejectedValue(new Error('offline'));
     const { user } = setup(patch);
     await user.click(screen.getByRole('radio', { name: 'Navy' }));
@@ -472,6 +560,43 @@ describe('serialized saves (P3-5 review)', () => {
     await settle(1, { success: true });
     expect(html.getAttribute('data-base')).toBe('graphite');
     expect(screen.queryByText(/Couldn't save your appearance/)).toBeNull();
+  });
+
+  it('before /me has arrived, a failed save keeps the pick (localStorage is not server-confirmed) and toasts', async () => {
+    localStorage.setItem('averrow-accent', 'lime');
+    html.setAttribute('data-accent', 'lime');
+    const patch = vi.fn().mockResolvedValue({ success: false });
+    const { user } = setup(patch);
+    await user.click(screen.getByRole('radio', { name: 'Mono' }));
+    expect(await screen.findByText(/Couldn't save your appearance/)).toBeInTheDocument();
+    expect(html.getAttribute('data-accent')).toBe('mono');
+  });
+
+  it('once /me lands, a failed save reverts to the account value', async () => {
+    flags.enabled = true;
+    localStorage.setItem('averrow-accent', 'lime');
+    let settle: (v: unknown) => void = () => {};
+    const patch = vi.fn().mockImplementation(() => new Promise((r) => { settle = r; }));
+    const { user } = setup(patch);
+    await user.click(screen.getByRole('radio', { name: 'Mono' }));
+    act(() => hydrateAppearanceFromAccount({ id: 'u1', accent_preference: 'violet' })); // skipped on screen (pending)
+    expect(html.getAttribute('data-accent')).toBe('mono');
+    await act(async () => { settle({ success: false }); });
+    expect(html.getAttribute('data-accent')).toBe('violet');
+  });
+
+  it('sends the latest pick even when it equals the last confirmed value', async () => {
+    flags.enabled = true;
+    hydrateAppearanceFromAccount({ id: 'u1', accent_preference: 'mono' });
+    const { patch, settle } = controlledPatch();
+    const { user } = setup(patch);
+    await user.click(screen.getByRole('radio', { name: 'Violet' })); // A, in flight
+    await user.click(screen.getByRole('radio', { name: 'Mono' }));   // back to the confirmed value
+    await settle(0, { success: false }); // A may still have reached the server
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    expect(patch).toHaveBeenLastCalledWith('/api/profile', { accent_preference: 'mono' });
+    await settle(1, { success: true });
+    expect(html.getAttribute('data-accent')).toBe('mono');
   });
 
   it('a failure after a confirmed save reverts to that save, not to the start', async () => {

@@ -27,20 +27,22 @@
 // (users.accent_preference / base_preference, PATCH /api/profile).
 // hydrateAppearanceFromAccount() applies the server values (and the light/dark
 // theme_preference) after the session user is validated: server wins over
-// localStorage, which stays the no-flash cache. It runs once per session and
-// never overwrites a field picked locally or with a save in flight
-// (./accountSync). It is a no-op while APPEARANCE_PICKER_ENABLED is false.
+// localStorage, which stays the no-flash cache. It runs once per signed-in
+// user and never overwrites a field picked locally or with a save in flight
+// (./accountSync; every sign-out path resets it). It is a no-op while APPEARANCE_PICKER_ENABLED is false.
 //
 // Saves (pickAccent / pickBase) are serialized per field: one PATCH in flight,
 // and when it settles only the LATEST pick is sent. A failure that no newer
-// pick supersedes reverts to the last value the server confirmed.
+// pick supersedes reverts to the last value the server confirmed (this
+// session's /me or a successful save; none known = no revert).
 
 import { useCallback, useSyncExternalStore } from 'react';
 import { safeGetItem, safeSetItem, setRootAttr } from './storage';
 import { ACCENTS, APPEARANCE_PICKER_ENABLED, BASES, DEFAULT_ACCENT, DEFAULT_BASE } from './appearanceDefaults';
 import { applyThemePreference } from './useTheme';
 import {
-  beginAccountSave, endAccountSave, hasHydratedThisSession, markHydrated, markLocalPick, mayHydrateField,
+  beginAccountSave, endAccountSave, hydratedUserId, markHydrated, markLocalPick, mayHydrateField,
+  onAccountSyncReset, resetAccountSyncSession,
 } from './accountSync';
 import type { Accent, Base } from './appearanceDefaults';
 
@@ -174,6 +176,8 @@ export function applyBase(b: Base | null): void {
 
 /** The account's saved appearance, as /api/auth/me and /api/profile return it. */
 export interface AccountAppearance {
+  /** The account's user id: hydration runs once per id. */
+  id?: string;
   theme_preference?: string | null;
   accent_preference?: string | null;
   base_preference?: string | null;
@@ -185,10 +189,12 @@ function has(obj: object, key: string): boolean {
 
 /**
  * Apply the account's saved theme / accent / base (server wins over
- * localStorage). Runs once per session: only the first call after a
- * successful /me does anything, so a later refreshUser cannot re-apply an
- * older account value over a newer local pick. A field picked on this device
- * before that first call, or with a save in flight, is left alone.
+ * localStorage). Runs once per signed-in user: only the first call for a user
+ * id does anything, so a later refreshUser cannot re-apply an older account
+ * value over a newer local pick. A different id (another user signing in on
+ * this tab) starts a new session first. A field picked on this device before
+ * that first call, or with a save in flight, is left alone on screen, but the
+ * account value still becomes the save queue's server-confirmed value.
  * Only fields PRESENT on `user` are applied, so a response from an older
  * Worker (or a cached user written before 0317) never clears a choice;
  * a present null or unknown value means "the default" (theme: follow the
@@ -197,22 +203,25 @@ function has(obj: object, key: string): boolean {
  */
 export function hydrateAppearanceFromAccount(user: AccountAppearance | null | undefined): void {
   if (!APPEARANCE_PICKER_ENABLED || !user || typeof user !== 'object') return;
-  if (hasHydratedThisSession()) return;
+  const id = typeof user.id === 'string' ? user.id : '';
+  const prior = hydratedUserId();
+  if (prior === id) return;
+  if (prior !== null) resetAccountSyncSession(); // a different user on this tab
   if (has(user, 'theme_preference') && mayHydrateField('theme')) {
     const v = user.theme_preference;
     applyThemePreference(v === 'dark' || v === 'light' ? v : 'auto');
   }
-  if (has(user, 'accent_preference') && mayHydrateField('accent')) {
+  if (has(user, 'accent_preference')) {
     const v = isAccent(user.accent_preference) ? user.accent_preference : null;
-    applyAccent(v);
-    saves.accent.confirmed = v;
+    if (mayHydrateField('accent')) applyAccent(v);
+    if (saves.accent.confirmed === undefined) saves.accent.confirmed = v;
   }
-  if (has(user, 'base_preference') && mayHydrateField('base')) {
+  if (has(user, 'base_preference')) {
     const v = isBase(user.base_preference) ? user.base_preference : null;
-    applyBase(v);
-    saves.base.confirmed = v;
+    if (mayHydrateField('base')) applyBase(v);
+    if (saves.base.confirmed === undefined) saves.base.confirmed = v;
   }
-  markHydrated();
+  markHydrated(id);
 }
 
 // ── serialized account saves ───────────────────────────────────────────
@@ -221,7 +230,8 @@ export function hydrateAppearanceFromAccount(user: AccountAppearance | null | un
 export type AppearanceSaver<T> = (value: T | null) => Promise<boolean>;
 
 interface SaveQueue<T> {
-  /** Last value the server confirmed (undefined = not known yet). */
+  /** Last value the server confirmed: from this session's /me or a successful
+   *  save. undefined = not known yet (localStorage is never treated as it). */
   confirmed: T | null | undefined;
   inFlight: boolean;
   /** The newest pick not yet sent. */
@@ -236,40 +246,48 @@ function newQueue<T>(): SaveQueue<T> {
 
 const saves: { accent: SaveQueue<Accent>; base: SaveQueue<Base> } = { accent: newQueue(), base: newQueue() };
 
+// A new session (sign-out, another user) starts with empty queues; the old
+// queue objects become stale, so their in-flight saves stop at the next await.
+onAccountSyncReset(() => {
+  saves.accent = newQueue();
+  saves.base = newQueue();
+});
+
 async function pump<T>(field: 'accent' | 'base', q: SaveQueue<T>, apply: (v: T | null) => void): Promise<void> {
   if (q.inFlight) return;
   q.inFlight = true;
-  beginAccountSave(field);
+  const gen = beginAccountSave(field);
   try {
     while (q.queued) {
+      // Always send the latest pick (even one equal to the last confirmed
+      // value: a failed request may still have reached the server).
       const { value } = q.queued;
       q.queued = null;
-      // Already what the server has (e.g. A failed, then the user went back).
-      if (q.confirmed !== undefined && value === q.confirmed) continue;
       let ok = false;
       try { ok = q.save ? await q.save(value) : false; } catch { ok = false; }
+      // Signed out / another user since this save started: drop it silently.
+      if (q !== saves[field]) return;
       if (ok) {
         q.confirmed = value;
       } else if (!q.queued) {
-        // Nothing newer to send: revert to what the server holds.
-        apply(q.confirmed ?? null);
+        // Nothing newer to send: revert to what the server holds. With no
+        // server value known yet (/me not in), keep the pick; the account
+        // value applies when /me lands.
+        if (q.confirmed !== undefined) apply(q.confirmed);
         q.onFailed?.();
       }
       // else: a newer pick supersedes this one; send it instead.
     }
   } finally {
     q.inFlight = false;
-    endAccountSave(field);
+    endAccountSave(field, gen);
   }
 }
 
 function pick<T>(
-  field: 'accent' | 'base', q: SaveQueue<T>, value: T | null, current: T | null,
+  field: 'accent' | 'base', q: SaveQueue<T>, value: T | null,
   apply: (v: T | null) => void, save: AppearanceSaver<T>, onFailed: () => void,
 ): Promise<void> {
-  // First pick before any hydration: what was on screen is the best known
-  // server value (it came from the account or is the default).
-  if (q.confirmed === undefined) q.confirmed = current;
   markLocalPick(field);
   apply(value);
   q.queued = { value };
@@ -280,12 +298,12 @@ function pick<T>(
 
 /** User picked an accent: apply now, save to the account (serialized). */
 export function pickAccent(value: Accent | null, save: AppearanceSaver<Accent>, onFailed: () => void): Promise<void> {
-  return pick('accent', saves.accent, value, getSnapshot().accent, applyAccent, save, onFailed);
+  return pick('accent', saves.accent, value, applyAccent, save, onFailed);
 }
 
 /** User picked a background: apply now, save to the account (serialized). */
 export function pickBase(value: Base | null, save: AppearanceSaver<Base>, onFailed: () => void): Promise<void> {
-  return pick('base', saves.base, value, getSnapshot().base, applyBase, save, onFailed);
+  return pick('base', saves.base, value, applyBase, save, onFailed);
 }
 
 export function useAppearance(): UseAppearanceReturn {

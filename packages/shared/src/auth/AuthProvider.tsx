@@ -15,7 +15,7 @@
 //      the attempt settles, so hosts must not redirect to login
 //      while `loading` is set.
 //   4. Validate via /api/auth/me. Apply onValidatedUser hook, then (first
-//      successful /me of the session only) the account's saved theme,
+//      successful /me for the user id only) the account's saved theme,
 //      accent and background (hydrateAppearanceFromAccount).
 //   5. Set loading=false, render.
 //
@@ -207,6 +207,10 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
   const setUser = useCallback((u: SharedAuthUser | null) => {
     setUserState(u);
     saveCachedUser(u);
+    // Every sign-out path (logout, 401, a failed /me, no session) ends the
+    // account-appearance session, so the next user on this tab hydrates their
+    // own values and never inherits the previous user's save state.
+    if (!u) resetAccountSyncSession();
   }, [saveCachedUser]);
 
   const checkAuth = useCallback(async () => {
@@ -266,8 +270,8 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
         }
         setUser(res.data);
         // Account-synced theme/accent/background: the server value wins over
-        // this device's localStorage, on the FIRST successful /me of the
-        // session only (refreshUser re-runs this; see theme/accountSync).
+        // this device's localStorage, on the FIRST successful /me for this
+        // user id only (refreshUser re-runs this; see theme/accountSync).
         // No-op until APPEARANCE_PICKER_ENABLED.
         hydrateAppearanceFromAccount(res.data);
       } else {
@@ -313,7 +317,6 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     try { await httpClient.post(logoutPath, {}); } catch { /* swallow */ }
     httpClient.clearTokens();
     setUser(null);
-    resetAccountSyncSession();
     onLogoutCleanup?.();
     if (typeof window !== 'undefined') window.location.href = destination;
   }, [httpClient, logoutPath, onLogoutCleanup, setUser]);
