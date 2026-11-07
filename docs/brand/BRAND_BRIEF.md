@@ -98,6 +98,13 @@ Each palette must ship with tokens for both themes and a severity-collision chec
 | G1 Logo | **R3 "Sharpened + edge"**: today's A + tail-fin mark, flattened (no glow/gradient), sharper apex, raked swallow-tail feet, ~9° forward lean, counter opened for 16px. The mark stays red `#C83C3C`. One tile spec: `#121B31`, radius 7/32, no rim, mark 22/32 high. Min size 16px (mark), clear space ¼ mark height. | `docs/brand/logo/` (SVG, ICO, PNG, `final-sheet.png`); pre-screen `LOGO_SIMILARITY_PRESCREEN.md` (not legal clearance; a trademark search by counsel is still required) |
 | G2 Palette | **Indigo on graphite** is the default for dark, **indigo** for light. Marketing uses exactly this, with no options (dark/light only). Ops and tenant get a theme picker: accent Indigo / Violet / Mono / Lime × background Graphite / Navy × mode Dark / Light / System. Amber becomes a status colour only. | `docs/brand/palettes/` (`indigo.css`, `violet.css`, `mono.css`, `lime.css`; each has navy, graphite and light blocks) |
 | G3 Type | **Geist + Geist Mono** (OFL, ~50 KB self-hosted). Label rules: sentence-case sans labels at 12px or larger; mono only for facts (IDs, domains, ASNs, timestamps, counts); tabular numerals; `calt`/`liga` off in mono. | Scale: display 32/36/600/−0.03em, h1 24/30/600, h2 18/24/600, body 14/21/400, small 13/18, label 12/16/500/+0.01em, mono 13/20; marketing hero 84/0.98/600/−0.045em, section 44/1.06/600, body 18/1.6 |
-| Sidebar | Default (owner not yet confirmed): logo without the "THREAT INTELLIGENCE" tagline (too small to read there); the tagline stays on login and marketing. | — |
+| Sidebar | Confirmed by owner: logo without the "THREAT INTELLIGENCE" tagline (too small to read there); the tagline stays on login and marketing. | — |
 
 Known follow-ups for the build: Violet collides with the hardcoded NEXUS tag purple (`#A78BFA`); Lime needs "healthy" green shifted to emerald; the ops `Button` hardcodes `color:#000`; canvas/WebGL colours must read tokens at runtime.
+
+## 10. Phase 2 decisions
+
+| Gate | Decision |
+|---|---|
+| G4 Motion | **M1 Precision** as the base (120 / 160 / 200 ms on ease-standard, 4–8 px travel, opacity + slight scale, short tinted settle on change), plus four **Kinetic** moves: the critical-alert edge scan-line with a tinted row slide-in, the gliding shared nav indicator, the tab underline morph, and a small (~24 px) directional page slide. Springs never overshoot on data. The 500 ms duration is retired from product UI; Cinematic choreography is reserved for the marketing hero / first-load chart. Every animation has a reduced-motion version (opacity-only, no travel, no loops). Budget: ~3 KB JS (Motion `mini` or a small FLIP helper) plus CSS `linear()` springs. |
+| G5 Hero | Pending: owner wants H1 (Operation Graph hero copy + full-size graph) combined with H3's step-by-step flow; two hybrid versions are in review. |
