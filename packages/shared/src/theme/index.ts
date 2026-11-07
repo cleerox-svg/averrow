@@ -15,7 +15,7 @@
 //   import { useTheme } from '@averrow/shared/theme';
 //   const { theme, toggle, setTheme, isDark } = useTheme();
 
-export { useTheme, bootstrapTheme } from './useTheme';
+export { useTheme, bootstrapTheme, applyThemePreference } from './useTheme';
 export type { Theme } from './useTheme';
 export {
   useAppearance,
@@ -30,8 +30,15 @@ export {
   DEFAULT_BASE,
   ACCENT_STORAGE_KEY,
   BASE_STORAGE_KEY,
+  APPEARANCE_PICKER_ENABLED,
+  applyAccent,
+  applyBase,
+  hydrateAppearanceFromAccount,
+  pickAccent,
+  pickBase,
 } from './useAppearance';
-export type { Accent, Base, UseAppearanceReturn } from './useAppearance';
+export type { Accent, Base, UseAppearanceReturn, AccountAppearance, AppearanceSaver } from './useAppearance';
+export { resetAccountSyncSession } from './accountSync';
 // Runtime token reader for canvas / WebGL colours (P3-2a).
 export {
   readToken,

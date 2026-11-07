@@ -1024,7 +1024,9 @@ No `data-accent` attribute = today's legacy look, until the flip PR (P3-6) makes
 
 **Motion:** M1 tokens 120 / 160 / 200 ms on ease-standard; the four Kinetic moves (critical-alert edge scan-line, gliding nav indicator, tab underline morph, ~24 px page slide); every animation has a reduced-motion version; 500 ms is retired from product UI.
 
-**Logo:** R3 mark; tile `#121B31`, radius 7/32, no rim; the sidebar lockup omits the tagline (it stays on login and marketing).
+**Logo:** R3 mark; tile `#121B31`, radius 7/32, no rim; the sidebar lockup omits the tagline (it stays on login and marketing). Components: `AverrowMark` (tile / `tile={false}` bare) and `AverrowLockup` from `@averrow/shared/ui` (`ui/brand/`). Until P3-6, swap sites render the legacy logo AND the R3 one and toggle with `LOGO_LEGACY_CLASS` / `LOGO_R3_CLASS` / `LOGO_R3_BLOCK_CLASS` (rules at the end of `tokens.css`): no `data-accent` = legacy only.
+
+**Account sync (P3-5):** accent and background are saved on the account (`users.accent_preference` / `base_preference`, migration 0317, `PATCH /api/profile`) and hydrated from `/api/auth/me` by the shared `AuthProvider` (`hydrateAppearanceFromAccount`; server wins, localStorage stays the no-flash cache). Settings → Appearance (`AppearanceSettings`, ops `/settings/appearance`, tenant `/account/appearance`) and the hydration are both gated on `APPEARANCE_PICKER_ENABLED` (`theme/appearanceDefaults.ts`, `false` until P3-6; the route redirects to Profile meanwhile). Mode stays in Profile.
 
 ---
 

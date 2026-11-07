@@ -192,6 +192,15 @@ describe('settings routes', () => {
       expect(screen.getByTestId('where')).toHaveTextContent('/settings/notifications/events'));
   });
 
+  it('Appearance is hidden until the P3-6 flip: no rail entry, /settings/appearance redirects to Profile', async () => {
+    renderAt('/settings/appearance');
+    expect(await screen.findByLabelText('Display name')).toBeInTheDocument();
+    expect(screen.getByTestId('where')).toHaveTextContent('/settings/profile');
+    const rail = screen.getByRole('navigation', { name: 'Settings sections' });
+    expect(rail).not.toHaveTextContent('Appearance');
+    expect(screen.queryByRole('radio', { name: 'Violet' })).not.toBeInTheDocument();
+  });
+
   it('unknown /settings/* paths redirect to Profile', async () => {
     renderAt('/settings/bogus');
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/settings/profile'));

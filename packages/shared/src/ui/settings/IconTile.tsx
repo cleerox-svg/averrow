@@ -7,7 +7,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { cn } from '../cn';
 
-export type IconTileTone = 'amber' | 'green' | 'blue' | 'violet' | 'red' | 'neutral';
+export type IconTileTone = 'amber' | 'green' | 'blue' | 'violet' | 'cyan' | 'red' | 'neutral';
 
 /** TINT = accent fill/border colour, GLYPH = AA text colour for the icon. */
 export const ICON_TILE_TONES: Record<IconTileTone, { tint: string; glyph: string }> = {
@@ -15,6 +15,9 @@ export const ICON_TILE_TONES: Record<IconTileTone, { tint: string; glyph: string
   green:   { tint: 'var(--green)',          glyph: 'var(--sev-info-text)' },
   blue:    { tint: 'var(--blue)',           glyph: 'var(--sev-low-text)' },
   violet:  { tint: 'var(--violet)',         glyph: 'var(--violet-text)' },
+  // Appearance's own tone (no other settings section uses it). --cyan-text is
+  // the theme-aware AA cyan; the reserved --thrust / --orbital-teal stay unused.
+  cyan:    { tint: 'var(--cyan-text)',      glyph: 'var(--cyan-text)' },
   red:     { tint: 'var(--red)',            glyph: 'var(--sev-critical-text)' },
   neutral: { tint: 'var(--text-secondary)', glyph: 'var(--text-secondary)' },
 };

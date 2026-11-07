@@ -20,7 +20,7 @@ import {
   type MouseEvent, type ReactNode,
 } from 'react';
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { accountSectionIdFromPath, getAccountSections, SignOutRow } from '@averrow/shared/account';
+import { accountSectionIdFromPath, accountSettingsSubtitle, getAccountSections, SignOutRow } from '@averrow/shared/account';
 import {
   AccountHero, Button, ConfirmDialog, SettingsShell, ToastProvider, describeAccountScope, useMediaQuery,
   type SettingsRenderLink,
@@ -133,7 +133,7 @@ export function SettingsLayout() {
             activeId={activeId}
             basePath="/settings"
             title="Settings"
-            subtitle="Your profile, security and notifications."
+            subtitle={accountSettingsSubtitle()}
             home={home}
             homeFooter={(
               <>

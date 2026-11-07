@@ -14,7 +14,9 @@
 //      (H5, SECURITY_AUDIT_2026-06-10) — `loading` stays true until
 //      the attempt settles, so hosts must not redirect to login
 //      while `loading` is set.
-//   4. Validate via /api/auth/me. Apply onValidatedUser hook.
+//   4. Validate via /api/auth/me. Apply onValidatedUser hook, then (first
+//      successful /me for the user id only) the account's saved theme,
+//      accent and background (hydrateAppearanceFromAccount).
 //   5. Set loading=false, render.
 //
 // Token storage model (H5): the refresh token lives ONLY in the
@@ -38,6 +40,8 @@ import {
 import type {
   SharedAuthUser, SharedAuthState, AuthHttpClient, AuthProviderConfig,
 } from './types';
+import { hydrateAppearanceFromAccount } from '../theme/useAppearance';
+import { resetAccountSyncSession } from '../theme/accountSync';
 
 const AuthContext = createContext<SharedAuthState | null>(null);
 
@@ -203,6 +207,10 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
   const setUser = useCallback((u: SharedAuthUser | null) => {
     setUserState(u);
     saveCachedUser(u);
+    // Every sign-out path (logout, 401, a failed /me, no session) ends the
+    // account-appearance session, so the next user on this tab hydrates their
+    // own values and never inherits the previous user's save state.
+    if (!u) resetAccountSyncSession();
   }, [saveCachedUser]);
 
   const checkAuth = useCallback(async () => {
@@ -261,6 +269,11 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
           return;
         }
         setUser(res.data);
+        // Account-synced theme/accent/background: the server value wins over
+        // this device's localStorage, on the FIRST successful /me for this
+        // user id only (refreshUser re-runs this; see theme/accountSync).
+        // No-op until APPEARANCE_PICKER_ENABLED.
+        hydrateAppearanceFromAccount(res.data);
       } else {
         setUser(null);
         httpClient.clearTokens();

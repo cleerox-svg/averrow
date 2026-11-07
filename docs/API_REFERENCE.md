@@ -20,8 +20,8 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/auth/me` | User | Get current user info |
 | POST | `/api/auth/magic-link/request` | — (rate-limited) | Request a magic sign-in link by email. Body: `{ email, return_to? }` |
 | GET | `/api/auth/magic-link/:token` | — (rate-limited) | Verify magic link from the email body; mints a session and 302s to the SPA like the OAuth callback |
-| GET | `/api/profile` | User | Get editable profile (display_name, timezone, theme_preference). Distinct from `/api/auth/me` (read-only session bootstrap) |
-| PATCH | `/api/profile` | User | Update a partial set of profile fields; pass `null` to clear a field back to its default |
+| GET | `/api/profile` | User | Get editable profile (display_name, timezone, theme_preference, accent_preference, base_preference). Distinct from `/api/auth/me` (read-only session bootstrap, which also returns the appearance fields) |
+| PATCH | `/api/profile` | User | Update a partial set of profile fields; pass `null` to clear a field back to its default. `theme_preference`: `dark`\|`light`. `accent_preference`: `indigo`\|`violet`\|`mono`\|`lime`. `base_preference`: `graphite`\|`navy` (migration 0317; exact match, anything else is 400). Body must be a JSON object |
 | GET | `/api/invites/:token` | — | Validate an invite token before acceptance |
 | GET | `/invite` | — | Invite landing page (HTML) |
 

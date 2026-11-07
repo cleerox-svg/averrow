@@ -412,7 +412,8 @@ export async function handleMe(request: Request, env: Env, userId: string, enrol
   const origin = request.headers.get("Origin");
 
   // Pulls the new profile-personalization fields (display_name,
-  // timezone, theme_preference) added in 0119, plus a derived
+  // timezone, theme_preference) added in 0119, the appearance pair
+  // (accent_preference, base_preference) added in 0317, plus a derived
   // passkey_count via subquery so the client-side
   // FirstSignInPasskeyPrompt can self-gate without a second round-trip.
   const user = await env.DB.prepare(
@@ -420,13 +421,16 @@ export async function handleMe(request: Request, env: Env, userId: string, enrol
        u.id, u.email, u.name, u.role, u.status, u.created_at,
        u.last_login, u.last_active,
        u.display_name, u.timezone, u.theme_preference,
+       u.accent_preference, u.base_preference,
        (SELECT COUNT(*) FROM passkeys WHERE user_id = u.id) AS passkey_count
      FROM users u WHERE u.id = ?`,
   ).bind(userId).first<{
     id: string; email: string; name: string; role: string; status: string;
     created_at: string; last_login: string | null; last_active: string | null;
     display_name: string | null; timezone: string | null;
-    theme_preference: string | null; passkey_count: number;
+    theme_preference: string | null;
+    accent_preference: string | null; base_preference: string | null;
+    passkey_count: number;
   }>();
 
   if (!user) {

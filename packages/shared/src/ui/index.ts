@@ -56,3 +56,7 @@ export { Spinner } from './Spinner';
 export * from './forms';
 export * from './overlays';
 export * from './settings';
+
+// R3 brand marks (facelift P3-5): AverrowMark (tile / bare), AverrowLockup
+// (mark + wordmark, no tagline) and the legacy <-> R3 toggle classes.
+export * from './brand';

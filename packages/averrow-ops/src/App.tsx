@@ -43,6 +43,7 @@ const OverviewV4 = React.lazy(() => import('@/features/home/OverviewV4').then(m 
 const SettingsLayout = React.lazy(() => import('@/features/settings/SettingsLayout').then(m => ({ default: m.SettingsLayout })));
 const SettingsIndex = React.lazy(() => import('@/features/settings/SettingsLayout').then(m => ({ default: m.SettingsIndex })));
 const ProfileSettingsPage = React.lazy(() => import('@/features/settings/ProfileSettingsPage').then(m => ({ default: m.ProfileSettingsPage })));
+const AppearanceSettingsPage = React.lazy(() => import('@/features/settings/AppearanceSettingsPage').then(m => ({ default: m.AppearanceSettingsPage })));
 const DevicesSettingsPage = React.lazy(() => import('@/features/settings/DevicesSettingsPage').then(m => ({ default: m.DevicesSettingsPage })));
 const Notifications = React.lazy(() => import('@/features/settings/Notifications').then(m => ({ default: m.Notifications })));
 const SecurityPage = React.lazy(() => import('@/features/settings/SecurityPage').then(m => ({ default: m.SecurityPage })));
@@ -202,6 +203,8 @@ export default function App() {
         <Route path="settings" element={lazyRoute(<SettingsLayout />)}>
           <Route index element={lazyRoute(<SettingsIndex />)} />
           <Route path="profile" element={lazyRoute(<ProfileSettingsPage />)} />
+          {/* Redirects to /settings/profile until APPEARANCE_PICKER_ENABLED (P3-6). */}
+          <Route path="appearance" element={lazyRoute(<AppearanceSettingsPage />)} />
           <Route path="devices" element={lazyRoute(<DevicesSettingsPage />)} />
           <Route path="security" element={lazyRoute(<SecurityPage />)} />
           <Route path="notifications" element={<Navigate to="/settings/notifications/channels" replace />} />

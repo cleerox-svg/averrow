@@ -53,6 +53,8 @@ describe('L2 tokens are legacy-equivalent to the literals they replaced', () => 
     ['--focus-ring', '--amber-text'],
     // The settings back link used --amber-text.
     ['--link', '--amber-text'],
+    // The login card's top rim used --amber-border (P3-5 review).
+    ['--primary-rim', '--amber-border'],
   ];
   for (const theme of ['dark', 'light'] as const) {
     it.each(PAIRS)(`${theme}: %s resolves to the value of %s`, (l2, legacy) => {
