@@ -108,3 +108,17 @@ Known follow-ups for the build: Violet collides with the hardcoded NEXUS tag pur
 |---|---|
 | G4 Motion | **M1 Precision** as the base (120 / 160 / 200 ms on ease-standard, 4–8 px travel, opacity + slight scale, short tinted settle on change), plus four **Kinetic** moves: the critical-alert edge scan-line with a tinted row slide-in, the gliding shared nav indicator, the tab underline morph, and a small (~24 px) directional page slide. Springs never overshoot on data. The 500 ms duration is retired from product UI; Cinematic choreography is reserved for the marketing hero / first-load chart. Every animation has a reduced-motion version (opacity-only, no travel, no loops). Budget: ~3 KB JS (Motion `mini` or a small FLIP helper) plus CSS `linear()` springs. |
 | G5 Hero | **H4A "Auto-play steps"**: H1's hero copy and the full-size Operation Graph playing through the four steps (Domain found, Infrastructure linked, Actor attributed, Takedown filed) with a slim step bar along the graph's bottom edge, click-to-jump and a pause button. Reduced motion / no-JS show the finished operation with all four steps listed. ~4.5 KB JS, loaded after paint. The fictional actor name ("FX-114 · example") needs a disclosure check before launch. |
+
+## 11. Phase 3 shipped (2026-11-07, v4.8.0)
+
+The facelift is the live default for ops and tenant (PR P3-6). Owner decisions for the flip:
+
+| Decision | Detail |
+|---|---|
+| Flip without a preview | Goes straight to production for everyone; no staged or opt-in preview. |
+| Default for everyone | Indigo accent on graphite background, Geist + Geist Mono, R3 logo, M1 + Kinetic motion. |
+| Appearance follows the account | Accent, background and light/dark are saved to the user's account and follow them to every device (Settings → Appearance; mode stays in Profile). |
+| No legacy option | The amber look is not user-selectable after the flip; a stored null/absent accent means the default (indigo). Amber stays a status colour only. |
+| Avatar follows primary | The self-avatar uses `--primary`, so it follows the user's accent. |
+
+Revert path: `FACELIFT = false` in `packages/shared/src/theme/appearanceDefaults.ts` restores the legacy look in one line (see `AVERROW_UI_STANDARD.md` "Appearance & theme model").

@@ -272,7 +272,7 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
         // Account-synced theme/accent/background: the server value wins over
         // this device's localStorage, on the FIRST successful /me for this
         // user id only (refreshUser re-runs this; see theme/accountSync).
-        // No-op until APPEARANCE_PICKER_ENABLED.
+        // No-op while APPEARANCE_PICKER_ENABLED is off (FACELIFT reverted).
         hydrateAppearanceFromAccount(res.data);
       } else {
         setUser(null);

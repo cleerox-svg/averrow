@@ -999,7 +999,18 @@ NEVER use:          text-white/20 or below on readable content
 
 ## Appearance & theme model (facelift 2026-11)
 
-**Status: lands in Phase 3; NOT yet the default.** Decisions: `docs/brand/BRAND_BRIEF.md` §8–§10. Palettes: `docs/brand/palettes/` (`indigo.css`, `violet.css`, `mono.css`, `lime.css`). Logo: `docs/brand/logo/`.
+**Status: LIVE DEFAULT since v4.8.0 (P3-6, 2026-11-07).** Every ops and tenant user gets indigo on graphite, Geist, the R3 logo, the motion kit and Settings → Appearance. Decisions: `docs/brand/BRAND_BRIEF.md` §8–§11. Palettes: `docs/brand/palettes/` (`indigo.css`, `violet.css`, `mono.css`, `lime.css`). Logo: `docs/brand/logo/`.
+
+**The switch: `FACELIFT`** (`packages/shared/src/theme/appearanceDefaults.ts`, now `true`). Everything derives from it through `appearanceFlags(facelift)`:
+
+| | `FACELIFT = true` (shipped) | `FACELIFT = false` (revert) |
+|---|---|---|
+| `DEFAULT_ACCENT` / `DEFAULT_BASE` | `indigo` / `graphite` | `null` / `null` (no attributes = legacy amber look) |
+| `APPEARANCE_PICKER_ENABLED` | `true`: Settings → Appearance listed; account accent/base hydrated | `false`: section hidden, route redirects to Profile, account accent/base ignored |
+| `index.html` (both apps) | bootstrap defaults `'indigo'`/`'graphite'`; `theme-color` `#0a0b0e`; Geist sans + mono `<link rel="preload">`; Google Fonts link dropped | bootstrap defaults `null`; `theme-color` `#060A14`; no preloads; Google Fonts (Plus Jakarta Sans / JetBrains Mono) |
+| ops PWA `manifest.json` | `theme_color` / `background_color` `#0a0b0e` | untouched (`#060A14`) |
+
+`index.html` is generated, not hand-kept: the source carries `__APPEARANCE_ACCENTS__`, `__APPEARANCE_BASES__`, `__APPEARANCE_DEFAULT_ACCENT__`, `__APPEARANCE_DEFAULT_BASE__` and `__APPEARANCE_THEME_COLOR__` markers that the shared Vite plugin `appearanceHtml()` (`packages/shared/scripts/appearance-html.ts`, wired in both `vite.config.ts`) fills. Font preload hrefs are read from the build bundle (Vite's hashed asset names), build only; a missing marker, Google Fonts line or font fails the build. `appearanceDrift.test.ts` runs the transform for both values and executes the generated bootstrap.
 
 **Attributes on `<html>`**
 
@@ -1009,24 +1020,28 @@ NEVER use:          text-white/20 or below on readable content
 | `data-accent` | `indigo` \| `violet` \| `mono` \| `lime` | `averrow-accent` |
 | `data-base` | `graphite` \| `navy` (dark mode only) | `averrow-base` |
 
-No `data-accent` attribute = today's legacy look, until the flip PR (P3-6) makes indigo + graphite the default.
+Nothing stored (or an invalid value) = the default: the attribute is set to `DEFAULT_ACCENT` / `DEFAULT_BASE` and storage stays empty, so a user follows a future default change. There is **no "legacy" value**: the amber look is not user-selectable (owner decision). `setAccent(null)` / `setBase(null)` return to the default.
 
 **Token layers**
-- L0 neutrals: base x mode.
-- L1 accent: accent x mode.
-- L2 semantic tokens, which components should use: `--primary`, `--primary-hover`, `--primary-ink`, `--primary-text`, `--focus-ring`, `--status-warn` (= `--sev-medium`; `--sev-medium-text` in light mode, so status text clears AA on white), `--healthy`, `--tag-nexus`.
-- `--amber` becomes a status colour only; never a primary/CTA colour in new code.
-- Lime remaps `--healthy` to emerald; Violet remaps `--tag-nexus`.
+- L0 neutrals: base x mode. L1 accent: accent x mode. Both generated into `theme/appearance.css` by `packages/shared/scripts/gen-appearance.mjs` (never hand-edit; a drift test re-runs it).
+- L2 semantic tokens, which components use:
+  - `--primary`, `--primary-hover`, `--primary-pressed`, `--primary-ink` (text on a primary fill), `--primary-text` (AA primary-coloured text), `--primary-tint`, `--primary-tint-strong`, `--primary-border`, `--focus-ring`, `--link`, `--link-hover`, `--selection-bg`.
+  - `--primary-glow`: the primary glow (Card `active`, live indicators). A literal per scope, not an alias, so scoped overrides (e.g. `.shell-v4`) reach it.
+  - `--primary-as-text`, `--primary-focus`, `--metric-accent`: aliases for sites that used to paint raw `--amber`. Under an accent they map to `--primary-text`, `--focus-ring` and `--text-tertiary` (a plain metric tile is data, not a primary action).
+  - `--primary-rim`: the hairline rim (login card top edge) = `--primary-border`.
+  - `--status-warn` (= `--sev-medium`; `--sev-medium-text` in light mode, so status text clears AA on white), `--healthy`, `--tag-nexus`. Lime remaps `--healthy` to emerald; Violet remaps `--tag-nexus`.
+- `--amber` is a **status colour only** (warning / medium); never a primary / CTA / nav / active colour.
+- **Token reader** (`theme/tokenReader.ts`, `@averrow/shared/theme`): canvas / WebGL code cannot use `var()`. `readToken`, `readTokenRgba(name, alpha?)` and `useTokenColors(names)` return the resolved colour and re-read on any `data-theme` / `data-accent` / `data-base` change (`useAppearanceVersion`, `subscribeAppearance`). Colour tokens only; reads the `:root` value.
 
-**Surfaces:** ops and tenant get Settings → Appearance (mode, accent, background). Marketing has dark/light only and is always indigo/graphite.
+**Surfaces:** ops and tenant have Settings → Appearance (accent, background; ops `/settings/appearance`, tenant `/account/appearance`, shared `AppearanceSettings`); mode (Dark / Light / System) stays in Profile. Marketing has dark/light only and is always indigo/graphite.
 
-**Type:** Geist + Geist Mono, self-hosted. Sentence-case sans labels at 12px or larger; mono only for facts (IDs, domains, ASNs, timestamps, counts); tabular numerals; `calt`/`liga` off in mono.
+**Type** (`theme/type.css`): Geist + Geist Mono, self-hosted (OFL, latin subset, variable woff2 per family and style). The `'Geist'` / `'Geist Mono'` families are named only under `:root[data-accent]` (`--font-sans` / `--font-mono`, with Plus Jakarta Sans / JetBrains Mono as fallback names only), so the revert loads no Geist. Scale tokens `--type-{display,h1,h2,body,small,label,mono}-{size,lh,weight,tracking}`, Tailwind `text-type-*`. Sentence-case sans labels at 12px or larger; mono only for facts (IDs, domains, ASNs, timestamps, counts); tabular numerals; `calt`/`liga` off in mono.
 
-**Motion:** M1 tokens 120 / 160 / 200 ms on ease-standard; the four Kinetic moves (critical-alert edge scan-line, gliding nav indicator, tab underline morph, ~24 px page slide); every animation has a reduced-motion version; 500 ms is retired from product UI.
+**Motion** (`theme/motion.css` + `@averrow/shared/ui` motion kit, `ui/motion/`): M1 120 / 160 / 200 ms (`--motion-fast|base|slow`) on ease-standard, critically damped `linear()` springs (`--ease-spring`, never overshoot on data); 500 ms is retired (`--dur-slower` collapses to 200 ms). The four Kinetic moves: critical-alert edge scan-line + `useArrivalFlash`, gliding nav indicator (`NavIndicator` / `useGlideIndicator`), tab underline morph, ~24 px page slide (`usePageSlide`). Every rule and hook is gated on `data-accent` and has a reduced-motion version (opacity only; `html[data-motion="reduce"]` simulates it on the staff `/kit` gallery).
 
-**Logo:** R3 mark; tile `#121B31`, radius 7/32, no rim; the sidebar lockup omits the tagline (it stays on login and marketing). Components: `AverrowMark` (tile / `tile={false}` bare) and `AverrowLockup` from `@averrow/shared/ui` (`ui/brand/`). Until P3-6, swap sites render the legacy logo AND the R3 one and toggle with `LOGO_LEGACY_CLASS` / `LOGO_R3_CLASS` / `LOGO_R3_BLOCK_CLASS` (rules at the end of `tokens.css`): no `data-accent` = legacy only.
+**Logo:** R3 mark; tile `#121B31`, radius 7/32, no rim; the sidebar lockup omits the tagline (it stays on login and marketing). Components: `AverrowMark` (tile / `tile={false}` bare) and `AverrowLockup` from `@averrow/shared/ui` (`ui/brand/`). Swap sites render the legacy logo AND the R3 one and toggle with `LOGO_LEGACY_CLASS` (`av-logo-legacy`), `LOGO_R3_CLASS` (`av-logo-r3`, inline-flex) and `LOGO_R3_BLOCK_CLASS` (`av-logo-r3-block`) — rules at the end of `tokens.css`: with an accent (always, since the flip) only R3 shows; with `FACELIFT = false` only the legacy logo.
 
-**Account sync (P3-5):** accent and background are saved on the account (`users.accent_preference` / `base_preference`, migration 0317, `PATCH /api/profile`) and hydrated from `/api/auth/me` by the shared `AuthProvider` (`hydrateAppearanceFromAccount`; server wins, localStorage stays the no-flash cache). Settings → Appearance (`AppearanceSettings`, ops `/settings/appearance`, tenant `/account/appearance`) and the hydration are both gated on `APPEARANCE_PICKER_ENABLED` (`theme/appearanceDefaults.ts`, `false` until P3-6; the route redirects to Profile meanwhile). Mode stays in Profile.
+**Account sync:** accent and background are saved on the account (`users.accent_preference` / `base_preference`, migration 0317, `PATCH /api/profile`), alongside light/dark (`theme_preference`), and hydrated once per session from `/api/auth/me` by the shared `AuthProvider` (`hydrateAppearanceFromAccount`; server wins, localStorage stays the no-flash cache; a field picked locally or with a save in flight is left alone). Saves are serialized per field; a failed save reverts to the last server-confirmed choice (null = follow the default). Self-avatars follow `--primary` (`SELF_AVATAR_COLOR`).
 
 ---
 

@@ -268,22 +268,23 @@ describe('useAppearance', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('defaults are null: initial render sets no attributes', () => {
-    expect(DEFAULT_ACCENT).toBeNull();
-    expect(DEFAULT_BASE).toBeNull();
+  it('defaults are indigo / graphite (FACELIFT on): initial state, storage untouched', () => {
+    expect(FACELIFT).toBe(true);
+    expect(DEFAULT_ACCENT).toBe('indigo');
+    expect(DEFAULT_BASE).toBe('graphite');
     const { result } = renderHook(() => useAppearance());
-    expect(result.current.accent).toBeNull();
-    expect(result.current.base).toBeNull();
-    expect(html.hasAttribute('data-accent')).toBe(false);
-    expect(html.hasAttribute('data-base')).toBe(false);
+    expect(result.current.accent).toBe('indigo');
+    expect(result.current.base).toBe('graphite');
+    expect(localStorage.getItem('averrow-accent')).toBeNull();
+    expect(localStorage.getItem('averrow-base')).toBeNull();
   });
 
-  it('initialises from valid storage, ignores invalid', () => {
+  it('initialises from valid storage; invalid falls back to the default', () => {
     localStorage.setItem('averrow-accent', 'violet');
     localStorage.setItem('averrow-base', 'bogus');
     const { result } = renderHook(() => useAppearance());
     expect(result.current.accent).toBe('violet');
-    expect(result.current.base).toBeNull();
+    expect(result.current.base).toBe('graphite');
   });
 
   it('setAccent / setBase write attribute, storage and state', () => {
@@ -298,24 +299,27 @@ describe('useAppearance', () => {
     expect(result.current.base).toBe('navy');
   });
 
-  it('setAccent(null) / setBase(null) clear attribute and storage', () => {
+  it('setAccent(null) / setBase(null) return to the defaults and clear storage', () => {
     const { result } = renderHook(() => useAppearance());
-    act(() => { result.current.setAccent('mono'); result.current.setBase('graphite'); });
+    act(() => { result.current.setAccent('mono'); result.current.setBase('navy'); });
     act(() => { result.current.setAccent(null); result.current.setBase(null); });
-    expect(html.hasAttribute('data-accent')).toBe(false);
-    expect(html.hasAttribute('data-base')).toBe(false);
+    expect(html.getAttribute('data-accent')).toBe('indigo');
+    expect(html.getAttribute('data-base')).toBe('graphite');
+    // storage is cleared so a later default change is followed
     expect(localStorage.getItem('averrow-accent')).toBeNull();
     expect(localStorage.getItem('averrow-base')).toBeNull();
-    expect(result.current.accent).toBeNull();
-    expect(result.current.base).toBeNull();
+    expect(result.current.accent).toBe('indigo');
+    expect(result.current.base).toBe('graphite');
   });
 
-  it('simulated P3-6 flip: setAccent(null) / setBase(null) apply the defaults to DOM and state', async () => {
+  it('simulated revert (FACELIFT=false): null defaults mean the legacy look, no attributes', async () => {
     vi.resetModules();
     vi.doMock('../../../shared/src/theme/appearanceDefaults', async (orig) => ({
       ...(await orig<typeof import('../../../shared/src/theme/appearanceDefaults')>()),
-      DEFAULT_ACCENT: 'indigo',
-      DEFAULT_BASE: 'graphite',
+      FACELIFT: false,
+      DEFAULT_ACCENT: null,
+      DEFAULT_BASE: null,
+      APPEARANCE_PICKER_ENABLED: false,
     }));
     // Unmount explicitly (also on failure) so the hook from the re-imported
     // module graph never outlives this test.
@@ -324,24 +328,23 @@ describe('useAppearance', () => {
       // Fresh React + testing-library alongside the re-imported hook (same module graph).
       const rtl = await import('@testing-library/react');
       const theme = await import('../../../shared/src/theme/useAppearance');
-      expect(theme.DEFAULT_ACCENT).toBe('indigo');
+      expect(theme.DEFAULT_ACCENT).toBeNull();
       const hook = rtl.renderHook(() => theme.useAppearance());
       unmount = hook.unmount;
       const { result } = hook;
-      expect(result.current.accent).toBe('indigo');
-      expect(result.current.base).toBe('graphite');
+      expect(result.current.accent).toBeNull();
+      expect(result.current.base).toBeNull();
       rtl.act(() => { result.current.setAccent('lime'); result.current.setBase('navy'); });
       expect(html.getAttribute('data-accent')).toBe('lime');
       rtl.act(() => { result.current.setAccent(null); result.current.setBase(null); });
-      expect(html.getAttribute('data-accent')).toBe('indigo');
-      expect(html.getAttribute('data-base')).toBe('graphite');
-      expect(result.current.accent).toBe('indigo');
-      expect(result.current.base).toBe('graphite');
-      // storage is cleared so a later default change is followed
+      expect(html.hasAttribute('data-accent')).toBe(false);
+      expect(html.hasAttribute('data-base')).toBe(false);
+      expect(result.current.accent).toBeNull();
+      expect(result.current.base).toBeNull();
       expect(localStorage.getItem('averrow-accent')).toBeNull();
       expect(localStorage.getItem('averrow-base')).toBeNull();
       rtl.act(() => result.current.setAccent('nope' as never));
-      expect(html.getAttribute('data-accent')).toBe('indigo');
+      expect(html.hasAttribute('data-accent')).toBe(false);
     } finally {
       unmount?.();
       vi.doUnmock('../../../shared/src/theme/appearanceDefaults');
@@ -349,13 +352,13 @@ describe('useAppearance', () => {
     }
   });
 
-  it('an invalid value passed at runtime is treated as null', () => {
+  it('an invalid value passed at runtime is treated as null (the default)', () => {
     const { result } = renderHook(() => useAppearance());
-    act(() => result.current.setAccent('indigo'));
+    act(() => result.current.setAccent('violet'));
     act(() => result.current.setAccent('nope' as never));
-    expect(html.hasAttribute('data-accent')).toBe(false);
+    expect(html.getAttribute('data-accent')).toBe('indigo');
     expect(localStorage.getItem('averrow-accent')).toBeNull();
-    expect(result.current.accent).toBeNull();
+    expect(result.current.accent).toBe('indigo');
   });
 
   it('storage write failure still applies attribute and state', () => {

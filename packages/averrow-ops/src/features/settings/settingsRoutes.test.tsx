@@ -192,13 +192,19 @@ describe('settings routes', () => {
       expect(screen.getByTestId('where')).toHaveTextContent('/settings/notifications/events'));
   });
 
-  it('Appearance is hidden until the P3-6 flip: no rail entry, /settings/appearance redirects to Profile', async () => {
+  it('Appearance is live since the P3-6 flip: rail entry, picker, no legacy option', async () => {
     renderAt('/settings/appearance');
-    expect(await screen.findByLabelText('Display name')).toBeInTheDocument();
-    expect(screen.getByTestId('where')).toHaveTextContent('/settings/profile');
+    expect(await screen.findByRole('radio', { name: 'Violet' })).toBeInTheDocument();
+    expect(screen.getByTestId('where')).toHaveTextContent('/settings/appearance');
     const rail = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(rail).not.toHaveTextContent('Appearance');
-    expect(screen.queryByRole('radio', { name: 'Violet' })).not.toBeInTheDocument();
+    expect(rail).toHaveTextContent('Appearance');
+    for (const name of ['Indigo', 'Violet', 'Mono', 'Lime', 'Graphite', 'Navy']) {
+      expect(screen.getByRole('radio', { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole('radio', { name: /legacy|amber/i })).not.toBeInTheDocument();
+    // Nothing stored: the defaults read as selected.
+    expect(screen.getByRole('radio', { name: 'Indigo' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Graphite' })).toBeChecked();
   });
 
   it('unknown /settings/* paths redirect to Profile', async () => {

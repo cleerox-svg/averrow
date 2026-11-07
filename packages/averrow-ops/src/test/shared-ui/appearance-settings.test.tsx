@@ -1,6 +1,7 @@
 // Account-synced appearance (facelift P3-5):
-//   - Settings -> Appearance is hidden while APPEARANCE_PICKER_ENABLED is false
-//     and listed once it is true (the flag is mocked through a getter);
+//   - Settings -> Appearance is listed while APPEARANCE_PICKER_ENABLED is true
+//     (shipped since the P3-6 flip) and hidden when false (FACELIFT reverted;
+//     the flag is mocked through a getter, false by default in this file);
 //   - the account's accent/base hydrate from /api/auth/me (server wins), and
 //     never while the flag is false;
 //   - AppearanceSettings applies a choice instantly, PATCHes the profile and
@@ -29,6 +30,7 @@ import {
 } from '@averrow/shared/account';
 import {
   APPEARANCE_PICKER_ENABLED, hydrateAppearanceFromAccount, useAppearance, useTheme, ACCENTS, BASES,
+  DEFAULT_ACCENT, DEFAULT_BASE,
 } from '@averrow/shared/theme';
 import { AuthProvider, useAuth, type AuthHttpClient } from '@averrow/shared/auth';
 import { __resetAccountSyncForTests, hydratedUserId } from '../../../../shared/src/theme/accountSync';
@@ -60,11 +62,13 @@ afterEach(() => vi.restoreAllMocks());
 // ── flag + sections ────────────────────────────────────────────────
 
 describe('APPEARANCE_PICKER_ENABLED', () => {
-  it('ships false (nothing changes for users until the P3-6 flip)', async () => {
+  it('ships true (the P3-6 flip: FACELIFT on)', async () => {
     const real = await vi.importActual<typeof import('../../../../shared/src/theme/appearanceDefaults')>(
       '../../../../shared/src/theme/appearanceDefaults',
     );
-    expect(real.APPEARANCE_PICKER_ENABLED).toBe(false);
+    expect(real.FACELIFT).toBe(true);
+    expect(real.APPEARANCE_PICKER_ENABLED).toBe(true);
+    expect(real.appearanceFlags(false).pickerEnabled).toBe(false);
   });
 
   it('the mocked flag reaches the public theme export', () => {
@@ -144,7 +148,7 @@ describe('hydrateAppearanceFromAccount', () => {
   it('updates mounted useAppearance hooks', () => {
     flags.enabled = true;
     const { result } = renderHook(() => useAppearance());
-    expect(result.current.accent).toBeNull();
+    expect(result.current.accent).toBe('indigo'); // the default
     act(() => hydrateAppearanceFromAccount({ accent_preference: 'mono', base_preference: 'navy' }));
     expect(result.current.accent).toBe('mono');
     expect(result.current.base).toBe('navy');
@@ -529,8 +533,10 @@ describe('AppearanceSettings', () => {
     const { user } = setup(patch);
     await user.click(screen.getByRole('radio', { name: 'Navy' }));
     expect(await screen.findByText(/Couldn't save your appearance/)).toBeInTheDocument();
-    expect(html.hasAttribute('data-base')).toBe(false);
+    // Back to the default, and still FOLLOWING it: nothing pinned in storage.
+    expect(html.getAttribute('data-base')).toBe('graphite');
     expect(localStorage.getItem('averrow-base')).toBeNull();
+    expect(screen.getByRole('radio', { name: 'Graphite' })).toBeChecked();
   });
 
   it('a failed earlier save does not revert a later choice', async () => {
@@ -672,10 +678,12 @@ describe('storage events with hostile values (P3-5 review)', () => {
       localStorage.setItem(key, bad);
       window.dispatchEvent(new StorageEvent('storage', { key, newValue: bad }));
     });
-    // Default today is null = no attribute (the legacy look).
-    expect(html.hasAttribute(attr)).toBe(false);
+    // The default (indigo / graphite since the P3-6 flip).
+    const def = attr === 'data-accent' ? DEFAULT_ACCENT : DEFAULT_BASE;
+    expect(def).not.toBeNull();
+    expect(html.getAttribute(attr)).toBe(def);
     expect(spy.mock.calls.some(([, v]) => v === bad)).toBe(false);
-    expect(result.current[attr === 'data-accent' ? 'accent' : 'base']).toBeNull();
+    expect(result.current[attr === 'data-accent' ? 'accent' : 'base']).toBe(def);
   });
 });
 
@@ -752,8 +760,8 @@ describe('useAppearance shared store', () => {
       localStorage.clear();
       window.dispatchEvent(new StorageEvent('storage', { key: null }));
     });
-    expect(result.current.accent).toBeNull();
-    expect(html.hasAttribute('data-accent')).toBe(false);
+    expect(result.current.accent).toBe('indigo');
+    expect(html.getAttribute('data-accent')).toBe('indigo');
   });
 
   it('ignores unrelated storage keys', () => {
@@ -762,6 +770,6 @@ describe('useAppearance shared store', () => {
       localStorage.setItem('averrow-accent', 'mono'); // written without an event for our key
       window.dispatchEvent(new StorageEvent('storage', { key: 'something-else' }));
     });
-    expect(result.current.accent).toBeNull();
+    expect(result.current.accent).toBe('indigo'); // not 'mono': no event for our key
   });
 });

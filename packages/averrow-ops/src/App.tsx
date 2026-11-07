@@ -203,7 +203,7 @@ export default function App() {
         <Route path="settings" element={lazyRoute(<SettingsLayout />)}>
           <Route index element={lazyRoute(<SettingsIndex />)} />
           <Route path="profile" element={lazyRoute(<ProfileSettingsPage />)} />
-          {/* Redirects to /settings/profile until APPEARANCE_PICKER_ENABLED (P3-6). */}
+          {/* Redirects to /settings/profile when APPEARANCE_PICKER_ENABLED is off (FACELIFT reverted). */}
           <Route path="appearance" element={lazyRoute(<AppearanceSettingsPage />)} />
           <Route path="devices" element={lazyRoute(<DevicesSettingsPage />)} />
           <Route path="security" element={lazyRoute(<SecurityPage />)} />

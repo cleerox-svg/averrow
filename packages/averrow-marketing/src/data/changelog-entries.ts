@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.8.0",
+    publishedAt: "2026-11-07",
+    kind: "Feature",
+    title: "A refreshed look, and appearance that follows you",
+    description:
+      "The platform has a new look: a new indigo accent on a deep graphite background, a cleaner typeface built for reading data, a sharpened logo, and quick, subtle motion that respects reduced-motion settings. A new Appearance page in Settings lets you choose an accent color (Indigo, Violet, Mono, or Lime) and a dark background (Graphite or Navy). Your choices, along with light or dark mode, are saved to your account and follow you to every device. Amber is now used only to signal warnings, so it always means the same thing.",
+  },
+  {
     version: "v4.7.0",
     publishedAt: "2026-10-14",
     kind: "Feature",

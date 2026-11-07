@@ -13,7 +13,7 @@ export type Base = (typeof BASES)[number];
  *  (packages/shared/scripts/appearance-html.ts): the no-flash bootstrap
  *  defaults, the theme-color meta, the Geist font preloads and dropping the
  *  Google Fonts link. Reverting the facelift = setting this to false. */
-export const FACELIFT: boolean = false;
+export const FACELIFT: boolean = true;
 
 /** Default page colour per side of the flip: the indigo/graphite dark
  *  --bg-page (appearance.css) when on, the legacy navy (tokens.css) when off.

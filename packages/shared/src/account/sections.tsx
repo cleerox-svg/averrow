@@ -40,15 +40,16 @@ export interface AccountSectionsOptions {
   badges?: Partial<Record<AccountSectionId, number | string>>;
 }
 
-/** Whether a section is offered right now. Appearance waits for the P3-6 flip
- *  (APPEARANCE_PICKER_ENABLED); hosts redirect its route to Profile meanwhile. */
+/** Whether a section is offered right now. Appearance needs
+ *  APPEARANCE_PICKER_ENABLED (on since the P3-6 flip; off only with FACELIFT
+ *  reverted, when hosts redirect its route to Profile). */
 export function isAccountSectionEnabled(id: AccountSectionId): boolean {
   return id !== 'appearance' || APPEARANCE_PICKER_ENABLED;
 }
 
-/** Profile's default description. Before the flip Profile is where all
- *  appearance lives; once Appearance is its own section, Profile only keeps
- *  light / dark. */
+/** Profile's default description. With Appearance as its own section (since
+ *  the P3-6 flip) Profile only keeps light / dark; with FACELIFT reverted
+ *  Profile is where all appearance lives. */
 export function profileSectionDescription(): string {
   return APPEARANCE_PICKER_ENABLED ? 'Name, light or dark mode and time zone' : 'Name, appearance and time zone';
 }

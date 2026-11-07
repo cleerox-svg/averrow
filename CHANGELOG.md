@@ -4,6 +4,56 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.8.0] — 2026-11-07
+
+Facelift Phase 3 flip (P3-1 … P3-6). The new look becomes the default for every
+ops and tenant user, straight to production (owner decision: no preview stage).
+Tag `v4.8.0` is created by `tag-release.yml` on merge.
+
+### The switch
+- One constant, `FACELIFT` in `packages/shared/src/theme/appearanceDefaults.ts`,
+  now `true`. `DEFAULT_ACCENT` (`indigo`), `DEFAULT_BASE` (`graphite`),
+  `APPEARANCE_PICKER_ENABLED` and the theme colour derive from it
+  (`appearanceFlags()`).
+- Both apps' `index.html` are generated from it by the shared Vite plugin
+  `packages/shared/scripts/appearance-html.ts` (`appearanceHtml()` in each
+  `vite.config.ts`): the inline no-flash bootstrap defaults, `<meta
+  name="theme-color">` (`#0a0b0e`, indigo/graphite `--bg-page`), the ops PWA
+  manifest colours, `<link rel="preload">` for the Geist upright sans + mono
+  (hrefs read from the build bundle, so hashed names resolve; build only), and
+  the Google Fonts block (Plus Jakarta Sans / JetBrains Mono) is dropped.
+- **Revert = `FACELIFT = false`** (one line): legacy amber look, no `data-accent`,
+  Google Fonts back, no preloads, Appearance hidden, account accent/base ignored.
+
+### What users get
+- **Tokens:** L2 semantic layer (`--primary`, `--primary-hover`, `--primary-ink`,
+  `--primary-text`, `--focus-ring`, `--primary-glow`, `--primary-as-text`,
+  `--primary-focus`, `--metric-accent`, `--primary-rim`, `--status-*`) over
+  per-accent palettes generated into `appearance.css`
+  (`scripts/gen-appearance.mjs`). Canvas / WebGL reads tokens at runtime via the
+  token reader (`theme/tokenReader.ts`).
+- **Accents:** Indigo (default), Violet, Mono, Lime × background Graphite
+  (default) / Navy × Dark / Light / System. Lime remaps `--healthy` to emerald;
+  Violet remaps `--tag-nexus`.
+- **Amber is status-only:** `--amber` no longer drives primary actions anywhere;
+  it remains the warning/medium-severity colour.
+- **Type:** self-hosted Geist + Geist Mono (OFL, latin subset), `--type-*`
+  scale, mono for facts with ligatures off and tabular numerals.
+- **Motion:** M1 Precision (120 / 160 / 200 ms, critically damped springs) and
+  the four Kinetic moves (critical-alert scan-line, gliding nav indicator, tab
+  underline morph, page slide), each with a reduced-motion version.
+- **Logo:** R3 mark and lockup (`AverrowMark` / `AverrowLockup`); the sidebar
+  lockup omits the tagline.
+- **Settings → Appearance** (ops `/settings/appearance`, tenant
+  `/account/appearance`) is live: accent and background are saved to the
+  account (`users.accent_preference` / `base_preference`, migration 0317) and,
+  with light/dark (`theme_preference`), follow the user to every device. There is
+  no "legacy" option: the amber look is not user-selectable. A stored
+  null/absent accent means the default (indigo). Self-avatars follow `--primary`.
+- Staff `/kit` gallery: "Reset to legacy" is now "Reset to default".
+
+---
+
 ## [v4.7.0] — 2026-10-14
 
 Observatory phase C (PR #1848). Staff-only surface: no tenant changelog entry.
