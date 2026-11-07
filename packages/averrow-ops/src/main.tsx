@@ -7,6 +7,7 @@ import { AuthProvider } from '@/lib/auth';
 import { ToastProvider } from '@/components/ui/Toast';
 import { registerServiceWorker, captureInstallPrompt } from '@/lib/pwa';
 import { bootstrapTheme } from '@/design-system/hooks/useTheme';
+import { bootstrapAppearance } from '@averrow/shared/theme';
 import App from '@/App';
 import '@/index.css';
 
@@ -16,6 +17,7 @@ import '@/index.css';
 // theme — visible flash. bootstrapTheme reads localStorage and
 // sets data-theme on <html> in one shot.
 bootstrapTheme();
+bootstrapAppearance(); // accent/base attributes (no-op in the legacy look)
 
 // Catch Chrome's one-shot `beforeinstallprompt` before any lazy route mounts.
 captureInstallPrompt();

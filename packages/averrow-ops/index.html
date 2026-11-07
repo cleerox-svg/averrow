@@ -2,6 +2,28 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- No-flash appearance bootstrap: applies data-theme / data-accent / data-base before
+         first paint. The ACCENTS/BASES/DEFAULT_* literals MUST equal those exported by
+         packages/shared/src/theme/useAppearance.ts (a test enforces it). Theme resolution
+         sits outside the storage try/catch so blocked storage still gets the OS theme. -->
+    <script>
+      (function () {
+        var ACCENTS = ['indigo', 'violet', 'mono', 'lime'], BASES = ['graphite', 'navy'], DEFAULT_ACCENT = null, DEFAULT_BASE = null;
+        var d = document.documentElement, t = null, a = null, b = null;
+        try {
+          var s = window.localStorage;
+          t = s.getItem('averrow-theme'); a = s.getItem('averrow-accent'); b = s.getItem('averrow-base');
+        } catch (e) { /* storage blocked: defaults below */ }
+        if (t !== 'dark' && t !== 'light') {
+          try { t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark'; } catch (e) { t = 'dark'; }
+        }
+        d.setAttribute('data-theme', t);
+        if (ACCENTS.indexOf(a) < 0) a = DEFAULT_ACCENT;
+        if (BASES.indexOf(b) < 0) b = DEFAULT_BASE;
+        if (a) d.setAttribute('data-accent', a);
+        if (b) d.setAttribute('data-base', b);
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#060A14" />
     <meta name="description" content="Threat actor intelligence platform — identify who, how, and where." />

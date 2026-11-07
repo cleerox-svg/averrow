@@ -10,6 +10,16 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Appearance system L2 (Phase 3) - resolve to legacy amber until a data-accent is set.
+        primary: {
+          // <alpha-value> keeps bg-primary/20 etc. working with var()-based colours.
+          DEFAULT: 'color-mix(in srgb, var(--primary) calc(<alpha-value> * 100%), transparent)',
+          hover: 'color-mix(in srgb, var(--primary-hover) calc(<alpha-value> * 100%), transparent)',
+          pressed: 'color-mix(in srgb, var(--primary-pressed) calc(<alpha-value> * 100%), transparent)',
+          ink: 'var(--primary-ink)',
+          text: 'var(--primary-text)',
+          tint: 'var(--primary-tint)',
+        },
         cockpit: '#080E18',
         instrument: '#0C1525',
         console: '#142236',

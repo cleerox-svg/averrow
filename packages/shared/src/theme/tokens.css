@@ -5,6 +5,10 @@
    Never hardcode colors in components — use these vars.
    ============================================================ */
 
+/* Appearance system (accent x base x mode). Every rule inside is scoped under
+   :root[data-accent], so this import changes nothing until an accent is set. */
+@import "./appearance.css";
+
 :root {
   /* Native controls (select, time picker, scrollbars) follow the theme. */
   color-scheme: dark;
@@ -104,6 +108,49 @@
   --green-text: #3CB878;
   --red-text:   #f87171;
   --blue-text:  #5cc8ea;
+
+  /* ── L2 semantic tokens (Phase 3 appearance system) ──
+     In the legacy look (no data-accent) these resolve to today's values, so
+     components can migrate to the L2 names with no visible change. The
+     :root[data-accent] blocks in appearance.css override the literals; the
+     var() aliases below follow automatically. --focus-ring and --text-accent
+     are defined further down. All literals (no color-mix), so there is
+     nothing to fall back from on older browsers. ── */
+  --primary:         var(--amber);
+  --primary-hover:   #e8b24b;                      /* amber lifted 12% toward white */
+  --primary-pressed: var(--amber-dim);
+  --primary-ink:     var(--text-on-amber);
+  --primary-text:    var(--amber-text);
+  --primary-tint:    rgba(229, 168, 50, 0.12);
+  --primary-tint-strong: rgba(229, 168, 50, 0.22);
+  --primary-border:  rgba(229, 168, 50, 0.38);
+  --selection-bg:    rgba(229, 168, 50, 0.30);     /* ::selection is only styled under [data-accent] */
+  --text-selection:  var(--text-primary);
+  --link:            var(--amber-text);
+  --link-hover:      var(--amber-text);
+  --focus-ring-offset: 2px;
+  --disabled-bg:     rgba(255, 255, 255, 0.06);
+  --disabled-fg:     rgba(255, 255, 255, 0.38);
+  --disabled-border: rgba(255, 255, 255, 0.10);
+
+  /* Status siblings (aliases: they follow accent overrides of their targets). */
+  --status-warn:     var(--sev-medium);
+  --status-ok:       var(--healthy);
+  --status-bad:      var(--sev-critical);
+  --status-info:     var(--sev-low);
+  --healthy:         var(--green);
+  --tag-nexus:       #A78BFA;
+
+  /* Chart series: never amber or a severity hue, mutually distinguishable,
+     >= 3:1 non-text on --bg-card. Series 1 follows the accent. */
+  --chart-1:    var(--primary-text);
+  --chart-2:    #38bdf8;
+  --chart-3:    #2dd4bf;
+  --chart-4:    #f472b6;
+  --chart-5:    #34d399;
+  --chart-6:    var(--text-tertiary);
+  --chart-grid: rgba(255, 255, 255, 0.08);
+  --chart-axis: var(--text-tertiary);
 
   /* ── Text ── */
   --text-primary:   rgba(255, 255, 255, 0.92);
@@ -373,6 +420,15 @@
      light-mode-only value replaces the two hardcoded #6d28d9
      light-theme overrides in averrow-ops/src/index.css. */
   --nexus-text: #6d28d9;
+  --tag-nexus:  var(--nexus-text);
+  --disabled-bg:     rgba(15, 20, 35, 0.06);
+  --disabled-fg:     rgba(15, 20, 35, 0.38);
+  --disabled-border: rgba(15, 20, 35, 0.12);
+  --chart-2:    #0284c7;
+  --chart-3:    #0d9488;
+  --chart-4:    #db2777;
+  --chart-5:    #4d7c0f;
+  --chart-grid: rgba(15, 20, 35, 0.10);
 
   /* Account surface tokens, light overrides (accent hexes stay constant). */
   --violet-text:   #6d28d9;
