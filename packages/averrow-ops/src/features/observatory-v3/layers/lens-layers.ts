@@ -129,6 +129,8 @@ export interface LensLayerInput {
   projection?: Projection;
   /** Multiplier for halo radii (blooms, provider rings, their rings), 0.4..1: smaller toward the world view (lib/halo.ts). Default 1. */
   haloScale?: number;
+  /** Selection highlight colour: the resolved --primary (tokenReader), amber in the legacy look. Default amber. */
+  selectionColor?: Rgba;
 }
 
 /** Smallest radius (px) a scaled halo is drawn at: it must still read as a halo round its core. */
@@ -159,7 +161,11 @@ export interface LensFrame {
 // ─── Constants + small helpers ──────────────────────────────
 
 const CYAN: Rgba = [122, 234, 255, 255];
+/** Legacy selection colour (amber); the live one is `input.selectionColor` (the platform primary). */
 const AMBER: Rgba = [229, 168, 50, 255];
+const selColorOf = (input: LensLayerInput): Rgba => input.selectionColor ?? AMBER;
+/** updateTriggers key for the selection colour (the accessor closes over it). */
+const selKeyOf = (input: LensLayerInput): string => selColorOf(input).join(',');
 const VIOLET: Rgba = [167, 139, 250, 255];
 const SLATE: Rgba = [148, 163, 184, 255];
 const FUCHSIA: Rgba = [240, 171, 252, 255];
@@ -355,7 +361,7 @@ export function buildLensBaseLayers(input: LensLayerInput): Layer[] {
         id: 'baseline-selected',
         data: f as GeoData,
         stroked: true, filled: false,
-        getLineColor: AMBER, getLineWidth: 2, lineWidthUnits: 'pixels',
+        getLineColor: selColorOf(input), getLineWidth: 2, lineWidthUnits: 'pixels',
         pickable: false,
       }));
     }
@@ -429,6 +435,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = input.operations;
   if (!m || m.nodes.length === 0) return [];
   const { sel, reducedMotion, pick, labels } = input;
+  const selColor = selColorOf(input);
   const selOp = sel.opId;
   const range = opCountRange(m);
   const nodes = opNodesDrawOrder(m);
@@ -551,12 +558,12 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       getRadius: (n: OpNode) => opNodeRadius(n.opCount, range),
       getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? OP_DIM_CORE_ALPHA : Math.round(OP_ALPHA_BASE + 110 * (n.confidence ?? 0.5))),
       stroked: true,
-      getLineColor: (n: OpNode) => (n.country === sel.country || n.country === hiHub ? AMBER : withAlpha(CYAN, dim(n) ? 40 : 255)),
+      getLineColor: (n: OpNode) => (n.country === sel.country || n.country === hiHub ? selColor : withAlpha(CYAN, dim(n) ? 40 : 255)),
       getLineWidth: (n: OpNode) => (n.country === hiHub ? 3 : n.country === sel.country ? 2.5 : 1.2),
       lineWidthUnits: 'pixels',
       pickable: true,
       transitions: reducedMotion ? undefined : TR_DOT,
-      updateTriggers: { ...shared.updateTriggers, getFillColor: focusOp, getLineColor: [focusOp, sel.country, hiHub], getLineWidth: [sel.country, hiHub] },
+      updateTriggers: { ...shared.updateTriggers, getFillColor: focusOp, getLineColor: [focusOp, sel.country, hiHub, selKeyOf(input)], getLineWidth: [sel.country, hiHub] },
       onHover: (info: PickInfo<OpNode>) => pick.hover(info.object
         ? {
           x: info.x, y: info.y, title: countryName(info.object.country),
@@ -618,6 +625,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = tp ? tp.hosting : input.hosting;
   if (!m || m.rings.length === 0) return [];
   const { sel, reducedMotion, pick, labels } = input;
+  const selColor = selColorOf(input);
   const ringColor = (r: ProviderRing): Rgba => (tp ? tp.colors.get(r.id) ?? TAKEDOWN_SMALL_COLOR : TREND_COLORS[r.trend]);
   const animTime = reducedMotion ? 0 : frame.seconds;
   const { bullet, withTakedown } = hostingParts(m);
@@ -636,13 +644,13 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     // Takedowns measure: the fill IS the success share (sequential green), so it keeps its own alpha.
     getFillColor: (r: ProviderRing) => (tp ? withAlpha(ringColor(r), dimmed(r) ? 30 : Math.max(ringColor(r)[3], 110)) : withAlpha(TREND_COLORS[r.trend], dimmed(r) ? 14 : 82)),
     stroked: true,
-    getLineColor: (r: ProviderRing) => (r.id === sel.providerId ? AMBER : withAlpha(ringColor(r), dimmed(r) ? 50 : 235)),
+    getLineColor: (r: ProviderRing) => (r.id === sel.providerId ? selColor : withAlpha(ringColor(r), dimmed(r) ? 50 : 235)),
     getLineWidth: (r: ProviderRing) => (r.id === sel.providerId ? 3 : 1.5),
     lineWidthUnits: 'pixels',
     pickable: true,
     // Size / colour glide when the numbers move (a 15-minute refetch) and when a ring is picked, instead of snapping.
     transitions: reducedMotion ? undefined : TR_RING,
-    updateTriggers: { getFillColor: [sel.providerId, tp], getLineColor: [sel.providerId, tp], getLineWidth: sel.providerId },
+    updateTriggers: { getFillColor: [sel.providerId, tp], getLineColor: [sel.providerId, tp, selKeyOf(input)], getLineWidth: sel.providerId },
     onHover: (info: PickInfo<ProviderRing>) => pick.hover(info.object
       ? {
         x: info.x, y: info.y, title: info.object.name,
@@ -1009,6 +1017,7 @@ function velocityLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = input.velocity;
   if (!m || m.points.length === 0) return [];
   const { sel, reducedMotion, pick } = input;
+  const selColor = selColorOf(input);
   const animTime = reducedMotion ? 0 : frame.seconds;
   const selected = (p: VelocityPoint): boolean => p.cc === sel.country;
   const shared = {
@@ -1038,12 +1047,12 @@ function velocityLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       // Very-fast nodes are solid, fast-only ones lighter, so the two classes read without a legend lookup.
       getFillColor: (p: VelocityPoint) => withAlpha(VELOCITY_COLOR, p.hot ? 200 : 105),
       stroked: true,
-      getLineColor: (p: VelocityPoint) => (selected(p) ? AMBER : withAlpha(VELOCITY_COLOR, 255)),
+      getLineColor: (p: VelocityPoint) => (selected(p) ? selColor : withAlpha(VELOCITY_COLOR, 255)),
       getLineWidth: (p: VelocityPoint) => (selected(p) ? 2.5 : 1.2),
       lineWidthUnits: 'pixels',
       pickable: true,
       transitions: reducedMotion ? undefined : TR_DOT,
-      updateTriggers: { ...shared.updateTriggers, getLineColor: sel.country, getLineWidth: sel.country },
+      updateTriggers: { ...shared.updateTriggers, getLineColor: [sel.country, selKeyOf(input)], getLineWidth: sel.country },
       onHover: (info: PickInfo<VelocityPoint>) => pick.hover(info.object
         ? {
           x: info.x, y: info.y, title: countryName(info.object.cc),

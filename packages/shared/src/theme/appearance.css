@@ -42,6 +42,8 @@
   --violet-text: #d8b4fe;
   --cyan-text: #7adff7;
   --link: var(--primary-text);
+  --btn-primary-shadow: 0 0 #0000;
+  --btn-primary-border: transparent;
 }
 :root[data-accent][data-theme="light"] {
   --sev-critical: #f87171;
@@ -75,6 +77,8 @@
   --cyan-text: #005e6f;
   --healthy: var(--green-text);
   --link: var(--primary-text);
+  --btn-primary-shadow: 0 0 #0000;
+  --btn-primary-border: transparent;
 }
 :root[data-accent] ::selection {
   background: var(--selection-bg);
@@ -99,6 +103,7 @@
   --primary-tint: rgba(76, 92, 248, 0.14);
   --accent-bg: rgba(76, 92, 248, 0.1);
   --accent-bg-strong: rgba(76, 92, 248, 0.18);
+  --primary-glow: rgba(76, 92, 248, 0.24);
   --btn-primary-bg: #4c5cf8;
   --btn-primary-bg-hover: #4350ec;
   --nav-active-border: rgba(76, 92, 248, 0.38);
@@ -155,6 +160,7 @@
   --text-inverse: #151619;
 }
 :root[data-accent="indigo"]:not([data-base="navy"]):not([data-theme="light"]) .shell-v4 {
+  --primary-glow: rgba(76, 92, 248, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(60, 184, 120, 0.3);
@@ -191,6 +197,7 @@
   --text-inverse: #0e1624;
 }
 :root[data-accent="indigo"][data-base="navy"]:not([data-theme="light"]) .shell-v4 {
+  --primary-glow: rgba(76, 92, 248, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(60, 184, 120, 0.3);
@@ -241,6 +248,7 @@
   --primary-tint: rgba(50, 80, 240, 0.1);
   --accent-bg: rgba(50, 80, 240, 0.08);
   --accent-bg-strong: rgba(50, 80, 240, 0.18);
+  --primary-glow: rgba(50, 80, 240, 0.24);
   --btn-primary-bg: #3250f0;
   --btn-primary-bg-hover: #2941d9;
   --nav-active-border: rgba(50, 80, 240, 0.45);
@@ -273,6 +281,7 @@
   --link-hover: #1b2c89;
 }
 :root[data-accent="indigo"][data-theme="light"] .shell-v4 {
+  --primary-glow: rgba(50, 80, 240, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(60, 184, 120, 0.3);
@@ -299,6 +308,7 @@
   --primary-tint: rgba(143, 67, 248, 0.14);
   --accent-bg: rgba(143, 67, 248, 0.1);
   --accent-bg-strong: rgba(143, 67, 248, 0.18);
+  --primary-glow: rgba(143, 67, 248, 0.24);
   --btn-primary-bg: #8f43f8;
   --btn-primary-bg-hover: #8338ec;
   --nav-active-border: rgba(143, 67, 248, 0.38);
@@ -355,6 +365,7 @@
   --text-inverse: #161619;
 }
 :root[data-accent="violet"]:not([data-base="navy"]):not([data-theme="light"]) .shell-v4 {
+  --primary-glow: rgba(143, 67, 248, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(60, 184, 120, 0.3);
@@ -391,6 +402,7 @@
   --text-inverse: #151325;
 }
 :root[data-accent="violet"][data-base="navy"]:not([data-theme="light"]) .shell-v4 {
+  --primary-glow: rgba(143, 67, 248, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(60, 184, 120, 0.3);
@@ -441,6 +453,7 @@
   --primary-tint: rgba(126, 42, 227, 0.1);
   --accent-bg: rgba(126, 42, 227, 0.08);
   --accent-bg-strong: rgba(126, 42, 227, 0.18);
+  --primary-glow: rgba(126, 42, 227, 0.24);
   --btn-primary-bg: #7e2ae3;
   --btn-primary-bg-hover: #6f18cd;
   --nav-active-border: rgba(126, 42, 227, 0.45);
@@ -473,6 +486,7 @@
   --link-hover: #481582;
 }
 :root[data-accent="violet"][data-theme="light"] .shell-v4 {
+  --primary-glow: rgba(126, 42, 227, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(60, 184, 120, 0.3);
@@ -499,6 +513,7 @@
   --primary-tint: rgba(244, 245, 247, 0.08);
   --accent-bg: rgba(244, 245, 247, 0.1);
   --accent-bg-strong: rgba(244, 245, 247, 0.18);
+  --primary-glow: rgba(244, 245, 247, 0.24);
   --btn-primary-bg: #f4f5f7;
   --btn-primary-bg-hover: #dcdee1;
   --nav-active-border: rgba(244, 245, 247, 0.38);
@@ -559,6 +574,7 @@
   --text-inverse: #151617;
 }
 :root[data-accent="mono"]:not([data-base="navy"]):not([data-theme="light"]) .shell-v4 {
+  --primary-glow: rgba(244, 245, 247, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(60, 184, 120, 0.3);
@@ -595,6 +611,7 @@
   --text-inverse: #0f1720;
 }
 :root[data-accent="mono"][data-base="navy"]:not([data-theme="light"]) .shell-v4 {
+  --primary-glow: rgba(244, 245, 247, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(60, 184, 120, 0.3);
@@ -645,6 +662,7 @@
   --primary-tint: rgba(24, 27, 31, 0.06);
   --accent-bg: rgba(24, 27, 31, 0.048);
   --accent-bg-strong: rgba(24, 27, 31, 0.18);
+  --primary-glow: rgba(24, 27, 31, 0.24);
   --btn-primary-bg: #181b1f;
   --btn-primary-bg-hover: #2b2e33;
   --nav-active-border: rgba(24, 27, 31, 0.45);
@@ -681,6 +699,7 @@
   --link-hover: #101214;
 }
 :root[data-accent="mono"][data-theme="light"] .shell-v4 {
+  --primary-glow: rgba(24, 27, 31, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(60, 184, 120, 0.3);
@@ -707,6 +726,7 @@
   --primary-tint: rgba(160, 248, 20, 0.14);
   --accent-bg: rgba(160, 248, 20, 0.1);
   --accent-bg-strong: rgba(160, 248, 20, 0.18);
+  --primary-glow: rgba(160, 248, 20, 0.24);
   --btn-primary-bg: #a0f814;
   --btn-primary-bg-hover: #bfff7f;
   --nav-active-border: rgba(160, 248, 20, 0.38);
@@ -763,6 +783,7 @@
   --text-inverse: #161614;
 }
 :root[data-accent="lime"]:not([data-base="navy"]):not([data-theme="light"]) .shell-v4 {
+  --primary-glow: rgba(160, 248, 20, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(16, 185, 129, 0.3);
@@ -799,6 +820,7 @@
   --text-inverse: #0b1723;
 }
 :root[data-accent="lime"][data-base="navy"]:not([data-theme="light"]) .shell-v4 {
+  --primary-glow: rgba(160, 248, 20, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(16, 185, 129, 0.3);
@@ -849,6 +871,7 @@
   --primary-tint: rgba(26, 34, 19, 0.1);
   --accent-bg: rgba(26, 34, 19, 0.08);
   --accent-bg-strong: rgba(26, 34, 19, 0.18);
+  --primary-glow: rgba(26, 34, 19, 0.24);
   --btn-primary-bg: #1a2213;
   --btn-primary-bg-hover: #29351f;
   --nav-active-border: rgba(138, 216, 0, 0.45);
@@ -884,6 +907,7 @@
   --link-hover: #1b260c;
 }
 :root[data-accent="lime"][data-theme="light"] .shell-v4 {
+  --primary-glow: rgba(26, 34, 19, 0.34);
   --red-glow: rgba(200, 60, 60, 0.34);
   --blue-glow: rgba(10, 138, 181, 0.3);
   --green-glow: rgba(4, 120, 87, 0.3);

@@ -48,6 +48,7 @@ import type { Layer, PickingInfo } from '@deck.gl/core';
 import { TripsLayer } from '@/lib/trips-layer';
 import type { LngLat } from '@/lib/country-centroids';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useTokenColors } from '@averrow/shared/theme';
 import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
 import {
   getSeverityColor, getArcColor, heatmapWeight, sevText, typeLabel, HEATMAP_COLOR_RANGE,
@@ -124,6 +125,9 @@ const PICK_RADIUS_TOUCH = 16;
 const EMPTY_THREATS: ThreatPoint[] = [];
 const EMPTY_ARCS: ArcData[] = [];
 const EMPTY_HEAT: HeatmapPoint[] = [];
+/** Token read for the selection highlight, and its legacy value when it does not resolve (no DOM / jsdom). */
+const PRIMARY_TOKEN = ['--primary'] as const;
+const SELECTION_FALLBACK: Rgba = [229, 168, 50, 255];
 /** Width (px) of the invisible arc-picking corridor, on top of the pick radius: a corridor is thin, a fingertip is not. */
 const ARC_PICK_PX = { fine: 10, touch: 20 } as const;
 /** The loop keeps running this long after a trigger (ring life) so spawned rings can finish. */
@@ -765,6 +769,12 @@ function ThreatMapV3Inner({
   const selectedArc = selection?.kind === 'arc' ? selection.arc : null;
   const selectedNodeId = selectedNode ? nodeKey(selectedNode) : null;
   const selectedArcId = selectedArc ? arcKey(selectedArc) : null;
+  // Selection ring / arc follow the platform primary (amber in the legacy look); re-read on appearance change.
+  const { colors: tokenColors } = useTokenColors(PRIMARY_TOKEN);
+  // Keyed on the colour VALUE, not the read: an appearance change that leaves --primary
+  // as it was (e.g. a mode switch in the legacy look) must not rebuild the layers.
+  const selKey = (tokenColors['--primary'] ?? SELECTION_FALLBACK).join(',');
+  const selRgba = useMemo(() => selKey.split(',').map(Number) as Rgba, [selKey]);
 
   // ─── Static layers (rebuilt only when their data / style inputs change) ──
   const staticLayers = useMemo(() => {
@@ -875,7 +885,7 @@ function ThreatMapV3Inner({
           getRadius: 14,
           stroked: true, filled: false,
           lineWidthUnits: 'pixels', getLineWidth: 2,
-          getLineColor: [229, 168, 50, 255],
+          getLineColor: [selRgba[0], selRgba[1], selRgba[2], 255],
         }));
       }
       if (selectedArc) {
@@ -884,7 +894,7 @@ function ThreatMapV3Inner({
           data: [selectedArc],
           getPath: arcPath,
           updateTriggers: { getPath: projection },
-          getColor: [229, 168, 50, 230],
+          getColor: [selRgba[0], selRgba[1], selRgba[2], 230],
           getWidth: 2.5, widthUnits: 'pixels',
         }));
       }
@@ -906,7 +916,7 @@ function ThreatMapV3Inner({
     // an equal object doesn't rebuild.
   }, [
     nodeData, nodeTrans, arcsVisible, geoArcs, targetNodes, beamsOn, policy.staticBeams, showNodes, colorBy, mapMode, geoHeat,
-    isMobile, handlers, selectedNodeId, selectedArcId, projection,
+    isMobile, handlers, selectedNodeId, selectedArcId, projection, selRgba,
   ]);
 
   // Drop any stale hover tooltip when the scene changes (the hovered layer is gone).
@@ -1017,8 +1027,8 @@ function ThreatMapV3Inner({
   const lensInput = useMemo<LensLayerInput | null>(() => {
     if (!lens || mapMode === 'heatmap') return null;
     const pick: LensPickHandlers = { hover: handlers.hoverLens, click: handlers.clickLens };
-    return { ...lens, labels, reducedMotion, isMobile, pick, projection, haloScale: haloView.scale };
-  }, [lens, mapMode, labels, reducedMotion, isMobile, handlers, projection, haloView.scale]);
+    return { ...lens, labels, reducedMotion, isMobile, pick, projection, haloScale: haloView.scale, selectionColor: selRgba };
+  }, [lens, mapMode, labels, reducedMotion, isMobile, handlers, projection, haloView.scale, selRgba]);
   const lensBase = useMemo(() => (lensInput ? buildLensBaseLayers(lensInput) : []), [lensInput]);
   const lensAnimating = !!lensInput && policy.ambient && lensNeedsFrame(lensInput, { clockPlaying });
 

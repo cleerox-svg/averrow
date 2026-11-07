@@ -16,7 +16,7 @@ export function Table({ children, className, label, wrapperClassName, ...props }
   return (
     <div
       className={cn(
-        'overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--amber-text)]',
+        'overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
         wrapperClassName,
       )}
       {...(label ? { tabIndex: 0, role: 'region', 'aria-label': label } : {})}
@@ -104,17 +104,18 @@ export interface DataTableProps<T> {
 
 const ALIGN = { left: 'text-left', right: 'text-right', center: 'text-center' } as const;
 
-// Standard data-row hover (AVERROW_UI_STANDARD "Table row standard"): amber
-// left rail + soft gradient; severity rows swap the amber for the severity hue.
+// Standard data-row hover (AVERROW_UI_STANDARD "Table row standard"): primary
+// (amber in the legacy look) left rail + soft gradient; severity rows swap it for
+// the severity hue (medium stays the status amber).
 const ROW_BASE =
   'transition-colors duration-100 motion-reduce:transition-none [&>td:first-child]:border-l-2 [&>td:first-child]:border-l-transparent ' +
-  'hover:[background:linear-gradient(90deg,rgba(229,168,50,0.04)_0%,transparent_40%)] hover:[&>td:first-child]:border-l-[rgba(229,168,50,0.45)] ' +
+  'hover:[background:linear-gradient(90deg,color-mix(in_srgb,var(--primary)_4%,transparent)_0%,transparent_40%)] hover:[&>td:first-child]:border-l-[color:color-mix(in_srgb,var(--primary)_45%,transparent)] ' +
   'data-[severity=critical]:hover:[background:linear-gradient(90deg,rgba(239,68,68,0.06)_0%,transparent_40%)] data-[severity=critical]:hover:[&>td:first-child]:border-l-[rgba(239,68,68,0.50)] ' +
   'data-[severity=high]:hover:[background:linear-gradient(90deg,rgba(249,115,22,0.06)_0%,transparent_40%)] data-[severity=high]:hover:[&>td:first-child]:border-l-[rgba(249,115,22,0.50)] ' +
   'data-[severity=medium]:hover:[background:linear-gradient(90deg,rgba(229,168,50,0.06)_0%,transparent_40%)] data-[severity=medium]:hover:[&>td:first-child]:border-l-[rgba(229,168,50,0.50)] ' +
   'data-[severity=low]:hover:[background:linear-gradient(90deg,rgba(59,130,246,0.06)_0%,transparent_40%)] data-[severity=low]:hover:[&>td:first-child]:border-l-[rgba(59,130,246,0.50)]';
 
-const FOCUS_RING = 'focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--amber-text)]';
+const FOCUS_RING = 'focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)]';
 
 function SortIcon({ dir }: { dir: SortDir | null }) {
   return (
@@ -210,7 +211,7 @@ export function DataTable<T>({
                     key={col.key}
                     scope="col"
                     aria-sort={sortable ? (dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none') : undefined}
-                    style={{ width: col.width, color: active ? 'var(--amber)' : 'var(--text-secondary)' }}
+                    style={{ width: col.width, color: active ? 'var(--primary)' : 'var(--text-secondary)' }}
                     className={cn('font-mono text-[10px] uppercase tracking-[0.12em] font-normal select-none', ALIGN[col.align ?? 'left'], !sortable && pad)}
                   >
                     {sortable ? (

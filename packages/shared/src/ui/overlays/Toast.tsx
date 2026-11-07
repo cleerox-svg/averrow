@@ -175,7 +175,7 @@ function ToastItem({ entry, onDismiss }: { entry: ToastEntry; onDismiss: () => v
               onDismiss();
             }}
             className={cn(
-              '-my-2 inline-flex min-h-[44px] shrink-0 items-center rounded-[10px] px-3 text-[14px] font-bold text-[var(--amber-text)] outline-none hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)]',
+              '-my-2 inline-flex min-h-[44px] shrink-0 items-center rounded-[10px] px-3 text-[14px] font-bold text-[var(--primary-text)] outline-none hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)]',
               FOCUS_RING,
               sticky ? '' : '-mr-2',
             )}

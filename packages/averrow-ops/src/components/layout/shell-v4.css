@@ -18,7 +18,7 @@
   background:
     radial-gradient(1200px 700px at 80% -12%, rgba(200,60,60,0.14), transparent 60%),
     radial-gradient(1100px 800px at 0% 112%, rgba(10,138,181,0.12), transparent 55%),
-    radial-gradient(900px 600px at 60% 120%, rgba(229,168,50,0.07), transparent 60%);
+    radial-gradient(900px 600px at 60% 120%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 60%);
 }
 .shell-v4::after {
   content: "";
@@ -73,13 +73,21 @@
 }
 .v4-item.active::before {
   content: ""; position: absolute; left: -12px; top: 6px; bottom: 6px; width: 3px;
-  border-radius: 3px; background: var(--amber); box-shadow: 0 0 12px var(--amber);
+  border-radius: 3px; background: var(--primary); box-shadow: 0 0 12px var(--primary);
 }
+/* Accents (P3-2a review): the indicator is a flat bar, no glow. Legacy keeps the amber glow. */
+:root[data-accent] .v4-item.active::before { box-shadow: none; }
 .v4-item .count {
   margin-left: auto; font-family: var(--font-mono, ui-monospace); font-size: 10px; font-weight: 600;
-  /* triage-queue count, not a critical signal: neutral amber */
-  background: color-mix(in srgb, var(--amber) 16%, transparent); color: var(--amber-text); padding: 1px 7px; border-radius: 20px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 32%, transparent);
+  /* Triage-queue count, not a critical signal. Legacy look: amber pill. Under an
+     accent it is a neutral pill (rule below): a count is not a primary action. */
+  background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary-text); padding: 1px 7px; border-radius: 20px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 32%, transparent);
+}
+:root[data-accent] .v4-item .count {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-secondary);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 .v4-foot { border-top: 1px solid var(--border-base); padding: 10px 10px 4px; display: flex; align-items: center; gap: 7px; }
 .v4-foot button { min-width: 44px; min-height: 44px; display: grid; place-items: center; }
@@ -99,7 +107,7 @@
 .v4-banner-wrap { padding: 16px 24px 0; } /* page gutter (.v4-page--padded) */
 .v4-banner-wrap:empty { display: none; }
 .v4-cmdk { display: flex; align-items: center; gap: 9px; background: var(--bg-card-deep, rgba(14,20,34,0.92)); border: 1px solid var(--border-base); border-radius: 10px; padding: 8px 12px; color: var(--text-tertiary); font-size: 13px; width: 300px; cursor: text; text-align: left; font-family: inherit; transition: border-color .14s ease, color .14s ease; }
-.v4-cmdk:hover { border-color: rgba(229,168,50,.4); color: var(--text-secondary); }
+.v4-cmdk:hover { border-color: color-mix(in srgb, var(--primary) 40%, transparent); color: var(--text-secondary); }
 .v4-cmdk kbd { margin-left: auto; font-family: var(--font-mono, ui-monospace); font-size: 10px; background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border-base); color: var(--text-secondary); }
 .v4-live { display: flex; align-items: center; gap: 7px; font-family: var(--font-mono, ui-monospace); font-size: 11px; letter-spacing: .1em; color: var(--green-text); margin-left: auto; }
 .v4-live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: v4ping 1.8s ease-in-out infinite; }
@@ -116,7 +124,7 @@
 .v4-item:focus-visible, .v4-hamburger:focus-visible, .v4-drawer-close:focus-visible,
 .v4-cmdk:focus-visible, .v4-foot button:focus-visible,
 .v4-top button:focus-visible {
-  outline: 2px solid var(--amber); outline-offset: 2px;
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
 }
 [data-theme="light"] .v4-item:focus-visible, [data-theme="light"] .v4-hamburger:focus-visible,
 [data-theme="light"] .v4-drawer-close:focus-visible, [data-theme="light"] .v4-cmdk:focus-visible,
@@ -199,8 +207,8 @@
   width: 100%; max-width: 560px; max-height: 64vh;
   display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg-card-deep, rgba(14,20,34,.98));
-  border: 1px solid rgba(229,168,50,.28); border-radius: 14px;
-  box-shadow: 0 24px 70px rgba(0,0,0,.6), 0 0 30px rgba(229,168,50,.12);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent); border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0,0,0,.6), 0 0 30px color-mix(in srgb, var(--primary) 12%, transparent);
   animation: cmdkRise .14s ease;
 }
 @keyframes cmdkRise { from { transform: translateY(-8px); opacity: .6; } to { transform: none; opacity: 1; } }
@@ -231,11 +239,11 @@
   background: transparent; color: var(--text-secondary);
   font-size: 14px; font-family: inherit; text-align: left;
 }
-.cmdk-item.active { background: rgba(229,168,50,.13); color: var(--text-primary); }
+.cmdk-item.active { background: color-mix(in srgb, var(--primary) 13%, transparent); color: var(--text-primary); }
 .cmdk-item-icon { flex: 0 0 auto; color: var(--text-tertiary); }
-.cmdk-item.active .cmdk-item-icon { color: var(--amber-text); }
+.cmdk-item.active .cmdk-item-icon { color: var(--primary-text); }
 .cmdk-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cmdk-item-enter { flex: 0 0 auto; color: var(--amber-text); opacity: .8; }
+.cmdk-item-enter { flex: 0 0 auto; color: var(--primary-text); opacity: .8; }
 .cmdk-loading { flex: 0 0 auto; color: var(--text-tertiary); }
 
 /* data-search rows: label + sublabel stacked, both truncating independently */
@@ -245,8 +253,8 @@
 .cmdk-item.active .cmdk-item-sublabel { color: var(--text-secondary); }
 
 /* "View all results for …" trailer row per data group */
-.cmdk-viewall { color: var(--amber-text); }
-.cmdk-viewall .cmdk-item-icon { color: var(--amber-text); opacity: .8; }
+.cmdk-viewall { color: var(--primary-text); }
+.cmdk-viewall .cmdk-item-icon { color: var(--primary-text); opacity: .8; }
 .cmdk-viewall .cmdk-item-label { font-weight: 500; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -268,6 +276,9 @@
   --card-shadow: 0 18px 50px rgba(0, 0, 0, 0.58), 0 1px 0 rgba(255, 255, 255, 0.04);
   --card-radius: 18px;
   --amber-glow: rgba(229, 168, 50, 0.34);
+  /* L2 twin: --primary-glow is a literal at :root, so it needs its own override
+     here (legacy value = this --amber-glow; accents: appearance.css). */
+  --primary-glow: rgba(229, 168, 50, 0.34);
   --red-glow:   rgba(200, 60, 60, 0.34);
   --blue-glow:  rgba(10, 138, 181, 0.30);
   --green-glow: rgba(60, 184, 120, 0.30);

@@ -29,6 +29,23 @@ describe('Button', () => {
     expect(el.style.background).toContain('linear-gradient');
   });
 
+  it('marks only the primary variant with ds-btn-primary (accent hover/press rules in tokens.css)', () => {
+    const { container } = render(<><Button>P</Button><Button variant="secondary">S</Button></>);
+    const [p, s] = Array.from(container.querySelectorAll('button'));
+    expect(p!.className).toContain('ds-btn-primary');
+    expect(s!.className).not.toContain('ds-btn-primary');
+  });
+
+  it('primary falls back to the legacy amber look when --btn-primary-* are unset', () => {
+    const { container } = render(<Button>P</Button>);
+    const el = container.firstChild as HTMLElement;
+    const attr = el.getAttribute('style') ?? '';
+    expect(attr).toContain('var(--btn-primary-bg, linear-gradient(135deg, var(--primary), var(--primary-pressed)))');
+    expect(attr).toContain('var(--btn-primary-ink, #000)');
+    expect(attr).toContain('var(--btn-primary-border, color-mix(in srgb, var(--primary) 60%, transparent))');
+    expect(attr).toContain('var(--btn-primary-shadow, 0 4px 16px var(--primary-glow), 0 2px 4px rgba(0, 0, 0, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.30), inset 0 -1px 0 rgba(0, 0, 0, 0.20))');
+  });
+
   it('applies size styles', () => {
     const { container } = render(<Button size="sm">Small</Button>);
     const el = container.firstChild as HTMLElement;

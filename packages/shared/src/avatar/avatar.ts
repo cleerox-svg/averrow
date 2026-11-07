@@ -65,5 +65,9 @@ export function colorForUserId(userId: string | null | undefined): string {
   return COLOR_PALETTE[hash % COLOR_PALETTE.length]!;
 }
 
-/** Static self-avatar color — top-bar pill, current-user indicators. */
-export const SELF_AVATAR_COLOR = 'var(--amber)';
+/**
+ * Self-avatar color — top-bar pill, current-user indicators. Follows the
+ * platform primary: amber in the legacy look (no data-accent), the accent
+ * once one is set (owner decision, P3-2a).
+ */
+export const SELF_AVATAR_COLOR = 'var(--primary)';

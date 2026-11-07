@@ -36,9 +36,9 @@ export interface TabsProps {
 // inside an overflow-x-auto scroller, so it uses a negative offset to keep
 // the outline from being clipped.
 const FOCUS_RING =
-  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--amber-text)]';
+  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]';
 const FOCUS_RING_INSET =
-  'focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--amber-text)]';
+  'focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)]';
 
 export function Tabs({
   tabs, activeTab, onChange, variant = 'pills', size = 'sm', sticky = false, className,
@@ -122,7 +122,7 @@ export function Tabs({
     const count = tab.count !== undefined && (
       <span
         className="font-mono"
-        style={{ fontSize: md ? 12 : variant === 'underline' ? 10 : 9, color: active ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: active ? 0.8 : 1 }}
+        style={{ fontSize: md ? 12 : variant === 'underline' ? 10 : 9, color: active ? 'var(--primary-text)' : 'var(--text-secondary)', opacity: active ? 0.8 : 1 }}
       >
         {tab.count}
       </span>
@@ -130,7 +130,7 @@ export function Tabs({
     const badge = tab.badge && (
       <span
         className="rounded-full px-[5px] py-px text-[9px] font-black"
-        style={{ background: active ? 'var(--amber)' : 'var(--border-strong)', color: active ? 'var(--bg-page)' : 'var(--text-secondary)' }}
+        style={{ background: active ? 'var(--primary)' : 'var(--border-strong)', color: active ? 'var(--btn-primary-ink, var(--bg-page))' : 'var(--text-secondary)' }}
       >
         {tab.badge}
       </span>
@@ -143,8 +143,8 @@ export function Tabs({
           {...common}
           className={cn('shrink-0 inline-flex items-center gap-1.5 whitespace-nowrap px-4 py-3 text-[11px] font-bold border-b-2 bg-transparent cursor-pointer', md && 'min-h-[44px] text-[13px] max-[479px]:px-3', FOCUS_RING_INSET)}
           style={{
-            borderBottomColor: active ? 'var(--amber)' : 'transparent',
-            color: active ? 'var(--amber-text)' : 'var(--text-secondary)',
+            borderBottomColor: active ? 'var(--primary)' : 'transparent',
+            color: active ? 'var(--primary-text)' : 'var(--text-secondary)',
             transition: 'var(--transition-fast)',
           }}
         >
@@ -160,9 +160,9 @@ export function Tabs({
           className={cn('flex-1 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-2 py-[7px] font-mono text-[10px] font-bold tracking-[0.08em] cursor-pointer', md && 'min-h-[44px] text-[13px]', FOCUS_RING)}
           style={{
             border: `1px solid ${active ? 'var(--pill-active-border)' : 'transparent'}`,
-            background: active ? 'linear-gradient(135deg, var(--amber-glow), var(--pill-active-fill-2-strong))' : 'transparent',
-            color: active ? 'var(--amber-text)' : 'var(--text-secondary)',
-            boxShadow: active ? 'inset 0 1px 0 var(--pill-active-rim-strong), 0 0 12px var(--amber-glow)' : 'none',
+            background: active ? 'linear-gradient(135deg, var(--primary-glow), var(--pill-active-fill-2-strong))' : 'transparent',
+            color: active ? 'var(--primary-text)' : 'var(--text-secondary)',
+            boxShadow: active ? 'inset 0 1px 0 var(--pill-active-rim-strong), 0 0 12px var(--primary-glow)' : 'none',
             transition: 'var(--transition-fast)',
           }}
         >
@@ -178,7 +178,7 @@ export function Tabs({
         style={{
           border: `1px solid ${active ? 'var(--pill-active-border)' : 'var(--border-base)'}`,
           background: active ? 'linear-gradient(135deg, var(--pill-active-fill-1), var(--pill-active-fill-2))' : 'transparent',
-          color: active ? 'var(--amber-text)' : 'var(--text-secondary)',
+          color: active ? 'var(--primary-text)' : 'var(--text-secondary)',
           boxShadow: active ? 'inset 0 1px 0 var(--pill-active-rim)' : 'none',
           transition: 'var(--transition-fast)',
         }}

@@ -38,7 +38,7 @@ import { EventRail } from './components/EventRail';
 import { PanelTabs, PanelTabPanels, type PanelTab } from './components/PanelTabs';
 import { PanelDock } from './components/PanelDock';
 import { useObservatoryEvents } from '@/hooks/useObservatoryEvents';
-import { useTheme } from '@/design-system/hooks';
+import { useAppearanceVersion } from '@averrow/shared/theme';
 import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle, Search as SearchIcon, SlidersHorizontal } from 'lucide-react';
 import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -150,7 +150,8 @@ export function ObservatoryV3() {
   const { isMobile, width: viewportWidth } = useBreakpoint();
   const reducedMotion = usePrefersReducedMotion();
   const canSeeTakedowns = useCanSeeTakedowns();
-  const { resolvedTheme } = useTheme();
+  // Bumps on every data-theme / data-accent / data-base change on <html>.
+  const appearanceVersion = useAppearanceVersion();
   const { state, update } = useObservatoryUrlState();
   const { period, colorBy, layers, lens, view, wall } = state;
   // `measure=takedowns` needs manage_takedowns (the server refuses it to every other role): a viewer without it
@@ -294,8 +295,8 @@ export function ObservatoryV3() {
   const isBotMode = needs.bot;
   const { data: botData, isLoading: botLoading, error: botError, refetch: refetchBot } = useBotTraffic(7, { enabled: isBotMode });
   const botPoints = useMemo(() => buildBotDensityPoints(botData?.bot_density), [botData?.bot_density]);
-  // Colour stops are tokens read from the DOM: re-resolved after the theme attribute lands.
-  const botStops = useMemo(() => resolveScaleStops(), [resolvedTheme]);
+  // Colour stops are tokens read from the DOM: re-resolved after any appearance attribute lands.
+  const botStops = useMemo(() => resolveScaleStops(), [appearanceVersion]);
   const botGlobalAvg = resolveGlobalAvg(botData);
   const botAsOf = botData?.as_of?.bot_density ?? null;
   const botModel = useMemo(

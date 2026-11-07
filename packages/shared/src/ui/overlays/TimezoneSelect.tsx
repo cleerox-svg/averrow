@@ -290,11 +290,11 @@ export function TimezoneSelect({
           {row.label}
         </span>
         {selected ? (
-          <svg aria-hidden width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--amber-text)" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+          <svg aria-hidden width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary-text)" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
             <path d="m5 12.5 4.5 4.5L19 7.5" />
           </svg>
         ) : opts.detected ? (
-          <span className="shrink-0 text-[13px] font-semibold text-[var(--amber-text)]">Use this</span>
+          <span className="shrink-0 text-[13px] font-semibold text-[var(--primary-text)]">Use this</span>
         ) : null}
       </div>
     );
@@ -314,7 +314,7 @@ export function TimezoneSelect({
         onClick={() => setOpen(true)}
         className={cn(
           controlBase,
-          'inline-flex items-center justify-between gap-2 text-left cursor-pointer hover:border-[var(--border-strong)] focus-visible:border-[var(--focus-ring,var(--amber))]',
+          'inline-flex items-center justify-between gap-2 text-left cursor-pointer hover:border-[var(--border-strong)] focus-visible:border-[var(--focus-ring)]',
           className,
         )}
       >
@@ -346,7 +346,7 @@ export function TimezoneSelect({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onSearchKeyDown}
-          className="mb-3 h-11 w-full rounded-[10px] border border-[var(--border-base)] bg-[var(--bg-input,var(--bg-card-deep))] px-3.5 text-[16px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] focus:border-[var(--amber)] focus:ring-2 focus:ring-[var(--focus-ring,var(--amber))] md:text-[15px]"
+          className="mb-3 h-11 w-full rounded-[10px] border border-[var(--border-base)] bg-[var(--bg-input,var(--bg-card-deep))] px-3.5 text-[16px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--focus-ring)] md:text-[15px]"
         />
         <div
           id={listId}

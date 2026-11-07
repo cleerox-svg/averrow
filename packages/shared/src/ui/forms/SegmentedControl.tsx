@@ -43,7 +43,7 @@ export const SegmentedControl = React.forwardRef<React.ElementRef<typeof RadioGr
             'text-[var(--text-secondary)] border border-transparent cursor-pointer',
             'transition-[background,color,box-shadow] duration-[120ms] motion-reduce:transition-none',
             'hover:text-[var(--text-primary)]',
-            'data-[state=checked]:text-[var(--amber-text,var(--amber))] data-[state=checked]:border-[var(--pill-active-border)]',
+            'data-[state=checked]:text-[var(--primary-text)] data-[state=checked]:border-[var(--pill-active-border)]',
             'data-[state=checked]:[background:linear-gradient(135deg,var(--pill-active-fill-1),var(--pill-active-fill-2))]',
             'data-[state=checked]:shadow-[inset_0_1px_0_var(--pill-active-rim)]',
             FOCUS_RING,

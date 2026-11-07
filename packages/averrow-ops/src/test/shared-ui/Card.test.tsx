@@ -56,17 +56,17 @@ describe('Card', () => {
   });
 
   describe('variants', () => {
-    it('active uses the amber border + glow', () => {
+    it('active uses the primary border + glow (amber in the legacy look)', () => {
       const el = root(render(<Card variant="active">x</Card>).container);
-      expect(el.style.border).toContain('var(--amber-border)');
-      expect(el.style.boxShadow).toContain('var(--amber-glow)');
+      expect(el.style.border).toContain('color-mix(in srgb, var(--primary) 25%, transparent)');
+      expect(el.style.boxShadow).toContain('var(--primary-glow)');
     });
 
     it('active + accent tints border and glow with the accent colour', () => {
       const el = root(render(<Card variant="active" accent="var(--blue)">x</Card>).container);
       expect(el.style.border).toContain('color-mix(in srgb, var(--blue)');
       expect(el.style.boxShadow).toContain('color-mix(in srgb, var(--blue)');
-      expect(el.style.boxShadow).not.toContain('var(--amber-glow)');
+      expect(el.style.boxShadow).not.toContain('var(--primary-glow)');
     });
 
     it('accent is ignored outside the active variant', () => {

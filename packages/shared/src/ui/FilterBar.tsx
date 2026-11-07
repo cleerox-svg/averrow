@@ -43,7 +43,7 @@ export interface FilterBarProps<V extends string = string> {
 
 // Outline-based: the active pill's inline boxShadow would override a ring.
 const FOCUS_RING =
-  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--amber-text)]';
+  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]';
 
 // Pills are toggle buttons (`aria-pressed`) in a labelled group: filters are
 // "show this subset" switches, not a form-style radio selection, and a
@@ -76,7 +76,7 @@ export function FilterBar<V extends string = string>({
                 'rounded-lg px-3 text-[12px] font-sans',
                 md && 'h-[40px] text-[13px] [@media(pointer:coarse)]:h-11',
                 'bg-[var(--bg-input)] text-[var(--text-primary)] border border-[var(--border-base)] placeholder:text-[var(--text-secondary)]',
-                'focus-visible:outline-none focus-visible:border-[var(--amber-border)] focus-visible:ring-2 focus-visible:ring-[var(--amber)]',
+                'focus-visible:outline-none focus-visible:border-[color:color-mix(in_srgb,var(--primary)_25%,transparent)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
               )}
             />
             {searchAccessory && <div className="shrink-0">{searchAccessory}</div>}
@@ -108,14 +108,14 @@ export function FilterBar<V extends string = string>({
                   style={{
                     border: `1px solid ${isActive ? 'var(--pill-active-border)' : 'var(--border-base)'}`,
                     background: isActive ? 'linear-gradient(135deg, var(--pill-active-fill-1), var(--pill-active-fill-2))' : 'transparent',
-                    color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)',
+                    color: isActive ? 'var(--primary-text)' : 'var(--text-secondary)',
                     boxShadow: isActive ? 'inset 0 1px 0 var(--pill-active-rim)' : 'none',
                     transition: 'var(--transition-fast)',
                   }}
                 >
                   {f.label}
                   {f.count !== undefined && (
-                    <span aria-hidden="true" className={md ? 'font-mono text-[11px]' : 'text-[9px]'} style={{ color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: isActive ? 0.8 : 1 }}>
+                    <span aria-hidden="true" className={md ? 'font-mono text-[11px]' : 'text-[9px]'} style={{ color: isActive ? 'var(--primary-text)' : 'var(--text-secondary)', opacity: isActive ? 0.8 : 1 }}>
                       {f.count}
                     </span>
                   )}

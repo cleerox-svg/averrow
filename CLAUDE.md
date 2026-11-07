@@ -316,7 +316,7 @@ SELF_AVATAR_COLOR                           // var(--amber)
 ```
 
 **Color rule:**
-- Self-avatar (top bar, profile dropdown, profile identity card) → always `SELF_AVATAR_COLOR` (static amber).
+- Self-avatar (top bar, profile dropdown, profile identity card) → always `SELF_AVATAR_COLOR`, which follows `--primary` (amber in the legacy look, the accent after the flip).
 - Non-self avatars (admin user lists, attribution rows, comment authors) → `colorForUserId(user.id)` so the same user gets the same color across the app.
 
 **Never render `user.avatar_url` / Google profile picture.** Drop the prop from any `<img>` or Avatar call site that previously rendered it. Initials only. See `docs/SHARED_LOGIN_SPEC.md` §3.

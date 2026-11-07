@@ -1,6 +1,6 @@
 // Averrow — ThreatAreaChart
 // Full-size area chart for page-level threat visualizations.
-// Uses recharts. Gradient fill, glowing line, amber/red theme.
+// Uses recharts. Gradient fill, glowing line, primary/red theme.
 // Replaces flat charts in: CampaignDetail, Providers, IRGC timeline.
 
 import {
@@ -17,7 +17,7 @@ export interface ThreatDataPoint {
 export interface ThreatAreaChartProps {
   data:        ThreatDataPoint[];
   height?:     number;        // default 260
-  color?:      string;        // primary color, default amber
+  color?:      string;        // primary series color, default var(--primary)
   color2?:     string;        // second series color
   label?:      string;        // y-axis label
   label2?:     string;
@@ -28,7 +28,7 @@ export interface ThreatAreaChartProps {
   className?:  string;
 }
 
-const AMBER  = '#E5A832';
+const PRIMARY = 'var(--primary)';
 const RED    = '#C83C3C';
 
 interface TooltipEntry {
@@ -81,7 +81,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 export function ThreatAreaChart({
   data,
   height       = 260,
-  color        = AMBER,
+  color        = PRIMARY,
   color2       = RED,
   label,
   label2,

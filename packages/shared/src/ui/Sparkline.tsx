@@ -17,7 +17,7 @@ export interface SparklineProps {
   width?: number;
   /** Pixel height. Default 28. */
   height?: number;
-  /** Line + fill colour (any CSS colour). Default `var(--amber)`. */
+  /** Line + fill colour (any CSS colour). Default `var(--primary)`. */
   color?: string;
   /** Fill the container width (measured with ResizeObserver). */
   fill?: boolean;
@@ -41,7 +41,7 @@ export const Sparkline = memo(function Sparkline({
   data,
   width: widthProp = 80,
   height = 28,
-  color = 'var(--amber)',
+  color = 'var(--primary)',
   fill = false,
   animate = true,
   label,

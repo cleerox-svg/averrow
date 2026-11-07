@@ -374,7 +374,7 @@ function UserCell({ user: u, isSelf, large = false }: { user: PlatformUser; isSe
       <div
         aria-hidden="true"
         className="grid shrink-0 place-items-center rounded-lg text-[12px] font-extrabold"
-        style={{ width: size, height: size, background: isSelf ? SELF_AVATAR_COLOR : colorForUserId(u.id), color: 'var(--text-on-amber)' }}
+        style={{ width: size, height: size, background: isSelf ? SELF_AVATAR_COLOR : colorForUserId(u.id), color: isSelf ? 'var(--primary-ink)' : 'var(--text-on-amber)' }}
       >
         {parseInitials(u.name, u.email)}
       </div>
