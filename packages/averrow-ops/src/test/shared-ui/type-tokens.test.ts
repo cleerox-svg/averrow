@@ -240,7 +240,7 @@ describe('legacy contract: Geist only under [data-accent]', () => {
     expect(TOKENS).not.toMatch(/Geist/);
   });
 
-  it('neither app preloads a Geist font', () => {
+  it('neither app\'s index.html source preloads a Geist font by hand (appearance-html adds them, FACELIFT on only)', () => {
     for (const app of ['averrow-ops', 'averrow-tenant']) {
       expect(read(resolve(PACKAGES, app, 'index.html'))).not.toMatch(/geist/i);
     }

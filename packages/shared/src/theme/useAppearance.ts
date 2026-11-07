@@ -8,10 +8,10 @@
 //
 // Mode (dark/light/auto) stays in useTheme / `averrow-theme`, untouched.
 //
-// DEFAULT_ACCENT / DEFAULT_BASE are `null` = the legacy look: no attribute is
-// written, so the unscoped tokens in tokens.css apply. Phase 3 PR P3-6 flips
-// the default by changing these two constants in ./appearanceDefaults.ts
-// (indigo / graphite).
+// DEFAULT_ACCENT / DEFAULT_BASE derive from the FACELIFT switch in
+// ./appearanceDefaults.ts: indigo / graphite when it is on; `null` = the legacy
+// look (no attribute written, so the unscoped tokens in tokens.css apply) when
+// it is off.
 //
 // Like useTheme, DOM + storage side effects run synchronously in the setters
 // (not in an effect) so they survive a menu unmounting mid-click. All storage
@@ -48,8 +48,8 @@ import type { Accent, Base } from './appearanceDefaults';
 
 // The constants live in ./appearanceDefaults (a separate module so tests can
 // simulate the P3-6 flip); re-exported here for the public API.
-export { ACCENTS, APPEARANCE_PICKER_ENABLED, BASES, DEFAULT_ACCENT, DEFAULT_BASE } from './appearanceDefaults';
-export type { Accent, Base } from './appearanceDefaults';
+export { ACCENTS, APPEARANCE_PICKER_ENABLED, BASES, DEFAULT_ACCENT, DEFAULT_BASE, FACELIFT, appearanceFlags } from './appearanceDefaults';
+export type { Accent, Base, AppearanceFlags } from './appearanceDefaults';
 
 export const ACCENT_STORAGE_KEY = 'averrow-accent';
 export const BASE_STORAGE_KEY = 'averrow-base';

@@ -7,8 +7,11 @@
    - @font-face rules are declared unconditionally, but a browser fetches a
      face only when some rendered text resolves to it. Only the
      :root[data-accent] block below names 'Geist' / 'Geist Mono', so legacy
-     never resolves to them. Do NOT add <link rel="preload"> for these files:
-     a preload downloads even when unused.
+     never resolves to them. Do NOT add <link rel="preload"> for these files
+     by hand: a preload downloads even when unused. The appearanceHtml() Vite
+     plugin (packages/shared/scripts/appearance-html.ts) emits preloads for
+     the upright sans + mono ONLY when FACELIFT is on (appearanceDefaults.ts),
+     i.e. when every page has an accent and so resolves to Geist.
    - The --type-* scale tokens are always defined (inert until a consumer
      uses them); the base element styles that apply them are scoped under
      [data-accent].

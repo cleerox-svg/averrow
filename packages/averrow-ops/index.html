@@ -3,12 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <!-- No-flash appearance bootstrap: applies data-theme / data-accent / data-base before
-         first paint. The ACCENTS/BASES/DEFAULT_* literals MUST equal those exported by
-         packages/shared/src/theme/appearanceDefaults.ts (a test enforces it). Theme resolution
+         first paint. The __APPEARANCE_*__ markers (and theme-color below) are filled at build
+         time from packages/shared/src/theme/appearanceDefaults.ts (FACELIFT) by the
+         appearanceHtml() Vite plugin (packages/shared/scripts/appearance-html.ts). Theme resolution
          sits outside the storage try/catch so blocked storage still gets the OS theme. -->
     <script>
       (function () {
-        var ACCENTS = ['indigo', 'violet', 'mono', 'lime'], BASES = ['graphite', 'navy'], DEFAULT_ACCENT = null, DEFAULT_BASE = null;
+        var ACCENTS = __APPEARANCE_ACCENTS__, BASES = __APPEARANCE_BASES__, DEFAULT_ACCENT = __APPEARANCE_DEFAULT_ACCENT__, DEFAULT_BASE = __APPEARANCE_DEFAULT_BASE__;
         var d = document.documentElement, t = null, a = null, b = null;
         try {
           var s = window.localStorage;
@@ -25,7 +26,7 @@
       })();
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#060A14" />
+    <meta name="theme-color" content="__APPEARANCE_THEME_COLOR__" />
     <meta name="description" content="Threat actor intelligence platform — identify who, how, and where." />
     <link rel="icon" type="image/svg+xml" href="/v2/favicon.svg" />
     <link rel="apple-touch-icon" href="/v2/icon-192.svg" />
