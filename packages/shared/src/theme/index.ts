@@ -17,3 +17,18 @@
 
 export { useTheme, bootstrapTheme } from './useTheme';
 export type { Theme } from './useTheme';
+export {
+  useAppearance,
+  bootstrapAppearance,
+  readStoredAccent,
+  readStoredBase,
+  isAccent,
+  isBase,
+  ACCENTS,
+  BASES,
+  DEFAULT_ACCENT,
+  DEFAULT_BASE,
+  ACCENT_STORAGE_KEY,
+  BASE_STORAGE_KEY,
+} from './useAppearance';
+export type { Accent, Base, UseAppearanceReturn } from './useAppearance';

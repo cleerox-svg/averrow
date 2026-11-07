@@ -1,0 +1,100 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Averrow hero H4B: Scroll-driven</title>
+<link rel="preload" href="fonts/geist-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/geist-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/geist-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/geist-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+<script>if(!matchMedia("(prefers-reduced-motion: reduce)").matches)document.documentElement.classList.add("lv")</script>
+<style>
+/*BASE*/
+:root{--ease:cubic-bezier(.2,0,0,1);--ph:min(820px,calc(100svh - 72px))}
+@property --p{syntax:"<number>";inherits:true;initial-value:0}
+.nav{position:sticky;top:0;background:var(--bg);z-index:30}
+.wrap{position:relative}.track{display:none}
+.pin{max-width:1200px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:minmax(0,470px) minmax(0,1fr);grid-template-rows:minmax(var(--ph),auto) auto;gap:16px;align-items:center}
+.c-hero{grid-area:1/1;padding:24px 0}
+.stage{grid-area:1/2;position:relative;width:calc(100% + 56px);margin:0}.g{position:relative;aspect-ratio:760/620}
+.stage svg,.stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.stage canvas{opacity:0;transition:opacity .5s}
+.stage.live canvas{opacity:1}.stage.live .poster{opacity:0;transition:opacity .5s}
+.poster text{font-family:var(--mono);font-size:11px;fill:var(--text-2);font-feature-settings:"calt" 0;paint-order:stroke;stroke:var(--bg);stroke-width:3.5px;stroke-linejoin:round}
+.poster .sub{fill:var(--muted)}
+.poster .ttl{font-family:var(--sans);font-weight:600;font-size:15px;fill:var(--text)}
+.poster .hubt{fill:var(--primary-text);font-size:13px;font-weight:500;stroke:none}
+.poster .hubt+.sub{stroke:none}
+.tk{position:absolute;right:70px;bottom:10px;width:min(284px,62%);background:var(--surface);border:1px solid var(--line-2);border-radius:12px;padding:10px 12px 11px}
+.tk-h{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:500;margin-bottom:8px}
+.tk-t{height:6px;border-radius:3px;background:var(--line-2);display:flex;overflow:hidden}
+.tk-t i{display:block;height:100%}
+.tk-n{display:flex;gap:10px;margin-top:9px;font-size:12px;color:var(--text-2);white-space:nowrap}
+.tk-n b{font-weight:500;color:var(--text)}
+.ill{position:absolute;top:2px;right:56px;font-size:11px;color:var(--muted);margin:0}
+.pp{display:none}
+/* step copy: static list by default (no JS, reduced motion), single-step view when pinned */
+.c-steps{grid-area:2/1/3/-1;padding:18px 0 32px}
+h2.hero-eyebrow{font-weight:400}
+.sl{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:24px;counter-reset:s}
+.st{border-top:1px solid var(--line-2);padding-top:12px;counter-increment:s}
+.s-h{font:500 16px/1.3 var(--sans);letter-spacing:-.01em;margin:0 0 4px}.s-h::before{content:counter(s) "  ";font:400 12px var(--mono);color:var(--primary-text)}
+.s-p{font-size:14px;line-height:1.55;color:var(--text-2);margin:0;max-width:30em}
+.seg{display:none}
+.next{max-width:1200px;margin:0 auto;padding:96px 24px 120px;border-top:1px solid var(--line)}
+.next h2{font:600 32px/1.1 var(--sans);letter-spacing:-.03em;margin:0 0 12px}.next p{color:var(--text-2);max-width:36em;margin:0}
+@media (min-width:900px){
+html.lv .wrap{height:calc(var(--ph)*3.8)}
+html.lv .track{display:block;position:absolute;left:0;top:0;width:1px;height:calc(100% - var(--ph));pointer-events:none}
+html.lv .pin{position:sticky;top:72px;height:var(--ph);grid-template-rows:1fr}
+html.lv .c-steps{grid-area:1/1;padding:24px 0}
+html.lv .sl{grid-template-columns:1fr;gap:0}
+html.lv .st{grid-area:1/1;border:0;padding:0;align-self:start}
+html.lv .s-h{font:600 clamp(32px,3.5vw,50px)/1 var(--sans);letter-spacing:-.045em;margin:0 0 18px;text-wrap:balance}.html-lv .s-h::before,html.lv .s-h::before{content:none}
+html.lv .s-p{font-size:18px;line-height:1.6;max-width:26em}
+html.lv .seg{display:flex;gap:6px;margin-top:36px;max-width:320px}
+html.lv .seg i{flex:1;height:2px;background:var(--line-2);border-radius:1px;position:relative;overflow:hidden}
+html.lv .seg b{position:absolute;inset:0;background:var(--primary-text);transform:scaleX(0);transform-origin:left}
+html.lv .c-hero,html.lv .c-steps,html.lv .st{transition:opacity .16s var(--ease) .06s,transform .2s var(--ease) .06s,visibility 0s}
+html.lv .c-steps,html.lv .st{opacity:0;visibility:hidden;transform:translateY(6px);transition:opacity .12s var(--ease),transform .12s var(--ease),visibility 0s .12s}
+html.lv .pin:not([data-step="0"]) .c-steps{opacity:1;visibility:visible;transform:none;transition:opacity .16s var(--ease) .06s,transform .2s var(--ease) .06s,visibility 0s}
+html.lv .pin:not([data-step="0"]) .c-hero{opacity:0;visibility:hidden;transform:translateY(-6px);transition:opacity .12s var(--ease),transform .12s var(--ease),visibility 0s .12s}
+html.lv .pin[data-step="1"] .st[data-i="1"],html.lv .pin[data-step="2"] .st[data-i="2"],html.lv .pin[data-step="3"] .st[data-i="3"],html.lv .pin[data-step="4"] .st[data-i="4"]{opacity:1;visibility:visible;transform:none;transition:opacity .16s var(--ease) .06s,transform .2s var(--ease) .06s,visibility 0s}
+}
+@supports (animation-timeline:view()){@media (min-width:900px){
+@keyframes prog{to{--p:1}}
+html.lv .wrap{timeline-scope:--w;animation:prog linear both;animation-timeline:--w;animation-range:contain 0% exit 100%}
+html.lv .track{view-timeline:--w block;view-timeline-inset:72px 0}
+}}
+@media (max-width:899px){
+.pin{grid-template-columns:1fr;grid-template-rows:none;gap:0;padding-bottom:8px}
+.c-hero,.stage,.c-steps{grid-area:auto}
+.stage{margin:6px 0 0!important;max-width:520px;width:100%;display:flex;flex-direction:column}.g{aspect-ratio:390/340}
+.ill{order:1;position:static;margin:6px 0 0}.tk{order:2;position:relative;right:auto;bottom:auto;width:100%;margin:10px 0 12px}.nav{position:relative}
+.sl{grid-template-columns:1fr;gap:14px}
+html.lv .st{transition:opacity .16s var(--ease)}html.lv .st:not([aria-current]){opacity:.5}
+html.lv .pp{all:unset;box-sizing:border-box;display:grid;place-items:center;width:32px;height:32px;color:var(--text-2);cursor:pointer;border-radius:6px;position:absolute;right:0;top:6px}
+html.lv .pp svg{position:static;width:12px;height:12px}.pp .i-play{display:none}.pp[aria-pressed=true] .i-play{display:block}.pp[aria-pressed=true] .i-pause{display:none}
+.pp:focus-visible{outline:2px solid var(--primary-text);outline-offset:2px}
+.c-steps{padding:16px 0 24px;position:relative}
+}
+@media (prefers-reduced-motion:reduce){.stage canvas{display:none}}
+</style></head><body>
+<!--NAV-->
+<main><div class="wrap" id="wrap"><span class="track" aria-hidden="true"></span>
+<section class="pin" id="pin" data-step="0" aria-labelledby="hero-title">
+<div class="c-hero"><!--COPY--></div>
+<figure class="stage" id="stage" aria-labelledby="cap">
+<!--FIGCAP-->
+<div class="g" id="g"><!--POSTERS--><canvas id="cv" aria-hidden="true"></canvas></div>
+<!--CARD-->
+<p class="ill">Illustrative example · names changed</p>
+</figure>
+<div class="c-steps" id="cs"><h2 class="hero-eyebrow">From one fake domain to the operation behind it</h2>
+<ol class="sl"><!--STEPSB--></ol>
+<div class="seg" aria-hidden="true"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>
+<button type="button" class="pp" aria-pressed="false" aria-label="Pause step animation"><svg class="i-pause" width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="2" y="1.5" width="2.8" height="9" rx=".6"/><rect x="7.2" y="1.5" width="2.8" height="9" rx=".6"/></svg><svg class="i-play" width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M3 1.6v8.8L10.4 6z"/></svg></button>
+</div>
+</section></div>
+<section class="next"><h2>The next section starts here</h2><p>Placeholder for the content that follows the hero. The pinned story releases after step 4 and the page continues.</p></section>
+</main>
+<style>.stage .poster-m{display:none}@media (max-width:620px){.stage .poster-d{display:none}.stage .poster-m{display:block}}</style>
+<script>/*CORE*/</script><script>/*RUN*/</script>
+</body></html>

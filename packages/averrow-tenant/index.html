@@ -2,12 +2,45 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- No-flash appearance bootstrap: applies data-theme / data-accent / data-base before
+         first paint. The ACCENTS/BASES/DEFAULT_* literals MUST equal those exported by
+         packages/shared/src/theme/appearanceDefaults.ts (a test enforces it). Theme resolution
+         sits outside the storage try/catch so blocked storage still gets the OS theme. -->
+    <script>
+      (function () {
+        var ACCENTS = ['indigo', 'violet', 'mono', 'lime'], BASES = ['graphite', 'navy'], DEFAULT_ACCENT = null, DEFAULT_BASE = null;
+        var d = document.documentElement, t = null, a = null, b = null;
+        try {
+          var s = window.localStorage;
+          t = s.getItem('averrow-theme'); a = s.getItem('averrow-accent'); b = s.getItem('averrow-base');
+        } catch (e) { /* storage blocked: defaults below */ }
+        if (t !== 'dark' && t !== 'light') {
+          try { t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark'; } catch (e) { t = 'dark'; }
+        }
+        d.setAttribute('data-theme', t);
+        if (ACCENTS.indexOf(a) < 0) a = DEFAULT_ACCENT;
+        if (BASES.indexOf(b) < 0) b = DEFAULT_BASE;
+        if (a) d.setAttribute('data-accent', a);
+        if (b) d.setAttribute('data-base', b);
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#060A14" />
     <title>Averrow — Threat Protection</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet" />
+    <!-- body's text-white is a hard-coded white: in light mode (set before first
+         paint by the bootstrap above) inherited/pre-JS text would be invisible on
+         the light page, so light flips it to dark text. Dark is unchanged.
+         Why it is needed at all: the utility text-white on <body> overrides the
+         `body { color: ... }` rule in src/index.css, so without this the light
+         page keeps white body text. The literal mirrors the light
+         var(--text-primary) in tokens.css and covers the window before the CSS
+         bundle loads; the var() line then follows the token (including accent
+         light neutrals) and falls back to the same literal while the token is
+         not yet defined. -->
+    <style>[data-theme="light"] body.text-white { color: rgba(15, 20, 35, 0.96); color: var(--text-primary, rgba(15, 20, 35, 0.96)); }</style>
   </head>
   <body class="bg-bg-page text-white antialiased">
     <div id="root"></div>

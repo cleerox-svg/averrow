@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { bootstrapTheme } from '@averrow/shared/theme';
+import { bootstrapTheme, bootstrapAppearance } from '@averrow/shared/theme';
 import { App } from './App';
 import './index.css';
 
@@ -9,6 +9,7 @@ import './index.css';
 // useTheme consumer mounts, then snaps to the persisted theme
 // — visible flash. Mirror of the averrow-ops main.tsx bootstrap.
 bootstrapTheme();
+bootstrapAppearance(); // accent/base attributes (no-op in the legacy look)
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('No #root element found in index.html');

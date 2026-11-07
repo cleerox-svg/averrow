@@ -16,6 +16,7 @@
 // /v2/profile's toggle worked correctly. Audit fix 2026-05-08.
 
 import { useEffect, useState, useCallback } from 'react';
+import { safeGetItem, safeSetItem, setRootAttr } from './storage';
 
 export type Theme         = 'auto' | 'dark' | 'light';
 export type ResolvedTheme = 'dark' | 'light';
@@ -34,21 +35,16 @@ function resolveTheme(theme: Theme): ResolvedTheme {
 }
 
 function applyTheme(resolved: ResolvedTheme): void {
-  if (typeof document === 'undefined') return;
-  document.documentElement.setAttribute('data-theme', resolved);
+  setRootAttr('data-theme', resolved);
 }
 
 function persistTheme(theme: Theme): void {
-  try { localStorage.setItem(STORAGE_KEY, theme); } catch { /* private mode / SSR */ }
+  safeSetItem(STORAGE_KEY, theme);
 }
 
 function readStoredTheme(): Theme {
-  if (typeof window === 'undefined') return 'auto';
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === 'auto' || raw === 'dark' || raw === 'light') return raw;
-  } catch { /* swallow */ }
-  return 'auto';
+  const raw = safeGetItem(STORAGE_KEY);
+  return raw === 'auto' || raw === 'dark' || raw === 'light' ? raw : 'auto';
 }
 
 /** Read once on app boot so the theme is correct on first paint

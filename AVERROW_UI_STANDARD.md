@@ -1014,7 +1014,7 @@ No `data-accent` attribute = today's legacy look, until the flip PR (P3-6) makes
 **Token layers**
 - L0 neutrals: base x mode.
 - L1 accent: accent x mode.
-- L2 semantic tokens, which components should use: `--primary`, `--primary-hover`, `--primary-ink`, `--primary-text`, `--focus-ring`, `--status-warn` (= `--sev-medium`), `--healthy`, `--tag-nexus`.
+- L2 semantic tokens, which components should use: `--primary`, `--primary-hover`, `--primary-ink`, `--primary-text`, `--focus-ring`, `--status-warn` (= `--sev-medium`; `--sev-medium-text` in light mode, so status text clears AA on white), `--healthy`, `--tag-nexus`.
 - `--amber` becomes a status colour only; never a primary/CTA colour in new code.
 - Lime remaps `--healthy` to emerald; Violet remaps `--tag-nexus`.
 
