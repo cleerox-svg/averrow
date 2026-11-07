@@ -204,6 +204,46 @@ describe("reapOrphanAgentRuns", () => {
     expect(errorSpy).toHaveBeenCalled();
   });
 
+  it("reaps handler-dispatched writers' stuck 'running' rows (daily_snapshots / daily_briefing)", async () => {
+    const { env, updateCalls } = makeEnv({
+      candidates: [
+        { id: "snap-old", agent_id: "daily_snapshots", started_at: "x", age_minutes: 600 },
+        { id: "brief-young", agent_id: "daily_briefing", started_at: "x", age_minutes: 20 },
+      ],
+      changes: { "snap-old": 1 },
+    });
+    const reaped = await reapOrphanAgentRuns(env);
+    expect(reaped).toBe(1);
+    expect(updateCalls).toEqual([{ ceiling: DEFAULT_REAP_AGE_MINUTES, id: "snap-old" }]);
+  });
+
+  it("SQL treats 'partial' and 'running' as candidates, only while completed_at IS NULL", async () => {
+    const sqls: string[] = [];
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          sqls.push(sql);
+          if (sql.trim().toLowerCase().startsWith("select")) {
+            return {
+              all: async () => ({
+                results: [{ id: "r1", agent_id: "daily_snapshots", started_at: "x", age_minutes: 500 }],
+              }),
+            };
+          }
+          return { bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) };
+        },
+      },
+    } as unknown as Env;
+    expect(await reapOrphanAgentRuns(env)).toBe(1);
+    const [select, update] = sqls;
+    expect(select).toMatch(/status IN \('partial', 'running'\)/);
+    expect(select).toMatch(/completed_at IS NULL/);
+    expect(update).toMatch(/status IN \('partial', 'running'\)/);
+    expect(update).toMatch(/AND completed_at IS NULL/);
+    // The reaped status is named in the stamp, so 'running' orphans are distinguishable.
+    expect(update).toMatch(/agent run stuck ' \|\| status \|\|/);
+  });
+
   it("exposes the policy constants for callers + platform docs", () => {
     expect(DEFAULT_REAP_AGE_MINUTES).toBe(90);
     expect(REAP_BUFFER_MINUTES).toBe(30);

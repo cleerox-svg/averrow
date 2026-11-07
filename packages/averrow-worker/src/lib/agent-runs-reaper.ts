@@ -28,7 +28,7 @@
 // registry (or with no declared threshold) fall back to
 // DEFAULT_REAP_AGE_MINUTES = 90 — matches the prior behavior.
 //
-// Implementation: SELECT candidate rows (status='partial' AND
+// Implementation: SELECT candidate rows (status IN ('partial','running') AND
 // completed_at IS NULL AND older than the GLOBAL minimum threshold
 // = 15 min as a coarse pre-filter), then in JS compute the
 // per-agent ceiling and UPDATE only the rows that exceed their
@@ -36,6 +36,16 @@
 // (anything younger than 15 min is alive by definition); the
 // per-row UPDATE only fires for true zombies (typically 0-3 rows
 // at a time).
+//
+// 'running' rows (2026-11-07): handler-dispatched writers that are not
+// AgentModules (daily_snapshots, daily_briefing — `createAgentRun` in
+// db/agent-runs.ts) seed their row as 'running', not 'partial'. A killed
+// invocation left those rows open forever: this reaper matched only
+// 'partial', and Flight Control's orphan force-fail only walks registered
+// AgentModules. Prod had 6 daily_snapshots + 1 daily_briefing rows stuck
+// 'running' (2026-11-04..07). Both statuses are now candidates; a
+// 'running' row is always an orphan once past its ceiling (no live writer
+// holds one longer than the default 90 min).
 //
 // Tested via `test/agent-runs-reaper.test.ts`.
 
@@ -109,7 +119,7 @@ export async function reapOrphanAgentRuns(env: Env): Promise<number> {
       `SELECT id, agent_id, started_at,
               CAST((julianday('now') - julianday(started_at)) * 1440 AS INTEGER) AS age_minutes
          FROM agent_runs
-        WHERE status = 'partial'
+        WHERE status IN ('partial', 'running')
           AND completed_at IS NULL
           AND datetime(started_at) <= datetime('now', '-${PRE_FILTER_MINUTES} minutes')`,
     ).all<CandidateRow>();
@@ -132,14 +142,14 @@ export async function reapOrphanAgentRuns(env: Env): Promise<number> {
                   completed_at = datetime('now'),
                   error_message = COALESCE(
                     error_message,
-                    'reaped by navigator: agent run stuck partial > ' || ? || 'min (per-agent ceiling) — worker likely terminated mid-run'
+                    'reaped by navigator: agent run stuck ' || status || ' > ' || ? || 'min (per-agent ceiling) — worker likely terminated mid-run'
                   ),
                   duration_ms = COALESCE(
                     duration_ms,
                     CAST((julianday('now') - julianday(started_at)) * 86400000 AS INTEGER)
                   )
             WHERE id = ?
-              AND status = 'partial'
+              AND status IN ('partial', 'running')
               AND completed_at IS NULL`,
         ).bind(ceiling, row.id).run();
         if ((result.meta?.changes ?? 0) > 0) reaped++;

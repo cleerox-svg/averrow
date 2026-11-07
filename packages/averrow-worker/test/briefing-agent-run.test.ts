@@ -40,6 +40,8 @@ interface MakeEnvOpts {
   failAgentRunInsert?: boolean;
   // when set, the cached-briefing SELECT returns a row (12h-window cache hit)
   cachedRow?: Record<string, unknown> | null;
+  // number of agent_runs UPDATE (finalize) attempts that throw before one succeeds
+  failRunUpdates?: number;
 }
 
 function makeEnv(opts: MakeEnvOpts = {}): { env: Env; rec: Recorder } {
@@ -61,6 +63,10 @@ function makeEnv(opts: MakeEnvOpts = {}): { env: Env; rec: Recorder } {
             return { meta: { last_row_id: 0 } };
           }
           if (lower.includes("update agent_runs")) {
+            if ((opts.failRunUpdates ?? 0) > 0) {
+              opts.failRunUpdates = (opts.failRunUpdates ?? 0) - 1;
+              throw new Error("D1_ERROR: Network connection lost.");
+            }
             rec.agentRunUpdates.push({ sql, args });
             return { meta: {} };
           }
@@ -153,6 +159,33 @@ describe("daily briefing agent-run contract", () => {
     expect(rec.agentRunUpdates[0].sql.toLowerCase()).toContain("status = 'failed'");
     // No success telemetry on failure.
     expect(rec.events).toHaveLength(0);
+  });
+
+  it("retries a transient finalize failure so the run does not stay 'running' (2026-11-05 orphan)", async () => {
+    const { generateAndEmailBriefing } = await import("../src/handlers/briefing");
+    const { env, rec } = makeEnv({ failRunUpdates: 1 });
+
+    const result = await generateAndEmailBriefing(env, "cron:daily");
+
+    expect(result.briefingId).toBe(42);
+    // First UPDATE threw, the retry landed.
+    expect(rec.agentRunUpdates).toHaveLength(1);
+    expect(rec.agentRunUpdates[0].args[0]).toBe("success");
+    expect(rec.events).toHaveLength(1);
+  });
+
+  it("finalize retries are bounded and never throw out of a successful briefing", async () => {
+    const { generateAndEmailBriefing } = await import("../src/handlers/briefing");
+    const opts: MakeEnvOpts = { failRunUpdates: 10 };
+    const { env, rec } = makeEnv(opts);
+
+    const result = await generateAndEmailBriefing(env, "cron:daily");
+
+    expect(result.briefingId).toBe(42);
+    expect(rec.agentRunUpdates).toHaveLength(0);
+    // Exactly 3 attempts consumed — and telemetry still emitted.
+    expect(opts.failRunUpdates).toBe(7);
+    expect(rec.events).toHaveLength(1);
   });
 
   it("does NOT write an agent_runs row on the cron dedup-skip path", async () => {

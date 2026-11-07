@@ -67,6 +67,68 @@ export async function failAgentRun(
   `).bind(errorMessage, runId).run();
 }
 
+/**
+ * Record mid-run progress on a still-open run (best-effort heartbeat for
+ * long handler-dispatched writers). Guarded on `completed_at IS NULL` so a
+ * late heartbeat can never reopen or overwrite a finalized row.
+ */
+export async function updateAgentRunProgress(
+  env: Env,
+  runId: string,
+  recordsProcessed: number,
+): Promise<void> {
+  await env.DB.prepare(
+    "UPDATE agent_runs SET records_processed = ? WHERE id = ? AND completed_at IS NULL"
+  ).bind(recordsProcessed, runId).run();
+}
+
+export type AgentRunFinalOutcome =
+  | { kind: "complete"; stats: CompleteRunStats }
+  | { kind: "failed"; error_message: string };
+
+export interface FinalizeRetryOptions {
+  /** Total attempts (default 3). */
+  attempts?: number;
+  /** Delay before each retry, ms (default [250, 1000]); last value repeats. */
+  backoffMs?: readonly number[];
+}
+
+/**
+ * Finalize a run (complete or fail) with bounded retries. Handler-dispatched
+ * writers (daily_snapshots, daily_briefing) used to make ONE finalize
+ * attempt and only log a failure, so a transient D1 error right after a
+ * heavy statement left the row 'running' forever — nothing else closes
+ * those rows promptly. Returns true when a finalize write succeeded; never
+ * throws (the last error is returned for the caller to log).
+ */
+export async function finalizeAgentRun(
+  env: Env,
+  runId: string,
+  outcome: AgentRunFinalOutcome,
+  opts: FinalizeRetryOptions = {},
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const attempts = Math.max(1, opts.attempts ?? 3);
+  const backoff = opts.backoffMs ?? [250, 1000];
+  let lastError = "";
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) {
+      const delay = backoff[Math.min(i - 1, backoff.length - 1)] ?? 0;
+      if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
+    try {
+      if (outcome.kind === "failed") {
+        await failAgentRun(env, runId, outcome.error_message);
+      } else {
+        await completeAgentRun(env, runId, outcome.stats);
+      }
+      return { ok: true };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return { ok: false, error: lastError };
+}
+
 // ─── Lookups ──────────────────────────────────────────────────────
 
 export async function getLatestRun(env: Env, agentId: string): Promise<AgentRun | null> {

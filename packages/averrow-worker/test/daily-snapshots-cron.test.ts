@@ -9,13 +9,18 @@
  *   1. Neither type present → both generated; run row success with
  *      completed_at + records_processed; one telemetry agent_events row
  *      (snapshots_generated, target_agent NULL).
- *   2. Both present (the 12:28 pass) → both skipped, no INSERT … SELECT runs.
- *   3. Brand present, provider missing (the 2026-10-12 case) → only
- *      provider is generated; brand rows are not rebuilt.
+ *   2. Both complete (the 12:28 pass) → both skipped, no INSERT … SELECT runs.
+ *   3. Brand half-written, provider missing (2026-10-12 / killed-run case) →
+ *      provider generated; brand resumes AFTER its last entity (existing rows
+ *      untouched, the rest back-filled).
  *   4. One type failing → the other still runs; run 'partial' with
  *      error_message; all types failing → run 'failed'.
  *   5. Dispatch: exact event.cron match above the hourly-mesh guard,
  *      wrangler declares the trigger, no minute gate in the code path.
+ *   6. Bounded work (2026-11-07 orphaned-run fix): keyset chunks, a
+ *      records_processed heartbeat per chunk, a wall-clock budget that
+ *      leaves the rest to the next pass (run 'partial', completed_at SET),
+ *      and a finalize that retries a transient agent_runs failure.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -147,14 +152,15 @@ describe.skipIf(!hasSqlite())("daily_snapshots dedicated cron", () => {
     expect(result.brand).toEqual({ action: "skipped", rows: 0 });
     expect(insertSelects(log, "provider")).toBe(0);
     expect(insertSelects(log, "brand")).toBe(0);
-    // Probes are LIMIT 1 PK-prefix reads, never a COUNT over the day.
-    const probes = log.filter((e) => /FROM daily_snapshots WHERE date = \? AND entity_type = \? LIMIT 1/.test(e.sql));
+    // Resume probes are PK-prefix MAX reads, never a COUNT over the day.
+    const probes = log.filter((e) => /SELECT MAX\(entity_id\) AS last_id FROM daily_snapshots WHERE date = \? AND entity_type = \?/.test(e.sql));
     expect(probes).toHaveLength(2);
     expect(log.some((e) => /COUNT\(\*\)[^]*FROM daily_snapshots/i.test(e.sql))).toBe(false);
     expect(runs(raw)[1]).toMatchObject({ status: "success", records_processed: 0 });
   });
 
-  it("repairs only the provider type when brand rows already exist (the 2026-10-12 case)", async () => {
+  it("generates a missing type and resumes a half-written one after its last entity", async () => {
+    // b1 written by an earlier (killed) pass; b2 never reached.
     raw.prepare(
       `INSERT INTO daily_snapshots (date, entity_type, entity_id, new_threats, active_threats, remediated_threats)
        VALUES (?, 'brand', 'b1', 99, 99, 99)`,
@@ -163,14 +169,26 @@ describe.skipIf(!hasSqlite())("daily_snapshots dedicated cron", () => {
     const result = await runDailySnapshotsCron(env, AT);
 
     expect(result.provider).toEqual({ action: "generated", rows: 1 });
-    expect(result.brand).toEqual({ action: "skipped", rows: 0 });
-    expect(insertSelects(log, "brand")).toBe(0);
-    // Existing brand row untouched; b2 not back-filled (type was present).
+    expect(result.brand).toEqual({ action: "generated", rows: 1 });
+    // Existing brand row untouched; b2 back-filled.
     expect(snapshotRows(raw, "brand")).toEqual([
       { entity_id: "b1", new_threats: 99, active_threats: 99, remediated_threats: 99 },
+      { entity_id: "b2", new_threats: 0, active_threats: 1, remediated_threats: 0 },
     ]);
     expect(snapshotRows(raw, "provider")).toHaveLength(1);
-    expect(runs(raw)[0]).toMatchObject({ status: "success", records_processed: 1, outputs_generated: 1 });
+    expect(runs(raw)[0]).toMatchObject({ status: "success", records_processed: 2, outputs_generated: 2 });
+  });
+
+  it("a fully written type is skipped on resume — only the missing one is built", async () => {
+    await runDailySnapshotsCron(env, AT);
+    raw.prepare(`DELETE FROM daily_snapshots WHERE entity_type = 'provider'`).run();
+    log.length = 0;
+
+    const result = await runDailySnapshotsCron(env, new Date(`${DATE}T12:28:00Z`));
+
+    expect(result.provider).toEqual({ action: "generated", rows: 1 });
+    expect(result.brand).toEqual({ action: "skipped", rows: 0 });
+    expect(insertSelects(log, "brand")).toBe(0);
   });
 
   it("one type failing does not stop the other: run 'partial' with error_message", async () => {
@@ -209,6 +227,132 @@ describe.skipIf(!hasSqlite())("daily_snapshots dedicated cron", () => {
     expect(r.completed_at).not.toBeNull();
     expect(String(r.error_message)).toContain("provider: D1_ERROR");
     expect(String(r.error_message)).toContain("brand: D1_ERROR");
+    expect(events(raw)).toHaveLength(1);
+  });
+
+  it("writes in bounded keyset chunks and heartbeats records_processed after each", async () => {
+    const progress: unknown[] = [];
+    const watched = {
+      ...db,
+      prepare: (sql: string) => {
+        const stmt = db.prepare(sql);
+        if (!/SET records_processed = \? WHERE id = \? AND completed_at IS NULL/.test(sql)) return stmt;
+        return {
+          bind: (...args: unknown[]) => {
+            progress.push(args[0]);
+            return stmt.bind(...args);
+          },
+        } as unknown as D1PreparedStatement;
+      },
+    } as D1Database;
+    env = { DB: watched } as unknown as Env;
+
+    const result = await runDailySnapshotsCron(env, AT, "cron", { chunkSize: 1 });
+
+    expect(result.status).toBe("success");
+    // provider: 1 entity → 1 chunk; brand: 2 entities → 2 chunks.
+    expect(insertSelects(log, "provider")).toBe(1);
+    expect(insertSelects(log, "brand")).toBe(2);
+    // Every snapshot statement is range-bounded, never the whole table.
+    for (const e of log.filter((x) => /INSERT OR REPLACE INTO daily_snapshots/.test(x.sql))) {
+      expect(e.sql).toMatch(/_id > \? AND \w+_id <= \?/);
+    }
+    expect(progress).toEqual([1, 2, 3]);
+    expect(snapshotRows(raw, "brand")).toHaveLength(2);
+    expect(runs(raw)[0]).toMatchObject({ status: "success", records_processed: 3 });
+  });
+
+  it("budget exhausted mid-type: run 'partial' with completed_at set, next pass resumes and completes", async () => {
+    // Clock reads: handler start (deadline = 0 + 10), provider's two chunk
+    // checks, then brand's first check lands past the deadline.
+    const ticks = [0, 0, 0];
+    const now = (): number => ticks.shift() ?? 100;
+
+    const first = await runDailySnapshotsCron(env, AT, "cron", { chunkSize: 1, budgetMs: 10, now });
+
+    // provider: chunk 1 written, next check → no bound left → complete.
+    // brand: first check @100 → past the deadline before any brand chunk.
+    expect(first.provider).toEqual({ action: "generated", rows: 1 });
+    expect(first.brand).toEqual({ action: "incomplete", rows: 0 });
+    expect(first.status).toBe("partial");
+    const r = runs(raw)[0]!;
+    expect(r.status).toBe("partial");
+    expect(r.completed_at).not.toBeNull();
+    expect(String(r.error_message)).toMatch(/^brand: budget exhausted after 0 rows/);
+
+    const second = await runDailySnapshotsCron(env, new Date(`${DATE}T12:28:00Z`));
+    expect(second.provider).toEqual({ action: "skipped", rows: 0 });
+    expect(second.brand).toEqual({ action: "generated", rows: 2 });
+    expect(second.status).toBe("success");
+    expect(snapshotRows(raw, "brand")).toHaveLength(2);
+  });
+
+  it("a chunk failing after earlier chunks committed keeps their rows and the next pass resumes", async () => {
+    let brandChunks = 0;
+    const flaky = {
+      ...db,
+      prepare: (sql: string) => {
+        const stmt = db.prepare(sql);
+        if (!sql.includes("'brand' AS entity_type")) return stmt;
+        return {
+          bind: (...args: unknown[]) => {
+            const bound = stmt.bind(...args);
+            return {
+              run: async () => {
+                brandChunks += 1;
+                if (brandChunks === 2) throw new Error("D1_ERROR: Network connection lost.");
+                return bound.run();
+              },
+            };
+          },
+        } as unknown as D1PreparedStatement;
+      },
+    } as D1Database;
+    env = { DB: flaky } as unknown as Env;
+
+    const first = await runDailySnapshotsCron(env, AT, "cron", { chunkSize: 1 });
+    expect(first.brand).toEqual({ action: "failed", rows: 1, error: "D1_ERROR: Network connection lost." });
+    expect(first.status).toBe("partial");
+    expect(runs(raw)[0]).toMatchObject({ status: "partial", records_processed: 2 });
+    expect(runs(raw)[0]!.completed_at).not.toBeNull();
+    expect(snapshotRows(raw, "brand").map((x) => x.entity_id)).toEqual(["b1"]);
+
+    env = { DB: db } as unknown as Env;
+    const second = await runDailySnapshotsCron(env, new Date(`${DATE}T12:28:00Z`), "cron", { chunkSize: 1 });
+    expect(second.brand).toEqual({ action: "generated", rows: 1 });
+    expect(snapshotRows(raw, "brand").map((x) => x.entity_id)).toEqual(["b1", "b2"]);
+  });
+
+  it("finalize retries a transient agent_runs failure so the run never stays 'running'", async () => {
+    let finalizeAttempts = 0;
+    const flaky = {
+      ...db,
+      prepare: (sql: string) => {
+        const stmt = db.prepare(sql);
+        if (!/completed_at = datetime\('now'\)/.test(sql)) return stmt;
+        return {
+          bind: (...args: unknown[]) => {
+            const bound = stmt.bind(...args);
+            return {
+              run: async () => {
+                finalizeAttempts += 1;
+                if (finalizeAttempts === 1) throw new Error("D1_ERROR: storage operation exceeded timeout which caused object to be reset");
+                return bound.run();
+              },
+            };
+          },
+        } as unknown as D1PreparedStatement;
+      },
+    } as D1Database;
+    env = { DB: flaky } as unknown as Env;
+
+    const result = await runDailySnapshotsCron(env, AT, "cron", { finalizeBackoffMs: [0] });
+
+    expect(result.status).toBe("success");
+    expect(finalizeAttempts).toBe(2);
+    const r = runs(raw)[0]!;
+    expect(r.status).toBe("success");
+    expect(r.completed_at).not.toBeNull();
     expect(events(raw)).toHaveLength(1);
   });
 
