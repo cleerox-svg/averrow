@@ -32,3 +32,14 @@ export {
   BASE_STORAGE_KEY,
 } from './useAppearance';
 export type { Accent, Base, UseAppearanceReturn } from './useAppearance';
+// Runtime token reader for canvas / WebGL colours (P3-2a).
+export {
+  readToken,
+  readTokenRgba,
+  parseColor,
+  subscribeAppearance,
+  getAppearanceVersion,
+  useAppearanceVersion,
+  useTokenColors,
+} from './tokenReader';
+export type { Rgba, TokenColors } from './tokenReader';

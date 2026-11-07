@@ -172,7 +172,7 @@ export function PageState({
     if (layout === 'inline') {
       return (
         <div role="status" aria-busy="true" className={cn('flex items-center gap-2 py-2 font-mono text-[13px] text-[var(--text-secondary)]', className)}>
-          <span aria-hidden className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--border-strong)] border-t-[var(--amber)]" />
+          <span aria-hidden className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--border-strong)] border-t-[var(--primary)]" />
           {text}
         </div>
       );

@@ -124,6 +124,10 @@
   --primary-tint:    rgba(229, 168, 50, 0.12);
   --primary-tint-strong: rgba(229, 168, 50, 0.22);
   --primary-border:  rgba(229, 168, 50, 0.38);
+  /* Primary glow (legacy = --amber-glow's value). A literal, not var(--amber-glow):
+     an alias resolves at :root, so a scoped --amber-glow override (shell-v4.css)
+     would not reach it. Wherever a scope overrides --amber-glow, override this too. */
+  --primary-glow:    rgba(229, 168, 50, 0.20);
   --selection-bg:    rgba(229, 168, 50, 0.30);     /* ::selection is only styled under [data-accent] */
   --text-selection:  var(--text-primary);
   --link:            var(--amber-text);
@@ -477,7 +481,7 @@
   outline: none;
 }
 .ds-focusable:focus-visible {
-  outline: 2px solid var(--amber);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
   border-radius: inherit;
 }
@@ -531,10 +535,10 @@
   font-size: 32px;
   font-weight: 900;
   font-family: var(--font-mono);
-  color: #E5A832;
+  color: var(--primary);
   letter-spacing: -1px;
   line-height: 1;
-  text-shadow: 0 0 20px rgba(229, 168, 50, 0.40);
+  text-shadow: 0 0 20px color-mix(in srgb, var(--primary) 40%, transparent);
 }
 .detail-stat-metric-label {
   font-size: 9px;
@@ -786,7 +790,7 @@
    amber-filled surface (all are dark/glass form inputs), so no
    `-on-amber` swap is needed here. */
 .focus\:outline-none.focus\:outline-none:focus-visible {
-  outline: 2px solid var(--amber);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 [data-theme="light"] .focus\:outline-none.focus\:outline-none:focus-visible {
@@ -1082,7 +1086,7 @@ code, kbd, samp, pre, .font-mono, .tt-mono {
   box-shadow: inset 0 0 0 1px var(--nav-active-border), 0 0 12px var(--nav-active-glow-v4);
 }
 .ds-rail-item[aria-current="page"]::before {
-  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--amber);
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--primary);
 }
 .ds-rail-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-rail-foot { padding-top: 12px; border-top: 1px solid var(--border-base); }
@@ -1097,7 +1101,7 @@ code, kbd, samp, pre, .font-mono, .tt-mono {
   -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border-base);
 }
 .ds-sshell-back { display: inline-flex; align-items: center; gap: 2px; min-width: 44px; min-height: 44px; padding: 0 8px 0 4px;
-  justify-self: start; font-size: 15px; color: var(--amber-text); text-decoration: none; border-radius: 10px; }
+  justify-self: start; font-size: 15px; color: var(--link); text-decoration: none; border-radius: 10px; }
 .ds-sshell-back > svg { width: 20px; height: 20px; }
 .ds-sshell-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .ds-sshell-bartitle { font-size: 17px; font-weight: 700; color: var(--text-primary); opacity: 0; transition: opacity var(--dur-base) var(--ease-standard); }
@@ -1190,7 +1194,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; cursor: pointer; border-radius: 8px;
 }
 .ds-banner-head::after { content: ''; position: absolute; inset: 0; }
-.ds-banner-head:focus-visible, .ds-banner-link:focus-visible, .ds-banner-x:focus-visible { outline: 2px solid var(--focus-ring, var(--amber)); outline-offset: 2px; }
+.ds-banner-head:focus-visible, .ds-banner-link:focus-visible, .ds-banner-x:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .ds-banner-head:focus-visible { outline-offset: -2px; }
 .ds-banner-headtext { flex: 1 1 auto; min-width: 0; }
 .ds-banner-chevron { flex: none; color: var(--text-tertiary); transition: transform 150ms ease; }
@@ -1254,7 +1258,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   }
 }
 .ds-stat--interactive:active { transform: none; }
-.ds-stat--interactive:focus-visible { outline: 2px solid var(--focus-ring, var(--amber)); outline-offset: 2px; }
+.ds-stat--interactive:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .ds-stat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; }
 .ds-stat--crit .ds-stat-head { padding-right: 32px; }
 .ds-stat-label::before {
@@ -1323,4 +1327,19 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   .ds-stat--live { border: 2px solid Highlight; }
   .ds-banner[data-variant="prominent"] { border: 1px solid CanvasText; }
   .ds-banner[data-variant="prominent"]::before { display: none; }
+}
+
+/* ── Primary button states under an accent (P3-2a) ─────────────────────
+   The legacy look (no data-accent) keeps each button's own hover/press
+   treatment (brightness filter on the shared kit Button, none on the ops
+   Button). With an accent set, hover and press DARKEN the flat fill
+   (--btn-primary-bg-hover / --primary-pressed, generated in appearance.css).
+   !important: the ops Button paints its background with an inline style. */
+:root[data-accent] .ds-btn-primary:hover:not(:disabled) {
+  background: var(--btn-primary-bg-hover) !important;
+  filter: none !important;
+}
+:root[data-accent] .ds-btn-primary:active:not(:disabled) {
+  background: var(--primary-pressed) !important;
+  filter: none !important;
 }

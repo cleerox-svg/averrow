@@ -50,14 +50,14 @@ describe.each(['pills', 'underline', 'bar'] as const)('shared Tabs (%s)', (varia
     expect(tab(/^Three/)).toHaveTextContent('0');
   });
 
-  it('highlights the active tab with --amber-text and keeps inactive tabs on --text-secondary', () => {
+  it('highlights the active tab with --primary-text and keeps inactive tabs on --text-secondary', () => {
     const { rerender } = render(<Tabs tabs={TABS} activeTab="two" onChange={() => {}} variant={variant} />);
-    expect(tab(/^Two/).style.color).toBe('var(--amber-text)');
+    expect(tab(/^Two/).style.color).toBe('var(--primary-text)');
     expect(tab(/^One/).style.color).toBe('var(--text-secondary)');
     expect(tab(/^Three/).style.color).toBe('var(--text-secondary)');
     // Active styling follows the controlled activeTab prop.
     rerender(<Tabs tabs={TABS} activeTab="three" onChange={() => {}} variant={variant} />);
-    expect(tab(/^Three/).style.color).toBe('var(--amber-text)');
+    expect(tab(/^Three/).style.color).toBe('var(--primary-text)');
     expect(tab(/^Two/).style.color).toBe('var(--text-secondary)');
   });
 
@@ -187,7 +187,7 @@ describe('shared Tabs tab stop + focus', () => {
     render(<Harness variant={variant} />);
     const cls = tab(/^One/).className;
     expect(cls).toContain('focus-visible:outline-2');
-    expect(cls).toContain('focus-visible:outline-[var(--amber-text)]');
+    expect(cls).toContain('focus-visible:outline-[var(--focus-ring)]');
     expect(cls).not.toContain('focus-visible:ring');
     expect(cls).not.toContain('focus-visible:outline-none');
   });

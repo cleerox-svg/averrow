@@ -31,7 +31,7 @@ export interface AvatarProps {
   /**
    * `brand` (default): coloured gradient tile. `neutral`: quiet tile (list rows).
    * `self`: the signed-in USER's own avatar (ACCOUNT_DESIGN_SPEC §3) — initials
-   * only, ink-on-colour (`--text-on-amber`), outer glow. It never renders an
+   * only, ink-on-colour (`--primary-ink`), outer glow. It never renders an
    * image: `faviconUrl` is ignored, so a profile picture can't leak in.
    */
   tone?: AvatarTone;
@@ -88,8 +88,9 @@ export function Avatar({
 }: AvatarProps) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const self = tone === 'self';
-  // Self avatars default to the static amber (SELF_AVATAR_COLOR); entities to red.
-  const color = colorProp ?? (self ? 'var(--amber)' : 'var(--red)');
+  // Self avatars default to the platform primary (SELF_AVATAR_COLOR: amber in the
+  // legacy look, the accent once one is set); entities to red.
+  const color = colorProp ?? (self ? 'var(--primary)' : 'var(--red)');
   // Self avatars are initials-only by contract: never render an image.
   const showFavicon = !self && !!faviconUrl && failedUrl !== faviconUrl;
   const neutral = tone === 'neutral';
@@ -169,7 +170,7 @@ export function Avatar({
             style={{
               fontSize: fs,
               lineHeight: 1,
-              color: self ? 'var(--text-on-amber)' : neutral ? 'var(--text-secondary)' : '#fff',
+              color: self ? 'var(--primary-ink)' : neutral ? 'var(--text-secondary)' : '#fff',
               fontWeight: self ? 800 : undefined,
               textShadow: neutral || self ? undefined : '0 1px 3px rgba(0,0,0,0.65)',
             }}

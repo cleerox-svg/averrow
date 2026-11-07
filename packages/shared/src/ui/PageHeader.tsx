@@ -35,14 +35,14 @@ export interface PageHeaderProps {
 }
 
 const FOCUS_RING =
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--amber)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)]';
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)]';
 
 export function PageHeader({ title, subtitle, back, backFont = 'mono', actions, badge, meta, className, embedded }: PageHeaderProps) {
   const ctxEmbedded = useWorkspaceEmbed();
   const isEmbedded = embedded ?? ctxEmbedded;
 
   const backClass = cn(
-    'mb-3 inline-flex items-center gap-1.5 rounded text-[var(--text-secondary)] hover:text-[var(--amber-text)] bg-transparent border-0 p-0 cursor-pointer no-underline',
+    'mb-3 inline-flex items-center gap-1.5 rounded text-[var(--text-secondary)] hover:text-[var(--primary-text)] bg-transparent border-0 p-0 cursor-pointer no-underline',
     backFont === 'sans' ? 'font-sans text-[14px] font-medium' : 'font-mono text-[12px] tracking-[0.06em]',
     FOCUS_RING,
   );

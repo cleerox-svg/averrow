@@ -11,7 +11,8 @@
 //   * Graphite is the default dark base (also when data-base is absent or
 //     invalid); navy only applies for data-base="navy". Light ignores base.
 //   * The --amber family (--amber*, --text-on-amber) is dropped: amber stays
-//     the STATUS amber in every accent.
+//     the STATUS amber in every accent. The palettes' --amber-glow (the accent
+//     glow) is re-emitted as --primary-glow.
 //   * Hex only (the palettes' oklch twins differ by <=2/255 in sRGB).
 //   * Declarations are de-duplicated into layers: common (all accents) ->
 //     per-accent -> per-base neutrals, to keep the CSS small.
@@ -232,6 +233,10 @@ function parsePalette(src) {
     const body = src.slice(mk.end, i + 1 < marks.length ? marks[i + 1].idx : src.length);
     const decls = new Map();
     for (const d of body.matchAll(/^\s*(--[\w-]+)\s*:\s*([^;]+);/gm)) {
+      // The palettes' --amber-glow is the ACCENT glow (accent colour, 0.24 alpha):
+      // it becomes the L2 --primary-glow (legacy value in tokens.css), while
+      // --amber-glow itself stays the status amber.
+      if (d[1] === '--amber-glow') decls.set('--primary-glow', d[2].trim());
       if (!DROP(d[1])) decls.set(d[1], d[2].trim());
     }
     out[mk.key === 'dark navy' ? 'navy' : mk.key === 'dark graphite' ? 'graphite' : 'light'] = decls;

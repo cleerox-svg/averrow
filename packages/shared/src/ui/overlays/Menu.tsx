@@ -238,7 +238,7 @@ const RadioContext = React.createContext<RadioCtx | null>(null);
 function CheckGlyph() {
   return (
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--amber-text,var(--amber))]">
+      strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--primary-text)]">
       <path d="m5 12.5 4.5 4.5L19 7.5" />
     </svg>
   );
@@ -313,7 +313,7 @@ const SEGMENT_CLASS =
   'transition-colors duration-[var(--dur-fast,120ms)] motion-reduce:transition-none ' + FOCUS_RING_INSET + ' ' +
   'data-[disabled]:pointer-events-none data-[disabled]:opacity-50 disabled:pointer-events-none disabled:opacity-50';
 const SEGMENT_ON =
-  'font-semibold text-[var(--amber-text,var(--amber))] bg-[var(--bg-card-deep,var(--bg-card))] shadow-[0_0_0_1px_var(--amber-border,var(--border-strong))]';
+  'font-semibold text-[var(--primary-text)] bg-[var(--bg-card-deep,var(--bg-card))] shadow-[0_0_0_1px_color-mix(in_srgb,var(--primary)_25%,transparent)]';
 const SEGMENT_OFF =
   'font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] data-[highlighted]:text-[var(--text-primary)] ' +
   'data-[highlighted]:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)]';

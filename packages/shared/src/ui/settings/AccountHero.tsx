@@ -1,6 +1,6 @@
 // @averrow/shared/ui/settings — AccountHero (ACCOUNT_DESIGN_SPEC §3)
 //
-// "This is you" identity card: the one glowing (amber) Card on the page.
+// "This is you" identity card: the one glowing (primary) Card on the page.
 // Initials-only squircle avatar in the static self colour — NEVER a profile
 // picture (SHARED_LOGIN_SPEC §3): there is deliberately no avatar-URL prop.
 //
@@ -60,7 +60,7 @@ export function AccountHero({
       <div className="motion-safe:animate-pulse" style={{ width: w, height: h, borderRadius: r, background: strong ? 'var(--border-strong)' : 'var(--border-base)' }} />
     );
     return (
-      <Card variant="active" accent="var(--amber)" padding={padding} className={className} role="status" aria-busy="true" aria-label="Loading your profile">
+      <Card variant="active" accent="var(--primary)" padding={padding} className={className} role="status" aria-busy="true" aria-label="Loading your profile">
         <div className={cn('ds-hero', compact && 'ds-hero--compact')}>
           {bone(avatarSize, avatarSize, Math.round(avatarSize * 0.3), true)}
           <div className="ds-hero-body">
@@ -79,7 +79,7 @@ export function AccountHero({
   const display = (name ?? '').trim() || email || 'Your account';
 
   return (
-    <Card variant="active" accent="var(--amber)" padding={padding} className={cn('ds-card-vivid', className)}>
+    <Card variant="active" accent="var(--primary)" padding={padding} className={cn('ds-card-vivid', className)}>
       <div className={cn('ds-hero', compact && 'ds-hero--compact')}>
         <Avatar
           tone="self"

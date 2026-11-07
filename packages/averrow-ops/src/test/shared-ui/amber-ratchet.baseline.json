@@ -1,0 +1,20 @@
+{
+  "averrow-ops": {
+    "var(--amber)": 138,
+    "#e5a832": 46,
+    "rgba(229, 168, 50": 88,
+    "tailwind (text|bg|border|ring)-amber": 24
+  },
+  "averrow-tenant": {
+    "var(--amber)": 3,
+    "#e5a832": 0,
+    "rgba(229, 168, 50": 0,
+    "tailwind (text|bg|border|ring)-amber": 556
+  },
+  "shared": {
+    "var(--amber)": 9,
+    "#e5a832": 2,
+    "rgba(229, 168, 50": 17,
+    "tailwind (text|bg|border|ring)-amber": 9
+  }
+}

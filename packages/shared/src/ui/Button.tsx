@@ -10,12 +10,14 @@ import { cn } from './cn';
 const buttonVariants = cva(
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[10px] font-semibold tracking-[0.01em] select-none ' +
   'transition-[background,box-shadow,transform,opacity,filter] duration-150 motion-reduce:transition-none ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--amber)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] ' +
   'disabled:opacity-50 disabled:pointer-events-none',
   {
     variants: {
       variant: {
-        primary: 'text-[var(--text-on-amber)] [background:linear-gradient(135deg,var(--amber),var(--amber-dim))] shadow-[0_4px_18px_color-mix(in_srgb,var(--amber)_30%,transparent)] hover:brightness-110 active:brightness-95 ' +
+        primary: 'ds-btn-primary text-[var(--btn-primary-ink,var(--primary-ink))] [background:var(--btn-primary-bg,linear-gradient(135deg,var(--primary),var(--primary-pressed)))] shadow-[0_4px_18px_color-mix(in_srgb,var(--primary)_30%,transparent)] hover:brightness-110 active:brightness-95 ' +
+          // Under [data-accent] the hover/pressed fills come from tokens.css (.ds-btn-primary).
+
           // Disabled primary reads as an inert neutral control, not a muddy dimmed amber.
           'disabled:opacity-100 disabled:[background:var(--bg-input)] disabled:shadow-none disabled:border disabled:border-[var(--border-base)] disabled:text-[var(--text-tertiary)]',
         secondary: 'text-[var(--text-primary)] bg-[var(--bg-card-deep,rgba(14,20,34,0.92))] border border-[var(--border-base)] hover:border-[var(--border-strong)]',

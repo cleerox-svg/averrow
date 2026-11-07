@@ -98,12 +98,12 @@ describe('shared Avatar squircle / self', () => {
     expect((container.firstChild as HTMLElement).style.borderRadius).toBe('10px');
   });
 
-  it('tone="self" renders the supplied initials with on-amber ink and no image', () => {
+  it('tone="self" renders the supplied initials with primary ink and no image', () => {
     const { container } = render(
       <Avatar tone="self" shape="squircle" size={72} name="Claude Leroux" initials="CL" color="var(--amber)" />,
     );
     expect(screen.getByText('CL')).toBeInTheDocument();
-    expect(screen.getByText('CL').style.color).toBe('var(--text-on-amber)');
+    expect(screen.getByText('CL').style.color).toBe('var(--primary-ink)');
     expect(container.querySelector('img')).toBeNull();
   });
 
@@ -125,9 +125,9 @@ describe('shared Avatar squircle / self', () => {
 });
 
 describe('shared Avatar tone=self (review fix)', () => {
-  it('defaults to the amber self colour when no colour is passed', () => {
+  it('defaults to the primary self colour when no colour is passed', () => {
     const { container } = render(<Avatar tone="self" name="Claude Leroux" initials="CL" />);
-    expect((container.firstChild as HTMLElement).style.background).toContain('var(--amber)');
+    expect((container.firstChild as HTMLElement).style.background).toContain('var(--primary)');
   });
 
   it('caps self initials at 2 characters', () => {

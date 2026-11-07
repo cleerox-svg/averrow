@@ -5,6 +5,7 @@
 
 import type { BotTrafficDensity } from '@/hooks/useBotTraffic';
 import { getCountryCentroid, type LngLat } from '@/lib/country-centroids';
+import { readTokenRgba } from '@averrow/shared/theme';
 
 export type Rgba = [number, number, number, number];
 
@@ -54,17 +55,16 @@ export function parseCssColor(input: string): [number, number, number] | null {
 }
 
 /**
- * Resolve the sequential-scale stops from CSS vars at runtime. The result is
- * theme-invariant because the stop tokens (--sev-low, --amber, --sev-critical)
- * have the same value in light and dark themes, so no theme dependency is needed.
+ * Resolve the sequential-scale stops from CSS vars at runtime, through the
+ * shared token reader (fully resolved values, cached per appearance version).
+ * The stops are a data ramp, not the primary: --amber stays the status amber in
+ * every accent. Callers re-run this when the appearance version changes
+ * (useAppearanceVersion), since an accent may retune a severity token.
  */
 export function resolveScaleStops(): [Rgba, Rgba, Rgba] {
-  if (typeof document === 'undefined') return FALLBACK_STOPS;
-  const style = getComputedStyle(document.documentElement);
   return STOP_VARS.map((v, i) => {
-    const parsed = parseCssColor(style.getPropertyValue(v));
     const fb = FALLBACK_STOPS[i]!;
-    return parsed ? [parsed[0], parsed[1], parsed[2], fb[3]] : fb;
+    return readTokenRgba(v, fb[3]) ?? fb;
   }) as [Rgba, Rgba, Rgba];
 }
 

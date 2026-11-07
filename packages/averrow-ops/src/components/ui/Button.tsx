@@ -18,12 +18,15 @@ export interface ButtonProps
 }
 
 const VARIANT_STYLES: Record<ButtonVariant, React.CSSProperties> = {
+  // L2 primary. Legacy look (no data-accent): --btn-primary-* are unset, so the
+  // fallbacks render today's amber gradient + black ink. Accent hover/press:
+  // tokens.css `.ds-btn-primary` (inline styles cannot carry :hover).
   primary: {
-    background: 'linear-gradient(135deg, var(--amber), var(--amber-dim))',
-    border:     '1px solid rgba(229, 168, 50, 0.60)',
-    color:      '#000',
+    background: 'var(--btn-primary-bg, linear-gradient(135deg, var(--primary), var(--primary-pressed)))',
+    border:     '1px solid color-mix(in srgb, var(--primary) 60%, transparent)',
+    color:      'var(--btn-primary-ink, #000)',
     boxShadow: [
-      '0 4px 16px var(--amber-glow)',
+      '0 4px 16px var(--primary-glow)',
       '0 2px 4px rgba(0, 0, 0, 0.40)',
       'inset 0 1px 0 rgba(255, 255, 255, 0.30)',
       'inset 0 -1px 0 rgba(0, 0, 0, 0.20)',
@@ -92,7 +95,7 @@ export function Button({
   return (
     <button
       disabled={disabled || loading}
-      className={cn('ds-focusable', className)}
+      className={cn('ds-focusable', variant === 'primary' && 'ds-btn-primary', className)}
       style={{
         display:        'inline-flex',
         alignItems:     'center',

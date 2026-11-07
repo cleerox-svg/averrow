@@ -86,7 +86,7 @@ describe('shared FilterBar', () => {
     for (const name of [/^All/, /^Critical/]) {
       const cls = screen.getByRole('button', { name }).className;
       expect(cls).toContain('focus-visible:outline-2');
-      expect(cls).toContain('focus-visible:outline-[var(--amber-text)]');
+      expect(cls).toContain('focus-visible:outline-[var(--focus-ring)]');
       expect(cls).not.toContain('focus-visible:ring');
     }
   });

@@ -41,9 +41,10 @@ const VARIANT_STYLES: Record<CardVariant, { bg: string; border: string; rim: str
   },
   active: {
     bg: 'linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep) 100%)',
-    border: 'var(--amber-border)',
-    rim: 'rgba(229, 168, 50, 0.35)',
-    shadow: 'var(--card-shadow), 0 0 20px var(--amber-glow)',
+    // Primary accent; legacy (no data-accent) resolves to the amber look.
+    border: 'color-mix(in srgb, var(--primary) 25%, transparent)',
+    rim: 'color-mix(in srgb, var(--primary) 35%, transparent)',
+    shadow: 'var(--card-shadow), 0 0 20px var(--primary-glow)',
   },
   // Inset panel (e.g. a table's expansion row): surface + border only, no
   // shadow, rims or blur.
