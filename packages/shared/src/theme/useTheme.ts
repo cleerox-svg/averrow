@@ -15,8 +15,9 @@
 // avatar dropdown's "Light Mode" item being a no-op while
 // /v2/profile's toggle worked correctly. Audit fix 2026-05-08.
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { safeGetItem, safeSetItem, setRootAttr } from './storage';
+import { markLocalPick } from './accountSync';
 
 export type Theme         = 'auto' | 'dark' | 'light';
 export type ResolvedTheme = 'dark' | 'light';
@@ -90,6 +91,23 @@ export interface UseThemeReturn {
   isAuto:        boolean;
 }
 
+// Every mounted useTheme() follows a preference set anywhere (another
+// instance, or the account hydration after /api/auth/me).
+const themeListeners = new Set<(t: Theme) => void>();
+
+/** Apply a theme preference: DOM + storage + every mounted useTheme(). Does
+ *  NOT count as a local pick (the account hydration uses it). */
+export function applyThemePreference(t: Theme): void {
+  applyTheme(resolveTheme(t));
+  persistTheme(t);
+  for (const l of [...themeListeners]) l(t);
+}
+
+/** True for the preference values the account / storage may carry. */
+export function isTheme(v: unknown): v is Theme {
+  return v === 'auto' || v === 'dark' || v === 'light';
+}
+
 export function useTheme(): UseThemeReturn {
   const [theme, setThemeState] = useState<Theme>(() => readStoredTheme());
   const [resolved, setResolvedState] = useState<ResolvedTheme>(() => {
@@ -121,25 +139,31 @@ export function useTheme(): UseThemeReturn {
     };
   }, []);
 
+  // Follow preferences applied by other instances / the account hydration.
+  const themeRef = useRef<Theme>(theme);
+  themeRef.current = theme;
+  useEffect(() => {
+    const onApply = (t: Theme) => {
+      setThemeState(t);
+      setResolvedState(resolveTheme(t));
+    };
+    themeListeners.add(onApply);
+    return () => { themeListeners.delete(onApply); };
+  }, []);
+
+  // A user choice on this device: the account hydration must not overwrite it.
   const setTheme = useCallback((t: Theme) => {
-    const next = resolveTheme(t);
-    applyTheme(next);
-    persistTheme(t);
-    setThemeState(t);
-    setResolvedState(next);
+    markLocalPick('theme');
+    applyThemePreference(t);
   }, []);
 
   const cycle = useCallback(() => {
-    setThemeState((prev) => {
-      const order: Theme[] = ['auto', 'dark', 'light'];
-      const idx = order.indexOf(prev);
-      const nextTheme: Theme = order[(idx + 1) % order.length] ?? 'auto';
-      const nextResolved = resolveTheme(nextTheme);
-      applyTheme(nextResolved);
-      persistTheme(nextTheme);
-      setResolvedState(nextResolved);
-      return nextTheme;
-    });
+    const order: Theme[] = ['auto', 'dark', 'light'];
+    const idx = order.indexOf(themeRef.current);
+    const nextTheme: Theme = order[(idx + 1) % order.length] ?? 'auto';
+    themeRef.current = nextTheme;
+    markLocalPick('theme');
+    applyThemePreference(nextTheme);
   }, []);
 
   return {

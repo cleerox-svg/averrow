@@ -13,7 +13,7 @@ import {
   type MouseEvent, type ReactNode,
 } from 'react';
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { accountSectionIdFromPath, getAccountSections, SignOutRow, type AccountSectionId } from '@averrow/shared/account';
+import { accountSectionIdFromPath, accountSettingsSubtitle, getAccountSections, SignOutRow, type AccountSectionId } from '@averrow/shared/account';
 import {
   AccountHero, Button, ConfirmDialog, SettingsShell, ToastProvider, describeAccountScope, useMediaQuery,
   type SettingsRenderLink,
@@ -138,7 +138,7 @@ export function AccountLayout() {
             activeId={activeId}
             basePath={ACCOUNT_BASE_PATH}
             title="Account"
-            subtitle="Your profile, security and notifications."
+            subtitle={accountSettingsSubtitle()}
             home={home}
             homeFooter={(
               <>

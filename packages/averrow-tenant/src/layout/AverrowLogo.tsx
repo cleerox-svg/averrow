@@ -11,7 +11,10 @@
 
 import { AverrowLockup, LOGO_LEGACY_CLASS, LOGO_R3_CLASS } from '@averrow/shared/ui';
 
-const R3_HEIGHT = { small: 22, default: 26, large: 34 } as const;
+// R3 lockup heights: >= 28px at every size (P3-5 review), so the wordmark
+// stays legible in the sidebar. No "TENANT" subtitle on the R3 lockup; the
+// legacy lockup keeps it.
+const R3_HEIGHT = { small: 28, default: 32, large: 40 } as const;
 
 export function AverrowLogo({ size = 'default' }: { size?: 'small' | 'default' | 'large' }) {
   const dim = size === 'small' ? 24 : size === 'large' ? 40 : 28;

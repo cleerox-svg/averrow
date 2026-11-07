@@ -6,6 +6,7 @@
 export {
   ACCOUNT_SECTION_DEFS, ACCOUNT_SECTION_IDS, ACCOUNT_SETTINGS_BASE_PATH,
   getAccountSections, accountSectionIdFromPath, isAccountSectionEnabled,
+  profileSectionDescription, accountSettingsSubtitle,
   type AccountSectionId, type AccountSectionsOptions,
 } from './sections';
 export { securitySummary, notificationsSummary, devicesSummary } from './summaries';
@@ -14,7 +15,7 @@ export {
   ProfileSettings, type ProfileSettingsProps, type ProfileSettingsUser,
 } from './ProfileSettings';
 export {
-  AppearanceSettings, ACCENT_SWATCHES, BASE_SWATCHES, type AppearanceSettingsProps,
+  AppearanceSettings, ACCENT_SWATCHES, BASE_SWATCHES, BASE_CARD_SWATCHES, SWATCH_OUTLINE, type AppearanceSettingsProps,
 } from './AppearanceSettings';
 export {
   DevicesSettings,

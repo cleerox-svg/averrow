@@ -14,8 +14,9 @@
 //      (H5, SECURITY_AUDIT_2026-06-10) — `loading` stays true until
 //      the attempt settles, so hosts must not redirect to login
 //      while `loading` is set.
-//   4. Validate via /api/auth/me. Apply onValidatedUser hook, then the
-//      account's saved accent/background (hydrateAppearanceFromAccount).
+//   4. Validate via /api/auth/me. Apply onValidatedUser hook, then (first
+//      successful /me of the session only) the account's saved theme,
+//      accent and background (hydrateAppearanceFromAccount).
 //   5. Set loading=false, render.
 //
 // Token storage model (H5): the refresh token lives ONLY in the
@@ -40,6 +41,7 @@ import type {
   SharedAuthUser, SharedAuthState, AuthHttpClient, AuthProviderConfig,
 } from './types';
 import { hydrateAppearanceFromAccount } from '../theme/useAppearance';
+import { resetAccountSyncSession } from '../theme/accountSync';
 
 const AuthContext = createContext<SharedAuthState | null>(null);
 
@@ -263,8 +265,10 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
           return;
         }
         setUser(res.data);
-        // Account-synced accent/background: the server value wins over this
-        // device's localStorage (no-op until APPEARANCE_PICKER_ENABLED).
+        // Account-synced theme/accent/background: the server value wins over
+        // this device's localStorage, on the FIRST successful /me of the
+        // session only (refreshUser re-runs this; see theme/accountSync).
+        // No-op until APPEARANCE_PICKER_ENABLED.
         hydrateAppearanceFromAccount(res.data);
       } else {
         setUser(null);
@@ -309,6 +313,7 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     try { await httpClient.post(logoutPath, {}); } catch { /* swallow */ }
     httpClient.clearTokens();
     setUser(null);
+    resetAccountSyncSession();
     onLogoutCleanup?.();
     if (typeof window !== 'undefined') window.location.href = destination;
   }, [httpClient, logoutPath, onLogoutCleanup, setUser]);

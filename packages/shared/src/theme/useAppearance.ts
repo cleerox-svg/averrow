@@ -25,13 +25,23 @@
 //
 // Account sync (P3-5): accent/base are also saved on the user's account
 // (users.accent_preference / base_preference, PATCH /api/profile).
-// hydrateAppearanceFromAccount() applies the server values after the session
-// user is validated (server wins over localStorage, which stays the no-flash
-// cache). It is a no-op while APPEARANCE_PICKER_ENABLED is false.
+// hydrateAppearanceFromAccount() applies the server values (and the light/dark
+// theme_preference) after the session user is validated: server wins over
+// localStorage, which stays the no-flash cache. It runs once per session and
+// never overwrites a field picked locally or with a save in flight
+// (./accountSync). It is a no-op while APPEARANCE_PICKER_ENABLED is false.
+//
+// Saves (pickAccent / pickBase) are serialized per field: one PATCH in flight,
+// and when it settles only the LATEST pick is sent. A failure that no newer
+// pick supersedes reverts to the last value the server confirmed.
 
 import { useCallback, useSyncExternalStore } from 'react';
 import { safeGetItem, safeSetItem, setRootAttr } from './storage';
 import { ACCENTS, APPEARANCE_PICKER_ENABLED, BASES, DEFAULT_ACCENT, DEFAULT_BASE } from './appearanceDefaults';
+import { applyThemePreference } from './useTheme';
+import {
+  beginAccountSave, endAccountSave, hasHydratedThisSession, markHydrated, markLocalPick, mayHydrateField,
+} from './accountSync';
 import type { Accent, Base } from './appearanceDefaults';
 
 // The constants live in ./appearanceDefaults (a separate module so tests can
@@ -120,6 +130,9 @@ const getServerSnapshot = (): Snapshot => SERVER_SNAPSHOT;
 function onStorage(e: StorageEvent): void {
   // key === null: another tab called localStorage.clear().
   if (e.key !== null && e.key !== ACCENT_STORAGE_KEY && e.key !== BASE_STORAGE_KEY) return;
+  // Another tab's choice is newer than anything /me could still deliver here.
+  if (e.key === null || e.key === ACCENT_STORAGE_KEY) markLocalPick('accent');
+  if (e.key === null || e.key === BASE_STORAGE_KEY) markLocalPick('base');
   const next = readSnapshot();
   setRootAttr('data-accent', next.accent);
   setRootAttr('data-base', next.base);
@@ -161,37 +174,131 @@ export function applyBase(b: Base | null): void {
 
 /** The account's saved appearance, as /api/auth/me and /api/profile return it. */
 export interface AccountAppearance {
+  theme_preference?: string | null;
   accent_preference?: string | null;
   base_preference?: string | null;
 }
 
+function has(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 /**
- * Apply the account's saved accent/base (server wins over localStorage).
+ * Apply the account's saved theme / accent / base (server wins over
+ * localStorage). Runs once per session: only the first call after a
+ * successful /me does anything, so a later refreshUser cannot re-apply an
+ * older account value over a newer local pick. A field picked on this device
+ * before that first call, or with a save in flight, is left alone.
  * Only fields PRESENT on `user` are applied, so a response from an older
  * Worker (or a cached user written before 0317) never clears a choice;
- * a present null or unknown value means "the default". No-op while
- * APPEARANCE_PICKER_ENABLED is false (nothing changes before the P3-6 flip).
+ * a present null or unknown value means "the default" (theme: follow the
+ * device). No-op while APPEARANCE_PICKER_ENABLED is false (nothing changes
+ * before the P3-6 flip).
  */
 export function hydrateAppearanceFromAccount(user: AccountAppearance | null | undefined): void {
   if (!APPEARANCE_PICKER_ENABLED || !user || typeof user !== 'object') return;
-  if (Object.prototype.hasOwnProperty.call(user, 'accent_preference')) {
-    const v = user.accent_preference;
-    applyAccent(isAccent(v) ? v : null);
+  if (hasHydratedThisSession()) return;
+  if (has(user, 'theme_preference') && mayHydrateField('theme')) {
+    const v = user.theme_preference;
+    applyThemePreference(v === 'dark' || v === 'light' ? v : 'auto');
   }
-  if (Object.prototype.hasOwnProperty.call(user, 'base_preference')) {
-    const v = user.base_preference;
-    applyBase(isBase(v) ? v : null);
+  if (has(user, 'accent_preference') && mayHydrateField('accent')) {
+    const v = isAccent(user.accent_preference) ? user.accent_preference : null;
+    applyAccent(v);
+    saves.accent.confirmed = v;
   }
+  if (has(user, 'base_preference') && mayHydrateField('base')) {
+    const v = isBase(user.base_preference) ? user.base_preference : null;
+    applyBase(v);
+    saves.base.confirmed = v;
+  }
+  markHydrated();
+}
+
+// ── serialized account saves ───────────────────────────────────────────
+
+/** Sends one field to the account; resolves true when the server saved it. */
+export type AppearanceSaver<T> = (value: T | null) => Promise<boolean>;
+
+interface SaveQueue<T> {
+  /** Last value the server confirmed (undefined = not known yet). */
+  confirmed: T | null | undefined;
+  inFlight: boolean;
+  /** The newest pick not yet sent. */
+  queued: { value: T | null } | null;
+  save: AppearanceSaver<T> | null;
+  onFailed: (() => void) | null;
+}
+
+function newQueue<T>(): SaveQueue<T> {
+  return { confirmed: undefined, inFlight: false, queued: null, save: null, onFailed: null };
+}
+
+const saves: { accent: SaveQueue<Accent>; base: SaveQueue<Base> } = { accent: newQueue(), base: newQueue() };
+
+async function pump<T>(field: 'accent' | 'base', q: SaveQueue<T>, apply: (v: T | null) => void): Promise<void> {
+  if (q.inFlight) return;
+  q.inFlight = true;
+  beginAccountSave(field);
+  try {
+    while (q.queued) {
+      const { value } = q.queued;
+      q.queued = null;
+      // Already what the server has (e.g. A failed, then the user went back).
+      if (q.confirmed !== undefined && value === q.confirmed) continue;
+      let ok = false;
+      try { ok = q.save ? await q.save(value) : false; } catch { ok = false; }
+      if (ok) {
+        q.confirmed = value;
+      } else if (!q.queued) {
+        // Nothing newer to send: revert to what the server holds.
+        apply(q.confirmed ?? null);
+        q.onFailed?.();
+      }
+      // else: a newer pick supersedes this one; send it instead.
+    }
+  } finally {
+    q.inFlight = false;
+    endAccountSave(field);
+  }
+}
+
+function pick<T>(
+  field: 'accent' | 'base', q: SaveQueue<T>, value: T | null, current: T | null,
+  apply: (v: T | null) => void, save: AppearanceSaver<T>, onFailed: () => void,
+): Promise<void> {
+  // First pick before any hydration: what was on screen is the best known
+  // server value (it came from the account or is the default).
+  if (q.confirmed === undefined) q.confirmed = current;
+  markLocalPick(field);
+  apply(value);
+  q.queued = { value };
+  q.save = save;
+  q.onFailed = onFailed;
+  return pump(field, q, apply);
+}
+
+/** User picked an accent: apply now, save to the account (serialized). */
+export function pickAccent(value: Accent | null, save: AppearanceSaver<Accent>, onFailed: () => void): Promise<void> {
+  return pick('accent', saves.accent, value, getSnapshot().accent, applyAccent, save, onFailed);
+}
+
+/** User picked a background: apply now, save to the account (serialized). */
+export function pickBase(value: Base | null, save: AppearanceSaver<Base>, onFailed: () => void): Promise<void> {
+  return pick('base', saves.base, value, getSnapshot().base, applyBase, save, onFailed);
 }
 
 export function useAppearance(): UseAppearanceReturn {
   const { accent, base } = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const setAccent = useCallback((a: Accent | null) => applyAccent(a), []);
-  const setBase = useCallback((b: Base | null) => applyBase(b), []);
+  // A choice on this device: the account hydration must not overwrite it.
+  const setAccent = useCallback((a: Accent | null) => { markLocalPick('accent'); applyAccent(a); }, []);
+  const setBase = useCallback((b: Base | null) => { markLocalPick('base'); applyBase(b); }, []);
   return { accent, base, setAccent, setBase };
 }
 
 /** Test hook: drop the shared snapshot (module state is global). */
 export function __resetAppearanceStoreForTests(): void {
   snapshot = null;
+  saves.accent = newQueue();
+  saves.base = newQueue();
 }

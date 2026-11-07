@@ -129,6 +129,10 @@
   --primary-tint:    rgba(229, 168, 50, 0.12);
   --primary-tint-strong: rgba(229, 168, 50, 0.22);
   --primary-border:  rgba(229, 168, 50, 0.38);
+  /* Hairline rim (login card top edge). Legacy = --amber-border's value, as a
+     literal for the same reason as --primary-glow; :root[data-accent] repoints
+     it to --primary-border (end of this file). */
+  --primary-rim:     rgba(229, 168, 50, 0.25);
   /* Primary glow (legacy = --amber-glow's value). A literal, not var(--amber-glow):
      an alias resolves at :root, so a scoped --amber-glow override (shell-v4.css)
      would not reach it. Wherever a scope overrides --amber-glow, override this too. */
@@ -1387,4 +1391,10 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 }
 :root[data-accent] .av-logo-r3-block {
   display: block !important;
+}
+
+/* Login card top rim (P3-5 review): legacy keeps --amber-border's value
+   (see --primary-rim above); under an accent it follows the accent. */
+:root[data-accent] {
+  --primary-rim: var(--primary-border);
 }

@@ -14,18 +14,20 @@
 //   PATCH /api/profile { base_preference }   — 'graphite'|'navy'; null = default
 //
 // Save semantics: a choice applies instantly (useAppearance writes the <html>
-// attribute + localStorage, the no-flash cache), then saves to the account. A
-// failed save reverts the choice, unless the user has picked something else
-// since, and toasts. A successful save does not refetch the session user:
-// /api/auth/me re-hydrates on the next load, and an in-flight refetch could
-// otherwise re-apply an older value over a newer pick.
+// attribute + localStorage, the no-flash cache), then saves to the account
+// through pickAccent / pickBase, which serialize the PATCHes per field (one in
+// flight; afterwards only the latest pick is sent). A failed save that no newer
+// pick supersedes reverts to the last SERVER-CONFIRMED value and toasts. A
+// successful save does not refetch the session user: the account hydrates once
+// per session (theme/accountSync), on the next load.
 
-import { useRef } from 'react';
 import type { AccountApiClient } from './api-types';
 import { SegmentedControl, type SegmentedOption } from '../ui/forms';
 import { useToast } from '../ui/overlays';
 import { SettingsGroup, SettingsRow, useMediaQuery } from '../ui/settings';
-import { useAppearance, isAccent, isBase, type Accent, type Base } from '../theme/useAppearance';
+import {
+  useAppearance, isAccent, isBase, pickAccent, pickBase, type Accent, type Base,
+} from '../theme/useAppearance';
 import { useAppearanceVersion } from '../theme/tokenReader';
 import { ACCENTS, BASES, DEFAULT_ACCENT, DEFAULT_BASE } from '../theme/appearanceDefaults';
 import { LayersIcon, PaletteIcon } from './section-icons';
@@ -47,6 +49,15 @@ export const BASE_SWATCHES: Record<Base, string> = {
   graphite: '#0a0b0e',
   navy:     '#040915',
 };
+/** Each base's dark `--bg-card` (indigo palette; a test pins them): the inner
+ *  chip of the background swatch, so the two bases read apart on a dark card. */
+export const BASE_CARD_SWATCHES: Record<Base, string> = {
+  graphite: '#151619',
+  navy:     '#0c1423',
+};
+/** Swatch outline: mid grey, >= 3:1 against both a dark card (#151619, ~4.5:1)
+ *  and a light one (#ffffff, ~4:1), so near-black swatches keep a visible edge. */
+export const SWATCH_OUTLINE = '#7c8089';
 
 const ACCENT_LABELS: Record<Accent, string> = { indigo: 'Indigo', violet: 'Violet', mono: 'Mono', lime: 'Lime' };
 const BASE_LABELS: Record<Base, string> = { graphite: 'Graphite', navy: 'Navy' };
@@ -61,11 +72,29 @@ function Swatch({ color }: { color: string }) {
   );
 }
 
+/** Background preview: the page colour with a card-colour chip inside it. */
+function BaseSwatch({ base }: { base: Base }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-swatch={base}
+      className="relative inline-block h-4 w-5 rounded-[4px] border"
+      style={{ background: BASE_SWATCHES[base], borderColor: SWATCH_OUTLINE }}
+    >
+      <span
+        data-swatch-card
+        className="absolute rounded-[2px]"
+        style={{ inset: '3px 3px 3px 6px', background: BASE_CARD_SWATCHES[base] }}
+      />
+    </span>
+  );
+}
+
 const ACCENT_OPTIONS: SegmentedOption[] = ACCENTS.map((a) => ({
   value: a, label: ACCENT_LABELS[a], icon: <Swatch color={ACCENT_SWATCHES[a]} />,
 }));
 const BASE_OPTIONS: SegmentedOption[] = BASES.map((b) => ({
-  value: b, label: BASE_LABELS[b], icon: <Swatch color={BASE_SWATCHES[b]} />,
+  value: b, label: BASE_LABELS[b], icon: <BaseSwatch base={b} />,
 }));
 
 const SAVE_FAILED = "Couldn't save your appearance. Check your connection and try again.";
@@ -85,43 +114,24 @@ export function AppearanceSettings({ apiClient }: AppearanceSettingsProps) {
   const shownAccent: Accent = accent ?? DEFAULT_ACCENT ?? 'indigo';
   const shownBase: Base = base ?? DEFAULT_BASE ?? 'graphite';
 
-  // The choice made most recently per field: a failed earlier save must not
-  // revert a later pick.
-  const chosenAccent = useRef<Accent | null>(null);
-  const chosenBase = useRef<Base | null>(null);
-
-  const changeAccent = async (value: string) => {
-    if (!isAccent(value) || value === accent) return;
-    const previous = accent;
-    chosenAccent.current = value;
-    setAccent(value);
+  const saveField = (field: 'accent_preference' | 'base_preference') => async (value: string | null) => {
     try {
-      const res = await apiClient.patch('/api/profile', { accent_preference: value });
-      if (!res.success) throw new Error(res.error ?? 'save failed');
+      const res = await apiClient.patch('/api/profile', { [field]: value });
+      return !!res.success;
     } catch {
-      if (chosenAccent.current === value) {
-        chosenAccent.current = null;
-        setAccent(previous);
-      }
-      toast.error(SAVE_FAILED);
+      return false;
     }
   };
+  const onFailed = () => { toast.error(SAVE_FAILED); };
 
-  const changeBase = async (value: string) => {
+  const changeAccent = (value: string) => {
+    if (!isAccent(value) || value === accent) return;
+    void pickAccent(value, saveField('accent_preference'), onFailed);
+  };
+
+  const changeBase = (value: string) => {
     if (!isBase(value) || value === base) return;
-    const previous = base;
-    chosenBase.current = value;
-    setBase(value);
-    try {
-      const res = await apiClient.patch('/api/profile', { base_preference: value });
-      if (!res.success) throw new Error(res.error ?? 'save failed');
-    } catch {
-      if (chosenBase.current === value) {
-        chosenBase.current = null;
-        setBase(previous);
-      }
-      toast.error(SAVE_FAILED);
-    }
+    void pickBase(value, saveField('base_preference'), onFailed);
   };
 
   return (
@@ -132,7 +142,7 @@ export function AppearanceSettings({ apiClient }: AppearanceSettingsProps) {
       >
         <SettingsRow
           icon={<PaletteIcon />}
-          tone="violet"
+          tone="cyan"
           title="Accent"
           description="The color of buttons, links and highlights."
           stackTrailing
@@ -142,13 +152,13 @@ export function AppearanceSettings({ apiClient }: AppearanceSettingsProps) {
               options={ACCENT_OPTIONS}
               value={shownAccent}
               fullWidth={narrow}
-              onValueChange={(v) => { void changeAccent(v); }}
+              onValueChange={changeAccent}
             />
           )}
         />
         <SettingsRow
           icon={<LayersIcon />}
-          tone="violet"
+          tone="cyan"
           title="Background"
           description="The base the dark theme is built on."
           disabled={isLight}
@@ -161,7 +171,7 @@ export function AppearanceSettings({ apiClient }: AppearanceSettingsProps) {
               value={shownBase}
               disabled={isLight}
               fullWidth={narrow}
-              onValueChange={(v) => { void changeBase(v); }}
+              onValueChange={changeBase}
             />
           )}
         />

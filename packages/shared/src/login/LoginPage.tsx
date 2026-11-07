@@ -336,14 +336,14 @@ export function LoginPage(props: LoginPageProps) {
           ].join(', '),
         }}
       >
-        {/* amber rim along the top */}
+        {/* primary rim along the top (legacy: --amber-border, unchanged) */}
         <span
           aria-hidden
           style={{
             position: 'absolute',
             top: 0, left: 0, right: 0,
             height: 1,
-            background: 'linear-gradient(90deg, transparent, var(--amber-border, rgba(229,168,50,0.25)) 25%, var(--amber-border, rgba(229,168,50,0.25)) 75%, transparent)',
+            background: 'linear-gradient(90deg, transparent, var(--primary-rim, rgba(229,168,50,0.25)) 25%, var(--primary-rim, rgba(229,168,50,0.25)) 75%, transparent)',
             pointerEvents: 'none',
           }}
         />

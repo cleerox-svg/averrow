@@ -20,12 +20,14 @@ describe('AverrowLogo', () => {
     expect(r3!.classList.contains(LOGO_R3_CLASS)).toBe(true);
     expect(r3!.getAttribute('data-logo')).toBe('r3');
     expect(r3).toHaveAttribute('aria-label', 'Averrow');
-    expect(r3!.getAttribute('height')).toBe('26');
+    expect(r3!.getAttribute('height')).toBe('32');
+    expect(r3).not.toHaveTextContent('TENANT');
   });
 
   it('sizes the R3 lockup with the legacy size prop', () => {
     const { container } = render(<><AverrowLogo size="small" /><AverrowLogo size="large" /></>);
     const r3s = container.querySelectorAll(`.${LOGO_R3_CLASS}`);
-    expect([...r3s].map((e) => e.getAttribute('height'))).toEqual(['22', '34']);
+    expect([...r3s].map((e) => e.getAttribute('height'))).toEqual(['28', '40']);
+    for (const e of r3s) expect(Number(e.getAttribute('height'))).toBeGreaterThanOrEqual(28);
   });
 });

@@ -26,7 +26,7 @@ interface AccountSectionDef {
 export const ACCOUNT_SECTION_DEFS: readonly AccountSectionDef[] = [
   { id: 'profile',       label: 'Profile',        description: 'Name, appearance and time zone', tone: 'amber',  group: 'Account',     icon: () => <UserIcon /> },
   { id: 'security',      label: 'Security',       description: 'Passkeys and sessions',          tone: 'green',  group: 'Account',     icon: () => <ShieldCheckIcon /> },
-  { id: 'appearance',    label: 'Appearance',     description: 'Accent color and background',   tone: 'violet', group: 'Preferences', icon: () => <PaletteIcon /> },
+  { id: 'appearance',    label: 'Appearance',     description: 'Accent color and background',   tone: 'cyan',   group: 'Preferences', icon: () => <PaletteIcon /> },
   { id: 'notifications', label: 'Notifications',  description: 'Push, email and quiet hours',    tone: 'blue',   group: 'Preferences', icon: () => <BellIcon /> },
   { id: 'devices',       label: 'Devices & App',  description: 'Install the app and manage devices', tone: 'violet', group: 'Preferences', icon: () => <SmartphoneIcon /> },
 ];
@@ -46,13 +46,27 @@ export function isAccountSectionEnabled(id: AccountSectionId): boolean {
   return id !== 'appearance' || APPEARANCE_PICKER_ENABLED;
 }
 
+/** Profile's default description. Before the flip Profile is where all
+ *  appearance lives; once Appearance is its own section, Profile only keeps
+ *  light / dark. */
+export function profileSectionDescription(): string {
+  return APPEARANCE_PICKER_ENABLED ? 'Name, light or dark mode and time zone' : 'Name, appearance and time zone';
+}
+
+/** The Settings page subtitle (both apps). Mentions appearance once it has its own section. */
+export function accountSettingsSubtitle(): string {
+  return APPEARANCE_PICKER_ENABLED
+    ? 'Your profile, security, appearance and notifications.'
+    : 'Your profile, security and notifications.';
+}
+
 /** Sections in `SettingsShell` shape, with absolute hrefs under `basePath`. Disabled sections are left out. */
 export function getAccountSections(opts: AccountSectionsOptions = {}): SettingsSection[] {
   const root = (opts.basePath ?? ACCOUNT_SETTINGS_BASE_PATH).replace(/\/+$/, '');
   return ACCOUNT_SECTION_DEFS.filter((d) => isAccountSectionEnabled(d.id)).map((d) => ({
     id: d.id,
     label: d.label,
-    description: opts.descriptions?.[d.id] ?? d.description,
+    description: opts.descriptions?.[d.id] ?? (d.id === 'profile' ? profileSectionDescription() : d.description),
     icon: d.icon(),
     tone: d.tone,
     group: d.group,
