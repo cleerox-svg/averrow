@@ -90,3 +90,14 @@ Each palette must ship with tokens for both themes and a severity-collision chec
 | 5 | Scope | **Everything:** marketing site, ops and tenant apps. The login screen follows the platform in full; FarmTrack parity is deferred. |
 
 `WEBSITE_REBRAND_BRIEF_2026-11.md` (written in a separate marketing session) is reference input only; this brief and the gate decisions above are authoritative.
+
+## 9. Phase 1 decisions (2026-11-07)
+
+| Gate | Decision | Source of truth |
+|---|---|---|
+| G1 Logo | **R3 "Sharpened + edge"**: today's A + tail-fin mark, flattened (no glow/gradient), sharper apex, raked swallow-tail feet, ~9° forward lean, counter opened for 16px. The mark stays red `#C83C3C`. One tile spec: `#121B31`, radius 7/32, no rim, mark 22/32 high. Min size 16px (mark), clear space ¼ mark height. | `docs/brand/logo/` (SVG, ICO, PNG, `final-sheet.png`); pre-screen `LOGO_SIMILARITY_PRESCREEN.md` (not legal clearance; a trademark search by counsel is still required) |
+| G2 Palette | **Indigo on graphite** is the default for dark, **indigo** for light. Marketing uses exactly this, with no options (dark/light only). Ops and tenant get a theme picker: accent Indigo / Violet / Mono / Lime × background Graphite / Navy × mode Dark / Light / System. Amber becomes a status colour only. | `docs/brand/palettes/` (`indigo.css`, `violet.css`, `mono.css`, `lime.css`; each has navy, graphite and light blocks) |
+| G3 Type | **Geist + Geist Mono** (OFL, ~50 KB self-hosted). Label rules: sentence-case sans labels at 12px or larger; mono only for facts (IDs, domains, ASNs, timestamps, counts); tabular numerals; `calt`/`liga` off in mono. | Scale: display 32/36/600/−0.03em, h1 24/30/600, h2 18/24/600, body 14/21/400, small 13/18, label 12/16/500/+0.01em, mono 13/20; marketing hero 84/0.98/600/−0.045em, section 44/1.06/600, body 18/1.6 |
+| Sidebar | Default (owner not yet confirmed): logo without the "THREAT INTELLIGENCE" tagline (too small to read there); the tagline stays on login and marketing. | — |
+
+Known follow-ups for the build: Violet collides with the hardcoded NEXUS tag purple (`#A78BFA`); Lime needs "healthy" green shifted to emerald; the ops `Button` hardcodes `color:#000`; canvas/WebGL colours must read tokens at runtime.
