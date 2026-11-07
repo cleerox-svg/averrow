@@ -135,12 +135,14 @@ function contrast(fg: RGBA, bg: RGBA): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-/** HSL hue in degrees, or null for a neutral (saturation < 0.15). */
+/** HSL hue in degrees, or null for a neutral: saturation < 0.15, or chroma
+ *  (max - min channel) < 0.08 - HSL saturation explodes near white/black, so
+ *  e.g. mono's #f4f5f7 primary reads 16% "saturated" with a 3/255 tint. */
 function hueOf([r, g, b]: RGBA): number | null {
   const [R, G, B] = [r / 255, g / 255, b / 255];
   const M = Math.max(R, G, B), m = Math.min(R, G, B), d = M - m, l = (M + m) / 2;
   const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
-  if (sat < 0.15) return null;
+  if (sat < 0.15 || d < 0.08) return null;
   const h = M === R ? ((G - B) / d + 6) % 6 : M === G ? (B - R) / d + 2 : (R - G) / d + 4;
   return h * 60;
 }
@@ -467,25 +469,6 @@ describe('token-level contrast: new tokens', () => {
       expect(new Set(hexes).size).toBe(names.length);
     });
 
-    it('new chart series keep >= 25deg hue from status, severity, amber, primary and the other series', () => {
-      // Series 5 everywhere; mono also re-orders, so its series 4 is checked too.
-      const checked = accent === 'mono' ? ['--chart-4', '--chart-5'] : ['--chart-5'];
-      const others = ['--amber', '--sev-critical', '--sev-high', '--sev-medium', '--sev-low', '--sev-info',
-        '--status-warn', '--status-ok', '--status-bad', '--status-info', '--healthy', '--green',
-        '--primary', '--primary-text',
-        '--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5', '--chart-6'];
-      for (const n of checked) {
-        const h = hueOf(over(col(n), col('--bg-card')));
-        expect(h, `${n} is a neutral`).not.toBeNull();
-        for (const o of others) {
-          if (o === n) continue;
-          const ho = hueOf(over(col(o), col('--bg-card')));
-          if (ho === null) continue; // neutrals (mono primary, chart-6) separate by hue
-          expect(hueDist(h!, ho), `${n} ${resolve(c, n)} vs ${o} ${resolve(c, o)}`).toBeGreaterThanOrEqual(25);
-        }
-      }
-    });
-
     it('chart series never reuse amber or a severity value, and series 1 is not a neutral', () => {
       const banned = ['--amber', '--sev-critical', '--sev-high', '--sev-medium', '--sev-low', '--sev-info', '--healthy']
         .map((n) => resolve(c, n).toLowerCase());
@@ -501,12 +484,14 @@ describe('token-level contrast: new tokens', () => {
       }
     });
 
-    it('hover darkens/steps visibly from the fill and keeps ink >= 4.5; all hover aliases agree', () => {
-      const fill = over(col('--primary'), col('--bg-card'));
-      const hover = over(col('--primary-hover'), col('--bg-card'));
-      const step = (Math.max(lum(fill), lum(hover)) + 0.05) / (Math.min(lum(fill), lum(hover)) + 0.05);
-      expect(step, `fill ${resolve(c, '--primary')} vs hover ${resolve(c, '--primary-hover')}`).toBeGreaterThanOrEqual(1.1);
-      expect(contrast(col('--primary-ink'), hover)).toBeGreaterThanOrEqual(AA);
+    it('hover is distinguishable from the fill and pressed from hover (ratio >= 1.1), ink >= 4.5 on both; all hover aliases agree', () => {
+      for (const [from, to] of [['--primary', '--primary-hover'], ['--primary-hover', '--primary-pressed']] as const) {
+        const a = over(col(from), col('--bg-card'));
+        const b = over(col(to), col('--bg-card'));
+        const step = (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+        expect(step, `${from} ${resolve(c, from)} vs ${to} ${resolve(c, to)}`).toBeGreaterThanOrEqual(1.1);
+        expect(contrast(col('--primary-ink'), b), `ink on ${to}`).toBeGreaterThanOrEqual(AA);
+      }
       for (const alias of ['--btn-primary-bg-hover', '--accent-hover']) {
         expect(resolve(c, alias), alias).toBe(resolve(c, '--primary-hover'));
       }
@@ -522,6 +507,49 @@ describe('token-level contrast: new tokens', () => {
       }
       expect(contrast(col('--disabled-fg'), bg)).toBeGreaterThanOrEqual(1.5);
     });
+  });
+});
+
+// Every chromatic chart series keeps >= 25deg HSL hue from every
+// status/severity/healthy/green/amber/primary/--violet/--tag-nexus colour of
+// the same combo and from every other chromatic series. Neutral series
+// (chart-6) are skipped. Series 1, when it follows --primary-text, is a
+// primary colour by design: it is compared with the other series only.
+// Legacy (no accent) dark/light are included.
+const HUE_MIN = 25;
+const hueCombos: Array<[string | null, 'graphite' | 'navy' | null, 'dark' | 'light']> =
+  [[null, null, 'dark'], [null, null, 'light'], ...combos];
+describe.each(hueCombos)('chart hue separation: %s / %s / %s', (accent, base, theme) => {
+  const c = computed({ accent, base, theme });
+  const hue = (n: string) => hueOf(over(parseColor(resolve(c, n)), parseColor(resolve(c, '--bg-card'))));
+  const SERIES = ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5', '--chart-6'];
+  const OTHERS = ['--amber', '--sev-critical', '--sev-high', '--sev-medium', '--sev-low', '--sev-info',
+    '--status-warn', '--status-ok', '--status-bad', '--status-info', '--healthy', '--green',
+    '--primary', '--primary-text', '--violet', '--tag-nexus'];
+  const chromatic = SERIES.filter((n) => hue(n) !== null);
+  const followsPrimary = (n: string) => n === '--chart-1' && c.get('--chart-1') === 'var(--primary-text)';
+
+  it('chart-1..5 are chromatic (only chart-6 is a neutral)', () => {
+    for (const n of SERIES.slice(0, 5)) expect(chromatic, n).toContain(n);
+  });
+
+  it(`chromatic series are >= ${HUE_MIN}deg from each other`, () => {
+    for (const [i, a] of chromatic.entries()) {
+      for (const b of chromatic.slice(i + 1)) {
+        expect(hueDist(hue(a)!, hue(b)!), `${a} ${resolve(c, a)} vs ${b} ${resolve(c, b)}`).toBeGreaterThanOrEqual(HUE_MIN);
+      }
+    }
+  });
+
+  it(`chromatic series are >= ${HUE_MIN}deg from status, severity, healthy, green, amber, primary, --violet, --tag-nexus`, () => {
+    for (const n of chromatic) {
+      if (followsPrimary(n)) continue;
+      for (const o of OTHERS) {
+        const ho = hue(o);
+        if (ho === null) continue; // a neutral (e.g. mono primary) separates by hue
+        expect(hueDist(hue(n)!, ho), `${n} ${resolve(c, n)} vs ${o} ${resolve(c, o)}`).toBeGreaterThanOrEqual(HUE_MIN);
+      }
+    }
   });
 });
 

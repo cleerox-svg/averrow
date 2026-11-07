@@ -32,8 +32,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet" />
     <!-- body's text-white is a hard-coded white: in light mode (set before first
          paint by the bootstrap above) inherited/pre-JS text would be invisible on
-         the light page, so light flips it to dark text. Dark is unchanged. -->
-    <style>[data-theme="light"] body.text-white { color: rgba(15, 20, 35, 0.96); }</style>
+         the light page, so light flips it to dark text. Dark is unchanged.
+         Why it is needed at all: the utility text-white on <body> overrides the
+         `body { color: ... }` rule in src/index.css, so without this the light
+         page keeps white body text. The literal mirrors the light
+         var(--text-primary) in tokens.css and covers the window before the CSS
+         bundle loads; the var() line then follows the token (including accent
+         light neutrals) and falls back to the same literal while the token is
+         not yet defined. -->
+    <style>[data-theme="light"] body.text-white { color: rgba(15, 20, 35, 0.96); color: var(--text-primary, rgba(15, 20, 35, 0.96)); }</style>
   </head>
   <body class="bg-bg-page text-white antialiased">
     <div id="root"></div>

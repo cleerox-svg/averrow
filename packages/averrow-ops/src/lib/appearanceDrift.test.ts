@@ -115,7 +115,7 @@ describe.each(['averrow-ops', 'averrow-tenant'])('inline bootstrap (%s)', (pkg) 
     expect(out).toEqual({ theme: 'dark', accent: null, base: null });
     expect(runBootstrap(script, { throwing: true, prefersLight: true }).theme).toBe('light');
   });
-  it('literals equal ACCENTS / BASES / DEFAULT_ACCENT / DEFAULT_BASE from useAppearance.ts', () => {
+  it('literals equal ACCENTS / BASES / DEFAULT_ACCENT / DEFAULT_BASE from appearanceDefaults.ts', () => {
     const m = /var ACCENTS = (\[[^\]]*\]), BASES = (\[[^\]]*\]), DEFAULT_ACCENT = ([^,]+), DEFAULT_BASE = ([^;]+);/.exec(script);
     expect(m, 'inline literal line not found').not.toBeNull();
     const j = (x: string) => JSON.parse(x.trim().replace(/'/g, '"')) as unknown;
@@ -203,12 +203,17 @@ describe('useAppearance', () => {
       DEFAULT_ACCENT: 'indigo',
       DEFAULT_BASE: 'graphite',
     }));
+    // Unmount explicitly (also on failure) so the hook from the re-imported
+    // module graph never outlives this test.
+    let unmount: (() => void) | undefined;
     try {
       // Fresh React + testing-library alongside the re-imported hook (same module graph).
       const rtl = await import('@testing-library/react');
       const theme = await import('../../../shared/src/theme/useAppearance');
       expect(theme.DEFAULT_ACCENT).toBe('indigo');
-      const { result } = rtl.renderHook(() => theme.useAppearance());
+      const hook = rtl.renderHook(() => theme.useAppearance());
+      unmount = hook.unmount;
+      const { result } = hook;
       expect(result.current.accent).toBe('indigo');
       expect(result.current.base).toBe('graphite');
       rtl.act(() => { result.current.setAccent('lime'); result.current.setBase('navy'); });
@@ -224,6 +229,7 @@ describe('useAppearance', () => {
       rtl.act(() => result.current.setAccent('nope' as never));
       expect(html.getAttribute('data-accent')).toBe('indigo');
     } finally {
+      unmount?.();
       vi.doUnmock('../../../shared/src/theme/appearanceDefaults');
       vi.resetModules();
     }

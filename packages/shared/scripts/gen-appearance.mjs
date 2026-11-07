@@ -35,20 +35,51 @@ const NEUTRAL = /^--(bg-[\w-]+|border|border-(base|strong|sidebar)|text-(primary
 // list is parsed from shell-v4.css, never hand-kept.
 const SHELL_CSS = 'packages/averrow-ops/src/components/layout/shell-v4.css';
 
-/** Parse the `.shell-v4` token blocks of shell-v4.css -> { all: Map, dark: Map }. */
+/** Custom-property declarations of one rule body. Split on `;` so a final
+ *  declaration without a trailing `;` is still read. */
+function customProps(body) {
+  const out = [];
+  for (const part of body.split(';')) {
+    const m = /^\s*(--[\w-]+)\s*:\s*([\s\S]*\S)\s*$/.exec(part);
+    if (m) out.push([m[1], m[2]]);
+  }
+  return out;
+}
+
+/** Parse the `.shell-v4` token blocks of shell-v4.css -> { all: Map, dark: Map }.
+ *  Walks the brace structure so a token block nested in an @-rule (@media,
+ *  @supports, ...) is detected and refused rather than silently flattened into
+ *  an unconditional override. */
 function parseShell(src) {
   const out = { all: new Map(), dark: new Map() };
   const flat = src.replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const m of flat.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const sel = m[1].trim().replace(/\s+/g, ' ');
-    const decls = [...m[2].matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)];
-    if (!decls.length || !/\.shell-v4\b/.test(sel)) continue;
-    let kind;
-    if (sel === '.shell-v4') kind = 'all';
-    else if (sel === ':root:not([data-theme="light"]) .shell-v4') kind = 'dark';
-    else throw new Error(`gen-appearance: unhandled shell-v4.css token selector "${sel}" - teach parseShell() about it`);
-    for (const d of decls) out[kind].set(d[1], d[2].trim());
+  const stack = []; // open-block preludes, outermost first
+  let start = 0;
+  for (let i = 0; i < flat.length; i++) {
+    const ch = flat[i];
+    if (ch === '{') {
+      stack.push(flat.slice(start, i).trim().replace(/\s+/g, ' '));
+      start = i + 1;
+    } else if (ch === '}') {
+      const sel = stack.pop();
+      if (sel === undefined) throw new Error('gen-appearance: unbalanced "}" in shell-v4.css');
+      const decls = customProps(flat.slice(start, i));
+      start = i + 1;
+      if (!decls.length || !/\.shell-v4\b/.test(sel)) continue;
+      const atRule = stack.find((p) => p.startsWith('@'));
+      if (atRule) {
+        throw new Error(`gen-appearance: shell-v4.css declares custom properties on "${sel}" inside "${atRule}" - teach parseShell() to scope them instead of flattening`);
+      }
+      let kind;
+      if (sel === '.shell-v4') kind = 'all';
+      else if (sel === ':root:not([data-theme="light"]) .shell-v4') kind = 'dark';
+      else throw new Error(`gen-appearance: unhandled shell-v4.css token selector "${sel}" - teach parseShell() about it`);
+      for (const [k, v] of decls) out[kind].set(k, v);
+    } else if (ch === ';' && stack.length === 0) {
+      start = i + 1; // top-level statement (@import / @charset)
+    }
   }
+  if (stack.length) throw new Error('gen-appearance: unbalanced "{" in shell-v4.css');
   return out;
 }
 const SHELL = parseShell(readFileSync(resolve(root, SHELL_CSS), 'utf8'));
@@ -82,27 +113,44 @@ function unhsl([h, s, l]) {
 }
 const rgba = (c, a) => `rgba(${c.map(Math.round).join(', ')}, ${a})`;
 
-const alphaOf = (v) => { const m = /^rgba\(([^)]+)\)$/.exec(v); return m ? parseFloat(m[1].split(',')[3]) : 1; };
-const rgbOfAny = (v) => {
-  if (/^#[0-9a-f]{6}$/i.test(v)) return rgbOf(v);
-  const m = /^rgba?\(([^)]+)\)$/.exec(v);
-  if (!m) return null;
-  return m[1].split(',').slice(0, 3).map((x) => parseFloat(x));
-};
+/** Parse a colour literal -> [r, g, b, a]. Only 6-digit hex, rgb() with exactly
+ *  3 comma-separated channels and rgba() with 3 channels + alpha are accepted;
+ *  anything else (var(), keywords, 3/8-digit hex, space syntax) throws. */
+function parseColour(v) {
+  if (/^#[0-9a-f]{6}$/i.test(v)) return [...rgbOf(v), 1];
+  const m = /^(rgba?)\(([^()]*)\)$/.exec(v);
+  const parts = m ? m[2].split(',').map((x) => x.trim()) : [];
+  const want = m?.[1] === 'rgba' ? 4 : 3;
+  if (!m || parts.length !== want || !parts.every((x) => /^\d*\.?\d+$/.test(x))) {
+    throw new Error(`gen-appearance: unsupported colour literal "${v}" (6-digit hex, rgb(r, g, b) or rgba(r, g, b, a) only)`);
+  }
+  const n = parts.map(Number);
+  return want === 4 ? n : [...n, 1];
+}
+const isColour = (v) => { try { parseColour(v); return true; } catch { return false; } };
+const alphaOf = (v) => parseColour(v)[3];
+const rgbOfAny = (v) => parseColour(v).slice(0, 3);
 
 class HoverContrastError extends Error {
   constructor(msg) { super(msg); this.name = 'HoverContrastError'; }
 }
-// Hover/pressed DARKEN the fill (owner decision): the hover must be visibly
-// different from the fill (luminance ratio >= HOVER_MIN_STEP) and keep
-// primary-ink >= 4.5:1. Checked for every accent x mode; a miss is a build error.
+// What is enforced (every accent x mode; a miss is a build error):
+//   * --primary-hover is distinguishable from --primary (luminance contrast
+//     ratio >= HOVER_MIN_STEP) and keeps --primary-ink >= 4.5:1 on it;
+//   * --primary-pressed is distinguishable from --primary-hover (same ratio)
+//     and keeps --primary-ink >= 4.5:1 on it.
+// Direction is a palette choice, not checked: indigo and violet hover/pressed
+// DARKEN the fill (owner decision, OVERRIDES below); mono and lime keep their
+// palette direction.
 const HOVER_MIN_STEP = 1.1;
 function checkHover(where, map) {
-  const fill = rgbOf(map.get('--primary')), hover = rgbOf(map.get('--primary-hover'));
-  const ink = rgbOf(map.get('--primary-ink'));
-  const step = contrast(fill, hover), inkOn = contrast(ink, hover);
-  if (step < HOVER_MIN_STEP || inkOn < 4.5) {
-    throw new HoverContrastError(`${where}: --primary-hover ${map.get('--primary-hover')} fails (fill step ${step.toFixed(2)} < ${HOVER_MIN_STEP} or ink ${inkOn.toFixed(2)} < 4.5)`);
+  const get = (k) => rgbOf(map.get(k));
+  const ink = get('--primary-ink');
+  for (const [from, to] of [['--primary', '--primary-hover'], ['--primary-hover', '--primary-pressed']]) {
+    const step = contrast(get(from), get(to)), inkOn = contrast(ink, get(to));
+    if (step < HOVER_MIN_STEP || inkOn < 4.5) {
+      throw new HoverContrastError(`${where}: ${to} ${map.get(to)} fails (step from ${from} ${step.toFixed(2)} < ${HOVER_MIN_STEP} or ink ${inkOn.toFixed(2)} < 4.5)`);
+    }
   }
 }
 
@@ -140,14 +188,17 @@ const OVERRIDES = {
     light: { '--tag-nexus': '#be185d' },
   },
   mono: {
-    // Mono's primary is a neutral, so chart series 1 cannot follow it: sky
-    // leads and the series shift down (tokens.css order: sky, teal, pink, magenta).
-    dark: { '--chart-1': '#38bdf8', '--chart-2': '#2dd4bf', '--chart-3': '#f472b6', '--chart-4': '#f07cf0', '--chart-5': '#a48cf8' },
-    light: { '--chart-1': '#0284c7', '--chart-2': '#0d9488', '--chart-3': '#db2777', '--chart-4': '#b021b0', '--chart-5': '#7c3aed' },
+    // Mono's primary is a neutral, so chart series 1 cannot follow it and five
+    // chromatic series are needed: cyan leads, then the tokens.css hues plus
+    // magenta (~298 dark / 300 light, >= 25deg from --violet 271 and pink 326).
+    dark: { '--chart-1': '#20cadf', '--chart-2': '#ef6cb6', '--chart-3': '#5ed147', '--chart-4': '#b7e236', '--chart-5': '#e47de8' },
+    light: { '--chart-1': '#078388', '--chart-2': '#c91d7e', '--chart-3': '#268613', '--chart-4': '#688807', '--chart-5': '#b620b6' },
   },
   lime: {
     // One emerald green: --green = --healthy (alias in tokens.css) = --sev-info.
     dark: {
+      // Chart: yellow-green (75) is 8deg from the lime primary (83) -> magenta.
+      '--chart-5': '#e47de8',
       '--green': '#10b981', '--green-glow': 'rgba(16, 185, 129, 0.2)',
       '--sev-info': '#10b981', '--sev-info-bg': 'rgba(16, 185, 129, 0.07)',
       '--sev-info-border': 'rgba(16, 185, 129, 0.15)', '--sev-info-glow': 'rgba(16, 185, 129, 0.4)',
@@ -157,6 +208,11 @@ const OVERRIDES = {
       // the same family as the emerald healthy green).
       '--primary-text': '#2a3a12', '--focus-ring': '#2a3a12', '--text-accent': '#2a3a12',
       '--accent': '#2a3a12', '--accent-section': '#2a3a12',
+      // Chart: the olive primary (84) and emerald healthy (163) leave no room
+      // for the light cyan (182 is 19deg from 163) or olive (75): magenta, two
+      // greens between them (111 / 137, each >= 25deg from 84, 163 and each
+      // other) and pink.
+      '--chart-2': '#b620b6', '--chart-3': '#2a8b18', '--chart-4': '#c91d7e', '--chart-5': '#178235',
       '--green': '#047857', '--green-text': '#047857', '--green-glow': 'rgba(4, 120, 87, 0.2)',
       '--sev-info': '#047857', '--sev-info-bg': 'rgba(4, 120, 87, 0.07)',
       '--sev-info-border': 'rgba(4, 120, 87, 0.15)', '--sev-info-glow': 'rgba(4, 120, 87, 0.4)',
@@ -233,18 +289,27 @@ commonDark.set('--link', 'var(--primary-text)');
 commonLight.set('--link', 'var(--primary-text)');
 
 /** Shell tokens this file also sets for a combo. Dark-only shell tokens take
- *  the accent value; all-mode tokens (the glows) keep the accent colour at the
- *  shell's boosted alpha when the shell boosts it. */
+ *  the accent value; all-mode colour tokens (the glows) keep the accent colour
+ *  at the shell's boosted alpha when the shell boosts it. A non-colour all-mode
+ *  token (e.g. --card-shadow, --card-radius) re-emits the shell's own value -
+ *  it is never replaced by an accent value. Anything else unexpected throws. */
 function shellOverrides(map, kind) {
   const out = new Map();
-  const add = (k, v) => { if (map.has(k)) out.set(k, v); };
   for (const [k, shellV] of SHELL.all) {
     if (!map.has(k)) continue;
-    const v = map.get(k), c = rgbOfAny(v);
-    if (!c || alphaOf(shellV) <= alphaOf(v)) add(k, v);
-    else add(k, rgba(c, alphaOf(shellV)));
+    if (!isColour(shellV)) { out.set(k, shellV); continue; }
+    const v = map.get(k);
+    if (!isColour(v)) throw new Error(`gen-appearance: ${k} is a colour in shell-v4.css (${shellV}) but not in the palette (${v})`);
+    out.set(k, alphaOf(shellV) <= alphaOf(v) ? v : rgba(rgbOfAny(v), alphaOf(shellV)));
   }
-  if (kind === 'dark') for (const k of SHELL.dark.keys()) add(k, map.get(k));
+  if (kind === 'dark') {
+    for (const [k, shellV] of SHELL.dark) {
+      if (!map.has(k)) continue;
+      const v = map.get(k);
+      if (!isColour(shellV) || !isColour(v)) throw new Error(`gen-appearance: dark shell token ${k} is not a colour (shell ${shellV}, palette ${v}) - decide how to scope it`);
+      out.set(k, v);
+    }
+  }
   return out;
 }
 
