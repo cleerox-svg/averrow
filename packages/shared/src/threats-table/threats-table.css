@@ -106,3 +106,17 @@
 .tt-state { text-align: center; padding: 40px 0; font-size: 13px; font-family: var(--font-mono); color: var(--text-muted); }
 .tt-expand-icon { color: var(--text-muted); transition: transform .12s; display: inline-block; }
 .tt-row[data-open="true"] .tt-expand-icon { transform: rotate(90deg); color: var(--amber-text); }
+
+/* Facelift P3-6 review: primary (not status) amber above follows the accent.
+   Scoped under [data-accent] so the legacy look keeps the rules above exactly;
+   the high/medium severity pills stay amber (status colour). */
+:root[data-accent] .tt-chip[data-active="true"] {
+  color: var(--primary-text); background: var(--primary-tint); border-color: var(--primary-border);
+}
+:root[data-accent] .tt-th[data-active="true"] { color: var(--primary-text); }
+:root[data-accent] .tt-link { color: var(--link); }
+:root[data-accent] .tt-link:hover { color: var(--link-hover); }
+:root[data-accent] .tt-btn[data-variant="primary"] {
+  color: var(--primary-text); border-color: var(--primary-border); background: var(--primary-tint);
+}
+:root[data-accent] .tt-row[data-open="true"] .tt-expand-icon { color: var(--primary-text); }

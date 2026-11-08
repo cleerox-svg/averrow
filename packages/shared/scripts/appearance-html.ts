@@ -13,10 +13,20 @@
 //     ACCENTS / BASES / the derived defaults;
 //   * fills `__APPEARANCE_THEME_COLOR__` (theme-color meta);
 //   * FACELIFT on: removes the Google Fonts block (the two preconnects and the
-//     Plus Jakarta Sans / JetBrains Mono stylesheet). The families stay in the
-//     --font-* stacks as fallback names only.
-// Every marker / block must be present exactly once, or the build fails: a
-// placeholder left in the page would be a runtime error in the bootstrap.
+//     Plus Jakarta Sans / JetBrains Mono stylesheet). Removal is by WHOLE
+//     source line: each entry of GOOGLE_FONTS_LINES must appear exactly once,
+//     byte-for-byte (attribute order, quoting, ` />`), alone on its line; the
+//     line's indentation and newline go with it. Editing those tags in
+//     index.html means editing GOOGLE_FONTS_LINES too (the build fails
+//     otherwise). With FACELIFT off the lines are not checked or touched. The
+//     families stay in the --font-* stacks as fallback names only.
+//   * FACELIFT on: swaps the ops legacy body paint (`bg-cockpit`, #080E18,
+//     which is not a token) for the page token, so graphite / light show
+//     correctly before React mounts and on overscroll (BODY_SWAPS; an
+//     index.html without that tag, e.g. tenant, is left alone).
+// Every __APPEARANCE_*__ marker must be present exactly once, or the build
+// fails: a placeholder left in the page would be a runtime error in the
+// bootstrap.
 //
 // Font preloads (fontPreloadTags, order 'post', BUILD ONLY, FACELIFT on):
 // the Geist upright sans + mono woff2 are emitted by Vite from type.css with
@@ -27,8 +37,9 @@
 // font twice).
 //
 // PWA manifest (writeBundle, FACELIFT on): the copied public/manifest.json's
-// theme_color / background_color are rewritten to the facelift page colour.
-// Apps without a manifest.json in the output are left alone.
+// theme_color / background_color are rewritten to the facelift page colour
+// (both keys must exist, or the build fails). Apps without a manifest.json in
+// the output are left alone.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -57,6 +68,14 @@ function replaceOnce(html: string, find: string, replacement: string): string {
   return html.slice(0, first) + replacement + html.slice(first + find.length);
 }
 
+/** Legacy body tags replaced when the facelift is on: [exact source, replacement].
+ *  The page token (with the facelift page colour as fallback before the CSS
+ *  bundle defines it) and the primary text colour follow mode / base. */
+export const BODY_SWAPS: ReadonlyArray<readonly [string, string]> = [
+  ['<body class="bg-cockpit text-parchment">',
+    '<body style="background-color: var(--bg-page, #0a0b0e); color: var(--text-primary, #f6f7f7)">'],
+];
+
 /** Fill the appearance markers in an index.html source for one value of the
  *  facelift switch (pure; the plugin passes FACELIFT). */
 export function transformAppearanceHtml(html: string, facelift: boolean = FACELIFT): string {
@@ -75,6 +94,9 @@ export function transformAppearanceHtml(html: string, facelift: boolean = FACELI
         throw new Error(`appearance-html: expected exactly one Google Fonts line ${JSON.stringify(line)} in index.html`);
       }
       out = out.slice(0, m.index) + out.slice(m.index + m[0].length);
+    }
+    for (const [from, to] of BODY_SWAPS) {
+      if (out.includes(from)) out = replaceOnce(out, from, to);
     }
   }
   return out;
@@ -128,9 +150,13 @@ export function fontPreloadTags(
 export function transformManifest(json: string, facelift: boolean = FACELIFT): string {
   if (!facelift) return json;
   const color = appearanceFlags(true).themeColor;
-  return json
-    .replace(/("theme_color"\s*:\s*)"[^"]*"/, `$1"${color}"`)
-    .replace(/("background_color"\s*:\s*)"[^"]*"/, `$1"${color}"`);
+  let out = json;
+  for (const key of ['theme_color', 'background_color']) {
+    const re = new RegExp(`("${key}"\\s*:\\s*)"[^"]*"`);
+    if (!re.test(out)) throw new Error(`appearance-html: manifest.json has no "${key}" to set to the facelift colour`);
+    out = out.replace(re, `$1"${color}"`);
+  }
+  return out;
 }
 
 // Minimal structural Vite plugin types (vite is not a dependency of

@@ -13,7 +13,7 @@ import { join, resolve } from 'node:path';
 import { useAppearance, ACCENTS, BASES, DEFAULT_ACCENT, DEFAULT_BASE, FACELIFT, appearanceFlags } from '@averrow/shared/theme';
 import { FACELIFT_THEME_COLOR, LEGACY_THEME_COLOR } from '../../../shared/src/theme/appearanceDefaults';
 import {
-  transformAppearanceHtml, fontPreloadTags, transformManifest, GOOGLE_FONTS_LINES, PRELOADED_FONTS,
+  transformAppearanceHtml, fontPreloadTags, transformManifest, GOOGLE_FONTS_LINES, PRELOADED_FONTS, BODY_SWAPS,
 } from '../../../shared/scripts/appearance-html';
 
 const REPO = resolve(__dirname, '../../../..');
@@ -244,6 +244,23 @@ describe('appearance-html plugin helpers', () => {
 
   it('preloaded fonts exist in the shared theme', () => {
     for (const f of PRELOADED_FONTS) expect(readFileSync(join(REPO, 'packages/shared/src/theme/fonts', f)).length).toBeGreaterThan(1000);
+  });
+
+  it('ops body: legacy bg-cockpit when off, the page token when on; tenant untouched', () => {
+    const [from, to] = BODY_SWAPS[0]!;
+    expect(sourceHtml('averrow-ops')).toContain(from);
+    expect(generatedHtml('averrow-ops', false)).toContain(from);
+    const on = generatedHtml('averrow-ops', true);
+    expect(on).not.toContain('bg-cockpit');
+    expect(on).toContain(to);
+    expect(to).toContain('var(--bg-page');
+    expect(generatedHtml('averrow-tenant', true)).toContain('<body class="bg-bg-page text-white antialiased">');
+  });
+
+  it('manifest rewrite fails loudly when a colour key is missing', () => {
+    expect(() => transformManifest('{"name":"x","theme_color":"#000"}', true)).toThrow(/background_color/);
+    expect(() => transformManifest('{"name":"x","background_color":"#000"}', true)).toThrow(/theme_color/);
+    expect(transformManifest('{"name":"x"}', false)).toBe('{"name":"x"}');
   });
 
   it('PWA manifest colours: untouched when off, the facelift page colour when on', () => {

@@ -24,7 +24,7 @@ interface AccountSectionDef {
 
 /** Static definition: id, label, default description, tone and group. Order is the rail order. */
 export const ACCOUNT_SECTION_DEFS: readonly AccountSectionDef[] = [
-  { id: 'profile',       label: 'Profile',        description: 'Name, appearance and time zone', tone: 'amber',  group: 'Account',     icon: () => <UserIcon /> },
+  { id: 'profile',       label: 'Profile',        description: 'Name, appearance and time zone', tone: 'primary', group: 'Account',     icon: () => <UserIcon /> },
   { id: 'security',      label: 'Security',       description: 'Passkeys and sessions',          tone: 'green',  group: 'Account',     icon: () => <ShieldCheckIcon /> },
   { id: 'appearance',    label: 'Appearance',     description: 'Accent color and background',   tone: 'cyan',   group: 'Preferences', icon: () => <PaletteIcon /> },
   { id: 'notifications', label: 'Notifications',  description: 'Push, email and quiet hours',    tone: 'blue',   group: 'Preferences', icon: () => <BellIcon /> },

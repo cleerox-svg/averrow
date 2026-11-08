@@ -820,3 +820,14 @@
 .obs-tooltip-target { color: var(--primary-text); }
 :root[data-accent] .obs-tooltip-target { color: var(--text-primary); }
 :root[data-accent] .obs-tooltip-target-label { color: var(--text-tertiary); }
+
+/* Facelift (P3-6 review): light-mode cards inside the v4 shell. shell-v4.css
+   sets a heavy dark-tuned --card-shadow (0 18px 50px rgba(0,0,0,.58)) on the
+   shell in every theme; under an accent in light mode use a soft ink shadow
+   instead (the light --card-shadow from tokens.css, slightly deeper, plus the
+   shell's top highlight). Kept here, not in shell-v4.css, because
+   gen-appearance.mjs only accepts the shell's two known token selectors.
+   Legacy (no accent) is unchanged. */
+:root[data-accent][data-theme="light"] .shell-v4 {
+  --card-shadow: 0 8px 28px rgba(15, 20, 35, 0.10), 0 1px 0 rgba(255, 255, 255, 0.04);
+}

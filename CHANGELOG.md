@@ -51,6 +51,16 @@ Tag `v4.8.0` is created by `tag-release.yml` on merge.
   no "legacy" option: the amber look is not user-selectable. A stored
   null/absent accent means the default (indigo). Self-avatars follow `--primary`.
 - Staff `/kit` gallery: "Reset to legacy" is now "Reset to default".
+- Leftover primary amber follows the accent (legacy values kept as fallbacks /
+  unscoped rules): login Google button, letter tile, tagline and magic-link
+  controls; threats-table active chip, sort header, links, primary pager and
+  open-row icon; Profile / Theme / Time zone / staff-view settings tiles (new
+  IconTile tone `primary`). Admin role badges are neutral. Severity pills and
+  warning tiles stay amber.
+- Ops `<body>` paints `var(--bg-page)` before mount and on overscroll (was the
+  fixed `bg-cockpit` navy); the v4 shell's red top wash is accent-tinted; light
+  cards in the shell get a soft ink shadow. The manifest rewrite fails the build
+  if a colour key is missing.
 
 ---
 
