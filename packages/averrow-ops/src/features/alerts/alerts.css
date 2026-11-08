@@ -106,15 +106,16 @@
 .alerts-v4 .al-bar > span[data-level="mid"] { background: var(--sev-medium); }
 
 /* ── Row layout ─────────────────────────────────────────────── */
-.alerts-v4 .al-row-title { flex: 1 1 auto; min-width: 8rem; }
+.alerts-v4 .al-row-title { flex: 1 1 0; min-width: 8rem; }
 /* Fixed-basis, left-aligned meta group: its left edge sits at the same x on
-   every row (row width − basis), so the severity / status slots line up no
+   every row (row width − basis). Neither the title (basis 0) nor the meta
+   (no shrink; 32px = dot + two row gaps) depends on title length, so the severity / status slots line up no
    matter which optional chips a row carries. Time stays pinned right. The
    basis fits the widest row (sev + status + score + AI + owner + SLA + time);
    if the container squeezes it, it wraps instead of overflowing. */
 .alerts-v4 .al-row-meta {
   display: flex; align-items: center; justify-content: flex-start; gap: 12px;
-  flex: 0 1 36rem; min-width: 0; flex-wrap: wrap; row-gap: 6px;
+  flex: 0 0 min(36rem, calc(100% - 8rem - 32px)); min-width: 0; flex-wrap: wrap; row-gap: 6px;
 }
 .alerts-v4 .al-row-meta .al-time { margin-left: auto; }
 /* Fixed slots so severity / status align down the list. */
