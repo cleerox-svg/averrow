@@ -60,11 +60,11 @@ describe('CommandPalette — data search routing', () => {
     renderWithProviders(<CommandPalette open onClose={onClose} commands={[]} />);
     await typeQuery('a');
 
-    expect(screen.queryByText('BRANDS')).not.toBeInTheDocument();
-    expect(screen.queryByText('THREAT ACTORS')).not.toBeInTheDocument();
-    expect(screen.queryByText('PROVIDERS')).not.toBeInTheDocument();
-    expect(screen.queryByText('CAMPAIGNS')).not.toBeInTheDocument();
-    expect(screen.queryByText('APPS')).not.toBeInTheDocument();
+    expect(screen.queryByText('Brands')).not.toBeInTheDocument();
+    expect(screen.queryByText('Threat actors')).not.toBeInTheDocument();
+    expect(screen.queryByText('Providers')).not.toBeInTheDocument();
+    expect(screen.queryByText('Campaigns')).not.toBeInTheDocument();
+    expect(screen.queryByText('Apps')).not.toBeInTheDocument();
   });
 
   it('renders data groups once the trimmed query reaches 2 characters', async () => {
@@ -72,12 +72,12 @@ describe('CommandPalette — data search routing', () => {
     renderWithProviders(<CommandPalette open onClose={onClose} commands={[]} />);
     await typeQuery('ac');
 
-    expect(screen.getByText('BRANDS')).toBeInTheDocument();
+    expect(screen.getByText('Brands')).toBeInTheDocument();
     expect(screen.getByText('Acme Corp')).toBeInTheDocument();
-    expect(screen.getByText('THREAT ACTORS')).toBeInTheDocument();
-    expect(screen.getByText('PROVIDERS')).toBeInTheDocument();
-    expect(screen.getByText('CAMPAIGNS')).toBeInTheDocument();
-    expect(screen.getByText('APPS')).toBeInTheDocument();
+    expect(screen.getByText('Threat actors')).toBeInTheDocument();
+    expect(screen.getByText('Providers')).toBeInTheDocument();
+    expect(screen.getByText('Campaigns')).toBeInTheDocument();
+    expect(screen.getByText('Apps')).toBeInTheDocument();
     expect(screen.getByText('Acme Wallet')).toBeInTheDocument();
   });
 
@@ -189,11 +189,11 @@ describe('CommandPalette — data search routing', () => {
     renderWithProviders(<CommandPalette open onClose={vi.fn()} commands={[]} />);
     await typeQuery('ac');
 
-    expect(screen.queryByText('BRANDS')).not.toBeInTheDocument();
-    expect(screen.getByText('THREAT ACTORS')).toBeInTheDocument();
-    expect(screen.queryByText('PROVIDERS')).not.toBeInTheDocument();
-    expect(screen.queryByText('CAMPAIGNS')).not.toBeInTheDocument();
-    expect(screen.queryByText('APPS')).not.toBeInTheDocument();
+    expect(screen.queryByText('Brands')).not.toBeInTheDocument();
+    expect(screen.getByText('Threat actors')).toBeInTheDocument();
+    expect(screen.queryByText('Providers')).not.toBeInTheDocument();
+    expect(screen.queryByText('Campaigns')).not.toBeInTheDocument();
+    expect(screen.queryByText('Apps')).not.toBeInTheDocument();
   });
 
   it('renders nothing when the palette is closed', () => {
@@ -217,5 +217,20 @@ describe('CommandPalette — data search routing', () => {
 
     expect(mocks.navigate).toHaveBeenCalledWith('/search?q=a%26b');
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('renders each heading inside a role=group labelled by its heading', async () => {
+    renderWithProviders(<CommandPalette open onClose={vi.fn()} commands={[]} />);
+    await typeQuery('ac');
+
+    const groups = document.querySelectorAll('.cmdk-group');
+    expect(groups.length).toBeGreaterThan(0);
+    groups.forEach((g) => {
+      expect(g).toHaveAttribute('role', 'group');
+      const id = g.getAttribute('aria-labelledby');
+      expect(id).toBeTruthy();
+      expect(document.getElementById(id!)).toHaveClass('cmdk-group-label');
+    });
+    expect(screen.getByRole('group', { name: 'Brands' })).toBeInTheDocument();
   });
 });

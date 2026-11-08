@@ -19,19 +19,9 @@ export function ThemeCycleButton() {
       onClick={cycle}
       aria-label={label}
       title={label}
-      style={{
-        padding: 6,
-        borderRadius: 6,
-        background: 'transparent',
-        border: 'none',
-        color: 'var(--text-tertiary)',
-        cursor: 'pointer',
-        transition: 'color 120ms ease',
-      }}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-primary)'; }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-tertiary)'; }}
+      className="v4-theme-btn"
     >
-      <Icon size={14} />
+      <Icon size={16} aria-hidden="true" />
     </button>
   );
 }

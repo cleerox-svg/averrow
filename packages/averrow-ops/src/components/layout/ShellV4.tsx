@@ -21,7 +21,7 @@ import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
-import { CommandPalette, type PaletteCommand } from './CommandPalette';
+import { CommandPalette, sentenceCase, type PaletteCommand } from './CommandPalette';
 import { NotificationBell } from '@/components/NotificationBell';
 import { UserAvatar } from '@/components/UserAvatar';
 import { PlatformAlertBanner } from '@/components/PlatformAlertBanner';
@@ -234,6 +234,19 @@ function navOrderFor(nav: NavGroup[], pathname: string): number | null {
 /** The settings area runs its own screen transitions; moves inside it don't page-slide. */
 const withinSettings = (a: string, b: string) => /^\/settings(\/|$)/.test(a) && /^\/settings(\/|$)/.test(b);
 
+/** Tracks navigator.onLine; the top bar shows an "Offline" label only while it is false. */
+function useOffline(): boolean {
+  const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
+  useEffect(() => {
+    const down = () => setOffline(true);
+    const up = () => setOffline(false);
+    window.addEventListener('offline', down);
+    window.addEventListener('online', up);
+    return () => { window.removeEventListener('offline', down); window.removeEventListener('online', up); };
+  }, []);
+  return offline;
+}
+
 export function ShellV4() {
   const { user, isSuperAdmin } = useAuth();
   const location = useLocation();
@@ -244,6 +257,7 @@ export function ShellV4() {
   const wasDrawerOpen = useRef(false);
   const skipFocusRestore = useRef(false);
   const openAlerts = useOpenAlertCount();
+  const offline = useOffline();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const closeDrawer = () => setDrawerOpen(false);
@@ -383,7 +397,7 @@ export function ShellV4() {
           <NavIndicator activeKey={navKey} />
           {nav.map(group => (
             <div key={group.label}>
-              <div className="v4-grp">{group.label}</div>
+              <div className="v4-grp">{sentenceCase(group.label)}</div>
               {group.items.map(item => {
                 const Icon = item.icon;
                 return (
@@ -425,8 +439,8 @@ export function ShellV4() {
             <span className="v4-cmdk-label">Search threats, brands, actors…</span>
             <kbd>⌘K</kbd>
           </button>
-          <div className="v4-live"><span className="dot" />LIVE</div>
-          <NotificationBell />
+          {offline && <span className="v4-offline" role="status">Offline</span>}
+          <div className="v4-bell-slot"><NotificationBell /></div>
           <UserAvatar />
         </header>
         <div className="v4-outlet">
