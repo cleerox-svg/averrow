@@ -1,60 +1,59 @@
 {
-  "threats_detected": "1.5M+",
-  "campaigns": "6,300+",
-  "providers_mapped": "13,000+",
-  "countries": "216",
-  "active_feeds": 45,
-  "generated_at": "2026-11-08T04:33:11.178Z",
+  "threats_detected": "1.2M+",
+  "campaigns": "6,000+",
+  "providers_mapped": "12,000+",
+  "countries": "215",
+  "active_feeds": 46,
+  "generated_at": "2026-10-05T12:12:10.093Z",
   "source": "https://averrow.com/api/v1/public/stats",
   "proof": {
-    "lookalikes_found_30d": "9,000+",
-    "operations_tracked": "161",
+    "operations_tracked": "2,900+",
     "monitored_brands": "1,800+"
   },
   "live": {
-    "total_threats": 1539904,
-    "threats_today": 399,
+    "total_threats": 1274830,
+    "threats_today": 10768,
     "threat_types": [
       {
         "threat_type": "malware_distribution",
-        "count": 439661
+        "count": 388367
       },
       {
         "threat_type": "scanning",
-        "count": 410225
+        "count": 342172
       },
       {
         "threat_type": "phishing",
-        "count": 290723
+        "count": 235237
       },
       {
         "threat_type": "typosquatting",
-        "count": 144219
+        "count": 88329
       },
       {
         "threat_type": "malicious_ip",
-        "count": 76271
+        "count": 64459
       },
       {
         "threat_type": "c2",
-        "count": 76147
+        "count": 53580
       },
       {
         "threat_type": "credential_harvesting",
-        "count": 5320
+        "count": 4552
       },
       {
         "threat_type": "malicious_ssl",
-        "count": 19
+        "count": 13
       }
     ],
-    "operations_tracked": 161,
-    "lookalikes_found_30d": 9005,
+    "operations_tracked": 2964,
+    "lookalikes_found_30d": null,
     "monitored_brands": 1867,
-    "providers_mapped": 13404,
-    "countries": 216,
-    "active_feeds": 45,
-    "proof_generated_at": "2026-11-08T03:49:20.190Z"
+    "providers_mapped": 12154,
+    "countries": 215,
+    "active_feeds": 46,
+    "proof_generated_at": "2026-10-05T11:38:41.888Z"
   },
   "fallbacks": {
     "lookalikes_found_30d": "2,300+"
