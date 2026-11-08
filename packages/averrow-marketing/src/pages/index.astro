@@ -1,20 +1,20 @@
 ---
 /*
  * Homepage. Section 1 redesign (see docs/DISCLOSURE_REGISTER.md rows
- * L4/L10/L12/L13/L17/L21/L22): hero with scan form + an illustrative
- * operation card, a "from the platform" band of real build-time numbers,
- * coverage chips, then the operation story / takedown flow /
+ * L4/L10/L12/L13/L17/L21/L22, §3.13): the G5 H4A operation hero
+ * (components/hero/OperationHero.astro, which now tells the OP-2291 story,
+ * so the old OperationStory section is gone), a "from the platform" band of
+ * real build-time numbers, coverage chips, then the takedown flow /
  * coverage / by-the-numbers / CTA.
  *
  * Every number in the band comes from src/data/stats.json, which
  * scripts/fetch-stats.mjs refreshes from /api/v1/public/stats on each
  * build. Nothing here is "live": the band says when it was last updated.
- * The operation card and the console preview are explicitly labelled
- * illustrative.
+ * The hero graph is labelled "Fictional example" in every state (H1).
  */
 import Layout from "../layouts/Layout.astro";
 import ByTheNumbers from "../components/ByTheNumbers.astro";
-import OperationStory from "../components/OperationStory.astro";
+import OperationHero from "../components/hero/OperationHero.astro";
 import Coverage from "../components/Coverage.astro";
 import TakedownFlow from "../components/TakedownFlow.astro";
 import { COVERAGE } from "../lib/coverage";
@@ -46,130 +46,13 @@ const bandTiles = [
 
 // Names come from the shared source so the chips and the Coverage section match.
 const coverage = COVERAGE.map((c) => c.name);
-
-// Illustrative operation graph. Coordinates are in the SVG's 400x190 space.
-// tone -> colour token: crit = critical severity, high = high severity,
-// accent = brand primary (indigo); blue / green = platform palette.
-type Tone = "crit" | "high" | "accent" | "blue" | "green";
-const opNodes: Array<{ x: number; y: number; tone: Tone; title: string; sub: string }> = [
-  { x: 70, y: 40, tone: "crit", title: "14 domains", sub: "acme-payroll-login.example" },
-  { x: 60, y: 120, tone: "high", title: "2 hosting ASNs", sub: "AS64500 · AS64501" },
-  { x: 95, y: 168, tone: "accent", title: "1 TLS cert", sub: "shared serial" },
-  { x: 330, y: 38, tone: "blue", title: "Social profile", sub: "@acme_hr_support" },
-  { x: 345, y: 110, tone: "blue", title: "Cloned app", sub: "\"Acme Pay\"" },
-  { x: 305, y: 168, tone: "green", title: "Email", sub: "DMARC p=none" },
-];
-const toneVar: Record<Tone, string> = {
-  crit: "var(--sev-critical)",
-  high: "var(--sev-high)",
-  accent: "var(--primary)",
-  blue: "var(--blue)",
-  green: "var(--green)",
-};
 ---
 
 <Layout
   title="Averrow — Brand protection that traces the operation"
-  description="Brand protection that traces the operation. Averrow, a Digital Risk Protection (DRPS) platform, finds lookalike domains, fake profiles and cloned apps aimed at your brand and executives, and files takedowns for lookalike domains and phishing URLs under your authorization. Enterprise adds operation mapping. Free domain scan, no sign-up."
+  description="Find lookalike domains, impersonation accounts and copycat apps aimed at your brand, and file takedowns for lookalike domains and phishing URLs. Free scan, no sign-up."
 >
-  <div class="hero-wrap">
-  <section class="hero" aria-labelledby="hero-title">
-    <div class="hero-copy">
-      <div class="hero-eyebrow">Digital risk protection · threat-actor intelligence</div>
-      <h1 class="hero-h1" id="hero-title">Brand protection that <em>traces the operation</em>.</h1>
-      <p class="hero-lede">
-        Averrow finds lookalike domains, fake profiles and cloned apps aimed at
-        your brand and executives, then files takedowns for lookalike domains and
-        phishing URLs under your authorization. On the Enterprise plan, operation
-        mapping groups related lookalike domains into one campaign, so you act on
-        the operation instead of one alert at a time.
-      </p>
-      <p class="hero-lede hero-lede-short">
-        Find the fakes, file takedowns, and on Enterprise, trace the operation.
-      </p>
-
-      <form class="scan-box" id="scanForm" action={`${base}/assess`} method="POST">
-        <label class="sr-only" for="domainInput">Domain to scan for brand threats</label>
-        <input
-          class="scan-input"
-          id="domainInput"
-          name="domain"
-          type="text"
-          inputmode="url"
-          placeholder="yourcompany.com"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          required
-        />
-        <button class="scan-btn" type="submit" data-cta="hero-scan">Scan your domain <span aria-hidden="true">&rarr;</span></button>
-      </form>
-      <p class="scan-meta">
-        <span>Free scan &middot; no sign-up &middot; no card</span>
-        <span class="scan-meta-dot" aria-hidden="true"></span>
-        <a href={`${base}/demo`} data-cta="hero-demo">Book a demo</a>
-      </p>
-    </div>
-
-    <figure class="op" aria-labelledby="op-title">
-      <div class="op-hd">
-        <span class="op-id">OPERATION · EXAMPLE</span>
-        <span class="op-tag">Active</span>
-      </div>
-      <div class="op-title" id="op-title">Acme payroll sign-in impersonation</div>
-      <svg class="op-graph" viewBox="0 0 400 190" role="img" aria-labelledby="op-svg-title op-svg-desc">
-        <title id="op-svg-title">Example operation graph</title>
-        <desc id="op-svg-desc">
-          One operation grouping 14 lookalike domains, 2 hosting networks and a shared
-          TLS certificate, shown with a fake social profile, a cloned app and a weak
-          email authentication record found alongside it. Illustrative example with
-          names changed.
-        </desc>
-        <g stroke="var(--border-strong)" stroke-width="1.2" fill="none">
-          {opNodes.map(n => <path d={`M200 95 L${n.x} ${n.y}`} />)}
-          <path d="M70 40 L25 22" stroke-dasharray="3 3" />
-          <path d="M70 40 L32 62" stroke-dasharray="3 3" />
-          <path d="M60 120 L22 140" stroke-dasharray="3 3" />
-          <path d="M60 120 L28 100" stroke-dasharray="3 3" />
-        </g>
-        <circle cx="200" cy="95" r="30" fill="var(--sev-critical-bg, rgba(239,68,68,0.10))" stroke="var(--red)" stroke-width="1.5" />
-        <text x="200" y="92" text-anchor="middle" class="op-hub-id">OP-2291</text>
-        <text x="200" y="105" text-anchor="middle" class="op-hub-sub">19 findings</text>
-        {opNodes.map(n => {
-          const right = n.x > 200;
-          const tx = n.x + (right ? -12 : 12);
-          const anchor = right ? "end" : "start";
-          return (
-            <Fragment>
-              <circle cx={n.x} cy={n.y} r="7" fill="var(--bg-secondary)" stroke={toneVar[n.tone]} stroke-width="2" />
-              <text x={tx} y={n.y - 1} text-anchor={anchor} class="op-node-title">{n.title}</text>
-              <text x={tx} y={n.y + 11} text-anchor={anchor} class="op-node-sub">{n.sub}</text>
-            </Fragment>
-          );
-        })}
-        <g fill="var(--sev-critical)" opacity="0.7"><circle cx="25" cy="22" r="3" /><circle cx="32" cy="62" r="3" /></g>
-        <g fill="var(--sev-high)" opacity="0.7"><circle cx="22" cy="140" r="3" /><circle cx="28" cy="100" r="3" /></g>
-      </svg>
-      <div class="op-stats">
-        <div><b>9 days</b><span>First seen</span></div>
-        <div><b>3</b><span>Surfaces</span></div>
-        <div><b>14 &rarr; 6</b><span>Domains live</span></div>
-      </div>
-      <div class="op-bar">
-        <div class="op-bar-row"><span>Takedowns</span><span>8 removed · 4 pending · 2 queued</span></div>
-        <div class="op-track" role="img" aria-label="Takedown progress: 8 of 14 removed, 4 pending, 2 queued">
-          <i style="width:57%;background:var(--green)"></i>
-          <i style="width:29%;background:var(--amber)"></i>
-          <i style="width:14%;background:var(--border-strong)"></i>
-        </div>
-      </div>
-      <figcaption class="op-foot">
-        <span>Illustrative example · names changed</span>
-        <a class="op-link" href={`${base}/resources/sample-operation-report`} data-cta="hero-sample-report">View sample report &rarr;</a>
-      </figcaption>
-    </figure>
-  </section>
-  </div>
+  <OperationHero />
 
   <section class="band" aria-label="Platform numbers">
     <div class="band-grid">
@@ -185,10 +68,6 @@ const toneVar: Record<Tone, string> = {
       </ul>
     </div>
   </section>
-
-  <hr class="tr-divider-animated" />
-
-  <OperationStory />
 
   <hr class="tr-divider-animated" />
 
@@ -209,7 +88,7 @@ const toneVar: Record<Tone, string> = {
 
   <section class="cta-section">
     <div class="cta-inner">
-      <h2 class="cta-headline">Ready to protect your brand?</h2>
+      <h2 class="cta-headline">See what's aimed at your brand.</h2>
       <div class="cta-buttons">
         <a href={`${base}/scan`} class="btn btn-primary" data-cta="run-scan">Scan your domain</a>
         <a href={`${base}/pricing`} class="btn btn-outline" data-cta="view-pricing">See plans</a>
@@ -218,205 +97,7 @@ const toneVar: Record<Tone, string> = {
   </section>
 </Layout>
 
-<script>
-  // Progressive enhancement: with JS the hero form opens the scan page
-  // (/scan/?domain=...). Without JS it still POSTs to /assess, which
-  // the backend redirects to /scan/?id=.
-  const heroForm = document.getElementById("scanForm");
-  if (heroForm instanceof HTMLFormElement) {
-    heroForm.addEventListener("submit", (e) => {
-      const input = heroForm.querySelector<HTMLInputElement>('input[name="domain"]');
-      const value = input?.value.trim() ?? "";
-      if (!value) return;
-      e.preventDefault();
-      location.assign(`/scan/?domain=${encodeURIComponent(value)}&go=1`);
-    });
-  }
-</script>
-
 <style>
-  /* ── HERO ── */
-  .hero-wrap { position: relative; isolation: isolate; overflow: hidden; }
-  .hero {
-    position: relative;
-    display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-    gap: 48px;
-    align-items: center;
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 64px 24px 48px;
-  }
-  /* Faint grid + accent glow behind the operation card. */
-  .hero-wrap::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    background-image:
-      linear-gradient(var(--border) 1px, transparent 1px),
-      linear-gradient(90deg, var(--border) 1px, transparent 1px);
-    background-size: 44px 44px;
-    -webkit-mask-image: radial-gradient(ellipse 60% 70% at 70% 40%, #000 25%, transparent 75%);
-    mask-image: radial-gradient(ellipse 60% 70% at 70% 40%, #000 25%, transparent 75%);
-  }
-  .hero-wrap::after {
-    content: "";
-    position: absolute;
-    right: 0;
-    top: -15%;
-    width: 55%;
-    height: 120%;
-    z-index: -1;
-    background: radial-gradient(closest-side, color-mix(in srgb, var(--primary) 11%, transparent), transparent);
-    pointer-events: none;
-  }
-  .hero-copy { min-width: 0; }
-  .hero-eyebrow {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--accent);
-    margin-bottom: 18px;
-  }
-  .hero-h1 {
-    font-family: var(--font-display);
-    /* G3 hero tokens; size capped to fit the two-column hero (the full-width
-       84px hero lands with the G5 operation-graph hero). */
-    font-size: clamp(44px, 4.6vw, 84px);
-    font-weight: var(--type-hero-weight);
-    line-height: var(--type-hero-lh);
-    letter-spacing: var(--type-hero-tracking);
-    margin-bottom: 18px;
-    color: var(--text-primary);
-    text-wrap: balance;
-  }
-  .hero-h1 em { font-style: normal; color: var(--accent); }
-  .hero-lede {
-    font-size: var(--type-body-size);
-    line-height: var(--type-body-lh);
-    color: var(--text-secondary);
-    max-width: 54ch;
-    margin-bottom: 26px;
-  }
-  .hero-lede-short { display: none; }
-
-  /* ── SCAN FORM ── */
-  .scan-box {
-    display: flex;
-    max-width: 470px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    background: var(--bg-secondary);
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .scan-box:focus-within {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px var(--accent-bg-strong);
-  }
-  .scan-input {
-    flex: 1;
-    min-width: 0;
-    font-family: var(--font-mono);
-    font-size: 16px; /* >=16px stops iOS zooming the page on focus */
-    padding: 13px 14px;
-    border: none;
-    background: transparent;
-    color: var(--text-primary);
-    outline: none;
-  }
-  .scan-input::placeholder { color: var(--text-tertiary); }
-  .scan-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    white-space: nowrap;
-    font-family: var(--font-body);
-    font-size: 14px;
-    font-weight: 700;
-    padding: 13px 18px;
-    border: none;
-    background: var(--btn-primary-bg);
-    color: var(--btn-primary-ink);
-    cursor: pointer;
-    transition: filter 0.2s;
-  }
-  .scan-btn:hover { background: var(--btn-primary-bg-hover); }
-  .scan-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: -4px; }
-  .scan-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 14px;
-    align-items: center;
-    margin-top: 14px;
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-  .scan-meta a {
-    color: var(--text-primary);
-    font-weight: 600;
-    border-bottom: 1px solid var(--border-strong);
-  }
-  .scan-meta a:hover { text-decoration: none; border-bottom-color: var(--primary); }
-  .scan-meta-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-tertiary); }
-
-  /* ── OPERATION CARD ── */
-  .op {
-    min-width: 0;
-    margin: 0;
-    background: var(--glass-card-bg);
-    border: 1px solid var(--border-strong);
-    border-radius: 14px;
-    padding: 16px 16px 14px;
-    -webkit-backdrop-filter: blur(6px);
-    backdrop-filter: blur(6px);
-    box-shadow: var(--shadow-lg);
-  }
-  .op-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
-  .op-id { font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-secondary); }
-  .op-tag {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--sev-critical-text);
-    background: var(--sev-critical-bg, rgba(239, 68, 68, 0.10));
-    border: 1px solid var(--sev-critical-border, rgba(239, 68, 68, 0.30));
-    border-radius: 999px;
-    padding: 3px 8px;
-  }
-  .op-title { font-weight: 700; font-size: 16px; margin: 2px 0 10px; color: var(--text-primary); }
-  .op-graph { display: block; width: 100%; height: auto; }
-  .op-hub-id { font: 600 9.5px var(--font-mono); fill: var(--sev-critical-text); }
-  .op-hub-sub { font: 400 8.5px var(--font-mono); fill: var(--text-secondary); }
-  .op-node-title { font: 700 10.5px var(--font-display); fill: var(--text-primary); }
-  .op-node-sub { font: 400 8.5px var(--font-mono); fill: var(--text-secondary); }
-  .op-stats {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1px;
-    background: var(--border);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
-    margin-top: 10px;
-  }
-  .op-stats div { background: var(--bg-secondary); padding: 9px 10px; }
-  .op-stats b { display: block; font: 700 17px/1.1 var(--font-display); color: var(--text-primary); font-variant-numeric: tabular-nums; }
-  .op-stats span { font: 500 10.5px var(--font-mono); color: var(--text-secondary); letter-spacing: 0.04em; text-transform: uppercase; }
-  .op-bar { margin-top: 10px; display: grid; gap: 6px; font: 500 11px var(--font-mono); color: var(--text-secondary); }
-  .op-bar-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; }
-  .op-track { height: 6px; border-radius: 99px; background: var(--border); overflow: hidden; display: flex; }
-  .op-track i { display: block; height: 100%; }
-  .op-link { color: var(--text-primary); font-weight: 600; text-decoration: none; border-bottom: 1px solid var(--border-strong); }
-  .op-link:hover { border-bottom-color: var(--accent); }
-  .op-foot { margin-top: 10px; font: 500 10.5px var(--font-mono); color: var(--text-secondary); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-
   /* ── PLATFORM BAND + COVERAGE ── */
   .band { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
   .band-grid {
@@ -466,10 +147,6 @@ const toneVar: Record<Tone, string> = {
     .band-lbl { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid var(--border); }
   }
   @media (max-width: 959px) {
-    .hero { grid-template-columns: minmax(0, 1fr); padding: 32px 16px 28px; gap: 28px; }
-    .hero-lede { font-size: 16px; }
-    .hero-lede-short { display: block; }
-    .hero-lede:not(.hero-lede-short) { display: none; }
     .band-lbl { padding: 12px 16px; white-space: normal; }
     .cover { padding: 16px 16px 20px; }
   }
@@ -478,11 +155,6 @@ const toneVar: Record<Tone, string> = {
     .band-m { border-bottom: 1px solid var(--border); }
     .band-m:nth-child(even) { border-right: 0; }
     .band-m:last-child { grid-column: 1 / -1; border-bottom: 0; }
-  }
-  @media (max-width: 479px) {
-    .scan-box { flex-direction: column; }
-    .scan-input { padding: 13px 14px; }
-    .scan-btn { padding: 14px 18px; }
   }
 
   /* ── CTA SECTION ── */

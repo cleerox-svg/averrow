@@ -140,13 +140,31 @@ test.describe("homepage hero", () => {
     await expect(p.locator("h1")).toHaveCount(1);
     await expect(p.locator("h1")).toHaveText(/^Brand protection that traces the operation\.$/);
     await expect(p.locator("h1 em")).toHaveText("traces the operation");
-    await expect(p.locator(".hero-lede").first()).toContainText("files takedowns for lookalike domains");
+    await expect(p.locator(".hero-eyebrow")).toHaveText("Digital risk protection · threat-actor intelligence");
+    const lede = p.locator(".hero-lede").first();
+    await expect(lede).toContainText("impersonation accounts and copycat apps");
+    await expect(lede).toContainText("and files takedowns for lookalike domains and phishing URLs under your authorization");
+    await expect(lede).toContainText("groups phishing domains that share hosting or certificates into one operation");
 
     const form = p.locator("form#scanForm");
     await expect(form).toHaveAttribute("action", /\/assess$/);
     await expect(form).toHaveAttribute("method", /post/i);
     await expect(form.locator('input[name="domain"]')).toBeVisible();
     await expect(form.getByRole("button", { name: /scan your domain/i })).toBeVisible();
+    await expect(p.locator("#hero").getByText("Free scan · no sign-up · no card")).toBeVisible();
+    await expect(p.locator("#hero").getByRole("link", { name: "Book a demo" })).toHaveAttribute("href", "/demo");
+  });
+
+  test("meta title and description are the approved strings", async ({ page: p }) => {
+    await p.goto("/");
+    await expect(p).toHaveTitle("Averrow — Brand protection that traces the operation");
+    const desc =
+      "Find lookalike domains, impersonation accounts and copycat apps aimed at your brand, and file takedowns for lookalike domains and phishing URLs. Free scan, no sign-up.";
+    await expect(p.locator('meta[name="description"]')).toHaveAttribute("content", desc);
+    await expect(p.locator('meta[property="og:description"]')).toHaveAttribute("content", desc);
+    const ld = await p.locator('script[type="application/ld+json"]').first().textContent();
+    expect(ld).not.toMatch(/related lookalike domains|fake social profiles|cloned apps/);
+    expect(ld).toContain("impersonation accounts and copycat apps");
   });
 
   test("no fake live feed, no retired claims", async ({ page: p }) => {
@@ -157,7 +175,17 @@ test.describe("homepage hero", () => {
     expect(text).not.toContain("ai agents");
     expect(text).not.toContain("42-agent");
     expect(text).not.toContain("beavertooth");
-    await expect(p.getByText("Illustrative example · names changed")).toBeVisible();
+    // Register L48/L49/H1-H5: retired hero and story wording.
+    for (const banned of ["names changed", "nine lookalikes", "fake profiles", "cloned app"]) {
+      expect(text, banned).not.toContain(banned);
+    }
+    const hero = (await p.locator("#hero").innerText()).toLowerCase();
+    for (const banned of ["19 findings", "actor attributed", "queued", "as6450", "/24", "serial", "registrar,", "lookalike domains that"]) {
+      expect(hero, banned).not.toContain(banned);
+    }
+    await expect(p.getByText("Fictional example · operation mapping is on the Enterprise plan")).toBeVisible();
+    // The old OperationStory section is gone (the hero tells that story now).
+    await expect(p.locator("#operation-story")).toHaveCount(0);
   });
 
   test("platform band is dated and shows real numbers", async ({ page: p }) => {
@@ -167,6 +195,12 @@ test.describe("homepage hero", () => {
     await expect(band.locator(".band-m")).toHaveCount(5);
     await expect(band).toContainText("40+");
     await expect(p.locator(".cover-chip")).toHaveCount(8);
+  });
+
+  test("section heads follow the hero copy doc", async ({ page: p }) => {
+    await p.goto("/");
+    await expect(p.locator("#cv-title")).toHaveText("Where attackers pretend to be you.");
+    await expect(p.locator(".cta-headline")).toHaveText("See what's aimed at your brand.");
   });
 });
 
@@ -210,123 +244,5 @@ test.describe("navigation (mobile menu)", () => {
     for (const name of ["Platform", "Solutions", "Plans", "Research", "Company", "Log in", "Book a demo", "Scan your domain"]) {
       await expect(menu.getByRole("link", { name, exact: true })).toBeVisible();
     }
-  });
-});
-
-test.describe("homepage: follow one operation", () => {
-  const TITLES = [
-    "A lookalike is registered",
-    "It goes live",
-    "It isn't alone",
-    "It spreads beyond domains",
-    "It comes down",
-  ];
-
-  test("renders five steps, the illustrative label and working links", async ({ page: p, request }) => {
-    await p.goto("/");
-    const s = p.locator("#operation-story");
-    await expect(s.getByRole("heading", { level: 2 })).toContainText("From one fake domain");
-    await expect(s.getByRole("tab")).toHaveCount(5);
-    await expect(s.getByRole("tab").first()).toHaveAttribute("aria-selected", "true");
-    await expect(s.getByRole("tabpanel")).toHaveCount(1); // only the active panel is exposed
-    await expect(s).toContainText("Illustrative example · names and domains changed · timings vary by operation");
-    // The removed six-card section is gone.
-    await expect(p.getByText("Automated analysis", { exact: true })).toHaveCount(0);
-    // Step 1 makes no timing claim.
-    await expect(s.getByRole("tabpanel")).toContainText("new-registration data");
-    expect((await s.innerText()).toLowerCase()).not.toContain("within hours");
-
-    // /scan is served by the Worker (same href as the nav CTA), so the preview server can't resolve it.
-    await expect(s.getByRole("link", { name: "Scan your domain" })).toHaveAttribute("href", "/scan");
-    const sample = s.getByRole("link", { name: /View the sample report/ });
-    const href = await sample.getAttribute("href");
-    expect(href).toMatch(/\/resources\/sample-operation-report$/);
-    expect((await request.get(href!)).status()).toBeLessThan(400);
-  });
-
-  test("keyboard navigation changes the active step", async ({ page: p }) => {
-    await p.goto("/");
-    const tabs = p.locator("#operation-story").getByRole("tab");
-    await tabs.first().focus();
-    await p.keyboard.press("ArrowRight");
-    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
-    await expect(tabs.nth(1)).toBeFocused();
-    await p.keyboard.press("End");
-    await expect(tabs.nth(4)).toHaveAttribute("aria-selected", "true");
-    await expect(p.locator("#operation-story [role=tabpanel]:visible")).toContainText("8 of 14");
-    await expect(p.locator("#operation-story [data-graph]")).toHaveAttribute("aria-label", /step 5 of 5/);
-    await p.keyboard.press("Home");
-    await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
-    await p.keyboard.press("ArrowLeft"); // wraps
-    await expect(tabs.nth(4)).toHaveAttribute("aria-selected", "true");
-  });
-
-  test("does not auto-advance under reduced motion", async ({ browser }) => {
-    const ctx = await browser.newContext({ reducedMotion: "reduce" });
-    const p = await ctx.newPage();
-    await p.goto("/");
-    await p.locator("#operation-story").scrollIntoViewIfNeeded();
-    await p.waitForTimeout(6000);
-    await expect(p.locator("#operation-story").getByRole("tab").first()).toHaveAttribute("aria-selected", "true");
-    await ctx.close();
-  });
-
-  test("auto-advances once, then stops, when motion is allowed", async ({ browser }) => {
-    const ctx = await browser.newContext({ reducedMotion: "no-preference" });
-    const p = await ctx.newPage();
-    await p.goto("/");
-    const tabs = p.locator("#operation-story").getByRole("tab");
-    await p.locator("#operation-story [data-body]").scrollIntoViewIfNeeded();
-    await expect(p.getByRole("button", { name: "Pause automatic advance" })).toBeVisible();
-    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true", { timeout: 10000 });
-    // Any interaction stops it and hides the control.
-    await tabs.nth(1).click();
-    await p.mouse.move(0, 0);
-    await p.waitForTimeout(7200);
-    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
-    await expect(p.locator(".os-ctl")).toBeHidden();
-    await ctx.close();
-  });
-
-  test("pauses on hover and the pause control toggles", async ({ browser }, info) => {
-    test.skip(info.project.name === "mobile", "hover is a pointer affordance; the control scrolls the story out of view on a phone");
-    test.setTimeout(60_000);
-    const ctx = await browser.newContext({ reducedMotion: "no-preference" });
-    const p = await ctx.newPage();
-    await p.goto("/");
-    const s = p.locator("#operation-story");
-    const tabs = s.getByRole("tab");
-    await s.locator("[data-body]").scrollIntoViewIfNeeded();
-    // Hover pauses.
-    await s.locator("[data-stage]").hover();
-    await p.waitForTimeout(7200);
-    await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
-    // Button: Pause -> Play, no advance while paused.
-    const btn = s.locator(".os-ctl");
-    await btn.click();
-    await expect(btn).toHaveText("Play");
-    await p.mouse.move(0, 0);
-    await p.waitForTimeout(7200);
-    await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
-    // Play resumes.
-    await btn.click();
-    await expect(btn).toHaveText("Pause");
-    await p.mouse.move(0, 0);
-    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true", { timeout: 10000 });
-    await ctx.close();
-  });
-
-  test("is fully readable with JavaScript disabled", async ({ browser }) => {
-    const ctx = await browser.newContext({ javaScriptEnabled: false });
-    const p = await ctx.newPage();
-    await p.goto("/");
-    const s = p.locator("#operation-story");
-    for (const t of TITLES) await expect(s.getByRole("heading", { level: 3, name: t })).toBeVisible();
-    await expect(s.getByText("OP-2291 · Acme payroll sign-in impersonation")).toBeVisible();
-    await expect(s.getByText("8 of 14")).toBeVisible();
-    await expect(s.locator("svg[role=img]")).toHaveAttribute("aria-label", /14 domains/);
-    await expect(s.getByRole("tab")).toHaveCount(0);
-    await expect(s.locator(".os-ctl")).toHaveCount(0);
-    await ctx.close();
   });
 });

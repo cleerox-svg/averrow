@@ -1,0 +1,482 @@
+---
+/*
+ * Homepage hero, G5 H4A "Auto-play steps" (docs/brand/BRAND_BRIEF.md §10).
+ *
+ * Copy: docs/brand/HERO_COPY_2026-11.md is the ONLY source of the strings
+ * below (register docs/DISCLOSURE_REGISTER.md §3.13, rows H1-H8). Do not
+ * edit a string here without going back through the register.
+ *
+ * Progressive enhancement, three states:
+ *   - No JS / reduced motion: the server-rendered SVG poster of the FINISHED
+ *     operation (the LCP element), the takedown card, the always-visible
+ *     disclosure line and a static <ol> of the four steps with their long
+ *     captions. No animation, no script requested.
+ *   - JS, motion allowed: an inline pre-paint script marks the hero `lv`
+ *     (swaps the static list for the step bar, so there is no layout shift),
+ *     and src/scripts/hero.ts is imported after `load` + idle. It draws the
+ *     same graph on a canvas and auto-plays the four steps; the step bar
+ *     jumps to a step, and the pause button stops all motion (WCAG 2.2.2).
+ *   - The scan form posts to /assess without JS, exactly as before; with JS
+ *     it opens /scan/?domain= (unchanged).
+ */
+import { build, labelPos, showsLabel, hubText, linkEnd, HUB_ID, HUB_SUB, HUB_TITLE, ACTOR_LINE, type Graph } from "../../lib/hero-graph";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const steps = [
+  {
+    long: "Domain found",
+    short: "Found",
+    caption: "acme-payroll-login.example turns up in phishing intelligence and is matched to Acme.",
+    live: "Phishing intelligence surfaces acme-payroll-login.example, matched to Acme.",
+  },
+  {
+    long: "Infrastructure linked",
+    short: "Linked",
+    caption: "Shared hosting and one shared TLS certificate tie it to 13 more phishing domains.",
+    live: "Shared hosting and one TLS certificate tie it to 13 more phishing domains.",
+  },
+  {
+    long: "Operation mapped",
+    short: "Mapped",
+    caption:
+      "On Enterprise, the cluster becomes one operation. A known actor is shown only where public reporting names one; this one is fictional. Related findings, shown dashed, are reviewed alongside.",
+    live: "Grouped into one operation; a known actor is shown only where public reporting names one.",
+  },
+  {
+    long: "Takedowns filed",
+    short: "Takedown",
+    caption:
+      "Takedowns are filed for each domain under your authorization, at the automation level you choose. Status updates as registrars and hosts act.",
+    live: "Takedowns filed for each domain under your authorization; status updates as hosts act.",
+  },
+];
+
+const figCaption =
+  "Fictional example of Enterprise operation mapping, in four steps: a phishing domain imitating Acme is found, shared hosting on two networks and one shared TLS certificate link it to 13 more, the 14 domains are grouped into one operation, OP-2291, and takedowns are filed for each domain (8 taken down, 4 submitted, 2 waiting for approval). An impersonation account and a copycat app are shown as related findings.";
+
+const DISCLOSURE = "Fictional example · operation mapping is on the Enterprise plan";
+
+const tone = { crit: "var(--sev-critical)", high: "var(--sev-high)", med: "var(--sev-medium)", low: "var(--sev-low)" } as const;
+const f = (v: number) => v.toFixed(1);
+
+/** The finished operation as SVG markup (same geometry the canvas lands on). */
+function poster(S: Graph): string {
+  const P: Record<string, [number, number]> = { hub: [S.cx, S.cy] };
+  for (const n of S.nodes) P[n.id] = [n.tx, n.ty];
+  let o = "";
+  for (const l of S.links) {
+    const a = P[l.a];
+    const e = linkEnd(S, a, P[l.b], l.b === "hub");
+    o += `<path d="M${f(a[0])} ${f(a[1])}L${f(e[0])} ${f(e[1])}" stroke="var(--primary-text)" stroke-opacity="${l.kind === "ev" ? 0.5 : 0.6}" stroke-width="${l.kind === "ev" ? 1 : 1.2}"${l.kind === "rel" ? ' stroke-dasharray="3 4"' : ""} fill="none"/>`;
+  }
+  o += `<circle cx="${f(S.cx)}" cy="${f(S.cy)}" r="${f(S.hubR)}" fill="var(--primary-tint)" stroke="var(--primary-text)" stroke-width="1.6"/>`;
+  for (const n of S.nodes) {
+    const s = S.st[n.id];
+    const x = f(n.tx), y = f(n.ty);
+    if (s && typeof s === "object") {
+      o += `<circle cx="${x}" cy="${y}" r="${n.r}" fill="var(--bg-primary)" stroke="var(--text-muted)" stroke-width="2" opacity=".35"/>`;
+    } else {
+      o += `<circle cx="${x}" cy="${y}" r="${n.r}" fill="var(--bg-primary)" stroke="${tone[n.col]}" stroke-width="2"/><circle cx="${x}" cy="${y}" r="${f(n.r * 0.38)}" fill="${tone[n.col]}"/>`;
+      if (s === "submitted") o += `<circle cx="${x}" cy="${y}" r="${n.r + 4}" fill="none" stroke="var(--sev-high)" stroke-dasharray="2 3"/>`;
+    }
+  }
+  for (const n of S.nodes) {
+    if (!showsLabel(n, S.cp)) continue;
+    const lp = labelPos(n, n.tx, n.ty);
+    const rm = typeof S.st[n.id] === "object";
+    o += `<text x="${f(lp.x)}" y="${f(lp.y)}" text-anchor="${lp.a}"${rm ? ' opacity=".6"' : ""}>${n.label}</text>`;
+    if (n.sub && !S.cp) o += `<text class="sub" x="${f(lp.x)}" y="${f(lp.y + 13)}" text-anchor="${lp.a}">${n.sub}</text>`;
+  }
+  const H = hubText(S);
+  o += `<text class="hubt" x="${f(H.id[0])}" y="${f(H.id[1])}" text-anchor="middle">${HUB_ID}</text>`;
+  o += `<text class="sub" x="${f(H.sub[0])}" y="${f(H.sub[1])}" text-anchor="middle">${HUB_SUB}</text>`;
+  o += `<text class="ttl" x="${f(H.title[0])}" y="${f(H.title[1])}" text-anchor="middle">${HUB_TITLE}</text>`;
+  o += `<text x="${f(H.actor[0])}" y="${f(H.actor[1])}" text-anchor="middle" opacity=".9">${ACTOR_LINE}</text>`;
+  return o;
+}
+
+const posterDesktop = poster(build(false));
+const posterCompact = poster(build(true));
+---
+
+<section class="hero" id="hero" aria-labelledby="hero-title">
+  <script is:inline>
+    // Pre-paint: with JS and motion allowed, show the step bar instead of the
+    // static list now, so the swap never shifts the layout.
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) document.getElementById("hero").classList.add("lv");
+  </script>
+  <div class="hero-head">
+    <p class="hero-eyebrow">Digital risk protection · threat-actor intelligence</p>
+    <h1 class="hero-h1" id="hero-title">Brand protection that <em>traces the operation</em>.</h1>
+  </div>
+
+  <div class="hero-copy">
+    <p class="hero-lede hero-lede-long">
+      Averrow finds lookalike domains, impersonation accounts and copycat apps aimed at your brand and
+      executives, and files takedowns for lookalike domains and phishing URLs under your authorization.
+      On the Enterprise plan, operation mapping groups phishing domains that share hosting or
+      certificates into one operation, so you act on the operation, not one alert at a time.
+    </p>
+    <p class="hero-lede hero-lede-short">Find the fakes, file takedowns, and on Enterprise, trace the operation.</p>
+
+    <form class="scan-box" id="scanForm" action={`${base}/assess`} method="POST">
+      <label class="sr-only" for="domainInput">Domain to scan for brand threats</label>
+      <input
+        class="scan-input"
+        id="domainInput"
+        name="domain"
+        type="text"
+        inputmode="url"
+        placeholder="yourcompany.com"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        required
+      />
+      <button class="scan-btn" type="submit" data-cta="hero-scan">Scan your domain <span aria-hidden="true">&rarr;</span></button>
+    </form>
+    <p class="scan-meta">
+      <span>Free scan &middot; no sign-up &middot; no card</span>
+      <span class="scan-meta-dot" aria-hidden="true"></span>
+      <a href={`${base}/demo`} data-cta="hero-demo">Book a demo</a>
+    </p>
+  </div>
+
+  <figure class="stage" aria-labelledby="hero-fig-cap">
+    <figcaption id="hero-fig-cap" class="sr-only">{figCaption}</figcaption>
+    <div class="gw">
+      <div class="g" data-hero-g>
+        <svg class="poster poster-d" viewBox="0 0 800 620" aria-hidden="true" set:html={posterDesktop} />
+        <svg class="poster poster-m" viewBox="0 0 390 340" aria-hidden="true" set:html={posterCompact} />
+        <canvas aria-hidden="true"></canvas>
+      </div>
+      <div class="tk" data-hero-card>
+        <div class="tk-h"><span>Takedowns</span><span class="tk-pill">Active</span></div>
+        <div class="tk-t" aria-hidden="true">
+          <i data-n="b-rem" style="width:57.1%;background:var(--green)"></i>
+          <i data-n="b-sub" style="width:28.6%;background:var(--primary)"></i>
+        </div>
+        <div class="tk-n">
+          <span><b data-n="rem">8</b> taken down</span>
+          <span><b data-n="sub">4</b> submitted</span>
+          <span><b data-n="apr">2</b> to approve</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail" data-hero-rail role="group" aria-label="Operation steps">
+      <div class="rt">
+        <ol>
+          {steps.map((s, i) => (
+            <li>
+              <button
+                type="button"
+                class="sb"
+                data-step={i + 1}
+                data-cap={s.live}
+                aria-current={i === 3 ? "step" : undefined}
+                aria-label={`Step ${i + 1} of 4: ${s.long}`}
+              >
+                <i class="fl"></i>
+                <span class="lg">{s.long}</span>
+                <span class="sh">{s.short}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+        <button type="button" class="pp" data-pp aria-label="Pause step animation">
+          <svg class="i-pause" width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="2" y="1.5" width="2.8" height="9" rx=".6" /><rect x="7.2" y="1.5" width="2.8" height="9" rx=".6" /></svg>
+          <svg class="i-play" width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M3 1.6v8.8L10.4 6z" /></svg>
+        </button>
+      </div>
+      <p class="cap" data-live-cap aria-live="polite">{steps[3].live}</p>
+    </div>
+
+    <p class="ill">{DISCLOSURE}</p>
+  </figure>
+
+  <ol class="sl" aria-label="How the example operation unfolds">
+    {steps.map((s) => (
+      <li><b>{s.long}</b><span>{s.caption}</span></li>
+    ))}
+  </ol>
+</section>
+
+<script>
+  // Progressive enhancement: with JS the hero form opens the scan page
+  // (/scan/?domain=...). Without JS it still POSTs to /assess, which
+  // the backend redirects to /scan/?id=.
+  const heroForm = document.getElementById("scanForm");
+  if (heroForm instanceof HTMLFormElement) {
+    heroForm.addEventListener("submit", (e) => {
+      const input = heroForm.querySelector<HTMLInputElement>('input[name="domain"]');
+      const value = input?.value.trim() ?? "";
+      if (!value) return;
+      e.preventDefault();
+      location.assign(`/scan/?domain=${encodeURIComponent(value)}&go=1`);
+    });
+  }
+
+  // The animation is loaded after paint, and never for reduced motion.
+  const hero = document.getElementById("hero");
+  if (hero && hero.classList.contains("lv")) {
+    const boot = () => {
+      const idle = window.requestIdleCallback ?? ((fn: () => void) => window.setTimeout(fn, 200));
+      idle(() => void import("../../scripts/hero").then((m) => m.start(hero)), { timeout: 1500 });
+    };
+    if (document.readyState === "complete") boot();
+    else window.addEventListener("load", boot, { once: true });
+  }
+</script>
+
+<style>
+  .hero {
+    --gap: 48px;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 56px 24px 8px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 660px);
+    grid-template-areas: "head head" "copy stage" "list list";
+    column-gap: var(--gap);
+    align-items: start;
+  }
+  .hero-head { grid-area: head; min-width: 0; }
+  .hero-copy { grid-area: copy; min-width: 0; padding-top: 20px; }
+  .stage { grid-area: stage; }
+  .sl { grid-area: list; }
+
+  .hero-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+  .hero-h1 {
+    font-family: var(--font-display);
+    /* G3 marketing hero: 84 / 0.98 / 600 / -0.045em, clamped down on phones
+       so "Brand protection" still fits one line at 360. */
+    font-size: clamp(40px, 8.5vw, 84px);
+    font-weight: var(--type-hero-weight);
+    line-height: var(--type-hero-lh);
+    letter-spacing: var(--type-hero-tracking);
+    margin: 0 0 8px;
+    color: var(--text-primary);
+    text-wrap: balance;
+    max-width: 15ch;
+  }
+  .hero-h1 em { font-style: normal; color: var(--accent); }
+  .hero-lede {
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-lh);
+    color: var(--text-secondary);
+    max-width: 54ch;
+    margin: 0 0 26px;
+  }
+  .hero-lede-short { display: none; }
+
+  /* ── SCAN FORM (unchanged) ── */
+  .scan-box {
+    display: flex;
+    max-width: 470px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--bg-secondary);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .scan-box:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--accent-bg-strong); }
+  .scan-input {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 16px; /* >=16px stops iOS zooming the page on focus */
+    padding: 13px 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    outline: none;
+  }
+  .scan-input::placeholder { color: var(--text-tertiary); }
+  .scan-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    white-space: nowrap;
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 700;
+    padding: 13px 18px;
+    border: none;
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-ink);
+    cursor: pointer;
+  }
+  .scan-btn:hover { background: var(--btn-primary-bg-hover); }
+  .scan-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: -4px; }
+  .scan-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    align-items: center;
+    margin: 14px 0 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .scan-meta a { color: var(--text-primary); font-weight: 600; border-bottom: 1px solid var(--border-strong); }
+  .scan-meta a:hover { text-decoration: none; border-bottom-color: var(--primary); }
+  .scan-meta-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-tertiary); }
+
+  /* ── OPERATION GRAPH ── */
+  .stage {
+    position: relative;
+    min-width: 0;
+    margin: 0;
+    container: hero-stage / inline-size;
+    display: flex;
+    flex-direction: column;
+  }
+  .gw { position: relative; }
+  .g { position: relative; aspect-ratio: 800 / 620; }
+  .g svg, .g canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .g canvas { opacity: 0; transition: opacity 0.4s cubic-bezier(0.2, 0, 0, 1); }
+  .hero.live .g canvas { opacity: 1; }
+  .hero.live .poster { opacity: 0; transition: opacity 0.4s cubic-bezier(0.2, 0, 0, 1); }
+  .g .poster-m { display: none; }
+  .poster :global(text) {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    fill: var(--text-secondary);
+    paint-order: stroke;
+    stroke: var(--bg-primary);
+    stroke-width: 3.5px;
+    stroke-linejoin: round;
+  }
+  .poster :global(.sub) { fill: var(--text-muted); }
+  .poster :global(.ttl) { font-family: var(--font-display); font-weight: 600; font-size: 15px; fill: var(--text-primary); }
+  .poster :global(.hubt) { fill: var(--primary-text); font-size: 14px; font-weight: 500; stroke: none; }
+  .poster-m :global(text) { font-size: 10px; }
+  .poster-m :global(.ttl) { font-size: 12px; }
+  .poster-m :global(.hubt) { font-size: 11px; }
+
+  .tk {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 300px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 9px 12px 10px;
+    font-size: 13px;
+  }
+  .tk-h { display: flex; justify-content: space-between; align-items: center; font-weight: 500; margin-bottom: 7px; color: var(--text-primary); }
+  .tk-pill {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--primary-text);
+    background: var(--primary-tint);
+    border-radius: 999px;
+    padding: 2px 8px;
+  }
+  .tk-t { height: 6px; border-radius: 3px; background: var(--border-strong); display: flex; overflow: hidden; }
+  .tk-t i { display: block; height: 100%; }
+  .tk-n { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px; font: 400 12px var(--font-mono); color: var(--text-secondary); white-space: nowrap; }
+  .tk-n b { font-weight: 500; color: var(--text-primary); }
+
+  .ill { position: absolute; top: 2px; right: 0; font-size: 12px; color: var(--text-secondary); margin: 0; }
+
+  /* Step bar along the graph's bottom edge (JS + motion only). */
+  .rail { display: none; padding-top: 12px; }
+  .hero.lv .rail { display: block; }
+  .hero.lv .sl { display: none; }
+  .rt { display: flex; align-items: flex-start; gap: 8px; }
+  .rt ol { list-style: none; margin: 0; padding: 0; display: flex; gap: 10px; flex: 1; min-width: 0; }
+  .rt li { flex: 1; min-width: 0; }
+  .sb {
+    all: unset;
+    box-sizing: border-box;
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 10px 0 4px;
+    font: 500 12.5px/18px var(--font-body);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color 0.12s cubic-bezier(0.2, 0, 0, 1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sb::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--border-strong); border-radius: 1px; }
+  .sb .fl { position: absolute; top: 0; left: 0; right: 0; height: 2px; border-radius: 1px; background: var(--primary-text); transform: scaleX(1); transform-origin: left; }
+  .sb[aria-current="step"], .sb:hover { color: var(--text-primary); }
+  .sb:focus-visible, .pp:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: 3px; }
+  .sb .lg { display: none; }
+  .pp {
+    all: unset;
+    box-sizing: border-box;
+    width: 32px;
+    height: 28px;
+    margin-top: 4px;
+    display: grid;
+    place-items: center;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 6px;
+    flex: none;
+  }
+  .pp:hover { color: var(--text-primary); background: var(--primary-tint); }
+  .pp .i-play { display: none; }
+  .pp[data-state="paused"] .i-play { display: block; }
+  .pp[data-state="paused"] .i-pause { display: none; }
+  .cap { margin: 2px 40px 0 0; min-height: 32px; font-size: 13px; line-height: 16px; color: var(--text-secondary); transition: opacity 0.12s cubic-bezier(0.2, 0, 0, 1); }
+  .cap.sw { opacity: 0; }
+
+  /* Static step list (no JS / reduced motion). */
+  .sl { list-style: none; margin: 0; padding: 20px 0 32px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; counter-reset: s; }
+  .sl li { border-top: 1px solid var(--border-strong); padding-top: 10px; counter-increment: s; }
+  .sl b { display: block; font-weight: 500; font-size: 15px; color: var(--text-primary); }
+  .sl b::before { content: counter(s) "\00a0\00a0"; font-family: var(--font-mono); color: var(--primary-text); font-size: 12px; }
+  .sl span { display: block; font-size: 13px; line-height: 1.5; color: var(--text-secondary); margin-top: 4px; }
+
+  @container hero-stage (min-width: 620px) {
+    .sb .lg { display: inline; }
+    .sb .sh { display: none; }
+  }
+  /* Compact graph (phone space 390x340): everything stacks under it. */
+  @container hero-stage (max-width: 619.98px) {
+    .g { aspect-ratio: 390 / 340; }
+    .g .poster-d { display: none; }
+    .g .poster-m { display: block; }
+    /* Graph, step bar, disclosure, then the card. */
+    .gw { display: contents; }
+    .rail { order: 1; }
+    .ill { order: 2; position: static; margin: 8px 0 0; }
+    .tk { order: 3; position: relative; right: auto; bottom: auto; width: 100%; margin: 12px 0 0; }
+    .sb { padding: 12px 0 8px; }
+    .cap { margin-right: 0; }
+  }
+
+  @media (max-width: 959px) {
+    .hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "copy" "stage" "list"; padding: 32px 16px 8px; }
+    .hero-copy { padding-top: 12px; }
+    .stage { max-width: 560px; margin-top: 28px; }
+    .hero-lede { font-size: 16px; }
+    .hero-lede-short { display: block; }
+    .hero-lede-long { display: none; }
+    .sl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  }
+  @media (max-width: 559px) {
+    .sl { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 479px) {
+    .scan-box { flex-direction: column; }
+    .scan-btn { padding: 14px 18px; }
+  }
+</style>

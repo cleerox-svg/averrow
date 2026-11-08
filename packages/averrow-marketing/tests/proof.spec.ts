@@ -162,12 +162,6 @@ test("homepage: old showcase and compliance claims are gone (home and pricing)",
   await expect(page.locator(".trust-line")).toContainText("Customer data is never used in public numbers");
 });
 
-test("homepage: hero operation card links to the sample report", async ({ page }) => {
-  await stub404(page);
-  await page.goto("/");
-  await expect(page.getByRole("link", { name: /View sample report/ })).toHaveAttribute("href", "/resources/sample-operation-report");
-});
-
 test("tooltip shows exact count and share on focus", async ({ page }) => {
   await stub404(page);
   await page.goto("/");

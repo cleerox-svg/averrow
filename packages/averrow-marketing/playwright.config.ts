@@ -59,6 +59,20 @@ export default defineConfig({
       // launch with it. Same phone-sized viewport + touch emulation.
       use: { ...devices["Pixel 5"] },
     },
+    // The homepage hero animation must work in every engine (owner, G5).
+    // These use Playwright's own Firefox / WebKit builds (`npx playwright
+    // install firefox webkit`), so the pre-installed Chromium override is
+    // cleared for them.
+    {
+      name: "firefox",
+      testMatch: /hero\.spec\.ts/,
+      use: { ...devices["Desktop Firefox"], launchOptions: {} },
+    },
+    {
+      name: "webkit",
+      testMatch: /hero\.spec\.ts/,
+      use: { ...devices["Desktop Safari"], launchOptions: {} },
+    },
   ],
   // When PLAYWRIGHT_BASE_URL isn't set, boot the Astro preview
   // server. CI typically deploys to staging and overrides BASE_URL,
