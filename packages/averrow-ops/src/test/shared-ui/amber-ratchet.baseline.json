@@ -14,10 +14,10 @@
     "tailwind (text|bg|border|ring)-amber": 245
   },
   "shared": {
-    "var(--amber)": 5,
+    "var(--amber)": 4,
     "var(--amber-text)": 10,
     "#e5a832": 2,
-    "rgba(229, 168, 50": 16,
+    "rgba(229, 168, 50": 11,
     "tailwind (text|bg|border|ring)-amber": 9
   }
 }
