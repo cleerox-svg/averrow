@@ -262,7 +262,7 @@ export function ChannelsSection({
           <SettingsRow
             variant="toggle"
             icon={<EyeIcon />}
-            tone="amber"
+            tone="primary"
             title="Show customer notifications"
             description="Also get a copy of what customers are sent, across every organization. Useful for support, but noisy."
             loading={autosave.saving('show-customer')}

@@ -7,8 +7,9 @@
 // The mark is always red #C83C3C, in every accent. Minimum 16px (smaller
 // sizes are clamped up); keep a quarter of the mark height clear around it.
 //
-// Until the P3-6 flip the legacy logo is what users see: swap sites render
-// both and toggle with LOGO_LEGACY_CLASS / LOGO_R3_CLASS (see ./logoToggle).
+// Swap sites render both this and the legacy logo and toggle with
+// LOGO_LEGACY_CLASS / LOGO_R3_CLASS (see ./logoToggle): R3 since the P3-6
+// flip, legacy only with FACELIFT reverted.
 
 import type { CSSProperties } from 'react';
 import { R3_MARK_PATH, R3_MARK_RED, R3_TILE_FILL } from './paths';

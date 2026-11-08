@@ -24,7 +24,7 @@ interface AccountSectionDef {
 
 /** Static definition: id, label, default description, tone and group. Order is the rail order. */
 export const ACCOUNT_SECTION_DEFS: readonly AccountSectionDef[] = [
-  { id: 'profile',       label: 'Profile',        description: 'Name, appearance and time zone', tone: 'amber',  group: 'Account',     icon: () => <UserIcon /> },
+  { id: 'profile',       label: 'Profile',        description: 'Name, appearance and time zone', tone: 'primary', group: 'Account',     icon: () => <UserIcon /> },
   { id: 'security',      label: 'Security',       description: 'Passkeys and sessions',          tone: 'green',  group: 'Account',     icon: () => <ShieldCheckIcon /> },
   { id: 'appearance',    label: 'Appearance',     description: 'Accent color and background',   tone: 'cyan',   group: 'Preferences', icon: () => <PaletteIcon /> },
   { id: 'notifications', label: 'Notifications',  description: 'Push, email and quiet hours',    tone: 'blue',   group: 'Preferences', icon: () => <BellIcon /> },
@@ -40,15 +40,16 @@ export interface AccountSectionsOptions {
   badges?: Partial<Record<AccountSectionId, number | string>>;
 }
 
-/** Whether a section is offered right now. Appearance waits for the P3-6 flip
- *  (APPEARANCE_PICKER_ENABLED); hosts redirect its route to Profile meanwhile. */
+/** Whether a section is offered right now. Appearance needs
+ *  APPEARANCE_PICKER_ENABLED (on since the P3-6 flip; off only with FACELIFT
+ *  reverted, when hosts redirect its route to Profile). */
 export function isAccountSectionEnabled(id: AccountSectionId): boolean {
   return id !== 'appearance' || APPEARANCE_PICKER_ENABLED;
 }
 
-/** Profile's default description. Before the flip Profile is where all
- *  appearance lives; once Appearance is its own section, Profile only keeps
- *  light / dark. */
+/** Profile's default description. With Appearance as its own section (since
+ *  the P3-6 flip) Profile only keeps light / dark; with FACELIFT reverted
+ *  Profile is where all appearance lives. */
 export function profileSectionDescription(): string {
   return APPEARANCE_PICKER_ENABLED ? 'Name, light or dark mode and time zone' : 'Name, appearance and time zone';
 }

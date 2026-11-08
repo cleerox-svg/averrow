@@ -160,15 +160,18 @@ beforeEach(() => {
 });
 
 describe('defaults', () => {
-  it('ships the legacy look (no accent, no base) until P3-6 flips it', () => {
-    expect(DEFAULT_ACCENT).toBeNull();
-    expect(DEFAULT_BASE).toBeNull();
+  it('ships the facelift default: indigo on graphite (P3-6); no legacy value exists', () => {
+    expect(DEFAULT_ACCENT).toBe('indigo');
+    expect(DEFAULT_BASE).toBe('graphite');
+    expect(ACCENTS as readonly string[]).not.toContain('legacy');
   });
 
-  it('sets no attribute when nothing is stored', () => {
-    expect(bootstrapAppearance()).toEqual({ accent: null, base: null });
-    expect(root().hasAttribute('data-accent')).toBe(false);
-    expect(root().hasAttribute('data-base')).toBe(false);
+  it('applies the defaults when nothing is stored, without writing storage', () => {
+    expect(bootstrapAppearance()).toEqual({ accent: 'indigo', base: 'graphite' });
+    expect(root().getAttribute('data-accent')).toBe('indigo');
+    expect(root().getAttribute('data-base')).toBe('graphite');
+    expect(localStorage.getItem('averrow-accent')).toBeNull();
+    expect(localStorage.getItem('averrow-base')).toBeNull();
   });
 });
 
@@ -189,18 +192,18 @@ describe('storage round-trip', () => {
 });
 
 describe('invalid values fall back safely', () => {
-  it.each(['', 'INDIGO', 'amber', 'null', '<script>'])('accent %j', (bad) => {
+  it.each(['', 'INDIGO', 'amber', 'legacy', 'null', '<script>'])('accent %j', (bad) => {
     localStorage.setItem('averrow-accent', bad);
     expect(readStoredAccent()).toBe(DEFAULT_ACCENT);
     bootstrapAppearance();
-    expect(root().hasAttribute('data-accent')).toBe(false);
+    expect(root().getAttribute('data-accent')).toBe(DEFAULT_ACCENT);
   });
 
   it.each(['', 'Navy', 'black', 'dark'])('base %j', (bad) => {
     localStorage.setItem('averrow-base', bad);
     expect(readStoredBase()).toBe(DEFAULT_BASE);
     bootstrapAppearance();
-    expect(root().hasAttribute('data-base')).toBe(false);
+    expect(root().getAttribute('data-base')).toBe(DEFAULT_BASE);
   });
 
   it('survives throwing storage', () => {

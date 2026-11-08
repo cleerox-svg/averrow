@@ -31,13 +31,15 @@ export {
   ACCENT_STORAGE_KEY,
   BASE_STORAGE_KEY,
   APPEARANCE_PICKER_ENABLED,
+  FACELIFT,
+  appearanceFlags,
   applyAccent,
   applyBase,
   hydrateAppearanceFromAccount,
   pickAccent,
   pickBase,
 } from './useAppearance';
-export type { Accent, Base, UseAppearanceReturn, AccountAppearance, AppearanceSaver } from './useAppearance';
+export type { Accent, Base, AppearanceFlags, UseAppearanceReturn, AccountAppearance, AppearanceSaver } from './useAppearance';
 export { resetAccountSyncSession } from './accountSync';
 // Runtime token reader for canvas / WebGL colours (P3-2a).
 export {

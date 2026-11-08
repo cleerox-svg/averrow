@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { appearanceHtml } from '../shared/scripts/appearance-html';
 import path from 'path';
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -14,7 +15,9 @@ const buildSha = (() => {
 })();
 
 export default defineConfig({
-  plugins: [react()],
+  // appearanceHtml(): fills index.html's appearance bootstrap / theme-color /
+  // Geist preloads from the FACELIFT switch (packages/shared/scripts/appearance-html.ts).
+  plugins: [react(), appearanceHtml()],
   base: '/v2/',
   define: {
     __APP_VERSION__: JSON.stringify(platformVersion),

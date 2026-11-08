@@ -40,6 +40,12 @@ const DEFAULT_ERROR_COPY: Record<string, string> = {
 // text (content spoofing via ?error=<sentence>) and gets generic copy.
 const SAFE_ERROR_CODE = /^[a-z0-9_]{1,40}$/;
 
+// Primary fill + ink (facelift P3-6 review). --btn-primary-* exist only under
+// an accent (appearance.css: flat accent fill, AA ink); without one the
+// fallbacks are exactly the legacy amber gradient and ink.
+const PRIMARY_FILL = 'var(--btn-primary-bg, linear-gradient(135deg, var(--amber), var(--amber-dim)))';
+const PRIMARY_INK = 'var(--btn-primary-ink, var(--text-on-amber, #0A0F1E))';
+
 export function LoginPage(props: LoginPageProps) {
   const {
     branding, apiClient, passkeyAdapter, lastSignInMethod,
@@ -265,13 +271,17 @@ export function LoginPage(props: LoginPageProps) {
       disabled={googleBusy || undefined}
       aria-busy={googleBusy || undefined}
       data-testid="login-google"
-      className="inline-flex w-full items-center justify-center font-mono uppercase"
+      className={`inline-flex w-full items-center justify-center font-mono uppercase${variant === 'primary' ? ' ds-btn-primary' : ''}`}
       style={{
+        // L2 primary via the --btn-primary-* tokens (set only under an accent,
+        // where the button is flat); the fallbacks are the legacy amber values.
         background: variant === 'primary'
-          ? 'linear-gradient(135deg, var(--amber), var(--amber-dim))'
+          ? PRIMARY_FILL
           : 'transparent',
-        color:      variant === 'primary' ? 'var(--text-on-amber, #0A0F1E)' : 'var(--text-primary)',
-        border:     '1px solid rgba(229,168,50,0.60)',
+        color:      variant === 'primary' ? PRIMARY_INK : 'var(--text-primary)',
+        border:     variant === 'primary'
+          ? '1px solid var(--btn-primary-border, rgba(229,168,50,0.60))'
+          : '1px solid color-mix(in srgb, var(--primary) 60%, transparent)',
         padding:    '14px 24px',
         borderRadius: 12,
         fontSize:   12,
@@ -279,12 +289,12 @@ export function LoginPage(props: LoginPageProps) {
         letterSpacing: '0.08em',
         minHeight:  48,
         boxShadow: variant === 'primary'
-          ? [
+          ? `var(--btn-primary-shadow, ${[
               '0 4px 16px var(--amber-glow, rgba(229,168,50,0.40))',
               '0 2px 4px rgba(0,0,0,0.40)',
               'inset 0 1px 0 rgba(255,255,255,0.30)',
               'inset 0 -1px 0 rgba(0,0,0,0.20)',
-            ].join(', ')
+            ].join(', ')})`
           : 'none',
         cursor: googleBusy ? 'wait' : 'pointer',
         width:  '100%',
@@ -369,12 +379,12 @@ export function LoginPage(props: LoginPageProps) {
               className="flex items-center justify-center font-bold"
               style={{
                 width: 56, height: 56,
-                background: 'linear-gradient(135deg, var(--amber), var(--amber-dim))',
-                color: 'var(--text-on-amber, #0A0F1E)',
+                background: PRIMARY_FILL,
+                color: PRIMARY_INK,
                 borderRadius: 14,
                 fontSize: 20,
                 fontFamily: 'var(--font-display, inherit)',
-                boxShadow: '0 0 24px var(--amber-glow, rgba(229,168,50,0.40))',
+                boxShadow: '0 0 24px var(--primary-glow, rgba(229,168,50,0.40))',
                 marginBottom: 16,
               }}
             >
@@ -394,7 +404,7 @@ export function LoginPage(props: LoginPageProps) {
           <span
             className="mt-2 font-mono uppercase"
             style={{
-              color: 'var(--amber-text)',
+              color: 'var(--primary-text)',
               fontSize: 9,
               letterSpacing: '0.24em',
               fontWeight: 700,
@@ -506,7 +516,7 @@ export function LoginPage(props: LoginPageProps) {
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: 'var(--amber-text)',
+                  color: 'var(--primary-text)',
                   fontSize: 10,
                   letterSpacing: '0.14em',
                   fontWeight: 700,
@@ -547,13 +557,13 @@ export function LoginPage(props: LoginPageProps) {
                 onClick={() => void requestLink()}
                 disabled={magicLink.kind === 'sending'}
                 data-testid="login-magic-link-submit"
-                className="font-mono uppercase"
+                className={`font-mono uppercase${lastMethod === 'magic-link' ? ' ds-btn-primary' : ''}`}
                 style={{
                   background: lastMethod === 'magic-link'
-                    ? 'linear-gradient(135deg, var(--amber), var(--amber-dim))'
+                    ? PRIMARY_FILL
                     : 'linear-gradient(135deg, var(--bg-elevated, var(--bg-card)), var(--bg-card-deep, var(--bg-card)))',
                   color: lastMethod === 'magic-link'
-                    ? 'var(--text-on-amber, #0A0F1E)'
+                    ? PRIMARY_INK
                     : 'var(--text-primary)',
                   border: '1px solid var(--border-strong, var(--border-base))',
                   borderRadius: 10,

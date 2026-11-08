@@ -276,7 +276,7 @@ export function ProfileSettings({
       <SettingsGroup title="Appearance">
         <SettingsRow
           icon={<MonitorIcon />}
-          tone="amber"
+          tone="primary"
           title="Theme"
           description="Match your device, or always use dark or light."
           stackTrailing
@@ -292,7 +292,7 @@ export function ProfileSettings({
         />
         <SettingsRow
           icon={<GlobeIcon />}
-          tone="amber"
+          tone="primary"
           title="Time zone"
           description="Used for quiet hours and the times you see in alerts."
           stackTrailing

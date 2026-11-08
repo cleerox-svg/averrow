@@ -6,8 +6,10 @@
 //
 // Host-agnostic: no router, no api module. The host passes an api client (only
 // `patch`). Mount it inside a <ToastProvider> (failures report via useToast).
-// Hidden until APPEARANCE_PICKER_ENABLED (theme/appearanceDefaults.ts): the
-// section list leaves it out and hosts redirect its route to Profile.
+// Shown while APPEARANCE_PICKER_ENABLED (theme/appearanceDefaults.ts, derived
+// from FACELIFT; on since P3-6). With FACELIFT reverted the section list leaves
+// it out and hosts redirect its route to Profile. There is no "legacy" option:
+// the amber look is not user-selectable after the flip.
 //
 // Persistence contract (account-synced, like theme_preference):
 //   PATCH /api/profile { accent_preference } — 'indigo'|'violet'|'mono'|'lime'; null = default
@@ -108,9 +110,9 @@ export function AppearanceSettings({ apiClient }: AppearanceSettingsProps) {
     && document.documentElement.getAttribute('data-theme') === 'light';
   const narrow = useMediaQuery('(max-width: 479px)', false);
 
-  // What the controls show: the stored choice, else the default it falls back to.
-  // Before the P3-6 flip both defaults are null; the indigo / graphite segment
-  // then reads as selected, which is what the CSS renders once an accent is set.
+  // What the controls show: the stored choice, else the default it falls back to
+  // (indigo / graphite). The `?? 'indigo'` fallbacks only matter with FACELIFT
+  // reverted (null defaults), when this page is not reachable anyway.
   const shownAccent: Accent = accent ?? DEFAULT_ACCENT ?? 'indigo';
   const shownBase: Base = base ?? DEFAULT_BASE ?? 'graphite';
 

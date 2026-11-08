@@ -1,11 +1,11 @@
 // Staff /kit gallery (P3-4): the facelift's living reference. Not linked from
 // the nav or the command palette; reached by URL only.
 //
-// Shows the appearance switcher (mode / accent / base, plus "Reset to legacy"),
+// Shows the appearance switcher (mode / accent / base, plus "Reset to default"),
 // live token swatches, the four Kinetic motion moves with replay buttons and a
 // reduced-motion simulation, and the design-system component samples. The
-// motion kit is a no-op without an accent, so the demos only move once an
-// accent is picked here.
+// motion kit is a no-op without an accent; since the P3-6 flip every page has
+// one (indigo by default), so the demos move unless FACELIFT is reverted.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ACCENTS, BASES, readToken, useAppearance, useAppearanceVersion,
@@ -63,14 +63,14 @@ function AppearanceSection() {
   return (
     <Section
       title="Appearance"
-      action={<Button size="sm" variant="ghost" onClick={() => { setAccent(null); setBase(null); }}>Reset to legacy</Button>}
+      action={<Button size="sm" variant="ghost" onClick={() => { setAccent(null); setBase(null); }}>Reset to default</Button>}
     >
       <div className="flex flex-col gap-3">
         <Segmented<Theme> label="Mode" options={MODES} value={theme} onChange={setTheme} format={(m) => MODE_LABEL[m]} />
         <Segmented<Accent> label="Accent" options={ACCENTS} value={accent} onChange={setAccent} />
         <Segmented<Base> label="Background" options={BASES} value={base} onChange={setBase} />
         <p className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-          {accent ? `Accent ${accent}${base ? ` on ${base}` : ''}.` : 'Legacy look: no accent is set, so the motion kit is off.'}
+          {accent ? `Accent ${accent}${base ? ` on ${base}` : ''}.` : 'No accent is set (FACELIFT is off: the legacy look), so the motion kit is off.'}
         </p>
       </div>
     </Section>
@@ -264,7 +264,7 @@ function MotionSection() {
       <p className="text-[12px] mb-3" style={{ color: 'var(--text-tertiary)' }}>
         {motionOn
           ? 'M1 Precision: 120 / 160 / 200 ms on ease-standard. Reduced motion fades only: no travel, no loops.'
-          : 'Motion is off in the legacy look. Pick an accent above to see the moves.'}
+          : 'Motion is off without an accent (FACELIFT is off: the legacy look).'}
       </p>
       <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
         <ArrivalDemo />

@@ -316,3 +316,20 @@ describe('magicLinkSentCopy', () => {
     expect(box).toHaveTextContent('Use a different email');
   });
 });
+
+describe('primary colour (facelift P3-6 review)', () => {
+  // Primary affordances read the L2 / --btn-primary-* tokens; the legacy amber
+  // values only survive as var() fallbacks (legacy-identical without an accent,
+  // since --btn-primary-* are defined only under [data-accent]).
+  it('Google button, letter tile and tagline use primary tokens, not raw amber', () => {
+    const { container } = setup();
+    const google = screen.getByTestId('login-google').getAttribute('style') ?? '';
+    expect(google).toMatch(/var\(--btn-primary-(bg|border|shadow)/);
+    const tile = [...container.querySelectorAll<HTMLElement>('div')].find((d) => d.textContent === 'AV');
+    expect(tile?.getAttribute('style') ?? '').toMatch(/var\(--btn-primary-bg/);
+    expect(tile?.getAttribute('style') ?? '').toMatch(/var\(--primary-glow/);
+    const tagline = screen.getByText('TAG');
+    expect(tagline.getAttribute('style') ?? '').toContain('var(--primary-text)');
+    expect(tagline.getAttribute('style') ?? '').not.toContain('--amber');
+  });
+});

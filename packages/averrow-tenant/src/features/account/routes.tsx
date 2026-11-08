@@ -18,7 +18,7 @@ export const accountRoutes = (
     <Route path="account" element={<AccountLayout />}>
       <Route index element={<AccountIndex />} />
       <Route path="profile" element={<ProfileSettingsPage />} />
-      {/* Redirects to /account/profile until APPEARANCE_PICKER_ENABLED (P3-6). */}
+      {/* Redirects to /account/profile when APPEARANCE_PICKER_ENABLED is off (FACELIFT reverted). */}
       <Route path="appearance" element={<AppearanceSettingsPage />} />
       <Route path="security" element={<SecurityPage />} />
       <Route path="notifications" element={<Navigate to="/account/notifications/channels" replace />} />

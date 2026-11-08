@@ -3,8 +3,8 @@
 // @averrow/shared/account; this injects the ops api client. Edit the shared
 // component, not this file.
 //
-// Hidden until the P3-6 flip: while APPEARANCE_PICKER_ENABLED is false the
-// section is not listed and this route redirects to Profile.
+// Live since the P3-6 flip. With FACELIFT reverted APPEARANCE_PICKER_ENABLED is
+// false: the section is not listed and this route redirects to Profile.
 
 import { Navigate } from 'react-router-dom';
 import { AppearanceSettings } from '@averrow/shared/account';

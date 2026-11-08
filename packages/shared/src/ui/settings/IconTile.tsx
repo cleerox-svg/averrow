@@ -7,10 +7,15 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { cn } from '../cn';
 
-export type IconTileTone = 'amber' | 'green' | 'blue' | 'violet' | 'cyan' | 'red' | 'neutral';
+export type IconTileTone = 'primary' | 'amber' | 'green' | 'blue' | 'violet' | 'cyan' | 'red' | 'neutral';
 
 /** TINT = accent fill/border colour, GLYPH = AA text colour for the icon. */
 export const ICON_TILE_TONES: Record<IconTileTone, { tint: string; glyph: string }> = {
+  // Decorative tiles that used to be amber (Profile, its Theme / Time zone
+  // rows, the staff-view toggle). Legacy --primary / --primary-text ARE amber /
+  // --amber-text, so the legacy look is unchanged; under an accent they follow
+  // it. Keep `amber` for tiles that signal a warning (status colour).
+  primary: { tint: 'var(--primary)',      glyph: 'var(--primary-text)' },
   amber:   { tint: 'var(--amber)',          glyph: 'var(--amber-text)' },
   green:   { tint: 'var(--green)',          glyph: 'var(--sev-info-text)' },
   blue:    { tint: 'var(--blue)',           glyph: 'var(--sev-low-text)' },

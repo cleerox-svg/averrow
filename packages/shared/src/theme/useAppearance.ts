@@ -8,10 +8,10 @@
 //
 // Mode (dark/light/auto) stays in useTheme / `averrow-theme`, untouched.
 //
-// DEFAULT_ACCENT / DEFAULT_BASE are `null` = the legacy look: no attribute is
-// written, so the unscoped tokens in tokens.css apply. Phase 3 PR P3-6 flips
-// the default by changing these two constants in ./appearanceDefaults.ts
-// (indigo / graphite).
+// DEFAULT_ACCENT / DEFAULT_BASE derive from the FACELIFT switch in
+// ./appearanceDefaults.ts: indigo / graphite when it is on; `null` = the legacy
+// look (no attribute written, so the unscoped tokens in tokens.css apply) when
+// it is off.
 //
 // Like useTheme, DOM + storage side effects run synchronously in the setters
 // (not in an effect) so they survive a menu unmounting mid-click. All storage
@@ -29,7 +29,8 @@
 // theme_preference) after the session user is validated: server wins over
 // localStorage, which stays the no-flash cache. It runs once per signed-in
 // user and never overwrites a field picked locally or with a save in flight
-// (./accountSync; every sign-out path resets it). It is a no-op while APPEARANCE_PICKER_ENABLED is false.
+// (./accountSync; every sign-out path resets it). It is a no-op while
+// APPEARANCE_PICKER_ENABLED is false (FACELIFT reverted).
 //
 // Saves (pickAccent / pickBase) are serialized per field: one PATCH in flight,
 // and when it settles only the LATEST pick is sent. A failure that no newer
@@ -47,9 +48,10 @@ import {
 import type { Accent, Base } from './appearanceDefaults';
 
 // The constants live in ./appearanceDefaults (a separate module so tests can
-// simulate the P3-6 flip); re-exported here for the public API.
-export { ACCENTS, APPEARANCE_PICKER_ENABLED, BASES, DEFAULT_ACCENT, DEFAULT_BASE } from './appearanceDefaults';
-export type { Accent, Base } from './appearanceDefaults';
+// simulate either side of the FACELIFT switch); re-exported here for the
+// public API.
+export { ACCENTS, APPEARANCE_PICKER_ENABLED, BASES, DEFAULT_ACCENT, DEFAULT_BASE, FACELIFT, appearanceFlags } from './appearanceDefaults';
+export type { Accent, Base, AppearanceFlags } from './appearanceDefaults';
 
 export const ACCENT_STORAGE_KEY = 'averrow-accent';
 export const BASE_STORAGE_KEY = 'averrow-base';
@@ -86,12 +88,14 @@ export function bootstrapAppearance(): { accent: Accent | null; base: Base | nul
 }
 
 export interface UseAppearanceReturn {
-  /** null = legacy look (no data-accent). */
+  /** The applied accent: the stored choice, else DEFAULT_ACCENT (indigo).
+   *  null only with FACELIFT reverted = legacy look (no data-accent). */
   accent:    Accent | null;
-  /** null = default base (graphite once an accent is set). */
+  /** The applied base: the stored choice, else DEFAULT_BASE (graphite).
+   *  null only with FACELIFT reverted. */
   base:      Base | null;
   /** Pass null to return to the default: clears storage and applies
-   *  DEFAULT_ACCENT (today null = legacy look, no attribute; after P3-6 indigo). */
+   *  DEFAULT_ACCENT (indigo; no attribute with FACELIFT reverted). */
   setAccent: (a: Accent | null) => void;
   /** Pass null to return to the default: clears storage and applies DEFAULT_BASE. */
   setBase:   (b: Base | null) => void;
@@ -198,8 +202,8 @@ function has(obj: object, key: string): boolean {
  * Only fields PRESENT on `user` are applied, so a response from an older
  * Worker (or a cached user written before 0317) never clears a choice;
  * a present null or unknown value means "the default" (theme: follow the
- * device). No-op while APPEARANCE_PICKER_ENABLED is false (nothing changes
- * before the P3-6 flip).
+ * device). No-op while APPEARANCE_PICKER_ENABLED is false (FACELIFT
+ * reverted: the legacy look ignores the account's accent/base).
  */
 export function hydrateAppearanceFromAccount(user: AccountAppearance | null | undefined): void {
   if (!APPEARANCE_PICKER_ENABLED || !user || typeof user !== 'object') return;

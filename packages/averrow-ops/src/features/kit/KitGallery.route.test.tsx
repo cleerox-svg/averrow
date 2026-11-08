@@ -71,18 +71,26 @@ describe('/kit route', () => {
     });
   }
 
-  it('the accent switcher sets data-accent and "Reset to legacy" clears it', async () => {
+  it('the accent switcher sets data-accent and "Reset to default" returns to indigo / graphite', async () => {
     asRole('analyst');
     renderAt('/kit');
     await screen.findByRole('heading', { name: 'Design kit' });
+    // No index.html bootstrap runs in jsdom, so no accent until one is picked.
     expect(document.querySelector('.motion-glide')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'violet' }));
+    fireEvent.click(screen.getByRole('button', { name: 'navy' }));
     expect(document.documentElement.getAttribute('data-accent')).toBe('violet');
     // The motion demos come alive (gliding indicators mount) once an accent is set.
     await waitFor(() => expect(document.querySelector('.motion-glide')).not.toBeNull());
-    fireEvent.click(screen.getByRole('button', { name: 'Reset to legacy' }));
-    expect(document.documentElement.hasAttribute('data-accent')).toBe(false);
-    await waitFor(() => expect(document.querySelector('.motion-glide')).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Reset to legacy' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to default' }));
+    expect(document.documentElement.getAttribute('data-accent')).toBe('indigo');
+    expect(document.documentElement.getAttribute('data-base')).toBe('graphite');
+    expect(localStorage.getItem('averrow-accent')).toBeNull();
+    // Still an accent, so the motion kit stays on (waitFor flushes the
+    // token reader's MutationObserver re-render).
+    await waitFor(() => expect(screen.getByText('Accent indigo on graphite.')).toBeInTheDocument());
+    expect(document.querySelector('.motion-glide')).not.toBeNull();
   });
 
   it('the reduced-motion simulation toggles html[data-motion] and cleans up', async () => {

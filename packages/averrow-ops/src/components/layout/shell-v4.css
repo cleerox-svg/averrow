@@ -30,6 +30,17 @@
   -webkit-mask-image: radial-gradient(circle at 50% 38%, #000, transparent 85%);
   mask-image: radial-gradient(circle at 50% 38%, #000, transparent 85%);
 }
+/* Facelift (P3-6 review): under an accent the warm red top-right wash would
+   read as a red-brown glow on graphite; it follows the accent instead, at
+   a lower strength (the other two layers are unchanged). Legacy (no accent)
+   keeps the rule above exactly. No custom properties here: gen-appearance.mjs
+   only parses token blocks. */
+:root[data-accent] .shell-v4::before {
+  background:
+    radial-gradient(1200px 700px at 80% -12%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 60%),
+    radial-gradient(1100px 800px at 0% 112%, rgba(10,138,181,0.12), transparent 55%),
+    radial-gradient(900px 600px at 60% 120%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 60%);
+}
 .shell-v4 > * { position: relative; z-index: 1; }
 
 /* Observatory wall screen: the shell is only the page background, one full-width column. */
