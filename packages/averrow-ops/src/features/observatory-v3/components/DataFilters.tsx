@@ -108,7 +108,7 @@ export function DataFiltersBody({ types, brand, brandName, onTypes, onBrand, sea
 
 const GLASS: CSSProperties = {
   background: 'var(--bg-card)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-  border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)',
+  border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)',
 };
 
 /** Toolbar button + popover for the type / brand filters. `count` = how many filter values are on (all kinds). */

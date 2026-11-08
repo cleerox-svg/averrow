@@ -191,7 +191,7 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
         style={{
           background: 'var(--bg-elevated)',
           border: '1px solid var(--border-base)',
-          boxShadow: 'var(--card-shadow)',
+          boxShadow: 'var(--card-shadow-elevated)',
           zIndex: 60,
           maxHeight: 320,
           overflowY: 'auto',
@@ -250,7 +250,7 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
           style={{
             width: touch ? 44 : 40, height: touch ? 44 : 40,
             background: 'var(--bg-card)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-            border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)',
+            border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)',
             color: popover ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer',
           }}
         >

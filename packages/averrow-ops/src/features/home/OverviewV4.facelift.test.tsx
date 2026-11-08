@@ -278,12 +278,13 @@ describe('Overview stylesheets', () => {
     expect(css(f)).not.toMatch(/infinite/);
   });
 
-  it('the flat card look is scoped under the accent and the Overview wrapper', () => {
+  it('the flat card surface is scoped under the accent and the Overview wrapper', () => {
     const src = css('features/home/home.css');
     const m = src.match(/:root\[data-accent\] \.home-v4\s*\{([^}]*)\}/);
     expect(m).not.toBeNull();
-    expect(m![1]).toMatch(/--card-radius:\s*var\(--radius-lg\)/);
-    expect(m![1]).toMatch(/--card-shadow:\s*none/);
+    expect(m![1]).toMatch(/--card-flat-bg:\s*var\(--bg-card\)/);
+    // radius / shadow / highlight moved to the shell (test/shared-ui/shell-card-tokens.test.ts)
+    expect(m![1]).not.toMatch(/--card-(radius|shadow|highlight)/);
   });
 
   it('the install step number has no glow', () => {

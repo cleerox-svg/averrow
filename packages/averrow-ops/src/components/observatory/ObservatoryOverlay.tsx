@@ -25,7 +25,7 @@ export function ObservatoryOverlay({ kind, timeWindow, totalThreats, sourceLabel
         style={{
           background: 'var(--bg-card)',
           border: '1px solid var(--border-base)',
-          boxShadow: 'var(--card-shadow)',
+          boxShadow: 'var(--card-shadow-elevated)',
         }}
       >
         {/* Pulsing globe icon */}

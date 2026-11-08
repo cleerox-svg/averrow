@@ -93,6 +93,17 @@
   background: var(--card-bg);
   box-shadow: var(--card-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.90);
 }
+/* Pinned for the frozen PortfolioHealthCard (a .glass-card consumer): the
+   facelift shell reset sets --card-shadow to none, so under an accent in light
+   theme the shadow it rendered before that reset (the removed
+   `:root[data-accent][data-theme="light"] .shell-v4` value) is hardcoded here.
+   :not(:hover) keeps the hover rule below in charge. Dark .glass-card uses
+   literals only (no --card-* reads), so it needs no pin. */
+:root[data-accent][data-theme="light"] .glass-card:not(:hover) {
+  box-shadow:
+    0 8px 28px rgba(15, 20, 35, 0.10), 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.90);
+}
 [data-theme="light"] .glass-card:hover {
   background: var(--bg-elevated);
   box-shadow: 0 8px 32px rgba(15, 20, 35, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.95);
@@ -821,13 +832,21 @@
 :root[data-accent] .obs-tooltip-target { color: var(--text-primary); }
 :root[data-accent] .obs-tooltip-target-label { color: var(--text-tertiary); }
 
-/* Facelift (P3-6 review): light-mode cards inside the v4 shell. shell-v4.css
-   sets a heavy dark-tuned --card-shadow (0 18px 50px rgba(0,0,0,.58)) on the
-   shell in every theme; under an accent in light mode use a soft ink shadow
-   instead (the light --card-shadow from tokens.css, slightly deeper, plus the
-   shell's top highlight). Kept here, not in shell-v4.css, because
-   gen-appearance.mjs only accepts the shell's two known token selectors.
-   Legacy (no accent) is unchanged. */
-:root[data-accent][data-theme="light"] .shell-v4 {
-  --card-shadow: 0 8px 28px rgba(15, 20, 35, 0.10), 0 1px 0 rgba(255, 255, 255, 0.04);
+/* Facelift: flat cards for every screen in the v4 shell, both themes. shell-v4.css
+   sets a heavy dark-tuned drop shadow, an 18px radius and a top highlight on the
+   shell (legacy look, kept when FACELIFT=false, i.e. no [data-accent]). Under an
+   accent the shell resets them to the kit defaults: --radius-lg corners, no base
+   shadow, no highlight. Separation for floating surfaces (Observatory overlays,
+   popovers, menus) comes from --card-shadow-elevated, which is not touched here;
+   Card variant="active"/"critical" keep their status glows. --card-flat-bg is
+   deliberately not reset (flat-variant callers expect the sunken inset panel).
+   Kept here, not in shell-v4.css, because gen-appearance.mjs only accepts the
+   shell's two known token selectors.
+   --card-shadow is a transparent zero shadow, NOT `none`: consumers compose it
+   in a list (`var(--card-shadow), 0 0 20px …, inset …`), and `none` inside a
+   list makes the whole box-shadow invalid, dropping status glows and rims. */
+:root[data-accent] .shell-v4 {
+  --card-radius: var(--radius-lg);
+  --card-shadow: 0 0 #0000;
+  --card-highlight: transparent;
 }

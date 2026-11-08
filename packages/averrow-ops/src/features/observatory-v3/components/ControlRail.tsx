@@ -101,7 +101,7 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
           id={tipId}
           role="tooltip"
           className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 z-40 w-max max-w-[220px] rounded-lg px-2.5 py-1.5 font-mono text-[11px] opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
-          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-base)', color: 'var(--text-primary)', boxShadow: 'var(--card-shadow)' }}
+          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-base)', color: 'var(--text-primary)', boxShadow: 'var(--card-shadow-elevated)' }}
         >
           <span className="flex items-center gap-2">
             <span>{item.label}</span>
@@ -222,7 +222,7 @@ export function ControlRail({
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
         border: '1px solid var(--border-base)',
-        boxShadow: 'var(--card-shadow)',
+        boxShadow: 'var(--card-shadow-elevated)',
       }}
       data-layout={layout}
     >
