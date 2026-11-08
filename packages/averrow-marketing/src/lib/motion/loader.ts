@@ -2,7 +2,7 @@
  * Scroll-motion loader (marketing only). This is the ONLY motion code in a
  * page's initial bundle: it watches the sections marked `data-motion` and,
  * once one comes within LOAD_MARGIN of the viewport, dynamic-imports the
- * GSAP + ScrollTrigger chunk (./sequences) and hands it the section.
+ * GSAP core chunk (./sequences) and hands it the section.
  *
  * Progressive enhancement:
  *   - The HTML is the end state. Nothing is hidden by CSS; start states are

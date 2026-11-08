@@ -108,21 +108,27 @@ img, video, svg { max-width: 100%; height: auto; }
 }
 
 /* ── MOTION (M1 Precision) ──
-   Focus: the ring settles 3px inward once, so keyboard focus is noticed
-   without a delay before it is visible (the outline is there from frame 1). */
-@keyframes focus-settle {
-  from { outline-offset: 5px; }
-  to   { outline-offset: 2px; }
+   Focus settle: on the site's own controls the ring appears at once at 5px
+   and settles to 2px through an outline-offset TRANSITION (listed in each
+   control's transition below), so no element's own animation is replaced. */
+:where(.btn, .nav-link, .footer-col a, .theme-toggle, .nav-hamburger, .mobile-link, .link-u) {
+  outline-offset: 5px;
 }
-:focus-visible { animation: focus-settle var(--motion-base) var(--ease-standard); }
+
+/* Print: whatever state a scroll sequence was in, print the end state. */
+@media print {
+  [data-motion], [data-motion] * { opacity: 1 !important; transform: none !important; }
+}
 
 /* Page transitions: native cross-document View Transitions (Chromium 126+,
    Safari 18.2+). No client router — the pre-paint theme script, analytics
    beacon and Turnstile keep running as normal full page loads. The nav and
    logo hold still; only the page body cross-fades. */
 @view-transition { navigation: auto; }
-.nav { view-transition-name: site-nav; }
-.nav-brand { view-transition-name: site-logo; }
+/* Names must be unique on the page or the browser skips the transition:
+   scope them to the header (the footer reuses .nav-brand). */
+nav.nav { view-transition-name: site-nav; }
+nav.nav > .nav-inner > .nav-brand { view-transition-name: site-logo; }
 ::view-transition-group(root),
 ::view-transition-old(root),
 ::view-transition-new(root) {
@@ -147,7 +153,6 @@ img, video, svg { max-width: 100%; height: auto; }
 
 @media (prefers-reduced-motion: reduce) {
   @view-transition { navigation: none; }
-  :focus-visible { animation: none; }
   :root[data-vt="fallback"] main { animation: none; }
 }
 
@@ -220,7 +225,8 @@ img, video, svg { max-width: 100%; height: auto; }
     border-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard),
     box-shadow var(--motion-base) var(--ease-standard),
-    transform var(--motion-fast) var(--ease-standard);
+    transform var(--motion-fast) var(--ease-standard),
+    outline-offset var(--motion-base) var(--ease-standard);
   border: 1px solid transparent;
   cursor: pointer;
 }
@@ -330,7 +336,7 @@ img, video, svg { max-width: 100%; height: auto; }
   line-height: 1;
   white-space: nowrap;
   text-decoration: none;
-  transition: color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+  transition: color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), outline-offset var(--motion-base) var(--ease-standard);
   position: relative;
 }
 .nav-link:hover {
@@ -437,7 +443,7 @@ img, video, svg { max-width: 100%; height: auto; }
   border-radius: 999px;
   background: var(--bg-secondary);
   cursor: pointer;
-  transition: border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+  transition: border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard), outline-offset var(--motion-base) var(--ease-standard);
   color: var(--text-secondary);
   font-family: var(--font-body);
   font-size: 13px;
@@ -464,7 +470,7 @@ img, video, svg { max-width: 100%; height: auto; }
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
-  transition: border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+  transition: border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), outline-offset var(--motion-base) var(--ease-standard);
 }
 .nav-hamburger:hover { border-color: var(--primary); color: var(--accent); }
 
@@ -503,7 +509,7 @@ img, video, svg { max-width: 100%; height: auto; }
   border: 1px solid transparent;
   background: transparent;
   text-decoration: none;
-  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), outline-offset var(--motion-base) var(--ease-standard);
 }
 .mobile-link:hover {
   background: color-mix(in srgb, var(--primary) 7%, transparent);
@@ -595,7 +601,7 @@ img, video, svg { max-width: 100%; height: auto; }
 .footer-col a {
   color: var(--text-secondary);
   font-size: 0.92rem;
-  transition: color var(--motion-fast) var(--ease-standard);
+  transition: color var(--motion-fast) var(--ease-standard), outline-offset var(--motion-base) var(--ease-standard);
 }
 .footer-col a:hover { color: var(--accent); text-decoration: none; }
 .footer-bottom {
@@ -631,7 +637,7 @@ img, video, svg { max-width: 100%; height: auto; }
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-strong);
   text-decoration: none;
-  transition: border-color var(--motion-fast) var(--ease-standard);
+  transition: border-color var(--motion-fast) var(--ease-standard), outline-offset var(--motion-base) var(--ease-standard);
 }
 .link-u:hover { border-bottom-color: var(--accent); }
 .num-dot {

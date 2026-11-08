@@ -1,141 +1,46 @@
 /*
- * Scroll sequences — GSAP + ScrollTrigger, lazy chunk (see ./loader.ts).
+ * Scroll sequences — GSAP core tweens, lazy chunk (see ./loader.ts).
+ *
+ * Triggered by IntersectionObserver, not ScrollTrigger: nothing here reads
+ * or writes scroll position, refreshes layout or restores scroll, so hash
+ * deep links (/#by-the-numbers) land exactly where the browser put them.
  *
  * M1 "Precision" budget (BRAND_BRIEF §10 G4, tokens.css --motion-*):
  * 200 ms entrances, ≤ 8 px travel, decelerating ease, never an overshoot.
- * Counters run longer (they carry information) but are monotonic and end on
- * the exact server-rendered string. No pinning.
+ * Values are never animated (BRAND_BRIEF §4: numbers render immediately,
+ * motion never gates reading). No pinning.
  *
  * Kinds (the section's data-motion value):
- *   reveal   — head, then direct children of [data-motion-items] stagger in
- *   stagger  — the section's own direct children stagger in
- *   numbers  — reveal + count-up on [data-motion-count] + bars grow from 0
+ *   reveal   — [data-motion-head], then direct children of [data-motion-items]
+ *   stagger  — the section's own direct children
+ *   numbers  — reveal + the ByTheNumbers bars grow from 0 (value text stays put)
  *
- * Every tween clears its inline props on completion, so hover transforms
- * and live re-renders (ByTheNumbers refresh) are never fighting a style="".
+ * A section that is already (partly) in view when the chunk arrives is left
+ * alone: no hide-then-show flash. Every tween clears its inline props when
+ * it ends, so hover transforms and live re-renders never fight a style="".
  */
 import { gsap } from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
-
-gsap.registerPlugin(ScrollTrigger);
 
 const DUR = 0.2; // --motion-slow
 const TRAVEL = 8; // --motion-travel-lg
 const STAGGER = 0.06;
 const EASE = "power3.out"; // ≈ ease-standard cubic-bezier(0.2, 0, 0, 1)
-const COUNT_DUR = 0.9;
+const BAR_DUR = 0.3;
+// Play when the section's top crosses 85% of the viewport height.
+const PLAY_MARGIN = "0px 0px -15% 0px";
+const PLAY_LINE = 0.85;
 
 const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-let refreshWired = false;
-function wireRefresh(): void {
-  if (refreshWired) return;
-  refreshWired = true;
-  // Content above a trigger can change height after load (live stats,
-  // <details> folds). Keep trigger positions honest so none is stranded
-  // below the reachable scroll range with its content still hidden.
-  let t = 0;
-  const refresh = () => {
-    window.clearTimeout(t);
-    t = window.setTimeout(() => ScrollTrigger.refresh(), 120);
-  };
-  if ("ResizeObserver" in window) new ResizeObserver(refresh).observe(document.body);
-  document.addEventListener("toggle", refresh, true);
-}
-
-/** Visible, laid-out elements only (skips closed <details> content, display:none). */
+/** Laid-out elements only (skips closed <details> content and display:none copies). */
 function visible(els: Element[]): HTMLElement[] {
-  return els.filter(
-    (el): el is HTMLElement =>
-      el instanceof HTMLElement && el.getClientRects().length > 0 && !el.closest("details:not([open]) > :not(summary)"),
-  );
-}
-
-function trigger(section: HTMLElement): ScrollTrigger.Vars {
-  // clamp(): a trigger near the page end still fires within the scroll range.
-  return { trigger: section, start: "clamp(top 85%)", once: true };
-}
-
-function revealIn(section: HTMLElement, targets: HTMLElement[], delay = 0): void {
-  if (targets.length === 0) return;
-  gsap.from(targets, {
-    opacity: 0,
-    y: TRAVEL,
-    duration: DUR,
-    ease: EASE,
-    stagger: STAGGER,
-    delay,
-    clearProps: "opacity,transform",
-    scrollTrigger: trigger(section),
-  });
-}
-
-const NUM_RE = /^(\D*?)(\d{1,3}(?:,\d{3})*|\d+)(\D*)$/;
-
-/** Count an integer label ("12,000+", "1,234,567", "40+") up from 0. */
-function countUp(section: HTMLElement, el: HTMLElement): void {
-  const finalText = el.textContent ?? "";
-  const m = NUM_RE.exec(finalText.trim());
-  if (!m) return;
-  const [, pre, digits, post] = m;
-  const target = Number(digits.replace(/,/g, ""));
-  if (!Number.isFinite(target) || target < 10) return;
-  const grouped = digits.includes(",");
-  const fmt = (n: number) => pre + (grouped ? Math.round(n).toLocaleString("en-US") : String(Math.round(n))) + post;
-
-  const state = { n: 0 };
-  let written = "";
-  let tween: gsap.core.Tween | null = null;
-  ScrollTrigger.create({
-    ...trigger(section),
-    onEnter: () => {
-      // Hold the final width so the tile never reflows while counting.
-      el.style.display = "inline-block";
-      el.style.minWidth = `${el.getBoundingClientRect().width}px`;
-      const done = () => {
-        if (el.textContent === written) el.textContent = finalText;
-        el.style.removeProperty("min-width");
-        el.style.removeProperty("display");
-      };
-      tween = gsap.to(state, {
-        n: target,
-        duration: COUNT_DUR,
-        ease: "power2.out", // monotonic: never passes the real number
-        onUpdate: () => {
-          // A live refresh rewrote the value mid-count: stop and keep it.
-          if (written && el.textContent !== written) {
-            tween?.kill();
-            el.style.removeProperty("min-width");
-            el.style.removeProperty("display");
-            return;
-          }
-          written = fmt(Math.min(state.n, target));
-          el.textContent = written;
-        },
-        onComplete: done,
-      });
-    },
-  });
-}
-
-function growBars(section: HTMLElement, bars: HTMLElement[]): void {
-  if (bars.length === 0) return;
-  gsap.from(bars, {
-    scaleX: 0,
-    transformOrigin: "left center",
-    duration: 0.5,
-    ease: "power2.out",
-    stagger: 0.04,
-    clearProps: "transform,transformOrigin",
-    scrollTrigger: trigger(section),
-  });
+  return els.filter((el): el is HTMLElement => el instanceof HTMLElement && el.getClientRects().length > 0);
 }
 
 export function enhance(section: HTMLElement): void {
   if (reduced()) return;
-  // Already scrolled past (e.g. reload mid-page): leave it as rendered.
-  if (section.getBoundingClientRect().bottom < 0) return;
-  wireRefresh();
+  // Already in (or above) the viewport: leave it exactly as rendered.
+  if (section.getBoundingClientRect().top < window.innerHeight) return;
 
   const kind = section.dataset.motion;
   const head = visible(Array.from(section.querySelectorAll("[data-motion-head]")));
@@ -144,12 +49,49 @@ export function enhance(section: HTMLElement): void {
       ? Array.from(section.children)
       : Array.from(section.querySelectorAll("[data-motion-items] > *")),
   );
+  const bars = kind === "numbers" ? visible(Array.from(section.querySelectorAll(".num-bar-f"))) : [];
+  const reveal = [...head, ...items];
+  if (reveal.length === 0 && bars.length === 0) return;
 
-  revealIn(section, head);
-  revealIn(section, items, head.length ? 0.08 : 0);
+  // Start states — applied only now, on a section still below the fold.
+  gsap.set(reveal, { opacity: 0, y: TRAVEL });
+  gsap.set(bars, { scaleX: 0, transformOrigin: "left center" });
 
-  if (kind === "numbers") {
-    visible(Array.from(section.querySelectorAll("[data-motion-count]"))).forEach((el) => countUp(section, el));
-    growBars(section, visible(Array.from(section.querySelectorAll(".num-bar-f"))));
+  let played = false;
+  const play = () => {
+    if (played) return;
+    played = true;
+    io.disconnect();
+    window.removeEventListener("scroll", onScroll);
+    gsap.to(head, { opacity: 1, y: 0, duration: DUR, ease: EASE, clearProps: "opacity,transform" });
+    gsap.to(items, {
+      opacity: 1,
+      y: 0,
+      duration: DUR,
+      ease: EASE,
+      stagger: STAGGER,
+      delay: head.length ? 0.08 : 0,
+      clearProps: "opacity,transform",
+    });
+    gsap.to(bars, { scaleX: 1, duration: BAR_DUR, ease: "power2.out", clearProps: "transform,transformOrigin" });
+  };
+
+  const io = new IntersectionObserver((entries) => {
+    if (entries.some((e) => e.isIntersecting)) play();
+  }, { rootMargin: PLAY_MARGIN });
+  io.observe(section);
+
+  // A fast jump (End key, scrollbar drag) can carry the section from below
+  // the fold to above the viewport between two observer checks, which never
+  // reports an intersection. Catch that with a read-only position check.
+  let queued = false;
+  function onScroll() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      if (section.getBoundingClientRect().top < window.innerHeight * PLAY_LINE) play();
+    });
   }
+  window.addEventListener("scroll", onScroll, { passive: true });
 }

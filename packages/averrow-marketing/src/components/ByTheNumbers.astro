@@ -127,7 +127,7 @@ const checks = [
     <div class="num-tiles" data-motion-items>
       {tiles.map((t) => (
         <div class="num-tile" data-tile={t.key}>
-          <b data-stat={t.key} data-motion-count>{val[t.key]}</b>
+          <b data-stat={t.key}>{val[t.key]}</b>
           <span class="num-tl">{t.label}</span>
           {t.key === "providers" ? (
             <span class="num-td">Across <span data-stat="countries">{val.countries}</span> countries, so you see where attacks are hosted.</span>
@@ -255,6 +255,11 @@ const checks = [
   }
   .num-tile { background: var(--bg-secondary); padding: 14px 16px; display: grid; gap: 3px; align-content: start; min-width: 0; }
   .num-tile b { font: 600 24px/1.1 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); font-variant-numeric: tabular-nums; min-height: 1.1em; }
+  /* Live refresh changed this value: tint settles back over 400 ms (colour only). */
+  .num [data-stat].num-updated { animation: num-settle 400ms var(--ease-standard); }
+  @keyframes num-settle {
+    from { color: var(--primary-text); }
+  }
   .num-tl { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
   .num-td { font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
 
@@ -311,7 +316,7 @@ const checks = [
   } from "../lib/proof";
   import { initScrollMotion } from "../lib/motion/loader";
 
-  // Lazy scroll motion: reveal + count-up (GSAP chunk loads only near here).
+  // Lazy scroll motion: reveal + bar grow (GSAP chunk loads only near here).
   initScrollMotion();
 
   const root = document.querySelector<HTMLElement>("[data-proof]");
@@ -319,7 +324,13 @@ const checks = [
   function setText(sel: string, text: string | null) {
     if (text === null) return;
     document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+      if (el.textContent === text) return;
       el.textContent = text;
+      // The value changed live: a short tinted settle (colour only, CSS),
+      // never a count — the new number is readable at once.
+      el.classList.remove("num-updated");
+      void el.offsetWidth;
+      el.classList.add("num-updated");
     });
   }
 
