@@ -113,6 +113,16 @@ const orgJsonLd = {
         document.documentElement.setAttribute("data-theme", theme);
         var tc = document.querySelectorAll('meta[name="theme-color"]');
         for (var i = 0; i < tc.length; i++) tc[i].setAttribute("content", theme === "light" ? "#f0f2f8" : "#0a0b0e");
+        // Page transitions: browsers with cross-document View Transitions
+        // (CSSViewTransitionRule = the @view-transition at-rule) animate
+        // natively from global.css. Others get a short <main> fade, but only
+        // when arriving from another page of this site.
+        try {
+          if (!("CSSViewTransitionRule" in window) && document.referrer &&
+              new URL(document.referrer).origin === location.origin) {
+            document.documentElement.setAttribute("data-vt", "fallback");
+          }
+        } catch (e) {}
       })();
     </script>
   </head>
@@ -182,7 +192,7 @@ const orgJsonLd = {
     font-family: var(--font-display);
     font-weight: 700;
     border-radius: 0 0 8px 8px;
-    transition: top 0.15s ease;
+    transition: top var(--motion-base) var(--ease-standard);
   }
   .skip-link:focus {
     top: 0;

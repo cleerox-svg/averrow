@@ -254,11 +254,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 1.5rem;
-    transition: all 0.3s;
+    transition: background-color var(--motion-slow) var(--ease-standard), border-color var(--motion-slow) var(--ease-standard), box-shadow var(--motion-slow) var(--ease-standard), transform var(--motion-slow) var(--ease-standard);
   }
   .value-prop-item:hover {
     border-color: var(--accent);
-    transform: translateY(-2px);
+    transform: translateY(calc(-1 * var(--motion-lift)));
     box-shadow: var(--shadow-glow);
   }
   .value-prop-icon { font-size: 1.5rem; margin-bottom: 0.75rem; }
@@ -293,9 +293,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     display: flex;
     flex-direction: column;
     position: relative;
-    transition: all 0.3s;
+    transition: background-color var(--motion-slow) var(--ease-standard), border-color var(--motion-slow) var(--ease-standard), box-shadow var(--motion-slow) var(--ease-standard), transform var(--motion-slow) var(--ease-standard);
   }
-  .price-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
+  .price-card:hover { transform: translateY(calc(-2 * var(--motion-lift))); box-shadow: var(--shadow-lg); }
   .price-card.popular {
     border-color: var(--accent);
     border-radius: var(--radius-lg);
@@ -479,7 +479,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .faq-arrow {
     font-size: 0.85rem;
     color: var(--text-tertiary);
-    transition: transform 0.2s;
+    transition: transform var(--motion-base) var(--ease-standard);
   }
   .faq-a {
     font-size: 0.88rem;

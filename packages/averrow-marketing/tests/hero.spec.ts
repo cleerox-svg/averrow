@@ -241,14 +241,30 @@ test("theme toggle re-reads the colour tokens", async ({ browser }) => {
 
 test("off-screen: no animation frames; back on screen: it resumes", async ({ browser }) => {
   const { ctx, p } = await liveHero(browser);
-  await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  // `html { scroll-behavior: smooth }` would animate a plain scrollTo, so on a
+  // slow runner the hero could still be on screen when counting starts.
+  // Jump instantly and wait until the hero has really left the viewport.
+  await p.evaluate(() => window.scrollTo({ top: document.body.scrollHeight, behavior: "instant" }));
+  await expect
+    .poll(() => p.evaluate(() => document.querySelector("#hero")!.getBoundingClientRect().bottom))
+    .toBeLessThan(0);
+  // __frames counts every requestAnimationFrame on the page, and the jump to
+  // the bottom starts the scroll sequences there (GSAP ticks on rAF until its
+  // tweens finish). Wait for a quiet 1 s window: a hero that kept animating
+  // off-screen would never produce one.
+  await expect
+    .poll(
+      async () => {
+        const before = await frames(p);
+        await p.waitForTimeout(1000);
+        return (await frames(p)) - before;
+      },
+      { message: "frames while off-screen", timeout: 15_000, intervals: [0] },
+    )
+    .toBe(0);
+  await p.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await p.waitForTimeout(500);
-  let f0 = await frames(p);
-  await p.waitForTimeout(1500);
-  expect((await frames(p)) - f0, "frames while off-screen").toBe(0);
-  await p.evaluate(() => window.scrollTo(0, 0));
-  await p.waitForTimeout(500);
-  f0 = await frames(p);
+  const f0 = await frames(p);
   await p.waitForTimeout(1000);
   expect((await frames(p)) - f0, "frames once visible again").toBeGreaterThan(5);
   await ctx.close();

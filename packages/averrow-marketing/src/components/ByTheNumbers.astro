@@ -93,9 +93,10 @@ const checks = [
   id="by-the-numbers"
   aria-labelledby="num-title"
   data-proof
+  data-motion="numbers"
   data-snapshot={snapshot}
 >
-  <div class="num-head">
+  <div class="num-head" data-motion-head>
     <div>
       <div class="num-eyebrow">By the numbers</div>
       <h2 class="num-h" id="num-title">What the platform sees, counted plainly.</h2>
@@ -123,7 +124,7 @@ const checks = [
       </div>
     </div>
 
-    <div class="num-tiles">
+    <div class="num-tiles" data-motion-items>
       {tiles.map((t) => (
         <div class="num-tile" data-tile={t.key}>
           <b data-stat={t.key}>{val[t.key]}</b>
@@ -140,7 +141,7 @@ const checks = [
 
   <div class="num-check">
     <div class="num-k">Check it yourself</div>
-    <div class="num-cards">
+    <div class="num-cards" data-motion-items>
       {checks.map((c) => (
         <a class="num-card" href={c.href} data-check>
           <b>{c.title}</b>
@@ -254,6 +255,11 @@ const checks = [
   }
   .num-tile { background: var(--bg-secondary); padding: 14px 16px; display: grid; gap: 3px; align-content: start; min-width: 0; }
   .num-tile b { font: 600 24px/1.1 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); font-variant-numeric: tabular-nums; min-height: 1.1em; }
+  /* Live refresh changed this value: tint settles back over 400 ms (colour only). */
+  .num [data-stat].num-updated { animation: num-settle 400ms var(--ease-standard); }
+  @keyframes num-settle {
+    from { color: var(--primary-text); }
+  }
   .num-tl { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
   .num-td { font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
 
@@ -268,9 +274,9 @@ const checks = [
     align-content: start;
     text-decoration: none;
     color: inherit;
-    transition: border-color 0.2s, transform 0.2s;
+    transition: border-color var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
   }
-  .num-card:hover { border-color: var(--accent); transform: translateY(-2px); text-decoration: none; }
+  .num-card:hover { border-color: var(--accent); transform: translateY(calc(-1 * var(--motion-lift))); text-decoration: none; }
   .num-card b { font-size: 14px; color: var(--text-primary); }
   .num-card span { font-size: 12.5px; line-height: 1.45; color: var(--text-secondary); }
   .num-card em { font-style: normal; font-size: 12.5px; font-weight: 700; color: var(--accent); margin-top: 4px; }
@@ -308,13 +314,23 @@ const checks = [
     typeTotal,
     utcStamp,
   } from "../lib/proof";
+  import { initScrollMotion } from "../lib/motion/loader";
+
+  // Lazy scroll motion: reveal + bar grow (GSAP chunk loads only near here).
+  initScrollMotion();
 
   const root = document.querySelector<HTMLElement>("[data-proof]");
 
   function setText(sel: string, text: string | null) {
     if (text === null) return;
     document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+      if (el.textContent === text) return;
       el.textContent = text;
+      // The value changed live: a short tinted settle (colour only, CSS),
+      // never a count — the new number is readable at once.
+      el.classList.remove("num-updated");
+      void el.offsetWidth;
+      el.classList.add("num-updated");
     });
   }
 

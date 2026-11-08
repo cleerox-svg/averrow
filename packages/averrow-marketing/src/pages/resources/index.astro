@@ -216,7 +216,7 @@ const categories = [
     padding: 1.75rem;
     text-decoration: none;
     color: inherit;
-    transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
+    transition: border-color var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
     position: relative;
     overflow: hidden;
   }
@@ -226,7 +226,7 @@ const categories = [
     top: 0; left: 0; right: 0;
     height: 3px;
     opacity: 0;
-    transition: opacity 0.25s;
+    transition: opacity var(--motion-slow) var(--ease-standard);
     background: var(--primary);
   }
   .res-card:hover {
@@ -319,11 +319,11 @@ const categories = [
     padding: 1.5rem;
     text-decoration: none;
     color: inherit;
-    transition: border-color 0.2s, transform 0.2s;
+    transition: border-color var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
   }
   .res-latest-card:hover {
     border-color: var(--primary);
-    transform: translateY(-2px);
+    transform: translateY(calc(-1 * var(--motion-lift)));
     text-decoration: none;
   }
   :global([data-theme="light"]) .res-latest-card {

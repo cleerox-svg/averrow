@@ -43,8 +43,8 @@ const surfaces = COVERAGE.map((s) => ({
 }));
 ---
 
-<section class="cv" id="coverage" aria-labelledby="cv-title">
-  <div class="cv-head">
+<section class="cv" id="coverage" aria-labelledby="cv-title" data-motion="reveal">
+  <div class="cv-head" data-motion-head>
     <div>
       <div class="cv-eyebrow">Coverage</div>
       <h2 class="cv-h" id="cv-title">Where attackers pretend to be you.</h2>
@@ -53,7 +53,7 @@ const surfaces = COVERAGE.map((s) => ({
     <a class="cv-cmp" href={`${base}/pricing#compare`}>Compare plans &rarr;</a>
   </div>
 
-  <ul class="cv-grid" role="list">
+  <ul class="cv-grid" role="list" data-motion-items>
     {surfaces.map((s) => (
       <li class:list={["cv-t", s.size]}>
         <div class="cv-th">
@@ -76,7 +76,7 @@ const surfaces = COVERAGE.map((s) => ({
     ))}
   </ul>
 
-  <ul class="cv-list" role="list">
+  <ul class="cv-list" role="list" data-motion-items>
     {surfaces.map((s) => (
       <li>
         <details class="cv-d">
@@ -261,3 +261,9 @@ const surfaces = COVERAGE.map((s) => ({
     .cv-list { display: grid; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
   }
 </style>
+
+<script>
+  // Lazy scroll motion (GSAP chunk loads only near this section; static without JS).
+  import { initScrollMotion } from "../lib/motion/loader";
+  initScrollMotion();
+</script>
