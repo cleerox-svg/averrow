@@ -247,6 +247,11 @@ into view on phones. A Google error also forces the full method menu (like
 (`__proto__` / `constructor` fall through); an unknown code is echoed as
 "Sign-in error: <code>" only if it matches `^[a-z0-9_]{1,40}$`, otherwise
 "Sign-in failed. Try again." (no attacker-supplied sentences on the page).
+The Averrow worker sends only the codes in `AUTH_ERROR_CODES`
+(`packages/shared/src/auth-error-codes.ts`, also the source of the default
+`errorCopy`): every sign-in failure (OAuth callback, invite acceptance, magic
+link) 302s to `/v2/login?error=<code>`; the tenant app has no login of its own.
+Add a code there (with its copy) before the worker can send it.
 
 ### Brand-locked theme (added 2026-06, login audit F2)
 

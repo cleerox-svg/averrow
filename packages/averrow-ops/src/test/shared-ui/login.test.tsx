@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LoginPage } from '@averrow/shared/login';
+import { AUTH_ERROR_CODES, AUTH_ERROR_COPY } from '@averrow/shared';
 import type {
   LoginPageProps, LastSignInMethodAdapter, PasskeyLoginAdapter,
 } from '@averrow/shared/login';
@@ -104,6 +105,30 @@ describe('errorCopy lookup', () => {
   it('ignores non-string override values', () => {
     setup({ errorCopy: { bad: 42 as unknown as string } }, '?error=bad');
     expect(screen.getByTestId('login-error')).toHaveTextContent('Sign-in error: bad');
+  });
+});
+
+// The worker redirects every sign-in failure to /v2/login?error=<code>
+// (handlers/auth.ts redirectToLoginWithError); each code it can send must
+// render its own customer copy, never the raw "Sign-in error: <code>".
+describe('worker sign-in error codes', () => {
+  it.each([...AUTH_ERROR_CODES])('?error=%s renders its shared copy', (code) => {
+    setup({}, `?error=${code}`);
+    const err = screen.getByTestId('login-error');
+    expect(err).toHaveTextContent(AUTH_ERROR_COPY[code]);
+    expect(err).not.toHaveTextContent(`Sign-in error: ${code}`);
+  });
+
+  it('renders the new invite / oauth copy in plain language', () => {
+    setup({}, '?error=invite_account_conflict');
+    const text = screen.getByTestId('login-error').textContent ?? '';
+    expect(text).toMatch(/cannot be accepted with this email address/);
+    expect(text).not.toMatch(/staff|role/i);
+  });
+
+  it('oauth_failed shows the Google retry copy', () => {
+    setup({}, '?error=oauth_failed');
+    expect(screen.getByTestId('login-error')).toHaveTextContent('Google sign-in did not complete. Try again.');
   });
 });
 

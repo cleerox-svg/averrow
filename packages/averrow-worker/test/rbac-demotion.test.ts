@@ -181,7 +181,7 @@ describe.skipIf(!hasSqlite())("placeholder exemption applies only while the user
     ).run(await hashToken(token), new Date(Date.now() + 3_600_000).toISOString());
     const res = await handleInviteAcceptance(new Request("https://averrow.com/api/auth/callback"), rig.env,
       { sub: "g-ex", email: "ex@averrow.com", name: "Ex" }, token, "https://averrow.com");
-    expect(res.headers.get("Location") ?? "").toContain("/auth/error");
+    expect(res.headers.get("Location") ?? "").toContain("/v2/login?error=invite_account_conflict");
     expect(roleOf(rig.raw, "exStaff")).toBe("client");
     expect(actions(rig)).toContain("invite_accept_refused_org_member");
   });

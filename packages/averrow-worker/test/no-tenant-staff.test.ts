@@ -138,8 +138,8 @@ describe.skipIf(!hasSqlite())("PR-F: invite acceptance never produces tenant sta
     const res = await accept(token, "staff1@averrow.com", "g-staff1");
     expect(res.status).toBe(302);
     const loc = res.headers.get("Location") ?? "";
-    expect(loc).toContain("/auth/error");
-    expect(decodeURIComponent(loc)).toMatch(/Averrow staff account/);
+    expect(loc).toContain("/v2/login?error=invite_account_conflict");
+    expect(decodeURIComponent(loc)).not.toMatch(/staff/i);
     expect(roleOf(rig.raw, "staff1")).toBe("analyst");
     expect(activeMemberships("staff1")).toBe(0);
     expect(invStatus("inv1")).toBe("pending");
@@ -149,7 +149,7 @@ describe.skipIf(!hasSqlite())("PR-F: invite acceptance never produces tenant sta
   it("staff invite to an existing active ORG MEMBER: refused, still client", async () => {
     const token = await invite("inv2", "cust1@acme.co", "analyst", null);
     const res = await accept(token, "cust1@acme.co", "g-cust1");
-    expect(res.headers.get("Location") ?? "").toContain("/auth/error");
+    expect(res.headers.get("Location") ?? "").toContain("/v2/login?error=invite_account_conflict");
     expect(roleOf(rig.raw, "cust1")).toBe("client");
     expect(invStatus("inv2")).toBe("pending");
     expect(rig.audits).toContain("invite_accept_refused_org_member");
@@ -180,7 +180,7 @@ describe.skipIf(!hasSqlite())("PR-F: invite acceptance never produces tenant sta
   it("same-role staff invite to an existing org-less account still works", async () => {
     const token = await invite("inv5", "admin1@averrow.com", "admin", null);
     const res = await accept(token, "admin1@averrow.com", "g-admin1");
-    expect(res.headers.get("Location") ?? "").not.toContain("/auth/error");
+    expect(res.headers.get("Location") ?? "").not.toContain("error=");
     expect(roleOf(rig.raw, "admin1")).toBe("admin");
   });
 });
@@ -274,7 +274,7 @@ describe.skipIf(!hasSqlite())("PR-F follow-up: lead-conversion placeholder owner
   it("same-role staff invite accepted by an account whose only membership is the placeholder still works", async () => {
     const token = await seedInvite(rig.raw, "stf1", "root2@averrow.com", "super_admin", null, null);
     const res = await acceptOn(rig, token, "root2@averrow.com", "g-root2");
-    expect(res.headers.get("Location") ?? "").not.toContain("/auth/error");
+    expect(res.headers.get("Location") ?? "").not.toContain("error=");
     expect(roleOf(rig.raw, "root2")).toBe("super_admin");
     expect(memberRow(rig.raw, 2, "root2").status).toBe("active");
   });
@@ -287,7 +287,7 @@ describe.skipIf(!hasSqlite())("PR-F follow-up: invite acceptance staff lookup is
   it("staff row `Bob@x.com` + org invite to `bob@x.com`: refused, no new account", async () => {
     const token = await seedInvite(rig.raw, "ci1", "bob@x.com", "client", 1, "viewer");
     const res = await acceptOn(rig, token, "bob@x.com", "g-bob-new");
-    expect(decodeURIComponent(res.headers.get("Location") ?? "")).toMatch(/Averrow staff account/);
+    expect(res.headers.get("Location") ?? "").toBe("https://averrow.com/v2/login?error=invite_account_conflict");
     expect(roleOf(rig.raw, "bobStaff")).toBe("analyst");
     const n = (rig.raw.prepare("SELECT COUNT(*) AS n FROM users WHERE LOWER(email) = 'bob@x.com'").all() as Array<{ n: number }>)[0]!.n;
     expect(n).toBe(1);
@@ -297,7 +297,7 @@ describe.skipIf(!hasSqlite())("PR-F follow-up: invite acceptance staff lookup is
   it("refuses when ANY matching row is staff, even if the exact-case row is a client", async () => {
     const token = await seedInvite(rig.raw, "ci2", "bob2@x.com", "client", 1, "viewer");
     const res = await acceptOn(rig, token, "bob2@x.com", "g-bob2");
-    expect(decodeURIComponent(res.headers.get("Location") ?? "")).toMatch(/Averrow staff account/);
+    expect(res.headers.get("Location") ?? "").toBe("https://averrow.com/v2/login?error=invite_account_conflict");
     expect(roleOf(rig.raw, "bob2Adm")).toBe("admin");
     const active = (rig.raw.prepare("SELECT COUNT(*) AS n FROM org_members WHERE user_id IN ('bob2Cli','bob2Adm') AND status = 'active'")
       .all() as Array<{ n: number }>)[0]!.n;

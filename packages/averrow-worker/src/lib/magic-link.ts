@@ -80,21 +80,35 @@ export interface MagicLinkLookup {
  *  single-use semantics — a token marked used or past its expiry is treated
  *  as not-found from the caller's perspective. */
 export async function findMagicLinkByHash(env: Env, tokenHash: string): Promise<MagicLinkLookup | null> {
+  const r = await inspectMagicLinkByHash(env, tokenHash);
+  return r.state === 'valid' ? r.row : null;
+}
+
+export type MagicLinkInspection =
+  | { state: 'valid'; row: MagicLinkLookup }
+  | { state: 'missing' | 'used' | 'expired' };
+
+/** Read-only lookup that says WHY a token is unusable. Never writes, so it
+ *  is safe on the interstitial GET that mail scanners prefetch. */
+export async function inspectMagicLinkByHash(env: Env, tokenHash: string): Promise<MagicLinkInspection> {
   const row = await env.DB.prepare(
     `SELECT id, email, expires_at, used_at, return_to
        FROM magic_link_tokens WHERE token_hash = ?`,
   ).bind(tokenHash).first<MagicLinkLookup>();
-  if (!row) return null;
-  if (row.used_at) return null;
-  if (new Date(row.expires_at).getTime() < Date.now()) return null;
-  return row;
+  if (!row) return { state: 'missing' };
+  if (row.used_at) return { state: 'used' };
+  if (new Date(row.expires_at).getTime() < Date.now()) return { state: 'expired' };
+  return { state: 'valid', row };
 }
 
-/** Mark a token as used. Idempotent — calling twice is a no-op. */
-export async function markMagicLinkUsed(env: Env, id: string): Promise<void> {
-  await env.DB.prepare(
+/** Mark a token as used. Returns true only for the call that actually
+ *  consumed it (`used_at IS NULL` guard), so two concurrent POSTs can't
+ *  both mint a session; a repeat call is a no-op that returns false. */
+export async function markMagicLinkUsed(env: Env, id: string): Promise<boolean> {
+  const res = await env.DB.prepare(
     `UPDATE magic_link_tokens SET used_at = datetime('now') WHERE id = ? AND used_at IS NULL`,
   ).bind(id).run();
+  return Number(res.meta?.changes ?? 0) > 0;
 }
 
 // ─── Constants exported for the email template + handler messaging ─────
