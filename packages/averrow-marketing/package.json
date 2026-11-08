@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "astro dev --port 4321",
     "build": "node scripts/fetch-stats.mjs && astro build && node scripts/generate-sitemap.mjs && node scripts/sync-to-worker.mjs",
+    "build:ci": "astro build && node scripts/generate-sitemap.mjs",
     "preview": "astro preview --port 4321",
     "astro": "astro",
     "typecheck": "astro check",

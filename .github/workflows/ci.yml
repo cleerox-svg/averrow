@@ -165,3 +165,120 @@ jobs:
       - name: Type check
         working-directory: packages/averrow-tenant
         run: pnpm typecheck
+
+  # ── averrow-marketing (Astro site, averrow.com /) ─────────────────
+  #
+  # Facelift Phase 5. The marketing site had no CI: its Playwright
+  # suite and `astro check` ran only on a contributor's machine, and
+  # deploy-radar.yml only builds it. This job typechecks, builds,
+  # serves the build with `astro preview` and runs the Playwright
+  # suite (desktop chromium project), including the homepage
+  # performance budgets in tests/perf-budget.spec.ts.
+  #
+  # Path-filtered inside the job (ci.yml has no workflow-level `paths`,
+  # and one would gate every other job too): the first step diffs the
+  # change against its base and the remaining steps are skipped when
+  # nothing under packages/averrow-marketing/ or this workflow moved.
+  # The job still reports success, so it can be a required check.
+  #
+  # No secrets and no prod dependency: `build:ci` is `astro build` +
+  # the sitemap generator only. It skips scripts/fetch-stats.mjs (the
+  # live stats fetch, so the build uses the committed
+  # src/data/stats.json and stays deterministic) and
+  # scripts/sync-to-worker.mjs (deploy-only copy into the Worker).
+  marketing:
+    name: Marketing Site
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: packages/averrow-marketing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect marketing changes
+        id: changes
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base="$PR_BASE"
+          else
+            base="$PUSH_BEFORE"
+          fi
+          # New branch / force-push / unknown base: run everything.
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "No usable base ($base); running the marketing job."
+            exit 0
+          fi
+          if git diff --name-only "$base"...HEAD -- \
+               packages/averrow-marketing .github/workflows/ci.yml | grep -q .; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No marketing changes since $base; skipping."
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.changes.outputs.run == 'true'
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        if: steps.changes.outputs.run == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.changes.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile
+
+      # The browser version is pinned by the lockfile's @playwright/test.
+      - name: Install Playwright Chromium
+        if: steps.changes.outputs.run == 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Astro check
+        if: steps.changes.outputs.run == 'true'
+        run: pnpm typecheck
+
+      - name: Astro build (no stats fetch, no worker sync)
+        if: steps.changes.outputs.run == 'true'
+        run: pnpm run build:ci
+
+      - name: Start astro preview
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          nohup pnpm exec astro preview --port 4321 --host 127.0.0.1 > "$RUNNER_TEMP/preview.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:4321/; then
+              echo "preview up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::astro preview did not start"; cat "$RUNNER_TEMP/preview.log"; exit 1
+
+      # PLAYWRIGHT_BASE_URL makes playwright.config.ts skip its own
+      # webServer (which would run the full deploy build).
+      - name: Playwright (chromium, incl. perf budgets)
+        if: steps.changes.outputs.run == 'true'
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:4321
+        run: pnpm exec playwright test --project=chromium
+
+      - name: Upload Playwright report
+        if: failure() && steps.changes.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: marketing-playwright-report
+          path: |
+            packages/averrow-marketing/playwright-report
+            packages/averrow-marketing/test-results
+          retention-days: 7
