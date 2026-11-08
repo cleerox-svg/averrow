@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.9.0",
+    publishedAt: "2026-11-08",
+    kind: "Improvement",
+    title: "The new look reaches the website and emails",
+    description:
+      "The refreshed look and sharpened logo now carry across the whole website, the sign-in and system pages, and the emails you receive from us, so every touchpoint feels like the same product. Fonts load faster, moving between pages is smoother, and the home and platform pages now tell their story with gentle scroll animations that respect reduced-motion settings. The home page also opens with a short walkthrough of how a single operation is mapped from first signal to full picture. We also made the wording clearer: what we used to call fake profiles are now called impersonation accounts. Behind the scenes, the threats view now loads with far less work, which keeps sign-in and the rest of the platform responsive under heavy use.",
+  },
+  {
     version: "v4.8.0",
     publishedAt: "2026-11-07",
     kind: "Feature",

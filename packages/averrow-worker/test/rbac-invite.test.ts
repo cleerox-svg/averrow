@@ -173,7 +173,7 @@ describe.skipIf(!hasSqlite())("F1: invite acceptance never changes an existing s
     it(`admin-minted ${inviteRole} invite (no org) to a super_admin's email → refused, role + placeholders intact, audited`, async () => {
       const token = await seedInvite(rig.raw, "inv-demote", "root2@averrow.com", inviteRole);
       const res = await accept(rig, token, "root2@averrow.com", "g-root2");
-      expect(location(res)).toContain("/auth/error");
+      expect(location(res)).toContain("/v2/login?error=invite_account_conflict");
       expect(roleOf(rig.raw, "root2")).toBe("super_admin");
       expect(member(rig.raw, 1, "root2")!.status).toBe("active");
       expect(member(rig.raw, 2, "root2")!.status).toBe("active");
@@ -185,7 +185,7 @@ describe.skipIf(!hasSqlite())("F1: invite acceptance never changes an existing s
   it("a staff → staff role change (analyst invite to an admin) is refused too", async () => {
     const token = await seedInvite(rig.raw, "inv-a", "admin1@averrow.com", "analyst");
     const res = await accept(rig, token, "admin1@averrow.com", "g-admin1");
-    expect(location(res)).toContain("/auth/error");
+    expect(location(res)).toContain("/v2/login?error=invite_account_conflict");
     expect(roleOf(rig.raw, "admin1")).toBe("admin");
   });
 
@@ -225,7 +225,7 @@ describe.skipIf(!hasSqlite())("F1: invite acceptance never changes an existing s
     const token = await seedInvite(rig.raw, "inv-race", "loner@example.com", "analyst");
     rig.race({ onPrepare: /^UPDATE users SET google_sub/, sql: "UPDATE users SET role = 'super_admin' WHERE id = 'loner'" });
     const res = await accept(rig, token, "loner@example.com", "g-loner");
-    expect(location(res)).toContain("/auth/error");
+    expect(location(res)).toContain("/v2/login?error=invite_changed");
     expect(roleOf(rig.raw, "loner")).toBe("super_admin");
     expect(inviteStatus(rig.raw, "inv-race")).toBe("pending");
   });
@@ -394,7 +394,7 @@ describe.skipIf(!hasSqlite())("R1: no tenant staff, enforced in SQL against inte
     const token = await seedInvite(rig.raw, "org-inv", "loner@example.com", "client", 3, "viewer");
     rig.race({ onPrepare: /INSERT OR IGNORE INTO org_members/, sql: "UPDATE users SET role = 'analyst' WHERE id = 'loner'" });
     const res = await accept(rig, token, "loner@example.com", "g-loner");
-    expect(location(res)).toContain("/auth/error");
+    expect(location(res)).toContain("/v2/login?error=invite_account_conflict");
     expect(location(res)).not.toContain("#token=");
     expect(member(rig.raw, 3, "loner")).toBeUndefined();
     expect(roleOf(rig.raw, "loner")).toBe("analyst");
@@ -418,7 +418,7 @@ describe.skipIf(!hasSqlite())("R1: no tenant staff, enforced in SQL against inte
       sql: "INSERT INTO org_members (org_id, user_id, role, status, provisioned_by) VALUES (3, 'loner', 'viewer', 'active', 'invite')",
     });
     const res = await accept(rig, token, "loner@example.com", "g-loner");
-    expect(location(res)).toContain("/auth/error");
+    expect(location(res)).toContain("/v2/login?error=invite_account_conflict");
     expect(roleOf(rig.raw, "loner")).toBe("client");
     expect(inviteStatus(rig.raw, "staff-inv")).toBe("pending");
     expect(rig.audits).toContainEqual({ action: "invite_accept_refused_org_member", outcome: "denied" });

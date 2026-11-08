@@ -6,14 +6,17 @@ import { signJWT, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL, ABSOLUTE_SESSION_TTL } fr
 import { hashToken, generateRefreshToken } from "../lib/hash";
 import { buildGoogleAuthURL, exchangeCodeForTokens, fetchGoogleUserInfo, getRedirectUri, CANONICAL_ORIGIN } from "../lib/oauth";
 import { audit } from "../lib/audit";
+import { logger } from "../lib/logger";
 import { forcedLogoutKey, isForcedOut, parseForcedLogout } from "../lib/forced-logout";
 import { loadOrgScopeForToken, isPlatformStaff } from "../middleware/auth";
 import { PLACEHOLDER_EXEMPT_SQL, STAFF_ROLE_LIST_SQL, USER_HAS_CUSTOMER_MEMBERSHIP_SQL } from "../lib/lead-conversion-placeholder";
 import {
   generateMagicLinkToken, hashMagicLinkToken, checkRateLimit,
-  persistMagicLinkRow, findMagicLinkByHash, markMagicLinkUsed,
+  persistMagicLinkRow, inspectMagicLinkByHash, markMagicLinkUsed,
 } from "../lib/magic-link";
 import { sendMagicLinkEmail } from "../lib/magic-link-email";
+import { renderMagicLinkConfirmPage } from "../templates/magic-link-confirm";
+import type { AuthErrorCode } from "@averrow/shared";
 import type { Env, UserRole } from "../types";
 
 // ─── OAuth: initiate login ──────────────────────────────────────
@@ -25,7 +28,9 @@ export async function handleOAuthLogin(request: Request, env: Env): Promise<Resp
 
   // state carries a return-to URL + CSRF nonce
   const url = new URL(request.url);
-  const returnTo = url.searchParams.get("return_to") ?? "/observatory";
+  // Validated before storage; issueSession re-validates and applies the role
+  // default when this is empty.
+  const returnTo = validateReturnTo(url.searchParams.get("return_to")) ?? "";
   const nonce = crypto.randomUUID();
 
   // Store nonce in KV with 10-min TTL for CSRF validation
@@ -90,10 +95,10 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
   const error = url.searchParams.get("error");
 
   if (error) {
-    return redirectWithError(CANONICAL_ORIGIN, `OAuth error: ${error}`);
+    return redirectToLoginWithError(CANONICAL_ORIGIN, "oauth_failed");
   }
   if (!code || !state) {
-    return redirectWithError(CANONICAL_ORIGIN, "Missing code or state");
+    return redirectToLoginWithError(CANONICAL_ORIGIN, "oauth_failed");
   }
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
     return json({ success: false, error: "OAuth not configured" }, 503, origin);
@@ -108,13 +113,15 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
   const stateCookie = cookies[OAUTH_STATE_COOKIE];
   if (!stateCookie || stateCookie !== await hashToken(state)) {
     await audit(env, { action: "oauth_state_cookie_mismatch", outcome: "denied", request }).catch(() => {});
-    return clearOAuthStateCookie(redirectWithError(CANONICAL_ORIGIN, "Invalid or expired OAuth state"), request);
+    return clearOAuthStateCookie(redirectToLoginWithError(CANONICAL_ORIGIN, "oauth_failed"), request);
   }
 
   // Validate CSRF state
+  // "" is a valid stored state (login had no / an invalid return_to → the
+  // role default applies in issueSession); only a missing key is a failure.
   const storedState = await env.CACHE.get(`oauth_state:${state}`);
-  if (!storedState) {
-    return clearOAuthStateCookie(redirectWithError(CANONICAL_ORIGIN, "Invalid or expired OAuth state"), request);
+  if (storedState === null) {
+    return clearOAuthStateCookie(redirectToLoginWithError(CANONICAL_ORIGIN, "oauth_failed"), request);
   }
   await env.CACHE.delete(`oauth_state:${state}`);
 
@@ -147,12 +154,12 @@ async function completeOAuthCallback(
     googleUser = await fetchGoogleUserInfo(tokens.access_token);
   } catch (err) {
     await audit(env, { action: "oauth_token_exchange_failed", details: { error: "An internal error occurred" }, outcome: "failure", request });
-    return redirectWithError(CANONICAL_ORIGIN, "Failed to authenticate with Google");
+    return redirectToLoginWithError(CANONICAL_ORIGIN, "oauth_failed");
   }
 
   if (!googleUser.email_verified) {
     await audit(env, { action: "oauth_unverified_email", details: { email: googleUser.email }, outcome: "denied", request });
-    return redirectWithError(CANONICAL_ORIGIN, "Google account email is not verified");
+    return redirectToLoginWithError(CANONICAL_ORIGIN, "email_unverified");
   }
 
   // Check if this is an invite flow
@@ -183,12 +190,12 @@ async function completeOAuthCallback(
 
   if (!user) {
     await audit(env, { action: "login_no_account", details: { email: googleUser.email, google_sub: googleUser.sub }, outcome: "denied", request });
-    return redirectWithError(CANONICAL_ORIGIN, "No account found. Access is invitation-only.");
+    return redirectToLoginWithError(CANONICAL_ORIGIN, "no_account");
   }
 
   if (user.status !== "active") {
     await audit(env, { action: "login_inactive", userId: user.id, details: { status: user.status }, outcome: "denied", request });
-    return redirectWithError(CANONICAL_ORIGIN, "Account is suspended or deactivated");
+    return redirectToLoginWithError(CANONICAL_ORIGIN, "account_deactivated");
   }
 
   // Issue session tokens
@@ -487,12 +494,12 @@ export async function handleInviteAcceptance(
 
   if (!invite) {
     await audit(env, { action: "invite_accept_invalid", details: { email: googleUser.email }, outcome: "failure", request });
-    return redirectWithError(siteOrigin, "Invalid or already-used invite");
+    return redirectToLoginWithError(siteOrigin, "invite_invalid");
   }
 
   if (new Date(invite.expires_at) < new Date()) {
     await env.DB.prepare("UPDATE invitations SET status = 'expired' WHERE id = ?").bind(invite.id).run();
-    return redirectWithError(siteOrigin, "Invite has expired");
+    return redirectToLoginWithError(siteOrigin, "invite_expired");
   }
 
   // Email must match invitation
@@ -503,7 +510,7 @@ export async function handleInviteAcceptance(
       outcome: "denied",
       request,
     });
-    return redirectWithError(siteOrigin, "Google account email does not match the invitation. Please sign in with the correct Google account.");
+    return redirectToLoginWithError(siteOrigin, "invite_email_mismatch");
   }
 
   // Check if user already exists. Match email case-insensitively (users.email
@@ -545,7 +552,7 @@ export async function handleInviteAcceptance(
       outcome: "denied",
       request,
     });
-    return redirectWithError(siteOrigin, "This email belongs to an Averrow staff account, which cannot join a customer organization. Ask the organization to invite a different email address.");
+    return redirectToLoginWithError(siteOrigin, "invite_account_conflict");
   }
   // (c) An invite must never CHANGE an existing staff account's role. The
   //     write below overwrites users.role with invite.role, so a non-org
@@ -567,7 +574,7 @@ export async function handleInviteAcceptance(
       outcome: "denied",
       request,
     });
-    return redirectWithError(siteOrigin, "This email belongs to an existing Averrow staff account. Its role can only be changed by an administrator, not through an invitation.");
+    return redirectToLoginWithError(siteOrigin, "invite_account_conflict");
   }
   if (matches.length > 0 && isPlatformStaff(invite.role)) {
     const membership = await env.DB.prepare(
@@ -586,7 +593,7 @@ export async function handleInviteAcceptance(
         outcome: "denied",
         request,
       });
-      return redirectWithError(siteOrigin, "This email belongs to a member of a customer organization and cannot be given an Averrow staff role. Remove it from the organization first.");
+      return redirectToLoginWithError(siteOrigin, "invite_account_conflict");
     }
   }
 
@@ -618,7 +625,7 @@ export async function handleInviteAcceptance(
           outcome: "denied",
           request,
         });
-        return redirectWithError(siteOrigin, "This email belongs to a member of a customer organization and cannot be given an Averrow staff role. Remove it from the organization first.");
+        return redirectToLoginWithError(siteOrigin, "invite_account_conflict");
       }
       await audit(env, {
         action: "invite_accept_refused_concurrent_change",
@@ -629,7 +636,7 @@ export async function handleInviteAcceptance(
         outcome: "failure",
         request,
       });
-      return redirectWithError(siteOrigin, "Your account was changed while accepting the invitation. Please open the invite link again.");
+      return redirectToLoginWithError(siteOrigin, "invite_changed");
     }
     if (existing.role !== invite.role) {
       // Same revocation as the admin role PATCH: the old tokens embed the old
@@ -691,7 +698,7 @@ export async function handleInviteAcceptance(
           outcome: "denied",
           request,
         });
-        return redirectWithError(siteOrigin, "This email belongs to an Averrow staff account, which cannot join a customer organization. Ask the organization to invite a different email address.");
+        return redirectToLoginWithError(siteOrigin, "invite_account_conflict");
       }
     }
 
@@ -835,11 +842,10 @@ export async function issueSession(
   // SPA's suspenders so a client never lands inside /v2/ or the
   // legacy /observatory alias (which 301s to /v2 anyway). Clients
   // only keep an explicit return_to if it's already a /tenant path.
-  const rawReturnTo = returnToPath || '/observatory';
-  const isClientToStaffPath =
-    role === 'client' &&
-    !rawReturnTo.startsWith('/tenant');
-  const returnTo = isClientToStaffPath ? '/tenant/' : rawReturnTo;
+  // The single return_to gate: anything that isn't a plain /v2 or /tenant
+  // path (fragment, encoded '#', '..', '\', protocol-relative, absolute URL,
+  // legacy '/observatory') falls back to the role default.
+  const returnTo = resolveReturnTo(returnToPath, role);
 
   if (mode === 'json') {
     // For AJAX callers (passkeys.ts on the SPA): JSON envelope, refresh
@@ -858,12 +864,44 @@ export async function issueSession(
   // Redirect mode — browser-navigation entrypoints (OAuth callback,
   // magic-link verify). Drop the token in the URL hash so it never
   // hits an HTTP log.
-  const isV2 = returnTo.startsWith('/v2');
-  const redirectUrl = isV2
-    ? `${siteOrigin}${returnTo}#token=${accessToken}&expires_in=${ACCESS_TOKEN_TTL}`
-    : `${siteOrigin}/auth/callback#token=${accessToken}&expires_in=${ACCESS_TOKEN_TTL}`;
+  // Both React apps read `#token=` on load (shared AuthProvider
+  // readTokensFromUrl), and resolveReturnTo only yields /v2 or /tenant
+  // paths, so the session always lands in an app. (The old /auth/callback
+  // fallback was a legacy-SPA route that is no longer served — 404.)
+  const redirectUrl = `${siteOrigin}${returnTo}#token=${accessToken}&expires_in=${ACCESS_TOKEN_TTL}`;
   const response = new Response(null, { status: 302, headers: { Location: redirectUrl } });
   return setRefreshCookie(response, refreshToken, request);
+}
+
+// ─── return_to validation ───────────────────────────────────────
+
+/** A plain same-origin path into one of the two apps: no fragment, no '%'
+ *  in the path (so no encoded '#' / '/' / '.'), no backslash, optional
+ *  query of printable URL characters only (no '#', '\', spaces or control
+ *  characters — a decoded CR/LF would make the Location header throw). The access token is appended as `#token=`, so
+ *  a return_to that could carry its own fragment would let an attacker
+ *  plant THEIR token ahead of ours (AuthProvider reads the first one). */
+const SAFE_RETURN_TO = /^\/(v2|tenant)(\/[A-Za-z0-9._~\-/]*)?(\?[A-Za-z0-9._~\-/=&%+,:;@!$'()*]*)?$/;
+const MAX_RETURN_TO_LENGTH = 200;
+
+/** The validated path, or null. No role logic — see resolveReturnTo. */
+export function validateReturnTo(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_RETURN_TO_LENGTH) return null;
+  if (!SAFE_RETURN_TO.test(raw)) return null;
+  const path = raw.split("?", 1)[0]!;
+  if (path.split("/").some((seg) => seg === "." || seg === "..")) return null;
+  return raw;
+}
+
+/** Where a fresh session lands: a valid return_to, else the role default
+ *  (staff /v2/, client /tenant/). Clients never land in /v2 — Phase D D2c
+ *  server-side backstop to the ops SPA's own client redirect. */
+export function resolveReturnTo(raw: string | null | undefined, role: UserRole): string {
+  const fallback = role === "client" ? "/tenant/" : "/v2/";
+  const valid = validateReturnTo(raw);
+  if (!valid) return fallback;
+  if (role === "client" && !valid.startsWith("/tenant")) return fallback;
+  return valid;
 }
 
 function setRefreshCookie(response: Response, refreshToken: string, request: Request): Response {
@@ -910,11 +948,26 @@ function clearRefreshCookie(response: Response): Response {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function redirectWithError(origin: string, message: string): Response {
-  const encoded = encodeURIComponent(message);
+/** The one sign-in page. The tenant app has no login of its own (its
+ *  logged-out guard sends people to `/`, which routes here), and
+ *  `issueSession` sends a `client` to /tenant/ after any sign-in, so every
+ *  flow — staff, client invite, magic link — fails back to this page. */
+export const LOGIN_PATH = "/v2/login";
+
+/** Every sign-in failure: 302 to the login page with a stable CODE from
+ *  `@averrow/shared` `AUTH_ERROR_CODES`, never free text — the LoginPage
+ *  maps the code to customer copy, and a URL-borne sentence would be a
+ *  content-spoofing vector. (Replaces the old free-text redirect to the
+ *  legacy SPA's `auth/error` route, which is no longer served — 404.) Origin is fixed by the caller:
+ *  CANONICAL_ORIGIN for the Google callback, the request origin for the
+ *  magic link — no `return_to` is followed on a failure. */
+export function redirectToLoginWithError(origin: string, code: AuthErrorCode): Response {
   return new Response(null, {
     status: 302,
-    headers: { Location: `${origin}/auth/error?message=${encoded}` },
+    headers: {
+      Location: `${origin}${LOGIN_PATH}?error=${code}`,
+      "Cache-Control": "no-store",
+    },
   });
 }
 
@@ -1023,7 +1076,28 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
   }
 }
 
-export async function handleMagicLinkVerify(
+/** Map a non-valid inspection to its login error code. */
+function magicLinkErrorCode(state: "missing" | "used" | "expired"): AuthErrorCode {
+  return state === "expired" ? "link_expired" : "link_used_or_invalid";
+}
+
+/** Headers for every magic-link interstitial / verify response. */
+const MAGIC_LINK_PAGE_HEADERS: Record<string, string> = {
+  "Content-Type": "text/html; charset=utf-8",
+  "Cache-Control": "no-store",
+  "X-Robots-Tag": "noindex, nofollow",
+};
+
+/**
+ * GET /api/auth/magic-link/:token — the link in the email.
+ *
+ * Validates the token WITHOUT consuming it and renders the interstitial
+ * (templates/magic-link-confirm.ts) whose button POSTs the token to
+ * /api/auth/magic-link/verify. Mail scanners that prefetch the link only
+ * ever reach this read-only path, so the person's own click still works.
+ * An unusable token → the login page with a code.
+ */
+export async function handleMagicLinkLanding(
   request: Request,
   env: Env,
   rawToken: string,
@@ -1031,13 +1105,91 @@ export async function handleMagicLinkVerify(
   const siteOrigin = new URL(request.url).origin;
   try {
     if (!rawToken) {
-      return redirectWithError(siteOrigin, "missing_token");
+      return redirectToLoginWithError(siteOrigin, "invalid_link");
+    }
+    const inspection = await inspectMagicLinkByHash(env, await hashMagicLinkToken(rawToken));
+    if (inspection.state !== "valid") {
+      return redirectToLoginWithError(siteOrigin, magicLinkErrorCode(inspection.state));
+    }
+    return new Response(renderMagicLinkConfirmPage(rawToken, inspection.row.email), {
+      status: 200,
+      headers: MAGIC_LINK_PAGE_HEADERS,
+    });
+  } catch (err) {
+    logger.error("magic_link_landing_error", { error: err instanceof Error ? err.message : String(err) });
+    return redirectToLoginWithError(siteOrigin, "signin_failed");
+  }
+}
+
+/** Login-CSRF guard for the consuming POST: a cross-site page must not be
+ *  able to sign the visitor into the ATTACKER's account by auto-submitting
+ *  the attacker's own token. Browsers send Origin on form POSTs and
+ *  Sec-Fetch-Site on all modern engines; when either is present it must say
+ *  same-origin. (Neither present = a non-browser client, which can't ride a
+ *  victim's cookies anyway.) */
+//
+// `Origin: null` is what a browser sends when the page's referrer policy
+// hides the origin (e.g. no-referrer); it carries no information, so it is
+// accepted ONLY alongside `Sec-Fetch-Site: same-origin` (browser-set, not
+// script-forgeable). The interstitial uses `strict-origin`, so real browsers
+// send the site origin; the null branch is defence in depth.
+export function isSameOriginPost(request: Request): boolean {
+  const selfOrigin = new URL(request.url).origin;
+  const origin = request.headers.get("Origin");
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (site !== null && site !== "same-origin") return false;
+  if (origin === "null") return site === "same-origin";
+  if (origin !== null && origin !== selfOrigin) return false;
+  return true;
+}
+
+/** Token from a form POST body (`token=`), or a JSON `{ token }`. */
+async function readMagicLinkToken(request: Request): Promise<string> {
+  const contentType = request.headers.get("Content-Type") ?? "";
+  try {
+    if (contentType.includes("application/json")) {
+      const body: unknown = await request.json();
+      if (body && typeof body === "object" && "token" in body) {
+        const t = (body as { token: unknown }).token;
+        return typeof t === "string" ? t : "";
+      }
+      return "";
+    }
+    const form = await request.formData();
+    const t = form.get("token");
+    return typeof t === "string" ? t : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * POST /api/auth/magic-link/verify — the interstitial's button.
+ *
+ * Consumes the single-use token (from the body, never the URL), mints the
+ * session and 302s exactly as the old consuming GET did (refresh cookie +
+ * `#token=` hash redirect via `issueSession`). Same audits as before.
+ */
+export async function handleMagicLinkVerify(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const siteOrigin = new URL(request.url).origin;
+  try {
+    if (!isSameOriginPost(request)) {
+      await audit(env, { action: "magic_link_verify_cross_site", outcome: "denied", request }).catch(() => {});
+      return redirectToLoginWithError(siteOrigin, "signin_failed");
+    }
+    const rawToken = await readMagicLinkToken(request);
+    if (!rawToken) {
+      return redirectToLoginWithError(siteOrigin, "invalid_link");
     }
     const tokenHash = await hashMagicLinkToken(rawToken);
-    const row = await findMagicLinkByHash(env, tokenHash);
-    if (!row) {
-      return redirectWithError(siteOrigin, "invalid_or_expired_token");
+    const inspection = await inspectMagicLinkByHash(env, tokenHash);
+    if (inspection.state !== "valid") {
+      return redirectToLoginWithError(siteOrigin, magicLinkErrorCode(inspection.state));
     }
+    const row = inspection.row;
 
     // Find the user — re-verify they still exist + are active. Email is
     // the source of truth on the magic-link row (we never store user_id
@@ -1054,13 +1206,15 @@ export async function handleMagicLinkVerify(
         details: { email: row.email },
         request,
       }).catch(() => {});
-      return redirectWithError(siteOrigin, "account_not_active");
+      return redirectToLoginWithError(siteOrigin, "account_deactivated");
     }
 
-    // Mark the token used FIRST so a simultaneous click can't double-spend.
-    // The UNIQUE token_hash + the conditional UPDATE inside markMagicLinkUsed
-    // means the second caller will find used_at already set on its lookup.
-    await markMagicLinkUsed(env, row.id);
+    // Mark the token used FIRST so a simultaneous click can't double-spend:
+    // the conditional UPDATE (`used_at IS NULL`) lets exactly one caller
+    // consume it; the loser of a race gets the used-link error.
+    if (!(await markMagicLinkUsed(env, row.id))) {
+      return redirectToLoginWithError(siteOrigin, "link_used_or_invalid");
+    }
 
     return issueSession(
       request,
@@ -1074,18 +1228,14 @@ export async function handleMagicLinkVerify(
     );
   } catch (err) {
     console.error("[magic-link] verify error:", err);
-    return redirectWithError(siteOrigin, "verify_error");
+    return redirectToLoginWithError(siteOrigin, "signin_failed");
   }
 }
 
-/** Whitelist /v2/... or /observatory paths so a malicious return_to can't
- *  hijack the redirect to an external site. */
+/** Same gate as issueSession (validateReturnTo): only plain /v2 or /tenant
+ *  paths are stored on the magic-link row. */
 function sanitizeReturnTo(returnTo: string | undefined): string | null {
-  if (!returnTo) return null;
-  if (!returnTo.startsWith("/")) return null;
-  if (returnTo.startsWith("//")) return null; // protocol-relative URL escape
-  if (returnTo.length > 200) return null;
-  return returnTo;
+  return validateReturnTo(returnTo);
 }
 
 function parseCookies(cookieHeader: string): Record<string, string> {

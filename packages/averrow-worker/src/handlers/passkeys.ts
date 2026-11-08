@@ -37,7 +37,7 @@ import type {
 
 import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
-import { issueSession } from "./auth";
+import { issueSession, validateReturnTo } from "./auth";
 import type { Env, UserRole } from "../types";
 
 const RP_NAME = "Averrow";
@@ -445,10 +445,7 @@ export async function handleDeletePasskey(
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
+/** Same gate as issueSession (handlers/auth.ts validateReturnTo). */
 function sanitizeReturnTo(returnTo: string | undefined): string | undefined {
-  if (!returnTo) return undefined;
-  if (!returnTo.startsWith("/")) return undefined;
-  if (returnTo.startsWith("//")) return undefined;
-  if (returnTo.length > 200) return undefined;
-  return returnTo;
+  return validateReturnTo(returnTo) ?? undefined;
 }

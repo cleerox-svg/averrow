@@ -10,7 +10,7 @@
  *    analysis (said honestly). No threshold, suffix list or probe method.
  *  - Executives: X, Instagram, TikTok, GitHub and YouTube only. Not LinkedIn
  *    (company pages only), not paste or leak-site mentions. Deterministic, no
- *    photo data. A flag is never called a "fake profile" as fact.
+ *    photo data. A flag is never called an "impersonation account" as fact.
  *  - Apps: Apple App Store only; no icon or image matching.
  *  - Trademark: a view built from the other monitors, not a detection source.
  *  - No evidence-package claim: "handle, platform, profile link, when we found
@@ -101,7 +101,7 @@ const appRows: SampleRow[] = [
 
 const tmRows: SampleRow[] = [
   { text: "acme-secure-login.example", mono: true, status: "From lookalike domains", pill: "High", tone: "high" },
-  { text: "@acme_support on X", status: "From fake profiles", pill: "Likely impersonation", tone: "high" },
+  { text: "@acme_support on X", status: "From impersonation accounts", pill: "Likely impersonation", tone: "high" },
   { text: "Acme Rewards Wallet", status: "From App Store monitoring", pill: "Copycat", tone: "high" },
 ];
 
@@ -146,13 +146,13 @@ const scope: ScopeRow[] = [
 
 <ProductPage
   title="Social and Executive Impersonation — Averrow"
-  description="Find fake accounts on six social networks, accounts using your executives' names, and copycat apps on the Apple App Store. Each flag comes with the handle, platform, profile link and why it was flagged."
+  description="Find impersonation accounts on six social networks, accounts using your executives' names, and copycat apps on the Apple App Store. Each flag comes with the handle, platform, profile link and why it was flagged."
   crumb="Impersonation"
 >
   <ProductHero
     surface="social"
     title="Find the accounts pretending to be you."
-    sub="We check six social networks for fake accounts using your brand name, watch for your executives' names, and look for copycat apps. You see why each one was flagged."
+    sub="We check six social networks for impersonation accounts using your brand name, watch for your executives' names, and look for copycat apps. You see why each one was flagged."
   >
     <SampleFrame
       slot="sample"
@@ -164,8 +164,8 @@ const scope: ScopeRow[] = [
 
   <ProductSection
     id="fake-profiles"
-    eyebrow="Fake profiles"
-    heading="Fake accounts on six networks."
+    eyebrow="Impersonation accounts"
+    heading="Accounts posing as your brand, on six networks."
     lede="Attackers don't need to touch your systems to damage your brand. A convincing handle is often enough. We check these networks for accounts that imitate yours."
   >
     <ul class="imp-nets" role="list" aria-label="Networks checked">

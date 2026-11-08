@@ -4,6 +4,65 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.9.0] — 2026-11-08
+
+Facelift Phase 4 + 5 close-out: the new identity reaches the Worker-served
+pages, emails and the marketing site, with the M1 motion layer on top. Rolls up
+#1896 to #1901 plus this PR's copy change. Tag `v4.9.0` is created by
+`tag-release.yml` on merge.
+
+### D1 overload fix (#1901)
+- 2026-11-08 ~03:40–04:00 UTC: prod D1 returned `D1 DB is overloaded` and
+  login failed. Cause: a cold ops Threats page load fired several full scans of
+  `threats` at once (severity-sorted list ~5.4M rows, unfiltered COUNT(*), ~13
+  aggregate GROUP BYs in one `Promise.all`).
+- Migration 0318: expression index on the severity rank + `created_at`, so the
+  default list sort walks the index.
+- Unfiltered list total via `cachedCount('count.threats.total')`; aggregate
+  queries run sequentially, the unfiltered slice is cached 3h with a
+  stale-while-revalidate single-flight (`cachedValue` `singleFlight`), reads
+  `top_providers` / `top_brands` from the pre-computed counters, and uses the
+  read replica.
+- Flight Control's unlinked backlog is a capped probe (≤50,001 rows);
+  enrichment's diagnostic counters are cached 6h.
+
+### Worker pages and emails (#1896)
+- R3 mark applied to the Worker-served pages and the transactional emails.
+- New OG image, and the CSP updated for the new assets.
+- Email-safe PNG of the mark served at `/email/averrow-mark-r3.png` (emails
+  cannot rely on SVG).
+
+### Marketing site identity (#1897)
+- Marketing palette moved to indigo on graphite, matching the product.
+- Geist self-hosted (no third-party font requests); R3 logo in the header and
+  footer.
+- `_headers`: owner-approved long-cache rules for `/fonts/*` and `/v2/email/*`.
+
+### Marketing CI (#1898)
+- New marketing job in CI: `astro check`, Playwright smoke/e2e, and performance
+  budgets.
+
+### Operation hero, H4A (#1899)
+- Home hero is now a canvas operation map with auto-playing steps, ending on the
+  "Operation mapped" claim. Replaces the old OperationStory section.
+
+### Motion, M1 (#1900)
+- M1 motion tokens on the marketing site.
+- Native cross-document view transitions between pages, with a fallback for
+  Firefox (no support).
+- Lazy-loaded GSAP core scroll sequences on home and `/platform`. No
+  ScrollTrigger; reduced-motion users get the static layout.
+
+### Copy (this PR)
+- "Fake profiles" is now "Impersonation accounts" across the marketing site
+  (`scan`, `platform/impersonation`, `solutions/index`,
+  `solutions/brand-and-legal`, plus the coverage blurb and resources teaser).
+  The `#fake-profiles` anchor id is unchanged so existing links keep working.
+  The home-page smoke test still bans "fake profiles" from the home copy, which
+  stays correct.
+
+---
+
 ## [v4.8.0] — 2026-11-07
 
 Facelift Phase 3 flip (P3-1 … P3-6). The new look becomes the default for every

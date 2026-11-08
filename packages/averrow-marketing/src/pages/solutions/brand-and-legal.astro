@@ -38,9 +38,9 @@ const heroRows: SampleRow[] = [
 const watch: Array<{ id: string; title: string; text: string; rows: SampleRow[]; label: string; href: string }> = [
   {
     id: "profiles",
-    title: "Fake profiles",
+    title: "Impersonation accounts",
     text: "On X, LinkedIn, Instagram, TikTok, GitHub and YouTube we look for accounts at the handles an impersonator would likely register for your brand name. Your official accounts are set aside. We check handles only, not photos, bios or followers.",
-    label: "Sample fake profile finding",
+    label: "Sample impersonation account finding",
     rows: [{ text: "@acme_support", mono: true, status: "On X. Brand name plus a support word.", pill: "Likely impersonation", tone: "high" }],
     href: "/platform/impersonation#fake-profiles",
   },
@@ -64,7 +64,7 @@ const watch: Array<{ id: string; title: string; text: string; rows: SampleRow[];
 
 const trademarkRows: SampleRow[] = [
   { text: "acme-secure-login.example", mono: true, status: "From lookalike domains", pill: "High", tone: "high" },
-  { text: "@acme_support on X", status: "From fake profiles", pill: "Likely impersonation", tone: "high" },
+  { text: "@acme_support on X", status: "From impersonation accounts", pill: "Likely impersonation", tone: "high" },
   { text: "Acme Rewards Wallet", status: "From App Store monitoring", pill: "Copycat", tone: "high" },
 ];
 const trademarkFacts = [
@@ -119,7 +119,7 @@ const scope: ScopeRow[] = [
     eyebrow="For brand and legal teams"
     plan={null}
     title="Find who is using your name, and what to do next."
-    sub="Averrow finds fake profiles on six social networks, accounts using your executives' names and copycat apps, with the evidence for each. Takedowns are filed only under the authorization you sign."
+    sub="Averrow finds impersonation accounts on six social networks, accounts using your executives' names and copycat apps, with the evidence for each. Takedowns are filed only under the authorization you sign."
   >
     <SampleFrame slot="sample" label="Sample impersonation findings" rows={heroRows} footer="Handle, platform, profile link, when we found it and why it was flagged" />
   </ProductHero>
@@ -127,7 +127,7 @@ const scope: ScopeRow[] = [
   <ProductSection
     id="impersonation"
     eyebrow="What we look for"
-    heading="Fake profiles, executives and copycat apps."
+    heading="Impersonation accounts, executives and copycat apps."
     lede="Each flag comes with the handle, platform, profile link, when we found it and why it was flagged. You decide what to act on."
   >
     <ul class="bl-cards" role="list">
