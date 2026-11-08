@@ -88,7 +88,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
             <h2 class="scan-k" id="cardScoreTitle">Email spoofing protection</h2>
             <div class="scan-grade-row">
               <span class="scan-grade" id="gradeLetter" data-tone="" aria-hidden="true"></span>
-              <span class="scan-level" id="gradeLevel" data-tone=""></span>
+              <span class="scan-level" id="gradeLevel" data-tone="" aria-hidden="true"></span>
               <span class="sr-only" id="gradeSr"></span>
             </div>
             <p class="scan-summary" id="emailSentence"></p>
@@ -218,7 +218,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     .scan-spinner { animation: none; border-top-color: var(--border-strong); border-right-color: var(--primary); }
   }
 
-  .scan-meta { color: var(--text-secondary); margin: 0 0 24px; display: flex; flex-wrap: wrap; gap: 4px 0; }
+  .scan-meta { color: var(--text-secondary); margin: 0 0 24px; display: flex; flex-wrap: wrap; gap: 4px 0; font-size: 0.9rem; }
   .scan-meta span { white-space: nowrap; }
   .scan-meta span + span::before { content: "\00b7"; margin: 0 8px; }
   .scan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; max-width: 960px; }
@@ -290,8 +290,6 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     .scan-lead-btn { justify-self: stretch; }
     .scan-row .btn { width: 100%; padding: 13px 18px; }
     .scan-foot-links { flex-wrap: wrap; }
-    .scan-meta { flex-direction: column; }
-    .scan-meta span + span::before { content: none; }
   }
 </style>
 
