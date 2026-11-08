@@ -15,6 +15,7 @@ const ACCENT_TEXT: Record<string, string> = {
   '#0a8ab5': 'var(--blue-text)',
   'var(--blue)': 'var(--blue-text)',
   '#9b59b6': 'var(--violet-text)',
+  'var(--violet)': 'var(--violet-text)',
   '#e8923c': 'var(--sev-high-text)',
   '#fb923c': 'var(--sev-high-text)',
   'var(--sev-high)': 'var(--sev-high-text)',

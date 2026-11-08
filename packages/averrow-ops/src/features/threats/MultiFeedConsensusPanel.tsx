@@ -5,6 +5,8 @@ import { Badge, Card, PageState } from '@/design-system/components';
 import { relativeTime } from '@/lib/time';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import { PanelHeader } from './PanelHeader';
+import { THREATS_CARD_VARIANT } from './threatsCard';
+import './threats.css';
 import { useMultiFeedConsensus } from '@/hooks/useMultiFeedConsensus';
 
 const COLLAPSED_ROWS = 5;
@@ -24,7 +26,7 @@ export function MultiFeedConsensusPanel() {
   const visible = showAll ? rows : rows.slice(0, COLLAPSED_ROWS);
 
   return (
-    <Card>
+    <Card variant={THREATS_CARD_VARIANT}>
       <PanelHeader title="Corroboration" subtitle="IPs flagged by 4+ independent feeds" />
       <h3 className="mt-2">
         <button
@@ -32,17 +34,14 @@ export function MultiFeedConsensusPanel() {
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
           aria-controls="multi-feed-consensus-body"
-          className="ds-focusable w-full flex items-center justify-between gap-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.2em]"
-          style={{ background: 'none', border: 0, cursor: 'pointer', padding: 0, color: 'var(--text-secondary)' }}
+          className="ds-focusable thr-toggle"
         >
-          <span>Multi-feed consensus{data ? ` (${rows.length})` : ''}</span>
+          <span>Multi-feed consensus{data ? <span className="thr-num"> ({rows.length})</span> : ''}</span>
           <ChevronDown
             size={14}
             aria-hidden="true"
-            style={{
-              transform: open ? 'rotate(180deg)' : 'none',
-              transition: 'transform 0.15s',
-            }}
+            className="thr-toggle-chevron"
+            style={{ transform: open ? 'rotate(180deg)' : 'none' }}
           />
         </button>
       </h3>
@@ -73,29 +72,26 @@ export function MultiFeedConsensusPanel() {
                   <Link
                     to={tabUrl('threats', { q: r.ip_address })}
                     state={{ focusTable: true }}
-                    className="block hover:bg-white/[0.03] transition-colors"
-                    style={{
-                      padding: '8px 10px', borderRadius: 5, textDecoration: 'none',
-                      border: '1px solid var(--border-base)', background: 'var(--bg-input)',
-                    }}
+                    className="thr-row"
+                    data-bordered="true"
                   >
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <span className="text-xs font-mono font-semibold break-all" style={{ color: 'var(--text-primary)' }}>
                         {r.ip_address}
                       </span>
-                      <span className="text-[10px] font-mono" style={{ color: 'var(--text-secondary)' }}>
+                      <span className="thr-label thr-num thr-label--secondary">
                         {plural(r.threat_count, 'threat')} · {plural(r.brand_count, 'brand')} · {r.last_seen ? `newest threat ${relativeTime(r.last_seen)}` : 'newest threat —'}
                       </span>
                     </div>
                     <div className="mt-1 flex items-center gap-1 flex-wrap">
                       <span
-                        className="text-[10px] font-mono font-bold mr-1"
-                        style={{ color: 'var(--primary-text)' }}
+                        className="thr-label thr-num mr-1"
+                        style={{ color: 'var(--primary-text)', fontWeight: 600 }}
                       >
                         {plural(r.feed_count, 'feed')}
                       </span>
                       {r.feeds.map((f) => (
-                        <Badge key={f} label={f} size="xs" />
+                        <Badge key={f} label={f} size="md" font="sans" />
                       ))}
                     </div>
                   </Link>
@@ -109,8 +105,7 @@ export function MultiFeedConsensusPanel() {
               onClick={() => setShowAll((v) => !v)}
               aria-expanded={showAll}
               aria-controls="multi-feed-consensus-list"
-              className="ds-focusable mt-2 py-1.5 min-h-[24px] font-mono text-[10px] font-bold uppercase tracking-wider"
-              style={{ background: 'none', border: 0, cursor: 'pointer', color: 'var(--primary-text)' }}
+              className="ds-focusable thr-more"
             >
               {showAll ? 'Show fewer' : `Show all (${rows.length})`}
             </button>

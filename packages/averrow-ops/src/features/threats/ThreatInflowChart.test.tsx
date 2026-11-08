@@ -49,7 +49,7 @@ describe('ThreatInflowChart — malformed-response guard (isInflowResponse) and 
     mocks.get.mockResolvedValue({ success: false, error: 'platform compute failed: boom' });
     renderChart();
     // Title always renders; the guard routes the malformed body to the error state.
-    expect(screen.getByText('Threat Inflow')).toBeInTheDocument();
+    expect(screen.getByText('Threat inflow')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load threat inflow"));
     expect(screen.queryByText('No data')).not.toBeInTheDocument();
   });
