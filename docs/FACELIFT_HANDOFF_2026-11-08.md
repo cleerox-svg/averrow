@@ -20,12 +20,12 @@ Every deploy above succeeded (`deploy-radar.yml`).
 
 ## Outstanding, in order
 
-1. **Motion PR #1900.** Open as a draft on branch `claude/averrow-p3-1-tokens-d36n7e`. This handoff doc is committed on the same branch.
+1. **DONE (#1900 merged).** Motion PR. Was: open as a draft on branch `claude/averrow-p3-1-tokens-d36n7e`. This handoff doc is committed on the same branch.
    - Contents: M1 motion tokens, native cross-document view transitions with a Firefox fallback, and lazy GSAP core scroll sequences on home and `/platform`. The sequences live in `packages/averrow-marketing/src/lib/motion/`.
    - Local gate passed: 872 Chromium/mobile tests and 32 Firefox/WebKit tests. Code review and design review fixes are in.
    - To do: check CI. If it is green, set `draft:false`, then merge with `merge_method: "merge"` and `expectedHeadSha`. Then confirm the deploy.
 
-2. **Phase 5 final PR: copy, changelog and docs.** A content agent had started this in a worktree that will not survive the session. Redo it from fresh `master` after #1900 merges:
+2. **DONE (v4.9.0, #1902).** Phase 5 final PR: copy, changelog and docs. A content agent had started this in a worktree that will not survive the session. Redo it from fresh `master` after #1900 merges:
    - **Copy.** Replace "Fake profiles" with "Impersonation accounts" in `packages/averrow-marketing/src`. Known pages: `scan.astro`, the platform impersonation page, `solutions/brand-and-legal`, `solutions/index`. Grep for any other "fake profile" or "fake account". Flip, do not delete, any test that asserts the old string.
    - **Version.** Bump `/platform-version.json` from 4.8.0 to 4.9.0.
    - **Staff changelog.** Add a 4.9.0 entry to root `CHANGELOG.md`, detailed: everything in #1896–#1900.
@@ -33,19 +33,28 @@ Every deploy above succeeded (`deploy-radar.yml`).
    - **Docs.** Update the BRAND_BRIEF rollout section (§12) and `packages/averrow-marketing/README.md`. The README should cover the motion loader and sequences, the hero runner `src/scripts/hero.ts`, and the Firefox/WebKit Playwright projects that run `hero.spec.ts` and `motion.spec.ts`.
    - After it merges, `tag-release.yml` creates the v4.9.0 tag.
 
-3. **L50 sample report.** Still open from the marketing review list.
+3. **DONE (#1908).** L50 sample report, from the marketing review list.
 
-4. **Phase 4 test email.** Not sent yet. The owner was asked which inbox to use, or whether to use `BRIEFING_RECIPIENT`. No answer yet.
+4. **DONE.** Phase 4 test email sent to claude.leroux@averrow.com and confirmed by the owner.
 
-5. **Phase 6: per-screen redesign.** One PR per screen, in this order:
-   1. Shell (`components/layout/ShellV4.tsx`)
-   2. Overview (`features/home/OverviewV4.tsx`)
+5. **Phase 6: per-screen redesign.** Screen 1 (Shell) is done; Overview is next. One PR per screen, in this order:
+   1. ~~Shell (`components/layout/ShellV4.tsx`)~~ DONE (#1909)
+   2. Overview (`features/home/OverviewV4.tsx`) — next
    3. Alerts / Threats
    4. Tenant dashboard
    5. Login (facelift parity with FarmTrack is suspended by owner decision; see `docs/SHARED_LOGIN_SPEC.md`)
    6. Observatory controls
 
    Run each one through the full §1A pipeline: build, test, `qa-verifier`, then code and design review (plus appsec for Login). The owner asked for no previews: ship it like the flip and send screenshots afterwards.
+
+## Also shipped 2026-11-08
+
+- D1 overload fixes: #1901, #1904, #1907.
+- Sign-in fixes: #1905.
+
+## Owner action
+
+- The abuse.ch feeds (urlhaus, threatfox, malwarebazaar) fail with 401/403. The `ABUSECH_AUTH_KEY` secret needs renewing.
 
 ## Owner decisions to keep
 

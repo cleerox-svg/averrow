@@ -586,7 +586,8 @@ while every agent reported `success`. Rules that came out of it:
   orphaned), set = a finished run (degraded, incomplete or awaiting approval). Never read
   `status = 'partial'` without it. Navigator's reaper (`lib/agent-runs-reaper.ts`)
   reaps orphans with `status IN ('partial','running')` past the per-agent
-  ceiling (default 90 min).
+  ceiling (default 90 min); its candidate SELECT is pinned `INDEXED BY
+  idx_agent_runs_open` (partial index over open rows, migration 0320).
 - **Alert:** Flight Control raises `platform_ai_calls_failing` (severity
   `high` — NOT `critical`, which would auto-create an incident that surfaces
   on the public status page) when `budget_ledger` has been silent >2h AND an
@@ -1764,7 +1765,7 @@ top-level `<section>_error` key (e.g. `agent_mesh_error`) instead of a 500 —
 check for `*_error` keys before trusting a zero. Full-table sections are
 KV-cached with a single-flight refill: `enrichment_pipeline` 30 min (so
 `enriched_last_hour` can lag ~30 min), `platform_totals` and `alerts.by_tier`
-1 h, `cartographer_exhausted_by_feed` 5 min. Before v17 the endpoint itself
+1 h, `cartographer_exhausted_by_feed` 5 min. The windowed `agent_mesh` / `feeds` rollups use a plain `started_at >= …` range served by `idx_agent_runs_started` / `idx_feed_pulls_started` (migration 0319). Before v17 the endpoint itself
 fired ~40 concurrent reads and could trip D1's 10 s overload window on its own.
 
 This table is a curated subset for common health-check reading, not an

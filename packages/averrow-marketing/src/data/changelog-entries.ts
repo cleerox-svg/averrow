@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.9.1",
+    publishedAt: "2026-11-08",
+    kind: "Improvement",
+    title: "More reliable sign-in and a calmer app",
+    description:
+      "Signing in is more dependable and easier to understand. If something goes wrong, you now land back on the sign-in page with a clear message instead of a dead end, and invitations and Google sign-in take you to the right place. Sign-in links in your email also keep working when an email security scanner opens them first: you confirm on a short page that shows your masked address. The app navigation has had a calmer, more consistent refresh, with clearer labels, steadier hover and active states, an honest offline indicator in place of the pulsing live badge, and better support for keyboard and screen-reader use. We also made the platform faster and more reliable under heavy load, and polished the wording in the sample operation report.",
+  },
+  {
     version: "v4.9.0",
     publishedAt: "2026-11-08",
     kind: "Improvement",

@@ -860,50 +860,55 @@ unchanged):
 
 ## SIDEBAR STANDARD
 
-The sidebar uses the same 5 depth rules. This replaces the current Phase 8a treatment.
+Shipped in Phase 6 screen 1 (#1909, 2026-11-08). The shell is
+`packages/averrow-ops/src/components/layout/ShellV4.tsx` (the only ops shell),
+styled by `shell-v4.css` in the same folder. Sidebar, top bar, command palette
+(`CommandPalette.tsx`) and theme button (`ThemeCycleButton.tsx`) are all there.
+Everything is token-driven; do not hard-code colours, sizes or timings here.
 
-```tsx
-// Sidebar container
-style={{
-  background:           'linear-gradient(180deg, rgba(10,16,30,0.96) 0%, rgba(6,10,20,0.99) 100%)',
-  backdropFilter:       'blur(24px)',
-  WebkitBackdropFilter: 'blur(24px)',
-  borderRight:          '1px solid rgba(255,255,255,0.07)',
-  boxShadow:            '4px 0 48px rgba(0,0,0,0.60), inset -1px 0 0 rgba(255,255,255,0.05)',
-}}
+**Canvas.** Under an accent (`:root[data-accent]`, the facelift default) the
+shell canvas is flat `--bg-page`: no vignette, no grid. Only the legacy look
+(`FACELIFT = false`) keeps the radial vignette and masked grid. The sidebar
+itself is `--bg-sidebar` with a `--border-base` right edge.
 
-// Section headers (INTELLIGENCE / RESPONSE / PLATFORM)
-// Label + horizontal line
-<div style={{ display:'flex', alignItems:'center', gap:8, padding:'16px 16px 6px' }}>
-  <span style={{ fontSize:9, fontFamily:'monospace', letterSpacing:'0.22em', color:'rgba(255,255,255,0.35)', textTransform:'uppercase', whiteSpace:'nowrap' }}>
-    {section}
-  </span>
-  <div style={{ flex:1, height:1, background:'linear-gradient(90deg, rgba(255,255,255,0.08), transparent)' }} />
-</div>
+**Group labels.** Sentence-case sans at the `--type-label-*` scale (12px /
+16px line, weight 500) in `--text-tertiary`. Nav group labels and palette
+section headings are authored in caps and rendered through
+`sentenceCase()` (`src/lib/sentence-case.ts`), which lower-cases words and keeps
+the acronym set (`SOC`, `AI`, `DNS`, `CT`, `IP`, `ASN`, `URL`, `NEXUS`) upper-case.
+Never uppercase or mono-space a group label. Mono is for facts (the nav
+count pill, version line).
 
-// Inactive nav item
-style={{
-  display:     'flex', alignItems: 'center', gap: 10,
-  padding:     '9px 14px', margin: '1px 8px', borderRadius: 10,
-  color:       'rgba(255,255,255,0.55)',
-  background:  'transparent',
-  border:      '1px solid transparent',
-  transition:  'all 0.15s ease',
-}}
+**Nav items (`.v4-item`).** Sans 13px / weight 500, `--text-secondary`, 16px icon.
+- Hover darkens, never lightens. Dark: text goes to `--text-primary` with a faint
+  `--bg-page` fill. Light: a 6% `--text-primary` ink fill.
+- Active: text `--text-primary`, background gradient from
+  `--nav-active-fill-v4-1` to `--nav-active-fill-v4-2`, inset ring
+  `--nav-active-border`, glow `--nav-active-glow-v4` (theme-aware tokens in
+  `tokens.css`). Active is not amber. The 3px bar uses `--primary`; under an
+  accent it has no glow, and `<NavIndicator/>` (`@averrow/shared/ui`) draws the
+  gliding bar instead (the per-item bar is hidden while `.v4-nav[data-glide]`).
+- The count pill is a neutral pill under an accent (a count is not a primary
+  action); the legacy look keeps the tinted pill.
+- Transitions use `--motion-fast` / `--ease-standard` with `120ms` / `ease`
+  fallbacks; the mobile drawer uses `--motion-slow`, the palette `--motion-base`.
+  `prefers-reduced-motion` disables them.
+- Focus: `outline: 2px solid var(--focus-ring)` (`--text-primary` in light).
+  Mobile hit targets are 44px.
 
-// Active nav item — amber treatment
-style={{
-  display:    'flex', alignItems: 'center', gap: 10,
-  padding:    '9px 14px', margin: '1px 8px', borderRadius: 10,
-  color:      '#E5A832',
-  background: 'linear-gradient(135deg, rgba(229,168,50,0.12), rgba(229,168,50,0.06))',
-  border:     '1px solid rgba(229,168,50,0.22)',
-  boxShadow:  'inset 0 1px 0 rgba(229,168,50,0.20), 0 0 12px rgba(229,168,50,0.08)',
-  // Left accent bar
-  borderLeft: '2px solid #E5A832',
-  paddingLeft: '12px', // compensate for border
-}}
-```
+**Accessibility structure.** Each nav group is `role="group"` with
+`aria-labelledby` pointing at its label's id (`v4-grp-<slug>`). Palette sections
+do the same (`.cmdk-group`, label `.cmdk-group-label`).
+
+**Offline status.** `.v4-offline` inside `.v4-top-right` (with the bell and
+avatar) is an always-mounted `role="status"` / `aria-live="polite"` region, so
+assistive tech announces the change. It is empty (and hidden by `:empty`)
+unless `navigator.onLine === false`, then shows a WifiOff icon and "Offline"
+in `--sev-medium-text`. No pulse.
+
+**Theme button.** `ThemeCycleButton` sits in the sidebar footer (`.v4-foot`,
+styled `.v4-theme-btn`), not the top bar: `--text-tertiary`, `--text-primary`
+on hover, 44px minimum target.
 
 ---
 
@@ -1069,14 +1074,14 @@ No flat backgrounds. No rgba() fills without the 5 depth rules."
 
 ## WHAT GETS REBUILT NEXT
 
-Priority order for applying this standard:
+Phase 6 per-screen redesign order (see `docs/brand/BRAND_BRIEF.md` §12):
 
-1. **Sidebar** — upgrade to sidebar standard above
-2. **Observatory mobile chrome** — mode tabs, stat bar, bottom panel
-3. **Brands Hub** — table rows, stat cards, search bar
-4. **Brand Detail** — exposure card (ExposureGauge removed in PR3, 2026-10), tab bar, stat grid
-5. **Threats / Alerts** — table rows, filter chips, detail cards
-6. **All remaining pages** — systematic pass
+1. ~~**Shell**~~ — done (#1909, 2026-11-08): sidebar, top bar, command palette, theme button
+2. **Overview** (`features/home/OverviewV4.tsx`) — next
+3. **Alerts / Threats** — table rows, filter chips, detail cards
+4. **Tenant dashboard**
+5. **Login** (FarmTrack parity stays suspended)
+6. **Observatory controls**
 
 Each screen gets its own Claude Code session.
 Each session reads this document before writing a single line.
