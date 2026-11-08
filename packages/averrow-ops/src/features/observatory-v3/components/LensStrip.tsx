@@ -89,6 +89,7 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
   };
 
   // Only the alpha channel of a mask matters: `black` / `transparent` are the mask's on / off, not colours on screen.
+  const chevron = touch ? 28 : 24;
   const mask = `linear-gradient(90deg, ${edges.left ? 'transparent 0, black ' + EDGE + 'px' : 'black 0'}, ${edges.right ? 'black calc(100% - ' + EDGE + 'px), transparent 100%' : 'black 100%'})`;
 
   return (
@@ -110,7 +111,8 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
         aria-orientation="horizontal"
         onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRove(null); }}
         className="flex items-center gap-[3px] px-1 overflow-x-auto min-w-0 h-full"
-        style={{ scrollbarWidth: 'none', WebkitMaskImage: mask, maskImage: mask }}
+        // Room for the paging chevrons, so a tab is never drawn under one.
+        style={{ scrollbarWidth: 'none', WebkitMaskImage: mask, maskImage: mask, paddingLeft: edges.left ? chevron : undefined, paddingRight: edges.right ? chevron : undefined }}
       >
         {LENS_IDS.map((id, i) => {
           const active = id === lens;
@@ -132,6 +134,8 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
                 LABEL,
                 'transition-[background,color] duration-150 motion-reduce:transition-none',
                 touch ? 'min-h-[44px]' : 'min-h-[32px]',
+                // the active tab's border would double the focus ring: the ring replaces it while focused
+                'focus-visible:!border-transparent',
               )}
               style={{
                 border: `1px solid ${active ? 'var(--primary-border)' : 'transparent'}`,
@@ -152,7 +156,7 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
           aria-hidden
           onClick={() => page(side === 'left' ? -1 : 1)}
           className={cn('absolute top-0 bottom-0 inline-flex items-center justify-center', side === 'left' ? 'left-0 rounded-l-xl' : 'right-0 rounded-r-xl')}
-          style={{ width: touch ? 28 : 22, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+          style={{ width: chevron, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
         >
           {side === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
         </button>

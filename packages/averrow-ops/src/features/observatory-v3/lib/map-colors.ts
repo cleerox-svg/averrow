@@ -5,7 +5,22 @@
  * fixed, not theme tokens; legend *text* uses theme tokens.
  */
 
+import { sentenceCase } from '@/lib/sentence-case';
+
 export type Rgba = [number, number, number, number];
+
+/** Lens colours the WebGL lens layers draw; the legends read the same tuples (rgbCss) so the key cannot drift. */
+export const LENS_COLORS = {
+  cyan: [122, 234, 255, 255] as Rgba,
+  violet: [167, 139, 250, 255] as Rgba,
+  slate: [148, 163, 184, 255] as Rgba,
+  fuchsia: [240, 171, 252, 255] as Rgba,
+  pink: [244, 114, 182, 255] as Rgba,
+  white: [255, 255, 255, 210] as Rgba,
+};
+
+/** The flat basemap's own background, whatever the page theme (ThreatMapV3's backdrop; the legend ramps sit on it). */
+export const BASEMAP_BACKDROP = '#0e0e0e';
 export type ColorBy = 'severity' | 'type';
 
 export const SEVERITY_COLORS: Record<string, Rgba> = {
@@ -89,4 +104,9 @@ export function sevText(severity: string | null | undefined): string {
 
 export function typeLabel(type: string | null | undefined): string {
   return (type ?? '').replace(/_/g, ' ');
+}
+
+/** The type as a display label: sentence case, acronyms kept ("Malicious IP", "Spam botnet C2"). Mid-sentence uses stay on typeLabel. */
+export function typeDisplayLabel(type: string | null | undefined): string {
+  return sentenceCase(typeLabel(type));
 }

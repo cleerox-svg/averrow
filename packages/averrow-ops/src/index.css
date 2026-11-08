@@ -862,7 +862,6 @@
   background: var(--bg-card);
   border: 1px solid var(--border-base);
   border-radius: 12px;
-  overflow: hidden;
 }
 .obs-root .maplibregl-ctrl.maplibregl-ctrl-group:not(:empty) {
   box-shadow: var(--card-shadow-elevated);
@@ -880,8 +879,11 @@
 .obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:focus,
 .obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:focus:focus-visible {
   box-shadow: none;
-  border-radius: 0;
 }
+/* Buttons round their own corners (the group cannot clip: the Heat "flat-only" reason hangs outside it). */
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:first-child { border-radius: 11px 11px 0 0; }
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:last-child { border-radius: 0 0 11px 11px; }
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:only-child { border-radius: 11px; }
 .obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;

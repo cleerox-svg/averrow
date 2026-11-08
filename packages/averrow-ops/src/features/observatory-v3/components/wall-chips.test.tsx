@@ -129,11 +129,12 @@ describe('brand filter while the cached arcs carry no brand ids (right after a d
 });
 
 describe('phone filters card', () => {
-  it('threat types are one column on touch (labels do not truncate), two otherwise', () => {
+  it('threat types are one column on touch, an auto-fit grid otherwise; labels wrap, never truncate', () => {
     const { container, rerender } = render(<TypeMultiSelect types={[]} onChange={vi.fn()} touch />);
-    expect(container.querySelector('.grid')!.className).toContain('grid-cols-1');
+    expect((container.querySelector('.grid') as HTMLElement).style.gridTemplateColumns).toBe('1fr');
     rerender(<TypeMultiSelect types={[]} onChange={vi.fn()} />);
-    expect(container.querySelector('.grid')!.className).toContain('grid-cols-2');
+    expect((container.querySelector('.grid') as HTMLElement).style.gridTemplateColumns).toContain('auto-fit');
+    expect(container.querySelector('.truncate')).toBeNull();
   });
 
   it('ControlRail can split severity from the rest, so severity can sit next to Type', () => {

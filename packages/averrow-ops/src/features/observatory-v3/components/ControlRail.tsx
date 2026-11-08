@@ -66,6 +66,8 @@ interface Item {
   icon: ReactNode;
   pressed: boolean;
   onPress: () => void;
+  /** The words shown beside the icon in the panel layout, when they differ from the accessible name. */
+  visible?: string;
   /** Unavailable right now; `hint` says why. */
   disabled?: boolean;
 }
@@ -95,7 +97,7 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
         }}
       >
         {item.icon}
-        {panel && <span className="min-w-0 text-left leading-tight">{item.label}</span>}
+        {panel && <span className="min-w-0 text-left leading-tight">{item.visible ?? item.label}</span>}
       </button>
       {!panel && (
         <span
@@ -167,6 +169,7 @@ export function ControlRail({
     ? SEVERITY_IDS.map(id => ({
       id: `sev-${id}`,
       label: `Severity: ${SEV_NOTE[id]}`,
+      visible: SEV_NOTE[id],
       hint: sev.length === 0 ? `Show only ${id} threats (select more to add)` : sev.includes(id) ? `Stop filtering to ${id}` : `Also show ${id} threats`,
       icon: icon(<span aria-hidden className="font-mono text-type-label font-semibold leading-none" style={{ color: sevText(id) }}>{id.charAt(0).toUpperCase()}</span>),
       pressed: sev.includes(id),
@@ -208,7 +211,7 @@ export function ControlRail({
     if (!panel || !traffickable || sevItems.length === 0) return null;
     return (
       <div className={cn('flex flex-col gap-1.5', className)} data-layout={layout} data-part="severity">
-        <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>Severity filter</div>
+        <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>Severity filter</div>
         <Group label="Severity filter" items={sevItems} layout={layout} />
         <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
       </div>
@@ -229,20 +232,20 @@ export function ControlRail({
     >
       {viewItems.length > 0 && (
         <>
-          {panel && <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>View</div>}
+          {panel && <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>View</div>}
           <Group label={lens === 'threats' ? 'Threats view' : lens === 'hosting' ? 'Hosting measure' : 'Baseline measure'} items={viewItems} layout={layout} />
           {!panel && traffickable && <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
         </>
       )}
       {traffickable && (
         <>
-          {panel && <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>Threat traffic underneath</div>}
+          {panel && <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>Threat traffic underneath</div>}
           <Group label="Threat traffic underneath" items={trafficItems} layout={layout} />
           {!panel && <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
           <Group label="Map options" items={extras} layout={layout} />
           {sevItems.length > 0 && !(panel && part === 'rest') && (
             <>
-              {panel ? <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>Severity filter</div> : <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
+              {panel ? <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>Severity filter</div> : <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
               <Group label="Severity filter" items={sevItems} layout={layout} />
             </>
           )}

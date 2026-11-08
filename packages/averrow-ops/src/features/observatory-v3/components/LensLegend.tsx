@@ -30,22 +30,16 @@ import type { VelocityModel } from '../lib/lens/velocity';
 import { VELOCITY_FILLING, VELOCITY_RGB } from '../lib/lens/velocity';
 import type { ActorModel } from '../lib/lens/actors';
 import type { ActorListItem } from '@/hooks/useObservatoryLenses';
-import { rgbCss, type Rgba } from '../lib/map-colors';
-import { BASEMAP_BG, BODY, LABEL } from '../lib/chrome-classes';
+import { BASEMAP_BACKDROP, LENS_COLORS, rgbCss, type Rgba } from '../lib/map-colors';
+import { BODY, LABEL } from '../lib/chrome-classes';
 
-// Lens colours as the map draws them: literals in the layers, so the legend repeats them rather than reading a theme token.
-// matches layers/lens-layers.ts CYAN (map colour)
-const MAP_CYAN = 'rgb(122, 234, 255)';
-// matches layers/lens-layers.ts VIOLET (map colour)
-const MAP_VIOLET = 'rgb(167, 139, 250)';
-// matches layers/lens-layers.ts SLATE (map colour)
-const MAP_SLATE = 'rgb(148, 163, 184)';
-// matches layers/lens-layers.ts PINK (map colour)
-const MAP_PINK = 'rgb(244, 114, 182)';
-// matches layers/lens-layers.ts FUCHSIA (map colour)
-const MAP_FUCHSIA = 'rgb(240, 171, 252)';
-// matches layers/lens-layers.ts BOT_ABOVE_LINE (map colour)
-const MAP_WHITE = 'rgb(255, 255, 255)';
+// Lens colours come from the same tuples the lens layers draw (LENS_COLORS), so the key cannot drift from the map.
+const MAP_CYAN = rgbCss(LENS_COLORS.cyan);
+const MAP_VIOLET = rgbCss(LENS_COLORS.violet);
+const MAP_SLATE = rgbCss(LENS_COLORS.slate);
+const MAP_PINK = rgbCss(LENS_COLORS.pink);
+const MAP_FUCHSIA = rgbCss(LENS_COLORS.fuchsia);
+const MAP_WHITE = rgbCss(LENS_COLORS.white);
 
 export interface QueryState {
   isLoading: boolean;
@@ -116,7 +110,7 @@ export function Status({ q, empty, emptyText, what }: { q: QueryState; empty: bo
 function Section({ title, children, id }: { title: string; children: ReactNode; id: string }) {
   return (
     <section aria-labelledby={id} className="flex flex-col gap-1.5">
-      <h3 id={id} className={LABEL} style={{ color: 'var(--text-tertiary)', margin: 0 }}>{title}</h3>
+      <h3 id={id} className={LABEL} style={{ color: 'var(--text-secondary)', margin: 0 }}>{title}</h3>
       {children}
     </section>
   );
@@ -321,7 +315,7 @@ function BotShareSection({ bot }: { bot: LegendSectionProps['baseline']['bot'] }
             <span>{formatPct(m.domain.minBot)}</span><span>{formatPct(m.domain.maxBot)}</span>
           </div>
           <ul className="list-none p-0 m-0">
-            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: 2, background: BASEMAP_BG, border: `1.5px solid ${MAP_WHITE}`, flexShrink: 0 }} />}>
+            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: 2, background: BASEMAP_BACKDROP, border: `1.5px solid ${MAP_WHITE}`, flexShrink: 0 }} />}>
               Outlined: above the global average{m.globalAvg != null ? ` (${formatPct(m.globalAvg)})` : ''}
             </Row>
           </ul>

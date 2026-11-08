@@ -124,7 +124,13 @@ export function FiltersPopover({
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent | TouchEvent) => { if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false); };
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        // Focus inside the dialog goes back to the trigger rather than to <body> when it closes.
+        if (dialogRef.current?.contains(document.activeElement)) btnRef.current?.focus({ preventScroll: true });
+        setOpen(false);
+      }
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); btnRef.current?.focus(); }
     };

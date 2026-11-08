@@ -8,8 +8,8 @@
  * Colour is not part of these: callers set it with a token (`--text-tertiary` for labels, `--text-secondary` for prose).
  */
 
-/** A section / field label: sans, 12px, sentence case. */
-export const LABEL = 'text-type-label';
+/** A section heading / field label: sans, 12px, semibold, sentence case. Callers colour it --text-secondary (tertiary is for notes and hints). */
+export const LABEL = 'text-type-label font-semibold';
 
 /** Prose and descriptions in dense chrome (legend rows, hints, notes): sans, 12px, regular weight. */
 export const BODY = 'text-type-label font-normal';
@@ -22,11 +22,3 @@ export const FACT_STRONG = 'font-mono text-type-label font-semibold';
 
 /** Coarse pointers (touch, stylus) get 44px targets without a JS breakpoint. */
 export const COARSE_TARGET = '[@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]';
-
-/** "malware distribution" -> "Malware distribution": sentence case for a lower-case API label (CSS `capitalize` would Title Case it). */
-export function sentence(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-/** The always-dark basemap ground the legend's ramps sit on, whatever the page theme. Matches ThreatMapV3 FLAT_BACKDROP (map colour). */
-export const BASEMAP_BG = '#0e0e0e';

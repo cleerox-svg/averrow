@@ -541,7 +541,7 @@ describe('ObservatoryV3 bot share (a Baseline measure)', () => {
     await waitFor(() => expect(search).toContain('lens=baseline'));
     expect(search).toContain('measure=bot');
     expect(search).not.toContain('mode=');
-    const footer = screen.getByText(/countries/, { selector: 'div.font-mono' });
+    const footer = screen.getByText(/countries/, { selector: 'div[data-stats-bar]' });
     expect(footer.textContent).toMatch(/^7D/);
     // The intel feed (headline bar) is not map data: it is the only request this scene makes.
     expect(urls().filter(u => !u.startsWith('/api/observatory/events'))).toEqual([]);
@@ -981,7 +981,7 @@ describe('ObservatoryV3 chrome', () => {
       return Promise.resolve({ success: true, data: [] });
     });
     renderAt('/observatory');
-    const footer = () => document.querySelector('div.font-mono[aria-busy]') as HTMLElement;
+    const footer = () => document.querySelector('div[data-stats-bar][aria-busy]') as HTMLElement;
     await waitFor(() => expect(footer().textContent).toContain('5'));
     expect(footer().textContent).toMatch(/^7D/);
 
@@ -1013,7 +1013,7 @@ describe('ObservatoryV3 footer label follows the stats query only', () => {
       return Promise.resolve({ success: true, data: [] });
     });
     renderAt('/observatory');
-    const footer = () => document.querySelector('div.font-mono[aria-busy]') as HTMLElement;
+    const footer = () => document.querySelector('div[data-stats-bar][aria-busy]') as HTMLElement;
     await waitFor(() => expect(footer().textContent).toMatch(/^7D/));
     await userEvent.click(screen.getByRole('radio', { name: '30D' }));
     await waitFor(() => expect(footer().textContent).toMatch(/^30D/));

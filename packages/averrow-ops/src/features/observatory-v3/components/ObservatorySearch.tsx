@@ -91,6 +91,9 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
     };
   }, [open, popover]);
 
+  // The phone's inline field is mounted when its toggle opens it: focus goes straight into it.
+  useEffect(() => { if (inline) inputRef.current?.focus({ preventScroll: true }); }, [inline]);
+
   // The popover input takes focus as it opens.
   useEffect(() => { if (popover) inputRef.current?.focus(); }, [popover]);
 

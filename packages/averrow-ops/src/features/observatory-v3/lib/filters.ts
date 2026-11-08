@@ -12,14 +12,15 @@
  */
 
 import type { ArcData, ObservatoryFilters, ThreatPoint } from '@/hooks/useObservatory';
-import { typeLabel } from './map-colors';
+import { typeLabel, typeDisplayLabel } from './map-colors';
+import { sentenceCase } from '@/lib/sentence-case';
 import { SEVERITY_IDS, THREAT_TYPE_IDS, type ObservatoryPatch, type ObservatoryUrlState, type Severity } from './url-state';
 
 /** The slice of the URL state the filters are made of. */
 export type FilterState = Pick<ObservatoryUrlState, 'sev' | 'type' | 'brand'>;
 
 /** The threat types offered in the multi-select: exactly the ones the API accepts (the `threats.threat_type` CHECK values). */
-export const TYPE_OPTIONS: ReadonlyArray<{ id: string; label: string }> = THREAT_TYPE_IDS.map(id => ({ id, label: typeLabel(id) }));
+export const TYPE_OPTIONS: ReadonlyArray<{ id: string; label: string }> = THREAT_TYPE_IDS.map(id => ({ id, label: typeDisplayLabel(id) }));
 
 /** True when any filter is on. */
 export function hasActiveFilters(f: FilterState): boolean {
@@ -71,8 +72,6 @@ export interface FilterChip {
   removeLabel: string;
 }
 
-const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
-
 /** Where the brand filter applies: /nodes has no brand dimension, so the node layer is not narrowed by it. */
 export const BRAND_SCOPE_NOTE = 'applies to arcs and stats';
 
@@ -82,8 +81,8 @@ export const BRAND_FILTER_FALLBACK_LABEL = 'Brand filter';
 /** One removable chip per active filter value. `brandName` is the brand's display name (the filter itself is its id). */
 export function filterChips(f: FilterState, brandName?: string | null): FilterChip[] {
   const chips: FilterChip[] = [];
-  for (const s of f.sev) chips.push({ key: `sev:${s}`, kind: 'sev', value: s, label: cap(s), removeLabel: `Remove ${s} severity filter` });
-  for (const t of f.type) chips.push({ key: `type:${t}`, kind: 'type', value: t, label: cap(typeLabel(t)), removeLabel: `Remove ${typeLabel(t)} type filter` });
+  for (const s of f.sev) chips.push({ key: `sev:${s}`, kind: 'sev', value: s, label: sentenceCase(s), removeLabel: `Remove ${s} severity filter` });
+  for (const t of f.type) chips.push({ key: `type:${t}`, kind: 'type', value: t, label: typeDisplayLabel(t), removeLabel: `Remove ${typeLabel(t)} type filter` });
   if (f.brand) {
     const name = brandName || BRAND_FILTER_FALLBACK_LABEL;
     chips.push({ key: `brand:${f.brand}`, kind: 'brand', value: f.brand, label: name, note: BRAND_SCOPE_NOTE, removeLabel: `Remove brand filter ${name}` });

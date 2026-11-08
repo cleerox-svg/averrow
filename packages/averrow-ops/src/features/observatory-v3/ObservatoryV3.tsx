@@ -55,7 +55,7 @@ import { DrillDrawer } from './components/DrillDrawer';
 import { LegendChip } from './components/LegendChip';
 import { LensPanel } from './components/LensPanel';
 import { PeekSheet } from './components/PeekSheet';
-import { BODY, COARSE_TARGET, FACT, LABEL } from './lib/chrome-classes';
+import { BODY, COARSE_TARGET, LABEL } from './lib/chrome-classes';
 import { PeriodSegment, SourceSelect, RefreshButton, FiltersPopover, PERIOD_LABELS, SOURCE_LABELS } from './components/ToolbarControls';
 import { ReplayTimeline, usePlayheadBus } from './components/ReplayTimeline';
 import { buildBotDensityPoints, resolveScaleStops, resolveGlobalAvg, botWallTiles } from './lib/bot-density';
@@ -917,11 +917,11 @@ export function ObservatoryV3() {
   const filtersBody = (
     <>
       <div className="flex flex-col gap-1.5">
-        <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>Period</div>
+        <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>Period</div>
         <PeriodSegment period={period} onChange={setPeriod} touch={phone} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>Source</div>
+        <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>Source</div>
         <SourceSelect source={source} onChange={setSource} touch={phone} disabledReason={fast ? FAST_SOURCE_NOTE : undefined} />
         {/* The select's own reason is a tooltip: there is no hover on touch, so it is also written out. */}
         {fast && <div className={BODY} style={{ color: 'var(--text-tertiary)' }}>{FAST_SOURCE_NOTE}</div>}
@@ -1219,34 +1219,34 @@ export function ObservatoryV3() {
       >
         <div className="flex items-center gap-4 min-w-0">
           {fast ? (
-            <div className={FACT} style={{ color: 'var(--text-muted)' }}>
-              <span style={{ color: 'var(--primary-text)' }}>{periodLabel}</span>
+            <div data-stats-bar className={BODY} style={{ color: 'var(--text-muted)' }}>
+              <span className="font-mono" style={{ color: 'var(--primary-text)' }}>{periodLabel}</span>
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{(L.velocityModel?.total ?? 0).toLocaleString()}</span> fast-weaponized
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{(L.velocityModel?.total ?? 0).toLocaleString()}</span> fast-weaponized
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{L.velocityModel?.points.length ?? 0}</span> countries
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{L.velocityModel?.points.length ?? 0}</span> countries
             </div>
           ) : isBotMode ? (
-            <div className={FACT} style={{ color: 'var(--text-muted)' }}>
+            <div data-stats-bar className={BODY} style={{ color: 'var(--text-muted)' }}>
               {/* Bot share fetches the 7-day Radar window (useBotTraffic(7)). */}
-              <span style={{ color: 'var(--primary-text)' }}>7D</span>
+              <span className="font-mono" style={{ color: 'var(--primary-text)' }}>7D</span>
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
               {botGlobalAvg != null && (
-                <>{' · '}global avg <span style={{ color: 'var(--text-secondary)' }}>{botGlobalAvg.toFixed(1)}%</span> bots</>
+                <>{' · '}global avg <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{botGlobalAvg.toFixed(1)}%</span> bots</>
               )}
             </div>
           ) : (
-            <div className={FACT} aria-busy={statsUpdating} style={{ color: 'var(--text-muted)', opacity: statsUpdating ? 0.6 : 1 }}>
-              <span style={{ color: 'var(--primary-text)' }}>{footerPeriodLabel}</span>
+            <div data-stats-bar className={BODY} aria-busy={statsUpdating} style={{ color: 'var(--text-muted)', opacity: statsUpdating ? 0.6 : 1 }}>
+              <span className="font-mono" style={{ color: 'var(--primary-text)' }}>{footerPeriodLabel}</span>
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{stats?.countries ?? 0}</span> countries
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{stats?.countries ?? 0}</span> countries
               {mapMode === 'global' && threatLayersOn && (
                 <>
                   {' · '}
-                  <span style={{ color: 'var(--text-secondary)' }}>{arcsResolved.length}</span> arcs
+                  <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{arcsResolved.length}</span> arcs
                 </>
               )}
             </div>

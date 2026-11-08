@@ -51,7 +51,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useTokenColors } from '@averrow/shared/theme';
 import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
 import {
-  getSeverityColor, getArcColor, heatmapWeight, sevText, typeLabel, HEATMAP_COLOR_RANGE,
+  getSeverityColor, getArcColor, heatmapWeight, sevText, typeLabel, BASEMAP_BACKDROP, HEATMAP_COLOR_RANGE,
   type ColorBy, type Rgba,
 } from '../lib/map-colors';
 import {
@@ -118,7 +118,7 @@ type Pick<T> = PickingInfo<T>;
 
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 /** The dark basemap's own background, whatever the page theme: what shows beyond the poles when a world-spanning target zooms out. */
-const FLAT_BACKDROP = '#0e0e0e';
+const FLAT_BACKDROP = BASEMAP_BACKDROP;
 /** Pointer-pick tolerance in px: nodes render as 1.5-9px dots, far below a usable hit target. */
 const PICK_RADIUS_FINE = 8;
 const PICK_RADIUS_TOUCH = 16;

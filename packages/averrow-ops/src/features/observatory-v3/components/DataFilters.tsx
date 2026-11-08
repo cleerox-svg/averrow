@@ -16,7 +16,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode,
 import { ChevronDown, Filter as FilterIcon, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ObservatorySearch } from './ObservatorySearch';
-import { BODY, FACT, LABEL, sentence } from '../lib/chrome-classes';
+import { BODY, FACT, LABEL } from '../lib/chrome-classes';
 import { focusInto } from '../lib/popover-focus';
 import { TYPE_OPTIONS, toggleType, type FilterChip } from '../lib/filters';
 import { rgbCss, sevText, THREAT_TYPE_COLORS } from '../lib/map-colors';
@@ -32,8 +32,8 @@ export const FILTERS_MUTED_NOTE = 'Applies to Threats';
 export function TypeMultiSelect({ types, onChange, touch = false }: { types: readonly string[]; onChange: (types: string[]) => void; touch?: boolean }) {
   return (
     <fieldset className="m-0 p-0 border-0 flex flex-col gap-1.5" data-filter="type">
-      <legend className={cn(LABEL, 'p-0 mb-1.5')} style={{ color: 'var(--text-tertiary)' }}>Threat type</legend>
-      <div className={cn('grid gap-x-2 gap-y-0.5', touch ? 'grid-cols-1' : 'grid-cols-2')}>
+      <legend className={cn(LABEL, 'p-0 mb-1.5')} style={{ color: 'var(--text-secondary)' }}>Threat type</legend>
+      <div className="grid gap-x-2 gap-y-0.5" style={{ gridTemplateColumns: touch ? '1fr' : 'repeat(auto-fit, minmax(180px, 1fr))' }}>
         {TYPE_OPTIONS.map(t => {
           const on = types.includes(t.id);
           return (
@@ -50,7 +50,7 @@ export function TypeMultiSelect({ types, onChange, touch = false }: { types: rea
                 style={{ accentColor: 'var(--primary)', width: 14, height: 14 }}
               />
               <span aria-hidden className="shrink-0 rounded-full" style={{ width: 8, height: 8, background: rgbCss(THREAT_TYPE_COLORS[t.id] ?? [120, 130, 145, 255]) }} />
-              <span className="min-w-0 truncate">{sentence(t.label)}</span>
+              <span className="min-w-0 break-words">{t.label}</span>
             </label>
           );
         })}
@@ -68,7 +68,7 @@ export function BrandFilter({ brand, brandName, data, onChange, onActivate, touc
 }) {
   return (
     <div className="flex flex-col gap-1.5" data-filter="brand">
-      <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>Brand</div>
+      <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>Brand</div>
       <ObservatorySearch
         data={data}
         kinds={BRAND_ONLY}
@@ -125,7 +125,13 @@ export function DataFiltersPopover({ count, children, touch = false, className }
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent | TouchEvent) => { if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false); };
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        // Focus inside the dialog goes back to the trigger rather than to <body> when it closes.
+        if (dialogRef.current?.contains(document.activeElement)) btnRef.current?.focus({ preventScroll: true });
+        setOpen(false);
+      }
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); btnRef.current?.focus(); }
     };

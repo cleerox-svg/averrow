@@ -682,7 +682,7 @@ describe('ThreatMapV3: the Flat | Globe toggle lives in the map\'s zoom cluster'
     expect(el.className).toContain('maplibregl-ctrl-group');
     const ctrl = lastMap().controls.find(c => (c as { element?: HTMLElement }).element === el)!;
     expect(lastMap().positions.get(ctrl)).toBe('bottom-right');
-    expect(mounted(el).getByRole('button', { name: 'Globe view' })).toHaveAttribute('aria-pressed', 'false');
+    expect(mounted(el).getByRole('button', { name: 'Flat or globe view' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('there is no toggle without a handler', () => {

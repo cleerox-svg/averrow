@@ -13,10 +13,11 @@ import { cn } from '@/lib/cn';
 import type { LensId, LayerToggles } from '../lib/lenses';
 import type { Measure, ThreatView } from '../lib/url-state';
 import { LENS_DEFS } from '../lib/lenses';
-import { BASEMAP_BG, BODY, FACT, LABEL, sentence } from '../lib/chrome-classes';
+import { BODY, LABEL } from '../lib/chrome-classes';
+import { sentenceCase } from '@/lib/sentence-case';
 import type { ColorBy } from '../lib/map-colors';
 import {
-  SEVERITY_COLORS, SEVERITY_ORDER, THREAT_TYPE_COLORS, TYPE_ORDER, HEATMAP_COLOR_RANGE, rgbCss, typeLabel,
+  SEVERITY_COLORS, SEVERITY_ORDER, THREAT_TYPE_COLORS, TYPE_ORDER, HEATMAP_COLOR_RANGE, rgbCss, typeDisplayLabel, BASEMAP_BACKDROP,
 } from '../lib/map-colors';
 import {
   ActorsSection, BaselineSection, CampaignsSection, HostingSection, MovementSection, OperationsSection, VelocitySection,
@@ -54,17 +55,17 @@ function Swatch({ color }: { color: string }) {
 export function ThreatKey({ colorBy, reducedMotion }: { colorBy: ColorBy; reducedMotion: boolean }) {
   return (
     <section className="flex flex-col gap-1.5" aria-label="Threat colours">
-      <h3 className={LABEL} style={{ color: 'var(--text-tertiary)', margin: 0 }}>{colorBy === 'severity' ? 'Colour: severity' : 'Colour: threat type'}</h3>
+      <h3 className={LABEL} style={{ color: 'var(--text-secondary)', margin: 0 }}>{colorBy === 'severity' ? 'Colour: severity' : 'Colour: threat type'}</h3>
       <ul className="grid grid-cols-2 gap-x-3 gap-y-1 list-none p-0 m-0">
         {colorBy === 'severity'
           ? SEVERITY_ORDER.map(s => (
             <li key={s} className={`flex items-center gap-1.5 ${BODY}`} style={{ color: 'var(--text-secondary)' }}>
-              <Swatch color={rgbCss(SEVERITY_COLORS[s])} />{sentence(s)}
+              <Swatch color={rgbCss(SEVERITY_COLORS[s])} />{sentenceCase(s)}
             </li>
           ))
           : TYPE_ORDER.map(t => (
             <li key={t} className={`flex items-center gap-1.5 min-w-0 ${BODY}`} style={{ color: 'var(--text-secondary)' }}>
-              <Swatch color={rgbCss(THREAT_TYPE_COLORS[t])} /><span className="truncate">{sentence(typeLabel(t))}</span>
+              <Swatch color={rgbCss(THREAT_TYPE_COLORS[t])} /><span className="truncate">{typeDisplayLabel(t)}</span>
             </li>
           ))}
       </ul>
@@ -77,14 +78,14 @@ export function ThreatKey({ colorBy, reducedMotion }: { colorBy: ColorBy; reduce
 }
 
 function HeatKey() {
-  const gradient = `linear-gradient(90deg, ${HEATMAP_COLOR_RANGE.map(c => `rgb(${c[0]} ${c[1]} ${c[2]} / ${Math.max(c[3], 40) / 255})`).join(', ')})`;
+  const gradient = `linear-gradient(90deg, ${HEATMAP_COLOR_RANGE.map(c => `color-mix(in srgb, ${rgbCss(c)} ${Math.round((Math.max(c[3], 40) / 255) * 100)}%, transparent)`).join(', ')})`;
   return (
     <section className="flex flex-col gap-1.5" aria-label="Threat density">
-      <h3 className={LABEL} style={{ color: 'var(--text-tertiary)', margin: 0 }}>Threat density</h3>
+      <h3 className={LABEL} style={{ color: 'var(--text-secondary)', margin: 0 }}>Threat density</h3>
       <div
         role="img"
         aria-label="Colour scale from low to high threat density"
-        style={{ height: 8, borderRadius: 4, background: gradient, backgroundColor: BASEMAP_BG }}
+        style={{ height: 8, borderRadius: 4, background: gradient, backgroundColor: BASEMAP_BACKDROP }}
       />
       <div className={`flex justify-between ${BODY}`} style={{ color: 'var(--text-secondary)' }}>
         <span>Low</span><span>High</span>
@@ -154,7 +155,7 @@ export function LegendChip(props: LegendChipProps) {
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen(o => !o)}
-        className={`ds-focusable inline-flex items-center gap-2 rounded-xl px-3 min-h-[36px] max-[899px]:min-h-[44px] ${FACT}`}
+        className={`ds-focusable inline-flex items-center gap-2 rounded-xl px-3 min-h-[36px] max-[899px]:min-h-[44px] ${BODY}`}
         style={{
           background: 'var(--bg-card)',
           backdropFilter: 'blur(20px)',
@@ -166,7 +167,7 @@ export function LegendChip(props: LegendChipProps) {
         }}
       >
         <span aria-hidden className="rounded-full" style={{ width: 7, height: 7, background: dot }} />
-        <span className={`font-sans ${LABEL}`} style={{ color: 'var(--text-tertiary)' }}>Legend</span>
+        <span className={LABEL} style={{ color: 'var(--text-secondary)' }}>Legend</span>
         <span className="truncate max-w-[170px]" role={summary.tone === 'error' ? 'alert' : undefined}>{summary.text}</span>
         <ChevronUp size={12} aria-hidden className="shrink-0 transition-transform duration-150 motion-reduce:transition-none" style={{ transform: open ? 'rotate(180deg)' : undefined }} />
       </button>
