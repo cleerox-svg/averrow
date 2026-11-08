@@ -1,0 +1,68 @@
+/* Tenant Workspace overview (Facelift Phase 6 screen 4).
+
+   Every rule here is scoped to `:root[data-accent] .tenant-home`, and data-accent
+   is only set under FACELIFT, so these are facelift-only overrides. Modules.tsx is
+   token-only (no hex, rgba or white-alpha) and its output applies in BOTH looks:
+   the amber-to-status colour fix and the kit components (Banner, Badge, Table,
+   PageState) are intentionally shared. The TSX carries the base styles (borders,
+   hover, ds-focusable); this file adds only what differs under the facelift:
+   the flat-surface reset, the module-card hover surface, the banner CTA focus ring
+   and the touch-target floor. */
+
+/* Flat cards share the page card surface (the kit default is the sunken deep tone). */
+:root[data-accent] .tenant-home {
+  --card-flat-bg: var(--bg-card);
+}
+
+/* Module cards: facelift radius, hover darkens the surface (TSX supplies the border change). */
+:root[data-accent] .tenant-home .th-module {
+  border-radius: var(--card-radius);
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+              border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+:root[data-accent] .tenant-home .th-module:hover {
+  background: var(--bg-page);
+}
+:root[data-accent][data-theme="light"] .tenant-home .th-module:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+/* Locked modules read as available-to-add: quieter surface, same affordance. */
+:root[data-accent] .tenant-home .th-module--locked {
+  background: transparent;
+}
+
+/* Brand table rows: light theme hover is a tint of the text colour (TSX supplies the dark hover). */
+:root[data-accent][data-theme="light"] .tenant-home .th-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+/* The authorization CTA is a link styled as a kit Button. The kit Button's own focus
+   treatment is transparent in the dark facelift, so give this CTA the shared ring. */
+:root[data-accent] .tenant-home .ds-banner-actions a {
+  text-decoration: none;
+}
+:root[data-accent] .tenant-home .ds-banner-actions a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+:root[data-accent][data-theme="light"] .tenant-home .ds-banner-actions a:focus-visible {
+  outline-color: var(--text-primary);
+}
+
+/* Touch: every standalone link and the CTA reach 44px. */
+@media (pointer: coarse) {
+  :root[data-accent] .tenant-home .th-tap {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  :root[data-accent] .tenant-home .ds-banner-actions a {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-accent] .tenant-home .th-module {
+    transition: none;
+  }
+}
