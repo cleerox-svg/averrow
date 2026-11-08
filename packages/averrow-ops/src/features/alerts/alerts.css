@@ -107,9 +107,16 @@
 
 /* ── Row layout ─────────────────────────────────────────────── */
 .alerts-v4 .al-row-title { flex: 1 1 auto; min-width: 8rem; }
+/* Fixed-basis, left-aligned meta group: its left edge sits at the same x on
+   every row (row width − basis), so the severity / status slots line up no
+   matter which optional chips a row carries. Time stays pinned right. The
+   basis fits the widest row (sev + status + score + AI + owner + SLA + time);
+   if the container squeezes it, it wraps instead of overflowing. */
 .alerts-v4 .al-row-meta {
-  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: flex-start; gap: 12px;
+  flex: 0 1 36rem; min-width: 0; flex-wrap: wrap; row-gap: 6px;
 }
+.alerts-v4 .al-row-meta .al-time { margin-left: auto; }
 /* Fixed slots so severity / status align down the list. */
 .alerts-v4 .al-slot { display: inline-flex; align-items: center; }
 .alerts-v4 .al-slot--sev { min-width: 4.5rem; }

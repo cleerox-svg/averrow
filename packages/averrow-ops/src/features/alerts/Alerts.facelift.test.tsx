@@ -119,6 +119,21 @@ describe('Alerts facelift', () => {
     expect(meta.querySelector('.al-slot--status')).not.toBeNull();
     expect(meta.querySelector('.al-time')).not.toBeNull();
     expect(container.querySelector('.al-row-title')).toBe(row);
+    // Slots come first so they start at the same x on every row; time is last.
+    expect(meta.firstElementChild).toHaveClass('al-slot--sev');
+    expect(meta.children[1]).toHaveClass('al-slot--status');
+    expect(meta.lastElementChild).toHaveClass('al-time');
+  });
+
+  it('stylesheet: meta group has a fixed, left-aligned basis so slots align across rows', () => {
+    const css = read('alerts.css');
+    const m = css.match(/\.alerts-v4 \.al-row-meta \{([^}]*)\}/);
+    expect(m).not.toBeNull();
+    const body = m![1];
+    expect(body).toMatch(/flex:\s*0 1 36rem/);
+    expect(body).toMatch(/justify-content:\s*flex-start/);
+    expect(body).not.toMatch(/flex-shrink:\s*0/);
+    expect(css).toMatch(/\.al-row-meta \.al-time \{ margin-left: auto; \}/);
   });
 
   it('group count badge is a neutral chip, not a severity badge', async () => {
