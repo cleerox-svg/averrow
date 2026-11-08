@@ -319,7 +319,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     background: var(--bg-secondary);
     text-decoration: none;
     color: inherit;
-    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+    transition: border-color var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard);
   }
   .sec-trust-tile:hover {
     border-color: color-mix(in srgb, var(--primary) 40%, transparent);
@@ -396,14 +396,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 1.75rem;
-    transition: all 0.3s;
+    transition: background-color var(--motion-slow) var(--ease-standard), border-color var(--motion-slow) var(--ease-standard), box-shadow var(--motion-slow) var(--ease-standard), transform var(--motion-slow) var(--ease-standard);
     position: relative;
     overflow: hidden;
   }
   .sec-card:hover {
     border-color: var(--accent);
     box-shadow: var(--shadow-glow);
-    transform: translateY(-2px);
+    transform: translateY(calc(-1 * var(--motion-lift)));
   }
   .sec-card-header { display: flex; align-items: center; gap: 0.85rem; margin-bottom: 0.85rem; }
   .sec-card-icon {
@@ -428,12 +428,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 1.5rem;
-    transition: all 0.3s;
+    transition: background-color var(--motion-slow) var(--ease-standard), border-color var(--motion-slow) var(--ease-standard), box-shadow var(--motion-slow) var(--ease-standard), transform var(--motion-slow) var(--ease-standard);
   }
   .sec-infra-item:hover {
     border-color: var(--accent);
     box-shadow: var(--shadow-sm);
-    transform: translateY(-2px);
+    transform: translateY(calc(-1 * var(--motion-lift)));
   }
   .sec-infra-item h4 {
     font-family: var(--font-display);

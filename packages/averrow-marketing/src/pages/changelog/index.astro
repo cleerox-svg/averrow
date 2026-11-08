@@ -125,7 +125,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     padding: 0.45rem 0.8rem;
     border-radius: 100px;
     text-decoration: none;
-    transition: background 0.2s, border-color 0.2s, color 0.2s;
+    transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
   }
   .changelog-rss:hover {
     background: color-mix(in srgb, var(--primary) 12%, transparent);
@@ -155,7 +155,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     background: var(--bg-secondary);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
   }
   .changelog-filter-chip:hover {
     color: var(--text-primary);
@@ -207,7 +207,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     background: var(--bg-primary);
     border: 3px solid var(--primary);
     z-index: 2;
-    transition: background 0.3s, border-color 0.3s;
+    transition: background-color var(--motion-slow) var(--ease-standard), border-color var(--motion-slow) var(--ease-standard);
   }
   .timeline-entry:hover::before {
     background: var(--primary);
@@ -219,7 +219,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 1.75rem 2rem;
-    transition: all 0.3s;
+    transition: background-color var(--motion-slow) var(--ease-standard), border-color var(--motion-slow) var(--ease-standard), box-shadow var(--motion-slow) var(--ease-standard), transform var(--motion-slow) var(--ease-standard);
   }
   .timeline-card:hover {
     border-color: var(--primary);

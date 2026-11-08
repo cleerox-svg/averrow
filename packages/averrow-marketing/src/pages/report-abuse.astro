@@ -182,11 +182,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     display: flex;
     flex-direction: column;
     box-shadow: var(--shadow-sm);
-    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+    transition: border-color var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
   }
   .abuse-card:hover {
     border-color: color-mix(in srgb, var(--primary) 40%, transparent);
-    transform: translateY(-2px);
+    transform: translateY(calc(-1 * var(--motion-lift)));
     box-shadow: 0 8px 24px rgba(0,0,0,0.12);
   }
   :global([data-theme="light"]) .abuse-card {
@@ -271,7 +271,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-weight: 600;
     text-decoration: none;
     border: 1px solid transparent;
-    transition: all 0.2s;
+    transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
     align-self: flex-start;
   }
   .abuse-mailto:hover {

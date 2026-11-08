@@ -93,14 +93,62 @@ img, video, svg { max-width: 100%; height: auto; }
   color: var(--primary-ink);
 }
 
-/* Reduced motion is honoured everywhere reveals are used. */
+/* Reduced motion is honoured everywhere: keyframe animations end at once,
+   and transitions may only fade (opacity / colour) at --motion-fast, so a
+   hover still reads but nothing travels, scales or slides. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
+    transition-property: opacity, color, background-color, border-color, outline-color, box-shadow, fill, stroke !important;
+    transition-duration: var(--motion-fast) !important;
+    transition-timing-function: linear !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ── MOTION (M1 Precision) ──
+   Focus: the ring settles 3px inward once, so keyboard focus is noticed
+   without a delay before it is visible (the outline is there from frame 1). */
+@keyframes focus-settle {
+  from { outline-offset: 5px; }
+  to   { outline-offset: 2px; }
+}
+:focus-visible { animation: focus-settle var(--motion-base) var(--ease-standard); }
+
+/* Page transitions: native cross-document View Transitions (Chromium 126+,
+   Safari 18.2+). No client router — the pre-paint theme script, analytics
+   beacon and Turnstile keep running as normal full page loads. The nav and
+   logo hold still; only the page body cross-fades. */
+@view-transition { navigation: auto; }
+.nav { view-transition-name: site-nav; }
+.nav-brand { view-transition-name: site-logo; }
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--motion-slow);
+  animation-timing-function: var(--ease-standard);
+}
+::view-transition-group(site-nav),
+::view-transition-group(site-logo),
+::view-transition-new(site-nav),
+::view-transition-new(site-logo) { animation: none; }
+::view-transition-old(site-nav),
+::view-transition-old(site-logo) { display: none; }
+
+/* Browsers without cross-document View Transitions (Firefox today) get the
+   same feel from a short fade-in of <main> after an in-site navigation.
+   Layout.astro's pre-paint script sets data-vt="fallback" only then. */
+@keyframes page-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+:root[data-vt="fallback"] main { animation: page-in var(--motion-slow) var(--ease-standard) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
+  :focus-visible { animation: none; }
+  :root[data-vt="fallback"] main { animation: none; }
 }
 
 /* Visually hidden, still announced (the home scan form's label relied on a
@@ -167,16 +215,24 @@ img, video, svg { max-width: 100%; height: auto; }
   padding: 0.65rem 1.25rem;
   border-radius: var(--radius-sm);
   text-decoration: none;
-  transition: all 0.2s;
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
   border: 1px solid transparent;
   cursor: pointer;
 }
+.btn:hover { transform: translateY(calc(-1 * var(--motion-lift))); }
+.btn:active { transform: none; transition-duration: 60ms; }
 /* Primary = solid indigo (--primary) with light ink, both themes. */
 .btn-primary {
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
   border-color: transparent;
 }
+.btn-primary:active { background: var(--primary-pressed, var(--btn-primary-bg-hover)); }
 .btn-primary:hover {
   background: var(--btn-primary-bg-hover);
   color: var(--btn-primary-ink);
@@ -214,7 +270,7 @@ img, video, svg { max-width: 100%; height: auto; }
   -webkit-backdrop-filter: blur(12px) saturate(160%);
   background: var(--nav-bg);
   border-bottom: 1px solid var(--border);
-  transition: background 0.2s, border-color 0.2s;
+  transition: background-color var(--motion-slow) var(--ease-standard), border-color var(--motion-slow) var(--ease-standard), box-shadow var(--motion-slow) var(--ease-standard);
 }
 .nav-scrolled {
   border-bottom-color: var(--border-strong);
@@ -274,7 +330,7 @@ img, video, svg { max-width: 100%; height: auto; }
   line-height: 1;
   white-space: nowrap;
   text-decoration: none;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  transition: color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
   position: relative;
 }
 .nav-link:hover {
@@ -295,6 +351,12 @@ img, video, svg { max-width: 100%; height: auto; }
   height: 2px;
   background: var(--primary);
   border-radius: 1px;
+  transform-origin: left center;
+  animation: nav-underline-in var(--motion-slow) var(--ease-standard) both;
+}
+@keyframes nav-underline-in {
+  from { transform: scaleX(0.4); opacity: 0; }
+  to   { transform: none; opacity: 1; }
 }
 .nav-chevron {
   width: 5px;
@@ -303,7 +365,10 @@ img, video, svg { max-width: 100%; height: auto; }
   border-bottom: 1.5px solid currentColor;
   transform: rotate(45deg) translateY(-2px);
   opacity: 0.6;
+  transition: transform var(--motion-base) var(--ease-standard);
 }
+.nav-item:hover .nav-chevron,
+.nav-item:focus-within .nav-chevron { transform: rotate(225deg) translate(-1px, -1px); }
 
 /* Dropdown — pure CSS: opens on hover or when any link inside has focus,
    so it is fully keyboard-reachable without JS. */
@@ -320,10 +385,10 @@ img, video, svg { max-width: 100%; height: auto; }
   box-shadow: var(--shadow-lg);
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-4px);
+  transform: translateY(calc(-1 * var(--motion-travel-sm)));
   /* opacity/transform only: visibility must flip instantly so a fast Tab
      into the menu never lands on a still-hidden (unfocusable) link. */
-  transition: opacity 0.12s, transform 0.12s;
+  transition: opacity var(--motion-fast) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
 }
 /* Hover bridge so the menu doesn't close crossing the 6px gap. */
 .nav-item-closed > .nav-menu { opacity: 0 !important; visibility: hidden !important; }
@@ -343,6 +408,7 @@ img, video, svg { max-width: 100%; height: auto; }
   font-weight: 500;
   white-space: nowrap;
   text-decoration: none;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .nav-menu a:hover,
 .nav-menu a:focus-visible { background: color-mix(in srgb, var(--primary) 8%, transparent); color: var(--text-primary); text-decoration: none; }
@@ -356,6 +422,7 @@ img, video, svg { max-width: 100%; height: auto; }
   font-weight: 500;
   white-space: nowrap;
   border-radius: 8px;
+  transition: color var(--motion-fast) var(--ease-standard);
 }
 .nav-login:hover { color: var(--text-primary); text-decoration: none; }
 .nav-cta { font-size: 13px; padding: 0.55rem 1rem; white-space: nowrap; }
@@ -370,7 +437,7 @@ img, video, svg { max-width: 100%; height: auto; }
   border-radius: 999px;
   background: var(--bg-secondary);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
   color: var(--text-secondary);
   font-family: var(--font-body);
   font-size: 13px;
@@ -397,7 +464,7 @@ img, video, svg { max-width: 100%; height: auto; }
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
-  transition: all 0.2s;
+  transition: border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .nav-hamburger:hover { border-color: var(--primary); color: var(--accent); }
 
@@ -417,7 +484,11 @@ img, video, svg { max-width: 100%; height: auto; }
   gap: 1px;
   box-shadow: var(--shadow-lg);
 }
-.mobile-menu.open { display: flex; }
+.mobile-menu.open { display: flex; animation: menu-in var(--motion-base) var(--ease-standard) both; }
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--motion-travel-sm))); }
+  to   { opacity: 1; transform: none; }
+}
 .mobile-link {
   display: flex;
   align-items: center;
@@ -432,7 +503,7 @@ img, video, svg { max-width: 100%; height: auto; }
   border: 1px solid transparent;
   background: transparent;
   text-decoration: none;
-  transition: all 0.15s ease;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 .mobile-link:hover {
   background: color-mix(in srgb, var(--primary) 7%, transparent);
@@ -524,7 +595,7 @@ img, video, svg { max-width: 100%; height: auto; }
 .footer-col a {
   color: var(--text-secondary);
   font-size: 0.92rem;
-  transition: color 0.2s;
+  transition: color var(--motion-fast) var(--ease-standard);
 }
 .footer-col a:hover { color: var(--accent); text-decoration: none; }
 .footer-bottom {
@@ -560,6 +631,7 @@ img, video, svg { max-width: 100%; height: auto; }
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-strong);
   text-decoration: none;
+  transition: border-color var(--motion-fast) var(--ease-standard);
 }
 .link-u:hover { border-bottom-color: var(--accent); }
 .num-dot {

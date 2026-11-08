@@ -70,6 +70,32 @@
   --radius-md: 10px;
   --radius-lg: 16px;
   --radius-xl: 24px;
+
+  /* Motion — M1 "Precision" (BRAND_BRIEF §10 G4). Names match
+     packages/shared/src/theme/motion.css + tokens.css so marketing and the
+     product read the same: 120 / 160 / 200 ms on ease-standard, 4–8 px
+     travel, never an overshoot. Hovers/press use --motion-fast, menus and
+     cards --motion-base, entrances and page changes --motion-slow. */
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 200ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-travel-sm: 4px;  /* menus, small reveals */
+  --motion-travel: 6px;     /* default entrance */
+  --motion-travel-lg: 8px;  /* section reveals (GSAP reads the same budget) */
+  --motion-lift: 2px;       /* card / button hover lift */
+}
+
+/* Reduced motion: opacity only. Travel tokens collapse to 0 so every
+   transform built from them is a no-op; global.css limits transitions to
+   colour/opacity and the scroll sequences never load. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-travel-sm: 0px;
+    --motion-travel: 0px;
+    --motion-travel-lg: 0px;
+    --motion-lift: 0px;
+  }
 }
 
 /* ── Dark: indigo on graphite (default; <html data-theme="dark">) ── */

@@ -113,7 +113,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     padding: 0.45rem 0.8rem;
     border-radius: 100px;
     text-decoration: none;
-    transition: background 0.2s, border-color 0.2s, color 0.2s;
+    transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
   }
   .blog-rss:hover { background: color-mix(in srgb, var(--primary) 12%, transparent); border-color: color-mix(in srgb, var(--primary) 50%, transparent); color: var(--accent); text-decoration: none; }
   .blog-rss svg { width: 12px; height: 12px; }
@@ -138,7 +138,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     background: var(--bg-secondary);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
   }
   .blog-filter-chip:hover { color: var(--text-primary); border-color: var(--primary); }
   .blog-filter-chip.active {
@@ -168,7 +168,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     padding: 2rem;
     display: flex;
     flex-direction: column;
-    transition: all 0.3s;
+    transition: background-color var(--motion-slow) var(--ease-standard), border-color var(--motion-slow) var(--ease-standard), box-shadow var(--motion-slow) var(--ease-standard), transform var(--motion-slow) var(--ease-standard);
     position: relative;
     overflow: hidden;
   }
@@ -179,10 +179,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     top: 0; left: 0; right: 0;
     height: 3px;
     opacity: 0;
-    transition: opacity 0.3s;
+    transition: opacity var(--motion-slow) var(--ease-standard);
     background: var(--primary);
   }
-  .blog-card:hover { border-color: var(--primary); box-shadow: var(--shadow-glow); transform: translateY(-2px); }
+  .blog-card:hover { border-color: var(--primary); box-shadow: var(--shadow-glow); transform: translateY(calc(-1 * var(--motion-lift))); }
   .blog-card:hover::before { opacity: 1; }
 
   .blog-card-meta-top {
@@ -254,7 +254,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    transition: gap 0.2s, color 0.2s;
+    transition: gap var(--motion-base) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
   }
   .blog-card:hover .blog-card-link { gap: 0.6rem; }
 

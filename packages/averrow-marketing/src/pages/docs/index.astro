@@ -201,7 +201,7 @@ const icons: Record<string, string> = {
     background: color-mix(in srgb, var(--primary) 7%, transparent);
     text-decoration: none;
     color: inherit;
-    transition: all 0.25s;
+    transition: background-color var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
   }
   .docs-hub-start-card:hover {
     border-color: color-mix(in srgb, var(--primary) 50%, transparent);
@@ -276,12 +276,12 @@ const icons: Record<string, string> = {
     padding: 1.4rem 1.35rem;
     text-decoration: none;
     color: inherit;
-    transition: all 0.25s;
+    transition: background-color var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
   }
   :global([data-theme="light"]) .docs-hub-card { background: rgba(255,255,255,0.6); }
   .docs-hub-card:hover {
     border-color: color-mix(in srgb, var(--primary) 40%, transparent);
-    transform: translateY(-4px);
+    transform: translateY(calc(-2 * var(--motion-lift)));
     box-shadow: 0 8px 24px rgba(0,0,0,0.18);
     text-decoration: none;
   }

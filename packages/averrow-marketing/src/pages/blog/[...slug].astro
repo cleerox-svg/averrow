@@ -216,11 +216,11 @@ const articleJsonLd = {
     background: var(--bg-secondary);
     text-decoration: none;
     color: inherit;
-    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+    transition: border-color var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard);
   }
   .related-card:hover {
     border-color: var(--primary);
-    transform: translateY(-2px);
+    transform: translateY(calc(-1 * var(--motion-lift)));
     box-shadow: 0 6px 18px rgba(0,0,0,0.10);
     text-decoration: none;
   }
