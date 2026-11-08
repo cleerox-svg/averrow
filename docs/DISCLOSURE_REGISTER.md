@@ -49,7 +49,16 @@ abuse-mailbox Claude tasks are inert (`W/lib/abuse-mailbox-classifier.ts:501-504
 (category line, onboarding, scoped pricing, boilerplate, changelog, MX wording). L35/L36 fixed,
 L43 closed, L45 open, L46 partly open.
 
-**Last updated: 2026-11-07.**
+Updated 2026-11-08 (eighth pass, facelift Phase 5 hero): disclosure check of the H4A
+"Auto-play steps" hero prototype (`docs/brand/hero-prototype/h4a.html`, `src/build4.js`,
+`src/core.js`; brief `docs/brand/BRAND_BRIEF.md` §10 G5). New §3.13 (rows H1-H8, FX-114
+outcome). Approved strings: `docs/brand/HERO_COPY_2026-11.md`. Verified in code that a domain
+found in new-registration data never reaches `threats` (`W/lib/phantom-matcher.ts:11-16`, NRD
+hits land in `lookalike_domains` / `phantom_domains` via `W/feeds/nrd_hagezi.ts`), so it can't
+start an operation chain: this strengthens L48. No live-site change in this pass; the hero build
+will close L48 and L49 on the homepage lede and meta.
+
+**Last updated: 2026-11-08.**
 
 Path roots: `W/` = `packages/averrow-worker/src/`, `T/` = `packages/averrow-tenant/src/`,
 `M/` = `packages/averrow-marketing/src/pages/`.
@@ -377,6 +386,27 @@ What each proposed page may claim. Rows not repeated here keep their §3.1-3.7 p
 | Press boilerplate (`M/../lib/company.ts:37-41`) | T1 | "Averrow provides brand protection that traces the operation. It finds look-alike domains, impersonation accounts, copycat apps and phishing aimed at a brand, and files takedowns for look-alike domains and phishing URLs under the customer's authorization; on the Enterprise plan it groups phishing domains that share hosting or certificates into operations. Hosting providers and registrars decide whether to remove content. Averrow is operated by LRX Enterprises Inc., a Canadian company. A free domain scan needs no signup." | "Detect and shut down", "kits", "cloned", AI | Current text is accurate but uses the old category ("digital risk protection platform"). L53 |
 | Changelog v2.2.1 "DKIM Selector Expansion" (`M/../data/changelog-entries.ts:126-132`) | T2, **keep as is** | "Expanded DKIM selector coverage across major enterprise email security providers." (current text) | Selector names or counts. "Verifies every provider" / "per-provider coverage" (probing stops at the first selector found, §3.10, G32) | It records a real change and claims only wider coverage, which matches §3.10 "We probe the DKIM selectors that major mail and gateway providers use". No edit needed |
 | Live web / mail (MX) as a look-alike risk signal in blogs | **T2** (decided 2026-11-07; refines L33) | "A look-alike that is serving a website or set up to receive mail is treated as more serious than a parked one." Per-domain evidence lists may show "live web server" and "mail (MX) records" (§3.7) | The combination rule (mail and web together raise the level), BIMI escalation, alert floors, page-score signals, registration age or "certificate issued yesterday" as scoring inputs (certificate age isn't one, L51/L52), and any claim that the exposure score weights weaponization (it counts live look-alikes) | Generic "live vs parked" is industry knowledge and already approved (§3.9 row 3, §3.7). The exact escalation rule tells an operator what to leave off to stay below the alert floor, so it is T3 (`W/scanners/lookalike-domains.ts:1304-1321`) |
+
+### 3.13 Marketing hero H4A (facelift Phase 5, 2026-11-08)
+
+The hero plays a fictional operation in four steps. Approved strings and build rules:
+`docs/brand/HERO_COPY_2026-11.md`. `docs/brand/hero-prototype/` is the prototype, not shipped copy.
+
+| # | Item | Tier | Approved phrasing | Never say | Evidence |
+|---|---|---|---|---|---|
+| H1 | The hero graph as a whole | T2 (illustration of an Enterprise outcome) | Always-visible line "Fictional example · operation mapping is on the Enterprise plan", in every motion state and at every width. Fictional brand "Acme", RFC 2606 `.example` domains, RFC 5737 documentation IPs. | "Names changed", "real case", "anonymised customer", "the kind of report Averrow produces", or showing the graph as a customer screen (no tenant operation view: G27) | §3.11 (no customers or case studies exist), L48, L50 |
+| H2 | Step 1 "Domain found" | T1 (source *type*) | "acme-payroll-login.example turns up in phishing intelligence and is matched to Acme." | "Spotted in new-registration data" **in this chain**: NRD hits are written to `lookalike_domains` / `phantom_domains` only and never to `threats` (`W/lib/phantom-matcher.ts:11-16`, `W/feeds/nrd_hagezi.ts`), and NEXUS clusters `threats` only (`W/lib/nexus-threat-lanes.ts:1-21`). The NRD phrasing stays approved for the look-alike module on its own (§3.9 row 2). Never name the NRD or feed source | §3.1 feeds row, L33 ("from phishing intelligence sources"), L48 |
+| H3 | Step 2 and the infrastructure nodes | T2 | "Shared hosting and one shared TLS certificate tie it to 13 more phishing domains." Nodes: "Hosting · 203.0.113.24", "Hosting · 198.51.100.7", "TLS certificate · shared by 5 domains" | "Lookalike domains" (L48). ASN or /24 nodes (AS64500/AS64501 are valid RFC 5398 documentation ASNs, but showing an ASN and a subnet as link nodes discloses two lane keys, L33 "no registrar/ASN nodes"). "Serial", "SAN", "registrar", lane order | §3.5 clustering row (lane names T3; "shared hosting and certificates" approved), `W/lib/nexus-threat-lanes.ts:20-21` |
+| H4 | Step 3, formerly "Actor attributed" | T2, **Enterprise** | Rail "Operation mapped". Caption: "On Enterprise, the cluster becomes one operation. A known actor is shown only where public reporting names one; this one is fictional. Related findings, shown dashed, are reviewed alongside." | "Actor attributed", "we identify who is attacking you", "attributed to", an actor name presented as Averrow's finding, any actor wording on a Pro/Business surface | `W/agents/attributor.ts:1-40` (actor names only from OTX inheritance or an analyst; no AI, never free text); §3.5 attribution row ("don't lead with WHO") |
+| H5 | Graph counts | T2 (illustrative arithmetic) | Hub "14 phishing domains"; takedown card "8 taken down · 4 submitted · 2 to approve" (tenant status labels, `T/lib/takedowns.ts:172-181`) | "19 findings" (counted 2 hosting + 1 certificate node as findings). "Queued" (not a status). Any takedown success rate or time drawn from the card as a claim (G6) | `docs/brand/hero-prototype/src/core.js` `build()`: 14 domain nodes, 2 hosting, 1 cert, 1 social, 1 app |
+| H6 | Fictional actor name "FX-114" | T1 as fiction, cleared 2026-11-08 | "Known actor: FX-114 (fictional)" | "FX-114" without "(fictional)" or the H1 line; a vendor-style prefix (APT, UNC, FIN, TEMP, TA, Storm-, CL-, an animal or weather word) | Web search 2026-11-08 ("FX-114" / "FX114" with threat actor, APT, cybersecurity): **no vendor or public actor uses it**. Nearest real name is the unrelated Fxmsp. "FX" is not a known vendor naming prefix. Re-run the search before any reuse in sales or paid material |
+| H7 | Coverage section head | T1 | "Where attackers pretend to be you." | "Everywhere attackers pretend to be you" (no Facebook, no Google Play: G7, G12) | §3.3 |
+| H8 | Homepage meta description | T1 | "Find lookalike domains, impersonation accounts and copycat apps aimed at your brand, and file takedowns for lookalike domains and phishing URLs. Free scan, no sign-up." | "Fake profiles", "cloned apps" (L49); takedowns for social or apps (§3.7: drafted, not filed) | §3.3, §3.7 |
+
+Unchanged and re-cleared for the hero: H1 "Brand protection that traces the operation." (N3,
+§3.12), the short lede, the scan form, "Free scan · no sign-up · no card", "Book a demo", step 4
+"Takedowns filed for each domain under your authorization" (§3.7), dashed social/app nodes as
+"related findings reviewed alongside" (N2).
 
 ---
 
