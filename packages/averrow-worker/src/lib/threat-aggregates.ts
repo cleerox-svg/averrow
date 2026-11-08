@@ -23,7 +23,7 @@ import type { Env } from '../types';
 import type { OrgScope } from '../middleware/auth';
 import { cachedValue } from './cached-value';
 import { scopeCacheSegment } from './scope-cache-key';
-import { runSequential } from './run-sequential';
+import { runSequential, softSection, type SectionErrors } from './run-sequential';
 
 /** KV TTL for the per-slice threat aggregate (raised 300 → 1800, D1 read spend 2026-10). */
 export const THREAT_AGGREGATE_TTL_S = 1800;
@@ -34,6 +34,15 @@ export const THREAT_AGGREGATE_TTL_S = 1800;
  * its numbers are platform-wide and move slowly. 2026-11-08 D1 overload.
  */
 export const THREAT_AGGREGATE_UNFILTERED_TTL_S = 10800;
+
+/**
+ * KV TTL for a DEGRADED aggregate (one or more section reads failed, see
+ * `degraded_sections`). Short so the next page view retries the failed reads
+ * soon, yet long enough that an overloaded D1 isn't hit with a full refill on
+ * every view. cachedValue's `ttlFor` writes it with `expirationTtl` 2× this
+ * (120s), which also bounds how long single-flight can serve it stale.
+ */
+export const THREAT_AGGREGATE_DEGRADED_TTL_S = 60;
 
 /**
  * Single-flight for the unfiltered refill (lib/cached-value.ts
@@ -111,7 +120,24 @@ export interface ThreatAggregate {
   top_providers:  Array<{ provider_id: string; name: string; asn: string | null; count: number }>;
   top_actors:     Array<{ actor_id: string; actor_name: string; count: number }>;
   top_campaigns:  Array<{ campaign_id: string; name: string; threat_count: number; brand_count: number; status: string }>;
+
+  /**
+   * Sections whose read failed and hold their empty fallback instead of data
+   * (`headline`, `attribution`, `by_severity`, `by_type`, `by_status`,
+   * `top_countries`, `top_brands`, `top_providers`, `top_actors`,
+   * `top_campaigns`, `multi_brand`, `surging`). Omitted when every read
+   * succeeded. `headline` here means the headline numbers are zeros because
+   * they could not be read — not a real empty slice. Cached only
+   * THREAT_AGGREGATE_DEGRADED_TTL_S.
+   */
+  degraded_sections?: string[];
 }
+
+/** Section names the aggregate can report in `degraded_sections`. */
+export type ThreatAggregateSection =
+  | 'headline' | 'attribution' | 'by_severity' | 'by_type' | 'by_status'
+  | 'top_countries' | 'top_brands' | 'top_providers' | 'top_actors'
+  | 'top_campaigns' | 'multi_brand' | 'surging';
 
 function buildWhere(filters: ThreatAggregateFilters, scope?: OrgScope | null): {
   where: string;
@@ -214,8 +240,36 @@ export async function threatAggregate(
       }
     : undefined;
   return cachedValue<ThreatAggregate>(env, cacheKey, ttl, async () => {
+    // Every read is fail-soft (lib/run-sequential.ts `softSection`): a
+    // `D1 DB is overloaded` / timeout on one query degrades that section to
+    // its empty fallback and names it in `degraded_sections`, instead of
+    // throwing the whole aggregate into a 500 (prod 2026-11-08: every hero
+    // tile + the Coordination panel showed "Couldn't load", and nothing was
+    // cached, so each page view re-ran the full refill).
+    const errors: SectionErrors = {};
+    const soft = <T>(section: ThreatAggregateSection, fallback: T, fn: () => Promise<T>) =>
+      softSection(errors, section, fallback, fn);
+    /** `.all()` rows of one section, `[]` when the read fails. */
+    const rows = <R>(section: ThreatAggregateSection, stmt: () => D1PreparedStatement) =>
+      soft<R[]>(section, [], async () => (await stmt().all<R>()).results ?? []);
+
+    type HeadlineRow = {
+      total: number; confirmed: number; correlated_by_campaign: number;
+      active: number; addressed: number; new_24h: number;
+    };
+    type BrandRow = {
+      brand_id: string; brand_name: string; canonical_domain: string;
+      logo_url: string | null; count: number;
+    };
+    type ProviderRow = { provider_id: string; name: string; asn: string | null; count: number };
+    type CampaignRow = {
+      campaign_id: string; name: string; status: string;
+      threat_count: number; brand_count: number;
+    };
+    type SurgeRow = { label: string; current_7d: number; previous_7d: number };
+
     // Headline counts in one query
-    const headline = await db.prepare(`
+    const headline = await soft<HeadlineRow | null>('headline', null, () => db.prepare(`
       SELECT
         COUNT(*) AS total,
         SUM(CASE WHEN t.confidence_score >= 70 THEN 1 ELSE 0 END) AS confirmed,
@@ -224,10 +278,7 @@ export async function threatAggregate(
         SUM(CASE WHEN t.status IN ('down','remediated') THEN 1 ELSE 0 END) AS addressed,
         SUM(CASE WHEN t.created_at >= datetime('now','-24 hours') THEN 1 ELSE 0 END) AS new_24h
       ${fromClause}
-    `).bind(...queryParams).first<{
-      total: number; confirmed: number; correlated_by_campaign: number;
-      active: number; addressed: number; new_24h: number;
-    }>();
+    `).bind(...queryParams).first<HeadlineRow>())();
 
     // Attribution count
     let attributed = 0;
@@ -241,11 +292,11 @@ export async function threatAggregate(
       // regardless of table stats, instead of scanning threats per
       // threat_actor_infrastructure row (~70M reads/24h across the
       // three ASN-joined queries in this function).
-      const attrRow = await db.prepare(`
+      const attrRow = await soft<{ attributed: number } | null>('attribution', null, () => db.prepare(`
         SELECT COUNT(*) AS attributed
         FROM threats t
         ${where ? `${where} AND` : 'WHERE'} t.asn IN (SELECT asn FROM threat_actor_infrastructure)
-      `).bind(...params).first<{ attributed: number }>().catch(() => null);
+      `).bind(...params).first<{ attributed: number }>())();
       attributed = attrRow?.attributed ?? 0;
     }
 
@@ -269,26 +320,26 @@ export async function threatAggregate(
     //    provider; no cube carries provider × brand).
     const [bySev, byType, byStatus, geo, brands, providers, actors, campaigns,
            mbCampaigns, mbActors, mbProviders, surgeTypes, surgeCampaigns] = await runSequential([
-      () => db.prepare(`SELECT t.severity AS severity, COUNT(*) AS count ${fromClause}
+      rows<{ severity: string; count: number }>('by_severity', () => db.prepare(`SELECT t.severity AS severity, COUNT(*) AS count ${fromClause}
                       GROUP BY t.severity ORDER BY count DESC`)
-        .bind(...queryParams).all<{ severity: string; count: number }>(),
-      () => db.prepare(`SELECT t.threat_type AS type, COUNT(*) AS count ${fromClause}
+        .bind(...queryParams)),
+      rows<{ type: string; count: number }>('by_type', () => db.prepare(`SELECT t.threat_type AS type, COUNT(*) AS count ${fromClause}
                       GROUP BY t.threat_type ORDER BY count DESC LIMIT 8`)
-        .bind(...queryParams).all<{ type: string; count: number }>(),
-      () => db.prepare(`SELECT t.status AS status, COUNT(*) AS count ${fromClause}
+        .bind(...queryParams)),
+      rows<{ status: string; count: number }>('by_status', () => db.prepare(`SELECT t.status AS status, COUNT(*) AS count ${fromClause}
                       GROUP BY t.status ORDER BY count DESC`)
-        .bind(...queryParams).all<{ status: string; count: number }>(),
-      () => db.prepare(`SELECT t.country_code AS country, COUNT(*) AS count
+        .bind(...queryParams)),
+      rows<{ country: string; count: number }>('top_countries', () => db.prepare(`SELECT t.country_code AS country, COUNT(*) AS count
                       ${fromClause} ${sliceWhere ? 'AND' : 'WHERE'} t.country_code IS NOT NULL AND t.country_code != 'XX'
                       GROUP BY t.country_code ORDER BY count DESC LIMIT 10`)
-        .bind(...queryParams).all<{ country: string; count: number }>(),
+        .bind(...queryParams)),
       // Unfiltered: brands.threat_count is COUNT(*) of ALL linked threats,
       // every status (lib/brand-count-reconciler.ts, 6-hourly + incremental
       // bumps) — the same quantity this GROUP BY computes for an empty
       // slice, but NOT live: some brand-link writers skip the incremental
       // bump, so a count can lag by up to the 6h reconcile.
       // idx_brands_threat_count serves the ORDER BY … LIMIT.
-      () => (unfiltered
+      rows<BrandRow>('top_brands', () => (unfiltered
         ? db.prepare(`SELECT b.id AS brand_id, b.name AS brand_name,
                              b.canonical_domain, b.logo_url, b.threat_count AS count
                       FROM brands b
@@ -298,18 +349,14 @@ export async function threatAggregate(
                              b.canonical_domain, b.logo_url, COUNT(*) AS count
                       ${fromWith('JOIN brands b ON b.id = t.target_brand_id')}
                       GROUP BY t.target_brand_id, b.name, b.canonical_domain, b.logo_url
-                      ORDER BY count DESC LIMIT 8`).bind(...queryParams)
-        ).all<{
-          brand_id: string; brand_name: string; canonical_domain: string;
-          logo_url: string | null; count: number;
-        }>(),
+                      ORDER BY count DESC LIMIT 8`).bind(...queryParams))),
       // Unfiltered: hosting_providers.total_threat_count is COUNT(*) of
       // threats on the provider, every status (lib/provider-counts.ts,
       // enrichment Stage 5 every 4h) — same quantity as the GROUP BY for an
       // empty slice but up to ~4h behind it (no incremental writer), and
       // what /api/dashboard's worst-providers already reads.
       // ~20K-row provider scan instead of a ~1.84M-row threats GROUP BY.
-      () => (unfiltered
+      rows<ProviderRow>('top_providers', () => (unfiltered
         ? db.prepare(`SELECT hp.id AS provider_id, hp.name AS name, hp.asn AS asn,
                              hp.total_threat_count AS count
                       FROM hosting_providers hp
@@ -319,11 +366,8 @@ export async function threatAggregate(
                              COUNT(*) AS count
                       ${fromWith('JOIN hosting_providers hp ON hp.id = t.hosting_provider_id')}
                       GROUP BY t.hosting_provider_id, hp.name, hp.asn
-                      ORDER BY count DESC LIMIT 8`).bind(...queryParams)
-        ).all<{
-          provider_id: string; name: string; asn: string | null; count: number;
-        }>(),
-      () => db.prepare(`SELECT tai.threat_actor_id AS actor_id, ta.name AS actor_name,
+                      ORDER BY count DESC LIMIT 8`).bind(...queryParams))),
+      rows<{ actor_id: string; actor_name: string; count: number }>('top_actors', () => db.prepare(`SELECT tai.threat_actor_id AS actor_id, ta.name AS actor_name,
                              COUNT(DISTINCT t.id) AS count
                       FROM threats t
                       JOIN threat_actor_infrastructure tai ON tai.asn = t.asn
@@ -331,37 +375,28 @@ export async function threatAggregate(
                       ${where}
                       GROUP BY tai.threat_actor_id, ta.name
                       ORDER BY count DESC LIMIT 6`)
-        .bind(...params).all<{
-          actor_id: string; actor_name: string; count: number;
-        }>().catch(() => ({ results: [] as Array<{ actor_id: string; actor_name: string; count: number }> })),
-      () => db.prepare(`SELECT t.campaign_id AS campaign_id, c.name AS name, c.status AS status,
+        .bind(...params)),
+      rows<CampaignRow>('top_campaigns', () => db.prepare(`SELECT t.campaign_id AS campaign_id, c.name AS name, c.status AS status,
                              COUNT(*) AS threat_count, COUNT(DISTINCT t.target_brand_id) AS brand_count
                       ${fromWith('JOIN campaigns c ON c.id = t.campaign_id')}
                       GROUP BY t.campaign_id, c.name, c.status
                       ORDER BY threat_count DESC LIMIT 6`)
-        .bind(...queryParams).all<{
-          campaign_id: string; name: string; status: string;
-          threat_count: number; brand_count: number;
-        }>().catch(() => ({ results: [] as Array<{
-          campaign_id: string; name: string; status: string;
-          threat_count: number; brand_count: number;
-        }> })),
+        .bind(...queryParams)),
 
       // ── Multi-brand patterns (brand_count >= 2 in the slice) ──
-      () => db.prepare(`SELECT t.campaign_id AS id, c.name AS name, c.status AS status,
+      rows<{
+        id: string; name: string; status: string;
+        threat_count: number; brand_count: number;
+      }>('multi_brand', () => db.prepare(`SELECT t.campaign_id AS id, c.name AS name, c.status AS status,
                              COUNT(*) AS threat_count, COUNT(DISTINCT t.target_brand_id) AS brand_count
                       ${fromWith('JOIN campaigns c ON c.id = t.campaign_id')}
                       GROUP BY t.campaign_id, c.name, c.status
                       HAVING COUNT(DISTINCT t.target_brand_id) >= 2
                       ORDER BY brand_count DESC, threat_count DESC LIMIT 5`)
-        .bind(...queryParams).all<{
-          id: string; name: string; status: string;
-          threat_count: number; brand_count: number;
-        }>().catch(() => ({ results: [] as Array<{
-          id: string; name: string; status: string;
-          threat_count: number; brand_count: number;
-        }> })),
-      () => db.prepare(`SELECT tai.threat_actor_id AS id, ta.name AS name,
+        .bind(...queryParams)),
+      rows<{
+        id: string; name: string; threat_count: number; brand_count: number;
+      }>('multi_brand', () => db.prepare(`SELECT tai.threat_actor_id AS id, ta.name AS name,
                              COUNT(DISTINCT t.id) AS threat_count,
                              COUNT(DISTINCT t.target_brand_id) AS brand_count
                       FROM threats t
@@ -371,26 +406,22 @@ export async function threatAggregate(
                       GROUP BY tai.threat_actor_id, ta.name
                       HAVING COUNT(DISTINCT t.target_brand_id) >= 2
                       ORDER BY brand_count DESC, threat_count DESC LIMIT 5`)
-        .bind(...params).all<{
-          id: string; name: string; threat_count: number; brand_count: number;
-        }>().catch(() => ({ results: [] as Array<{
-          id: string; name: string; threat_count: number; brand_count: number;
-        }> })),
-      () => db.prepare(`SELECT t.hosting_provider_id AS id, hp.name AS name, hp.asn AS asn,
+        .bind(...params)),
+      rows<{
+        id: string; name: string; asn: string | null;
+        threat_count: number; brand_count: number;
+      }>('multi_brand', () => db.prepare(`SELECT t.hosting_provider_id AS id, hp.name AS name, hp.asn AS asn,
                              COUNT(*) AS threat_count,
                              COUNT(DISTINCT t.target_brand_id) AS brand_count
                       ${fromWith('JOIN hosting_providers hp ON hp.id = t.hosting_provider_id')}
                       GROUP BY t.hosting_provider_id, hp.name, hp.asn
                       HAVING COUNT(DISTINCT t.target_brand_id) >= 2
                       ORDER BY brand_count DESC, threat_count DESC LIMIT 5`)
-        .bind(...queryParams).all<{
-          id: string; name: string; asn: string | null;
-          threat_count: number; brand_count: number;
-        }>(),
+        .bind(...queryParams)),
 
       // ── Surging week-over-week: types (ignores slice's `since` for the
       //   comparison window — surge is always last 7d vs prior 7d). ──
-      () => db.prepare(`
+      rows<SurgeRow>('surging', () => db.prepare(`
         SELECT
           t.threat_type AS label,
           SUM(CASE WHEN t.created_at >= datetime('now','-7 days')  THEN 1 ELSE 0 END) AS current_7d,
@@ -402,8 +433,8 @@ export async function threatAggregate(
         HAVING current_7d > 0
         ORDER BY (current_7d - previous_7d) DESC
         LIMIT 5
-      `).all<{ label: string; current_7d: number; previous_7d: number }>(),
-      () => db.prepare(`
+      `)),
+      rows<SurgeRow & { id: string }>('surging', () => db.prepare(`
         SELECT
           t.campaign_id AS id, c.name AS label,
           SUM(CASE WHEN t.created_at >= datetime('now','-7 days')  THEN 1 ELSE 0 END) AS current_7d,
@@ -416,14 +447,11 @@ export async function threatAggregate(
         HAVING current_7d > 0
         ORDER BY (current_7d - previous_7d) DESC
         LIMIT 5
-      `).all<{ id: string; label: string; current_7d: number; previous_7d: number }>()
-        .catch(() => ({ results: [] as Array<{
-          id: string; label: string; current_7d: number; previous_7d: number;
-        }> })),
+      `)),
     ]);
 
     // Compose surging signals from type + campaign rows
-    const surgeFromTypes = surgeTypes.results.map(r => ({
+    const surgeFromTypes = surgeTypes.map(r => ({
       kind: 'type' as const,
       label: r.label,
       current_7d: r.current_7d,
@@ -432,7 +460,7 @@ export async function threatAggregate(
         ? Math.round(((r.current_7d - r.previous_7d) / r.previous_7d) * 100)
         : (r.current_7d > 0 ? 100 : 0),
     }));
-    const surgeFromCampaigns = surgeCampaigns.results.map(r => ({
+    const surgeFromCampaigns = surgeCampaigns.map(r => ({
       kind: 'campaign' as const,
       id: r.id,
       label: r.label,
@@ -447,6 +475,10 @@ export async function threatAggregate(
       .sort((a, b) => b.delta_pct - a.delta_pct)
       .slice(0, 8);
 
+    // Section names in the order their reads failed (`<section>_error` keys).
+    // The DB error text stays server-side — callers only get the names.
+    const degraded = Object.keys(errors).map((k) => k.replace(/_error$/, ''));
+
     return {
       total,
       confirmed:        headline?.confirmed ?? 0,
@@ -457,18 +489,30 @@ export async function threatAggregate(
       addressed,
       remediation_rate,
       new_24h:          headline?.new_24h ?? 0,
-      by_severity:      bySev.results,
-      by_type:          byType.results,
-      by_status:        byStatus.results,
-      multi_brand_campaigns: mbCampaigns.results ?? [],
-      multi_brand_actors:    mbActors.results ?? [],
-      multi_brand_providers: mbProviders.results,
+      by_severity:      bySev,
+      by_type:          byType,
+      by_status:        byStatus,
+      multi_brand_campaigns: mbCampaigns,
+      multi_brand_actors:    mbActors,
+      multi_brand_providers: mbProviders,
       surging_signals,
-      top_countries:    geo.results,
-      top_brands:       brands.results,
-      top_providers:    providers.results,
-      top_actors:       actors.results ?? [],
-      top_campaigns:    campaigns.results ?? [],
+      top_countries:    geo,
+      top_brands:       brands,
+      top_providers:    providers,
+      top_actors:       actors,
+      top_campaigns:    campaigns,
+      ...(degraded.length > 0 ? { degraded_sections: degraded } : {}),
     };
-  }, { singleFlight });
+  }, {
+    singleFlight,
+    // A degraded result is cached briefly so the failed reads are retried
+    // soon. cachedValue backdates its stamp so it reads as expired after
+    // THREAT_AGGREGATE_DEGRADED_TTL_S, and writes it with expirationTtl
+    // 2× that (120s): single-flight's stale serving (which reuses any entry
+    // still in KV) can therefore show a degraded body for at most ~120s,
+    // never the 6h a normal unfiltered entry lives.
+    ttlFor: (value) => (value.degraded_sections?.length
+      ? THREAT_AGGREGATE_DEGRADED_TTL_S
+      : ttl),
+  });
 }

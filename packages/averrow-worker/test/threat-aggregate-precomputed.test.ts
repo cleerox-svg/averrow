@@ -11,7 +11,7 @@
  * unfiltered refill takes the single-flight lock.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   hasSqlite,
   openDerivedDb,
@@ -21,7 +21,11 @@ import {
   type StatementLogEntry,
 } from "./sqlite-d1-harness";
 import type { Env } from "../src/types";
-import { threatAggregate } from "../src/lib/threat-aggregates";
+import {
+  threatAggregate,
+  THREAT_AGGREGATE_DEGRADED_TTL_S,
+  THREAT_AGGREGATE_UNFILTERED_TTL_S,
+} from "../src/lib/threat-aggregates";
 
 const TABLES = [
   "threats", "brands", "hosting_providers", "campaigns",
@@ -125,5 +129,132 @@ describe.skipIf(!hasSqlite())("threatAggregate unfiltered slice — pre-computed
     puts.length = 0;
     await threatAggregate(env, { status: "active" });
     expect(puts.some((k) => k.startsWith("cvlock:"))).toBe(false);
+  });
+});
+
+// ─── Fail-soft sections (prod 2026-11-08: one overloaded read 500'd the page) ──
+
+/** Read DB whose statements matching `fail` throw at execution, like D1 overload. */
+function failingDb(fail: RegExp, log: string[] = []): D1Database {
+  const real = d1FromSqlite(seed());
+  const wrap = (sql: string, stmt: D1PreparedStatement): D1PreparedStatement => {
+    const boom = async () => {
+      log.push(sql);
+      throw new Error("D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window");
+    };
+    if (!fail.test(sql.replace(/\s+/g, " "))) return stmt;
+    return {
+      bind: (...args: unknown[]) => wrap(sql, stmt.bind(...args)),
+      all: boom,
+      first: boom,
+      run: boom,
+      raw: boom,
+    } as unknown as D1PreparedStatement;
+  };
+  return { prepare: (sql: string) => wrap(sql, real.prepare(sql)) } as unknown as D1Database;
+}
+
+/** fakeKv that records each put's expirationTtl. */
+function recordingKv() {
+  const kv = fakeKv();
+  const ttls = new Map<string, number | undefined>();
+  const origPut = kv.put.bind(kv);
+  kv.put = (async (k: string, v: string, o?: { expirationTtl?: number }) => {
+    ttls.set(k, o?.expirationTtl);
+    return origPut(k, v);
+  }) as typeof kv.put;
+  return { kv, ttls };
+}
+
+const AGG_KEY = "cv:threat-agg:global:::::::::";
+
+describe.skipIf(!hasSqlite())("threatAggregate fail-soft sections", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a healthy aggregate omits degraded_sections and caches the full TTL", async () => {
+    const { kv, ttls } = recordingKv();
+    const env = { DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env;
+    const agg = await threatAggregate(env, {});
+    expect(agg.degraded_sections).toBeUndefined();
+    expect("degraded_sections" in agg).toBe(false);
+    expect(ttls.get(AGG_KEY)).toBe(THREAT_AGGREGATE_UNFILTERED_TTL_S * 2);
+  });
+
+  it("one failing read degrades only its section; the rest is populated", async () => {
+    const { kv, ttls } = recordingKv();
+    const failed: string[] = [];
+    // The multi-brand provider read (the 4.1s scan on prod).
+    const db = failingDb(/HAVING COUNT\(DISTINCT t\.target_brand_id\) >= 2.*hp\.name|hp\.name.*HAVING COUNT\(DISTINCT t\.target_brand_id\) >= 2/, failed);
+    const env = { DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env;
+    const agg = await threatAggregate(env, {}, null, db);
+
+    expect(failed).toHaveLength(1);
+    expect(agg.degraded_sections).toEqual(["multi_brand"]);
+    expect(agg.multi_brand_providers).toEqual([]);
+    // Every other section still has its data.
+    expect(agg.total).toBe(3);
+    expect(agg.active).toBe(2);
+    expect(agg.addressed).toBe(1);
+    expect(byKey(agg.by_status, (r) => r.status, (r) => r.count)).toEqual({ active: 2, down: 1 });
+    expect(agg.by_severity).toEqual([{ severity: "high", count: 3 }]);
+    expect(agg.top_providers.map((r) => r.provider_id)).toEqual(["p2", "p1"]);
+    expect(agg.top_brands.map((r) => r.brand_id)).toEqual(["b2", "b1"]);
+
+    // Degraded result is cached briefly: KV expiry 2× the degraded TTL, and the
+    // stamp is backdated so it reads as fresh only for the degraded TTL.
+    expect(ttls.get(AGG_KEY)).toBe(THREAT_AGGREGATE_DEGRADED_TTL_S * 2);
+    const entry = JSON.parse(kv.store.get(AGG_KEY)!) as { t: number };
+    const ageS = (Date.now() - entry.t) / 1000;
+    expect(ageS).toBeGreaterThanOrEqual(THREAT_AGGREGATE_UNFILTERED_TTL_S - THREAT_AGGREGATE_DEGRADED_TTL_S - 1);
+    expect(ageS).toBeLessThan(THREAT_AGGREGATE_UNFILTERED_TTL_S);
+  });
+
+  it("a failing headline read is flagged, not served as healthy zeros", async () => {
+    const { kv } = recordingKv();
+    const db = failingDb(/AS correlated_by_campaign/);
+    const env = { DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env;
+    const agg = await threatAggregate(env, {}, null, db);
+    expect(agg.degraded_sections).toEqual(["headline"]);
+    expect(agg.total).toBe(0);
+    expect(agg.top_brands.length).toBe(2);
+  });
+
+  it("names every failed section once, in read order; shared sections collapse", async () => {
+    const env = { DB: d1FromSqlite(seed()), CACHE: fakeKv() } as unknown as Env;
+    // Fails attribution, top_actors, both multi-brand actor/campaign reads and both surge reads.
+    const db = failingDb(/threat_actor_infrastructure|datetime\('now','-14 days'\)|HAVING COUNT\(DISTINCT t\.target_brand_id\) >= 2/);
+    const agg = await threatAggregate(env, {}, null, db);
+    expect(agg.degraded_sections).toEqual(["attribution", "top_actors", "multi_brand", "surging"]);
+    expect(agg.surging_signals).toEqual([]);
+    expect(agg.total).toBe(3);
+  });
+
+  it("a degraded entry is retried after the degraded TTL; a later healthy refill caches normally", async () => {
+    const { kv, ttls } = recordingKv();
+    const env = { DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env;
+    const bad = failingDb(/GROUP BY t\.severity/);
+    const first = await threatAggregate(env, {}, null, bad);
+    expect(first.degraded_sections).toEqual(["by_severity"]);
+
+    // Within the degraded TTL: cache hit (still degraded, no re-read).
+    const again = await threatAggregate(env, {}, null, d1FromSqlite(seed()));
+    expect(again.degraded_sections).toEqual(["by_severity"]);
+
+    // Past it: recomputed, healthy, full TTL.
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + (THREAT_AGGREGATE_DEGRADED_TTL_S + 1) * 1000);
+    const healed = await threatAggregate(env, {}, null, d1FromSqlite(seed()));
+    expect(healed.degraded_sections).toBeUndefined();
+    expect(healed.by_severity).toEqual([{ severity: "high", count: 3 }]);
+    expect(ttls.get(AGG_KEY)).toBe(THREAT_AGGREGATE_UNFILTERED_TTL_S * 2);
+  });
+
+  it("filtered slice degraded TTL is also the short one", async () => {
+    const { kv, ttls } = recordingKv();
+    const env = { DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env;
+    const agg = await threatAggregate(env, { status: "active" }, null, failingDb(/GROUP BY t\.threat_type ORDER BY count DESC LIMIT 8/));
+    expect(agg.degraded_sections).toEqual(["by_type"]);
+    const key = [...ttls.keys()].find((k) => k.startsWith("cv:threat-agg:"))!;
+    expect(ttls.get(key)).toBe(THREAT_AGGREGATE_DEGRADED_TTL_S * 2);
   });
 });
