@@ -361,8 +361,8 @@ describe('Alerts staff ownership, notes and bulk batching', () => {
       stats: { ...BASE, open_critical: 2, open_total: 5, daily_new_7d: [1, 2, 1, 3, 2, 4, 7] },
     });
     const crit = (await screen.findByText('Critical open')).closest('.ds-stat') as HTMLElement;
-    await waitFor(() => expect(crit).toHaveClass('ds-stat--live'));
-    expect(within(crit).getByText('2')).toBeInTheDocument();
+    expect(crit).not.toHaveClass('ds-stat--live'); // no looping hairline (facelift)
+    expect(await within(crit).findByText('2')).toBeInTheDocument();
     const queue = screen.getByText('Open queue').closest('.ds-stat') as HTMLElement;
     expect(await within(queue).findByText('7 new today · 7-day intake')).toBeInTheDocument();
     expect(within(queue).getByText('5')).toBeInTheDocument();

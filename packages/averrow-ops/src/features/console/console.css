@@ -3,8 +3,22 @@
 .console-v4 { padding: 22px 24px 44px; }
 
 .console-head { display: flex; align-items: flex-end; gap: 14px; }
-.console-crumb { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .18em; color: var(--text-muted); }
-.console-title { font-size: 30px; font-weight: 800; letter-spacing: -.6px; margin: 4px 0 0; line-height: 1; }
+.console-crumb {
+  font-family: var(--font-sans);
+  font-size: var(--type-label-size, 12px);
+  line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500);
+  letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none;
+  color: var(--text-tertiary);
+}
+.console-title {
+  margin: 4px 0 0;
+  font-size: var(--type-display-size, 30px);
+  line-height: var(--type-display-lh, 1.1);
+  font-weight: var(--type-display-weight, 600);
+  letter-spacing: var(--type-display-tracking, -0.03em);
+}
 .console-live { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 4px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; color: var(--green-text); }
 .console-live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: console-ping 1.8s ease-in-out infinite; }
 
@@ -13,7 +27,15 @@
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 20px 0 22px; }
 
 .console-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-.console-def { color: var(--text-secondary); font-size: 13px; line-height: 1.55; max-width: 720px; margin: -2px 0 18px; }
+/* Console's kit Tabs bar (the flex-wrap .console-tabs above is TabbedWorkspace's button row). */
+.console-tabbar { margin-bottom: 14px; border-bottom: 1px solid var(--border-base); }
+.console-def {
+  color: var(--text-secondary);
+  font-size: var(--type-body-size, 14px);
+  line-height: var(--type-body-lh, 21px);
+  font-weight: var(--type-body-weight, 400);
+  max-width: 720px; margin: -2px 0 18px;
+}
 
 @keyframes console-ping { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 

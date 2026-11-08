@@ -64,7 +64,7 @@ describe('Console ?tab=alerts deep links', () => {
     window.history.pushState({}, '', '/?tab=alerts&status=new&alert=alr_7');
     renderWithProviders(<Console />);
     await screen.findByTestId('alert-detail');
-    await userEvent.click(screen.getByRole('button', { name: /Threats/ }));
+    await userEvent.click(screen.getByRole('tab', { name: /Threats/ }));
     await waitFor(() => expect(window.location.search).toBe('?tab=threats'));
     expect(await screen.findByText('THREATS PANE')).toBeInTheDocument();
   });

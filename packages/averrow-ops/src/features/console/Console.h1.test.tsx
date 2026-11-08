@@ -34,7 +34,7 @@ vi.mock('@/features/takedowns/Takedowns', () => ({ Takedowns: pane('Takedowns') 
 describe('Console — one h1 per tab', () => {
   it.each(['Alerts', 'Threats', 'Incidents', 'Takedowns'])('%s tab renders exactly one h1 and keeps the pane actions', async (name) => {
     renderWithProviders(<Console />);
-    if (name !== 'Alerts') await userEvent.click(screen.getByRole('button', { name: new RegExp(name) }));
+    if (name !== 'Alerts') await userEvent.click(screen.getByRole('tab', { name: new RegExp(name) }));
     expect(await screen.findByRole('button', { name: `${name} action` })).toBeInTheDocument();
     const h1s = screen.getAllByRole('heading', { level: 1 });
     expect(h1s).toHaveLength(1);
