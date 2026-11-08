@@ -13,6 +13,7 @@ import {
 } from "../scanners/dark-web-monitor";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { getCacheVersion, bumpCacheVersion } from "../lib/cache-version";
+import { countMonitoredBrandRows } from "../lib/monitored-brands-count";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import type { Env } from "../types";
 import { isPlatformStaff, type AuthContext } from "../middleware/auth";
@@ -600,9 +601,13 @@ export async function handleDarkWebOverview(
         executive_names: string | null;
         created_at: string;
       }>(),
-      session.prepare(
-        `SELECT COUNT(*) AS n FROM brands b ${scope}`,
-      ).bind(...scopeParams).first<{ n: number }>(),
+      // Global: shared KV counter over monitored_brands (lib/monitored-brands-count.ts)
+      // instead of a ~133K-row brands-driven join. Org-scoped: bounded raw count.
+      isGlobal
+        ? countMonitoredBrandRows(env, session).then((n) => ({ n }))
+        : session.prepare(
+            `SELECT COUNT(*) AS n FROM brands b ${scope}`,
+          ).bind(...scopeParams).first<{ n: number }>(),
       session.prepare(`
         SELECT
           SUM(CASE WHEN classification = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,

@@ -306,12 +306,14 @@ function extractReadTables(source: string): string[] {
   const out = new Set<string>();
   // Case-sensitive SQL verbs to avoid catching English "from" / "join"
   // in comments and log strings. All SQL in this codebase is uppercase.
-  const fromMatches = source.matchAll(/\bFROM\s+([A-Za-z_][A-Za-z0-9_]*)/g);
+  // A name followed by `(` is a table-valued function (json_each,
+  // json_tree), not a table.
+  const fromMatches = source.matchAll(/\bFROM\s+([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()/g);
   for (const m of fromMatches) {
     const name = m[1];
     if (name) out.add(name);
   }
-  const joinMatches = source.matchAll(/\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*)/g);
+  const joinMatches = source.matchAll(/\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()/g);
   for (const m of joinMatches) {
     const name = m[1];
     if (name) out.add(name);
