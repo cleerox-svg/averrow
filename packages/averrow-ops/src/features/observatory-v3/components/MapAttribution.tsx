@@ -8,6 +8,8 @@
  * basemap).
  */
 
+import { BODY } from '../lib/chrome-classes';
+
 export const ATTRIBUTION_LINKS = [
   { text: '© OpenStreetMap contributors', href: 'https://www.openstreetmap.org/copyright' },
   { text: '© CARTO', href: 'https://carto.com/attributions' },
@@ -18,7 +20,7 @@ export function MapAttribution({ className }: { className?: string }) {
     <span
       data-testid="map-attribution"
       aria-label="Map data attribution"
-      className={['font-mono text-[10px] flex flex-wrap items-center justify-end gap-x-2 gap-y-0', className].filter(Boolean).join(' ')}
+      className={[BODY, 'flex flex-wrap items-center justify-end gap-x-2 gap-y-0', className].filter(Boolean).join(' ')}
       style={{ color: 'var(--text-tertiary)' }}
     >
       {ATTRIBUTION_LINKS.map(l => (

@@ -26,6 +26,7 @@ import { cn } from '@/lib/cn';
 import type { LayerToggles, LensId } from '../lib/lenses';
 import type { ColorBy, Measure, Severity, ThreatView } from '../lib/url-state';
 import { SEVERITY_IDS } from '../lib/url-state';
+import { BODY, COARSE_TARGET, FACT, LABEL } from '../lib/chrome-classes';
 import { sevText } from '../lib/map-colors';
 import { toggleSeverity } from '../lib/filters';
 import { announceTraffic, trafficModeOf, trafficPatch, TRAFFIC_LABEL, type TrafficMode } from '../lib/controls';
@@ -85,11 +86,11 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
         className={cn(
           'ds-focusable inline-flex items-center justify-center rounded-lg transition-colors motion-reduce:transition-none',
           item.disabled ? 'cursor-not-allowed opacity-45' : 'cursor-pointer',
-          panel ? 'w-full min-h-[44px] gap-1.5 px-2 py-1 font-mono text-[11px]' : 'w-9 h-9',
+          panel ? cn('w-full min-h-[44px] gap-1.5 px-2 py-1', BODY) : cn('w-9 h-9', COARSE_TARGET),
         )}
         style={{
-          background: item.pressed ? 'color-mix(in srgb, var(--primary) 14%, transparent)' : 'transparent',
-          border: `1px solid ${item.pressed ? 'color-mix(in srgb, var(--primary) 25%, transparent)' : panel ? 'var(--border-base)' : 'transparent'}`,
+          background: item.pressed ? 'var(--primary-tint)' : 'transparent',
+          border: `1px solid ${item.pressed ? 'var(--primary-border)' : panel ? 'var(--border-base)' : 'transparent'}`,
           color: item.pressed ? 'var(--primary-text)' : 'var(--text-secondary)',
         }}
       >
@@ -100,16 +101,16 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
         <span
           id={tipId}
           role="tooltip"
-          className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 z-40 w-max max-w-[220px] rounded-lg px-2.5 py-1.5 font-mono text-[11px] opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
+          className={cn('pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 z-40 w-max max-w-[220px] rounded-lg px-2.5 py-1.5 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none', BODY)}
           style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-base)', color: 'var(--text-primary)', boxShadow: 'var(--card-shadow-elevated)' }}
         >
           <span className="flex items-center gap-2">
             <span>{item.label}</span>
             {item.key && (
-              <kbd className="font-mono text-[10px] rounded px-1" style={{ border: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}>{item.key}</kbd>
+              <kbd className={cn('rounded px-1', FACT)} style={{ border: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}>{item.key}</kbd>
             )}
           </span>
-          <span className="block mt-0.5 text-[10px] leading-snug" style={{ color: 'var(--text-tertiary)' }}>{item.hint}</span>
+          <span className="block mt-0.5 leading-snug" style={{ color: 'var(--text-tertiary)' }}>{item.hint}</span>
         </span>
       )}
     </div>
@@ -167,7 +168,7 @@ export function ControlRail({
       id: `sev-${id}`,
       label: `Severity: ${SEV_NOTE[id]}`,
       hint: sev.length === 0 ? `Show only ${id} threats (select more to add)` : sev.includes(id) ? `Stop filtering to ${id}` : `Also show ${id} threats`,
-      icon: icon(<span aria-hidden className="font-mono text-[11px] font-bold leading-none" style={{ color: sevText(id) }}>{id.charAt(0).toUpperCase()}</span>),
+      icon: icon(<span aria-hidden className="font-mono text-type-label font-semibold leading-none" style={{ color: sevText(id) }}>{id.charAt(0).toUpperCase()}</span>),
       pressed: sev.includes(id),
       onPress: () => {
         const next = toggleSeverity(sev, id);
@@ -207,7 +208,7 @@ export function ControlRail({
     if (!panel || !traffickable || sevItems.length === 0) return null;
     return (
       <div className={cn('flex flex-col gap-1.5', className)} data-layout={layout} data-part="severity">
-        <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Severity filter</div>
+        <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>Severity filter</div>
         <Group label="Severity filter" items={sevItems} layout={layout} />
         <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
       </div>
@@ -228,20 +229,20 @@ export function ControlRail({
     >
       {viewItems.length > 0 && (
         <>
-          {panel && <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>View</div>}
+          {panel && <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>View</div>}
           <Group label={lens === 'threats' ? 'Threats view' : lens === 'hosting' ? 'Hosting measure' : 'Baseline measure'} items={viewItems} layout={layout} />
           {!panel && traffickable && <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
         </>
       )}
       {traffickable && (
         <>
-          {panel && <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Threat traffic underneath</div>}
+          {panel && <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>Threat traffic underneath</div>}
           <Group label="Threat traffic underneath" items={trafficItems} layout={layout} />
           {!panel && <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
           <Group label="Map options" items={extras} layout={layout} />
           {sevItems.length > 0 && !(panel && part === 'rest') && (
             <>
-              {panel ? <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Severity filter</div> : <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
+              {panel ? <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>Severity filter</div> : <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
               <Group label="Severity filter" items={sevItems} layout={layout} />
             </>
           )}

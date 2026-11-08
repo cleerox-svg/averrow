@@ -16,18 +16,21 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { usePrefersReducedMotion } from '../lib/use-motion';
 import { LENS_DEFS, LENS_IDS, type LensId } from '../lib/lenses';
+import { LABEL } from '../lib/chrome-classes';
 
 export interface LensStripProps {
   lens: LensId;
   onChange: (lens: LensId) => void;
   /** 44px tabs (phone / coarse pointer). */
   touch?: boolean;
+  /** id of the map region the selected lens redraws: every tab names it with aria-controls. */
+  controls?: string;
   className?: string;
 }
 
 const EDGE = 28;
 
-export function LensStrip({ lens, onChange, touch = false, className }: LensStripProps) {
+export function LensStrip({ lens, onChange, touch = false, controls, className }: LensStripProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef(new Map<LensId, HTMLButtonElement>());
   const reduced = usePrefersReducedMotion();
@@ -85,7 +88,8 @@ export function LensStrip({ lens, onChange, touch = false, className }: LensStri
     tabRefs.current.get(id)?.focus();
   };
 
-  const mask = `linear-gradient(90deg, ${edges.left ? 'transparent 0, #000 ' + EDGE + 'px' : '#000 0'}, ${edges.right ? '#000 calc(100% - ' + EDGE + 'px), transparent 100%' : '#000 100%'})`;
+  // Only the alpha channel of a mask matters: `black` / `transparent` are the mask's on / off, not colours on screen.
+  const mask = `linear-gradient(90deg, ${edges.left ? 'transparent 0, black ' + EDGE + 'px' : 'black 0'}, ${edges.right ? 'black calc(100% - ' + EDGE + 'px), transparent 100%' : 'black 100%'})`;
 
   return (
     <div
@@ -117,21 +121,22 @@ export function LensStrip({ lens, onChange, touch = false, className }: LensStri
               type="button"
               role="tab"
               aria-selected={active}
+              aria-controls={controls}
               tabIndex={id === stop ? 0 : -1}
               title={LENS_DEFS[id].question}
               onClick={() => onChange(id)}
               onFocus={() => setRove(id)}
               onKeyDown={e => onKeyDown(e, i)}
               className={cn(
-                'ds-focusable shrink-0 inline-flex items-center justify-center whitespace-nowrap rounded-[9px] px-2.5 font-mono text-[11px] font-bold tracking-[0.03em] cursor-pointer',
-                'transition-[background,color,box-shadow] duration-150 motion-reduce:transition-none',
+                'ds-focusable shrink-0 inline-flex items-center justify-center whitespace-nowrap rounded-[9px] px-2.5 font-semibold cursor-pointer',
+                LABEL,
+                'transition-[background,color] duration-150 motion-reduce:transition-none',
                 touch ? 'min-h-[44px]' : 'min-h-[32px]',
               )}
               style={{
-                border: `1px solid ${active ? 'var(--pill-active-border)' : 'transparent'}`,
-                background: active ? 'linear-gradient(135deg, var(--primary-glow), var(--pill-active-fill-2-strong))' : 'transparent',
+                border: `1px solid ${active ? 'var(--primary-border)' : 'transparent'}`,
+                background: active ? 'var(--primary-tint)' : 'transparent',
                 color: active ? 'var(--primary-text)' : 'var(--text-secondary)',
-                boxShadow: active ? 'inset 0 1px 0 var(--pill-active-rim-strong), 0 0 12px var(--primary-glow)' : 'none',
               }}
             >
               {LENS_DEFS[id].label}

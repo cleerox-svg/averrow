@@ -850,3 +850,55 @@
   --card-shadow: 0 0 #0000;
   --card-highlight: transparent;
 }
+
+/* Observatory map controls (MapLibre's zoom cluster + the Flat | Globe slot).
+   MapLibre ships a white, #333-iconed control group with a blue focus glow; here it takes the console's chrome: card
+   surface, 1px border, the elevated shadow, and icons in --text-secondary in BOTH themes (the basemap is always dark,
+   the chrome around it follows the theme). Scoped under .obs-root, the Observatory page root: nothing else in ops
+   renders MapLibre controls. `.maplibregl-ctrl-group` is doubled below to beat MapLibre's own selectors, which load
+   first and carry up to three classes. The zoom +/- icons are background-image SVGs with a baked-in fill, so they
+   become masks over a --text-secondary fill (a fill cannot be re-coloured through background-image). */
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group {
+  background: var(--bg-card);
+  border: 1px solid var(--border-base);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group:not(:empty) {
+  box-shadow: var(--card-shadow-elevated);
+}
+.obs-root .maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--border-base);
+}
+.obs-root .maplibregl-ctrl-group button {
+  color: var(--text-secondary);
+}
+.obs-root .maplibregl-ctrl-group button:not(:disabled):hover,
+.obs-root .maplibregl-ctrl-group button:not(:disabled):active {
+  background-color: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:focus,
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:focus:focus-visible {
+  box-shadow: none;
+  border-radius: 0;
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  background-color: var(--text-secondary);
+  background-image: none;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button.maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 8.5c-.75 0-1.5.75-1.5 1.5v3h-3c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h3v3c0 .75.75 1.5 1.5 1.5S16 19.75 16 19v-3h3c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13h-3v-3c0-.75-.75-1.5-1.5-1.5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 8.5c-.75 0-1.5.75-1.5 1.5v3h-3c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h3v3c0 .75.75 1.5 1.5 1.5S16 19.75 16 19v-3h3c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13h-3v-3c0-.75-.75-1.5-1.5-1.5'/%3E%3C/svg%3E");
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M10 13c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h9c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M10 13c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h9c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13z'/%3E%3C/svg%3E");
+}

@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Globe2, Map as MapIcon } from 'lucide-react';
 import type { Projection } from '../lib/projection';
+import { BODY, FACT, LABEL } from '../lib/chrome-classes';
 
 export const HEAT_FLAT_ONLY = 'Heat view is flat-only';
 
@@ -57,11 +58,11 @@ export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch
       {flatOnly && (
         <span
           id={reasonId}
-          className="font-mono"
+          className={BODY}
           style={{
             // beside the BUTTON, whatever its width (the labelled desktop button is ~100px wide, the touch icon 44px)
             position: 'absolute', right: 'calc(100% + 8px)', top: '50%', transform: 'translateY(-50%)', whiteSpace: 'nowrap',
-            fontSize: 11, padding: '3px 8px', borderRadius: 8,
+            padding: '3px 8px', borderRadius: 8,
             background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-secondary)',
           }}
         >
@@ -84,19 +85,19 @@ export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch
           width: showLabel ? 'auto' : size, minWidth: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           gap: showLabel ? 6 : 0, padding: showLabel ? '0 8px' : undefined,
           opacity: flatOnly ? 0.45 : 1, cursor: flatOnly ? 'not-allowed' : 'pointer',
-          // pressed = the globe is on: MapLibre's control chrome with the console's primary for the on state
-          color: globe && !flatOnly ? 'var(--primary-pressed, #B8821F)' : '#333',
+          // pressed = the globe is on: the console's primary for the on state, the control group's icon colour otherwise
+          color: globe && !flatOnly ? 'var(--primary-text)' : 'var(--text-secondary)',
         }}
       >
         {globe ? <MapIcon size={touch ? 18 : 16} aria-hidden /> : <Globe2 size={touch ? 18 : 16} aria-hidden />}
         {showLabel && (
           <>
-            <span data-projection-label className="font-mono" style={{ fontSize: 11, lineHeight: 1, whiteSpace: 'nowrap' }}>
+            <span data-projection-label className={LABEL} style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
               <span style={{ fontWeight: globe ? 400 : 700, opacity: globe ? 0.55 : 1 }}>Flat</span>
               <span aria-hidden style={{ opacity: 0.4 }}> | </span>
               <span style={{ fontWeight: globe ? 700 : 400, opacity: globe ? 1 : 0.55 }}>Globe</span>
             </span>
-            <kbd className="font-mono" aria-hidden style={{ fontSize: 10, lineHeight: 1, padding: '1px 4px', borderRadius: 4, border: '1px solid rgba(0,0,0,0.25)', opacity: 0.7 }}>G</kbd>
+            <kbd className={FACT} aria-hidden style={{ lineHeight: 1, padding: '1px 4px', borderRadius: 4, border: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}>G</kbd>
           </>
         )}
       </button>

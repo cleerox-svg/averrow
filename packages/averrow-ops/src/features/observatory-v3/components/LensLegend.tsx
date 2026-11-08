@@ -31,6 +31,21 @@ import { VELOCITY_FILLING, VELOCITY_RGB } from '../lib/lens/velocity';
 import type { ActorModel } from '../lib/lens/actors';
 import type { ActorListItem } from '@/hooks/useObservatoryLenses';
 import { rgbCss, type Rgba } from '../lib/map-colors';
+import { BASEMAP_BG, BODY, LABEL } from '../lib/chrome-classes';
+
+// Lens colours as the map draws them: literals in the layers, so the legend repeats them rather than reading a theme token.
+// matches layers/lens-layers.ts CYAN (map colour)
+const MAP_CYAN = 'rgb(122, 234, 255)';
+// matches layers/lens-layers.ts VIOLET (map colour)
+const MAP_VIOLET = 'rgb(167, 139, 250)';
+// matches layers/lens-layers.ts SLATE (map colour)
+const MAP_SLATE = 'rgb(148, 163, 184)';
+// matches layers/lens-layers.ts PINK (map colour)
+const MAP_PINK = 'rgb(244, 114, 182)';
+// matches layers/lens-layers.ts FUCHSIA (map colour)
+const MAP_FUCHSIA = 'rgb(240, 171, 252)';
+// matches layers/lens-layers.ts BOT_ABOVE_LINE (map colour)
+const MAP_WHITE = 'rgb(255, 255, 255)';
 
 export interface QueryState {
   isLoading: boolean;
@@ -59,8 +74,7 @@ export interface LegendSectionProps {
   onPickActor: (id: string | null) => void;
 }
 
-const LABEL = 'font-mono text-[10px] uppercase tracking-wider';
-const TEXT = 'font-mono text-[10px]';
+const TEXT = BODY;
 
 function Swatch({ color, ring, dashed, square, halo }: { color: string; ring?: boolean; dashed?: boolean; square?: boolean; halo?: boolean }) {
   return (
@@ -72,7 +86,7 @@ function Swatch({ color, ring, dashed, square, halo }: { color: string; ring?: b
         background: ring ? 'transparent' : color,
         border: ring || dashed ? `1.5px ${dashed ? 'dashed' : 'solid'} ${color}` : 'none',
         // `halo`: a filled dot with a separate ring around it (the very-fast nodes' static ring on the map).
-        boxShadow: halo ? `0 0 0 2px var(--bg-card-deep), 0 0 0 3.5px ${color}` : '0 0 0 1px rgba(0,0,0,0.3)',
+        boxShadow: halo ? `0 0 0 2px var(--bg-card-deep), 0 0 0 3.5px ${color}` : '0 0 0 1px var(--border-base)',
         ...(halo ? { margin: 3 } : null),
       }}
     />
@@ -89,8 +103,8 @@ export function Status({ q, empty, emptyText, what }: { q: QueryState; empty: bo
     return (
       <div role="alert" className={`${TEXT} flex items-center justify-between gap-2`} style={{ color: 'var(--sev-critical-text)' }}>
         <span>{what} failed to load</span>
-        <button type="button" onClick={() => void q.refetch()} className="ds-focusable inline-flex items-center gap-1 uppercase font-bold" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>
-          <RefreshCw size={10} /> Retry
+        <button type="button" onClick={() => void q.refetch()} className="ds-focusable inline-flex items-center gap-1 font-semibold" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>
+          <RefreshCw size={12} aria-hidden /> Retry
         </button>
       </div>
     );
@@ -121,15 +135,15 @@ export function OperationsSection({ s }: { s: LegendSectionProps['operations'] }
       {m && m.nodes.length > 0 && (
         <>
           <ul className="list-none p-0 m-0 flex flex-col gap-1">
-            <Row swatch={<Swatch color="rgb(122, 234, 255)" />}>Country with operations: bigger = more of them there (labelled &ldquo;DE 37&rdquo; for the busiest). Click for the list.</Row>
-            <Row swatch={<Swatch color="rgb(122, 234, 255)" dashed />}>Links radiate from each operation&rsquo;s busiest country. The label says the evidence: ◆ cert, ● IP, ▲ ASN.</Row>
+            <Row swatch={<Swatch color={MAP_CYAN} />}>Country with operations: bigger = more of them there (labelled &ldquo;DE 37&rdquo; for the busiest). Click for the list.</Row>
+            <Row swatch={<Swatch color={MAP_CYAN} dashed />}>Links radiate from each operation&rsquo;s busiest country. The label says the evidence: ◆ cert, ● IP, ▲ ASN.</Row>
             <li className={`${TEXT} flex items-center gap-2`} style={{ color: 'var(--text-secondary)' }} data-testid="ops-edge-scale">
               <span aria-hidden className="inline-flex items-center gap-2 shrink-0">
                 {EDGE_SCALE.map(n => {
                   const { width, alpha } = opEdgeStyle(n, EDGE_SCALE[EDGE_SCALE.length - 1]!);
                   return (
                     <span key={n} className="inline-flex items-center gap-1">
-                      <span style={{ display: 'inline-block', width: 18, height: Math.max(1, Math.round(width)), borderRadius: 1, background: `rgba(122, 234, 255, ${(alpha / 255).toFixed(2)})` }} />
+                      <span style={{ display: 'inline-block', width: 18, height: Math.max(1, Math.round(width)), borderRadius: 1, background: MAP_CYAN, opacity: Number((alpha / 255).toFixed(2)) }} />
                       <span style={{ color: 'var(--text-tertiary)' }}>{n === EDGE_SCALE[EDGE_SCALE.length - 1] ? `${n}+` : n}</span>
                     </span>
                   );
@@ -157,9 +171,9 @@ export function MovementSection({ s }: { s: LegendSectionProps['movement'] }) {
       {m && drawn > 0 && (
         <>
           <ul className="list-none p-0 m-0 flex flex-col gap-1">
-            <Row swatch={<Swatch color="rgb(167, 139, 250)" />}>Trail: infrastructure hopping to a new host, in sequence.</Row>
-            <Row swatch={<Swatch color="rgb(167, 139, 250)" ring />}>Ghost: where it used to be.</Row>
-            <Row swatch={<Swatch color="rgb(148, 163, 184)" ring />}>Went dark, or arrived with the origin not recorded.</Row>
+            <Row swatch={<Swatch color={MAP_VIOLET} />}>Trail: infrastructure hopping to a new host, in sequence.</Row>
+            <Row swatch={<Swatch color={MAP_VIOLET} ring />}>Ghost: where it used to be.</Row>
+            <Row swatch={<Swatch color={MAP_SLATE} ring />}>Went dark, or arrived with the origin not recorded.</Row>
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             {s.count} events · {m.hops.filter(h => !h.id.endsWith(':w')).length} hops
@@ -307,7 +321,7 @@ function BotShareSection({ bot }: { bot: LegendSectionProps['baseline']['bot'] }
             <span>{formatPct(m.domain.minBot)}</span><span>{formatPct(m.domain.maxBot)}</span>
           </div>
           <ul className="list-none p-0 m-0">
-            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: 2, background: '#0b1220', border: '1.5px solid rgb(255,255,255)', flexShrink: 0 }} />}>
+            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: 2, background: BASEMAP_BG, border: `1.5px solid ${MAP_WHITE}`, flexShrink: 0 }} />}>
               Outlined: above the global average{m.globalAvg != null ? ` (${formatPct(m.globalAvg)})` : ''}
             </Row>
           </ul>
@@ -340,7 +354,7 @@ export function VelocitySection({ s }: { s: LegendSectionProps['velocity'] }) {
         <>
           <ul className="list-none p-0 m-0 flex flex-col gap-1">
             <Row swatch={<Swatch color={VELOCITY_RGB} halo />}>Very fast: live within 24h of registration. Solid, with a ring (and a pulse when motion is on).</Row>
-            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: VELOCITY_RGB, opacity: 0.45, boxShadow: '0 0 0 1px rgba(0,0,0,0.3)' }} />}>Fast: live within 72h. Lighter, no ring.</Row>
+            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: VELOCITY_RGB, opacity: 0.45, boxShadow: '0 0 0 1px var(--border-base)' }} />}>Fast: live within 72h. Lighter, no ring.</Row>
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             Node size = very fast + fast threats · {m.points.length} countries · {m.total.toLocaleString()} threats.
@@ -362,9 +376,9 @@ export function CampaignsSection({ s }: { s: LegendSectionProps['campaigns'] }) 
       {m && m.arcs.length > 0 && (
         <>
           <ul className="list-none p-0 m-0 flex flex-col gap-1">
-            <Row swatch={<Swatch color="rgb(244, 114, 182)" dashed />}>Adversary → target (long dashes). Curated, not observed traffic.</Row>
-            <Row swatch={<Swatch color="rgb(244, 114, 182)" />}>Adversary country</Row>
-            <Row swatch={<Swatch color="rgb(244, 114, 182)" ring />}>Target country</Row>
+            <Row swatch={<Swatch color={MAP_PINK} dashed />}>Adversary → target (long dashes). Curated, not observed traffic.</Row>
+            <Row swatch={<Swatch color={MAP_PINK} />}>Adversary country</Row>
+            <Row swatch={<Swatch color={MAP_PINK} ring />}>Target country</Row>
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             {m.drawn.size} campaigns · {m.arcs.length} links
@@ -401,8 +415,8 @@ export function ActorsSection({ s, onPickActor }: { s: LegendSectionProps['actor
         ) : (
           <>
             <ul className="list-none p-0 m-0 flex flex-col gap-1">
-              <Row swatch={<Swatch color="rgb(240, 171, 252)" />}>Country with attributed infrastructure; brighter = higher confidence</Row>
-              <Row swatch={<Swatch color="rgb(240, 171, 252)" dashed />}>Cluster spanning countries</Row>
+              <Row swatch={<Swatch color={MAP_FUCHSIA} />}>Country with attributed infrastructure; brighter = higher confidence</Row>
+              <Row swatch={<Swatch color={MAP_FUCHSIA} dashed />}>Cluster spanning countries</Row>
             </ul>
             <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
               {m.countries.length} countries · {m.asns.length} ASNs · {m.clusters.length} clusters
