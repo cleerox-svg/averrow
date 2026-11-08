@@ -7,13 +7,15 @@ import type { Env } from "../src/types";
 // duplication is cheaper than coupling tests via shared fixtures.
 class MockKV {
   store = new Map<string, string>();
+  ttls = new Map<string, number | undefined>();
 
   async get(key: string): Promise<string | null> {
     return this.store.get(key) ?? null;
   }
 
-  async put(key: string, value: string): Promise<void> {
+  async put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void> {
     this.store.set(key, value);
+    this.ttls.set(key, opts?.expirationTtl);
   }
 
   async delete(key: string): Promise<void> {
@@ -338,11 +340,36 @@ describe("cachedValue", () => {
       // Fresh for 10s: stamp = now - (300 - 10)s.
       expect(Date.now() - kept.t).toBeLessThan(291_000);
       expect(Date.now() - kept.t).toBeGreaterThanOrEqual(289_000);
-      // A second back-off keeps the ORIGINAL write time.
-      vi.spyOn(Date, "now").mockReturnValue(Date.now() + 11_000);
-      await cachedValue(env, "test.long", 300, compute, { keepExistingWhen: bad, ttlFor: (x) => (bad(x) ? 10 : 300) });
-      expect(JSON.parse(kv.store.get("cv:test.long")!).w).toBe(JSON.parse(longRaw).t);
-      vi.restoreAllMocks();
+      // KV expiry bounded by the original write: 600s life - 400s age = 200s.
+      const firstTtl = kv.ttls.get("cv:test.long")!;
+      expect(firstTtl).toBeGreaterThanOrEqual(199);
+      expect(firstTtl).toBeLessThanOrEqual(200);
+      // A second back-off keeps the ORIGINAL write time, re-stamps t, and the
+      // remaining lifetime shrinks rather than resetting.
+      const later = Date.now() + 11_000;
+      const spy = vi.spyOn(Date, "now").mockReturnValue(later);
+      try {
+        await cachedValue(env, "test.long", 300, compute, { keepExistingWhen: bad, ttlFor: (x) => (bad(x) ? 10 : 300) });
+        const second = JSON.parse(kv.store.get("cv:test.long")!) as { t: number; w: number };
+        expect(second.w).toBe(JSON.parse(longRaw).t);
+        expect(second.t).toBe(later - 290_000);
+        expect(kv.ttls.get("cv:test.long")!).toBeLessThan(firstTtl);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("back-off never clobbers an entry another caller refilled during compute", async () => {
+      kv.store.set("cv:test.race", JSON.stringify({ v: { n: "old-good" }, t: Date.now() - 400_000 }));
+      const newer = JSON.stringify({ v: { n: "new-good" }, t: Date.now() });
+      // While this caller computes (and degrades), another refill lands.
+      const compute = vi.fn().mockImplementation(async () => {
+        kv.store.set("cv:test.race", newer);
+        return { n: "partial", degraded: true };
+      });
+      const v = await cachedValue(env, "test.race", 300, compute, { keepExistingWhen: bad, ttlFor: (x) => (bad(x) ? 10 : 300) });
+      expect(v).toEqual({ n: "new-good" });
+      expect(kv.store.get("cv:test.race")).toBe(newer);
     });
   });
 });

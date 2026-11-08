@@ -92,8 +92,13 @@ interface CachedEntry<T> {
  *                     When it returns true for the freshly computed value (e.g. a
  *                     degraded/partial result) AND an entry for the key is still in
  *                     KV (fresh or expired) whose value it returns false for, that
- *                     existing value is returned and nothing is written — the good
- *                     entry keeps its own stamp and KV expiry. With no usable entry
+ *                     existing value is returned instead of writing the fresh one.
+ *                     With `ttlFor` set, the kept entry is re-stamped fresh for
+ *                     `ttlFor(fresh)` seconds (a refill back-off), keeping its
+ *                     original write time in `w`; its KV expiry never passes
+ *                     `w + 2 * ttlSeconds` (assumes the kept entry was written with
+ *                     the full `ttlSeconds`). If the key changed since it was read
+ *                     (another caller refilled), nothing is written. With no usable entry
  *                     (cold key, or the existing one also matches) the fresh value
  *                     is written as usual (subject to `ttlFor`). Uses the entry this
  *                     call last read: the first read, or the single-flight lock
@@ -173,6 +178,13 @@ export async function cachedValue<T>(
         const remaining = Math.floor((writtenAt + ttlSeconds * 2000 - Date.now()) / 1000);
         if (remaining >= 60) {
           try {
+            // Another caller may have refilled the key while we computed; never
+            // clobber a newer entry with this older value.
+            const current = await env.CACHE.get(cacheKey);
+            const cur = current ? (JSON.parse(current) as CachedEntry<T>) : null;
+            if (!cur || cur.t !== existing.t || (cur.w ?? null) !== (existing.w ?? null)) {
+              return cur && !opts.keepExistingWhen(cur.v) ? cur.v : existing.v;
+            }
             const kept: CachedEntry<T> = {
               v: existing.v,
               t: Date.now() - (ttlSeconds - backoff) * 1000,

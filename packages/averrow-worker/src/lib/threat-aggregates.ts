@@ -512,7 +512,9 @@ export async function threatAggregate(
     singleFlight,
     // Never replace a complete entry (fresh or stale — unfiltered entries
     // stay in KV up to 6h) with a degraded refill: return the older complete
-    // numbers and leave the entry as it is. A degraded body is written only
+    // numbers (re-stamped fresh for THREAT_AGGREGATE_DEGRADED_TTL_S so the
+    // next refill backs off instead of re-running every scan at once during
+    // the overload). A degraded body is written only
     // when there is no complete entry to fall back to (cold key).
     keepExistingWhen: (value) => (value.degraded_sections?.length ?? 0) > 0,
     // A degraded result is cached briefly so the failed reads are retried
