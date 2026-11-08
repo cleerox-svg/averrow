@@ -62,7 +62,7 @@ const steps = [
   <section class="docs-gs-hero">
     <div class="container">
       <a href={`${base}/docs`} class="docs-gs-back">&larr; Documentation</a>
-      <div class="docs-gs-eyebrow">Getting Started</div>
+      <div class="docs-gs-eyebrow">Getting started</div>
       <h1>From zero to your first<br /><span class="docs-gs-accent">Brand Exposure Score.</span></h1>
       <p class="docs-gs-lede">
         Five steps, plain language. This is the real product flow &mdash;
@@ -133,30 +133,29 @@ const steps = [
   }
   .docs-gs-back {
     display: inline-block;
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 13px;
     color: var(--text-tertiary);
     text-decoration: none;
     margin-bottom: 1.5rem;
   }
-  .docs-gs-back:hover { color: var(--amber-text); }
+  .docs-gs-back:hover { color: var(--accent); }
   .docs-gs-eyebrow {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 12px;
-    font-weight: 600;
-    color: var(--amber-text);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    font-weight: var(--type-label-weight);
+    color: var(--accent);
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.85rem;
   }
   .docs-gs-hero h1 {
     font-family: var(--font-display);
     font-size: clamp(32px, 5vw, 54px);
-    font-weight: 800;
+    font-weight: 600;
     margin-bottom: 1.1rem;
     line-height: 1.1;
   }
-  .docs-gs-accent { color: var(--amber-text); }
+  .docs-gs-accent { color: var(--accent); }
   .docs-gs-lede {
     font-size: 17px;
     color: var(--text-secondary);
@@ -180,9 +179,9 @@ const steps = [
     width: 56px;
     height: 56px;
     border-radius: 50%;
-    border: 2px solid rgba(229,168,50,0.4);
-    background: rgba(229,168,50,0.08);
-    color: var(--amber-text);
+    border: 2px solid color-mix(in srgb, var(--primary) 40%, transparent);
+    background: color-mix(in srgb, var(--primary) 8%, transparent);
+    color: var(--accent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -198,7 +197,7 @@ const steps = [
     top: 56px;
     bottom: 0;
     width: 2px;
-    background: linear-gradient(180deg, rgba(229,168,50,0.35), var(--border));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 35%, transparent), var(--border));
     transform: translateX(-1px);
   }
   .docs-gs-step-body { flex: 1; min-width: 0; padding-top: 0.5rem; }
@@ -222,10 +221,10 @@ const steps = [
     margin-top: 1rem;
   }
   .docs-gs-step-link {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.85rem;
     font-weight: 600;
-    color: var(--amber-text);
+    color: var(--accent);
   }
 
   /* ── WHAT'S NEXT ── */
@@ -285,10 +284,10 @@ const steps = [
      text on the light theme's pale tinted pills/sections. Darkened
      here for [data-theme="light"] only; dark theme values are
      untouched. */
-  :global([data-theme="light"]) .docs-gs-eyebrow { color: var(--accent-section, #8A5F0F); }
-  :global([data-theme="light"]) .docs-gs-accent { color: var(--accent-section, #8A5F0F); }
-  :global([data-theme="light"]) .docs-gs-step-link { color: var(--accent-section, #8A5F0F); }
-  :global([data-theme="light"]) .docs-gs-step-num { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .docs-gs-eyebrow { color: var(--accent-section); }
+  :global([data-theme="light"]) .docs-gs-accent { color: var(--accent-section); }
+  :global([data-theme="light"]) .docs-gs-step-link { color: var(--accent-section); }
+  :global([data-theme="light"]) .docs-gs-step-num { color: var(--accent-section); }
 
   /* ── RESPONSIVE ── */
   @media (max-width: 640px) {

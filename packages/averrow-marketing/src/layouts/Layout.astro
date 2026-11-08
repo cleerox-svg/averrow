@@ -31,7 +31,7 @@ const {
   title,
   description,
   noindex = false,
-  ogImage = "/brand/averrow-og.png",
+  ogImage = "/brand/og-r3-2026.png",
   ogType = "website",
   jsonLd,
 } = Astro.props;
@@ -47,7 +47,7 @@ const orgJsonLd = {
   "@type": "Organization",
   name: "Averrow",
   url: siteOrigin,
-  logo: new URL("/brand/averrow-512.png", siteOrigin).toString(),
+  logo: new URL("/brand/averrow-r3-512.png", siteOrigin).toString(),
   image: ogImageUrl,
   description:
     "Brand protection that traces the operation. Averrow (Digital Risk Protection, DRPS) finds lookalike domains, fake social profiles and cloned apps aimed at your brand and files takedowns for lookalike domains and phishing URLs under your authorization. Enterprise adds operation mapping, which groups related lookalike domains into one campaign.",
@@ -74,27 +74,32 @@ const orgJsonLd = {
     <meta property="og:image" content={ogImageUrl} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Averrow — threat intelligence" />
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImageUrl} />
+    <meta name="twitter:image:alt" content="Averrow — threat intelligence" />
 
     <!-- Structured data -->
     <script is:inline type="application/ld+json" set:html={JSON.stringify(orgJsonLd)} />
     {jsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
 
-    <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icon-192.svg" />
+    <link rel="icon" href="/favicon-r3.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon-r3.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon-r3.png" />
+    <!-- Browser chrome colour per theme (graphite / light page). The pre-paint
+         script below pins both to the stored theme, since the site ignores
+         prefers-color-scheme. -->
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0b0e" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f0f2f8" />
     <link rel="alternate" type="application/rss+xml" title="Averrow Blog" href="/blog/feed.xml" />
     <link rel="alternate" type="application/rss+xml" title="Averrow Changelog" href="/changelog/feed.xml" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Self-hosted Geist (see global.css @font-face). Both faces render above the fold. -->
+    <link rel="preload" href="/fonts/averrow-geist-sans-var.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/averrow-geist-mono-var.woff2" as="font" type="font/woff2" crossorigin />
 
     <script is:inline>
       // Pre-paint theme load — avoids a flash. Dark is the default: only an
@@ -106,6 +111,8 @@ const orgJsonLd = {
           if (localStorage.getItem("averrow-theme") === "light") theme = "light";
         } catch (e) {}
         document.documentElement.setAttribute("data-theme", theme);
+        var tc = document.querySelectorAll('meta[name="theme-color"]');
+        for (var i = 0; i < tc.length; i++) tc[i].setAttribute("content", theme === "light" ? "#f0f2f8" : "#0a0b0e");
       })();
     </script>
   </head>
@@ -170,8 +177,8 @@ const orgJsonLd = {
     top: -3rem;
     z-index: 1000;
     padding: 0.6rem 1rem;
-    background: var(--amber);
-    color: #0b0f1a;
+    background: var(--primary);
+    color: var(--primary-ink);
     font-family: var(--font-display);
     font-weight: 700;
     border-radius: 0 0 8px 8px;
@@ -179,7 +186,7 @@ const orgJsonLd = {
   }
   .skip-link:focus {
     top: 0;
-    outline: 2px solid #0b0f1a;
+    outline: 2px solid var(--primary-ink);
     outline-offset: 2px;
   }
 </style>

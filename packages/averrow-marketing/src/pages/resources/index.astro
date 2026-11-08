@@ -175,23 +175,22 @@ const categories = [
     background: var(--gradient-hero);
   }
   .res-label {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 12px;
-    font-weight: 600;
-    color: var(--amber-text);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    font-weight: var(--type-label-weight);
+    color: var(--accent);
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.85rem;
   }
   .res-hero h1 {
     font-family: var(--font-display);
     font-size: clamp(32px, 5vw, 56px);
-    font-weight: 800;
+    font-weight: 600;
     line-height: 1.1;
     letter-spacing: -0.02em;
     margin-bottom: 1rem;
   }
-  .res-accent { color: var(--amber-text); }
+  .res-accent { color: var(--accent); }
   .res-sub {
     font-size: 18px;
     color: var(--text-secondary);
@@ -228,10 +227,10 @@ const categories = [
     height: 3px;
     opacity: 0;
     transition: opacity 0.25s;
-    background: var(--amber);
+    background: var(--primary);
   }
   .res-card:hover {
-    border-color: var(--amber);
+    border-color: var(--primary);
     box-shadow: var(--shadow-glow);
     transform: translateY(-3px);
     text-decoration: none;
@@ -259,7 +258,7 @@ const categories = [
   .res-icon-layers { background: rgba(10,138,181,0.10); color: var(--blue); }
   .res-icon-file { background: var(--green-bg); color: var(--green); }
   .res-icon-scale { background: rgba(10,138,181,0.10); color: var(--blue); }
-  .res-icon-shield { background: rgba(229,168,50,0.10); color: var(--amber-text); }
+  .res-icon-shield { background: color-mix(in srgb, var(--primary) 10%, transparent); color: var(--accent); }
 
   .res-card-title {
     font-family: var(--font-display);
@@ -278,7 +277,7 @@ const categories = [
     font-family: var(--font-body);
     font-size: 0.88rem;
     font-weight: 600;
-    color: var(--amber-text);
+    color: var(--accent);
   }
 
   /* ── LATEST FROM THE BLOG ── */
@@ -300,10 +299,10 @@ const categories = [
     font-weight: 700;
   }
   .res-latest-all {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.8rem;
     font-weight: 600;
-    color: var(--amber-text);
+    color: var(--accent);
     white-space: nowrap;
   }
   .res-latest-grid {
@@ -323,7 +322,7 @@ const categories = [
     transition: border-color 0.2s, transform 0.2s;
   }
   .res-latest-card:hover {
-    border-color: var(--amber);
+    border-color: var(--primary);
     transform: translateY(-2px);
     text-decoration: none;
   }
@@ -338,19 +337,18 @@ const categories = [
     margin-bottom: 0.85rem;
   }
   .res-latest-badge {
-    font-family: var(--font-mono);
-    font-size: 0.64rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     padding: 0.22rem 0.6rem;
     border-radius: 100px;
-    background: rgba(229,168,50,0.10);
-    color: var(--amber-text);
-    border: 1px solid rgba(229,168,50,0.25);
+    background: color-mix(in srgb, var(--primary) 10%, transparent);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
   }
   .res-latest-read {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.68rem;
     color: var(--text-tertiary);
   }
@@ -399,13 +397,13 @@ const categories = [
      for dark backgrounds and drop below WCAG AA (4.5:1) as text on
      the light theme's pale tinted pills/sections. Darkened here for
      [data-theme="light"] only; dark theme values are untouched. */
-  :global([data-theme="light"]) .res-label { color: var(--accent-section, #8A5F0F); }
-  :global([data-theme="light"]) .res-accent { color: var(--accent-section, #8A5F0F); }
-  :global([data-theme="light"]) .res-card-link { color: var(--accent-section, #8A5F0F); }
-  :global([data-theme="light"]) .res-latest-all { color: var(--accent-section, #8A5F0F); }
-  :global([data-theme="light"]) .res-latest-badge { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .res-label { color: var(--accent-section); }
+  :global([data-theme="light"]) .res-accent { color: var(--accent-section); }
+  :global([data-theme="light"]) .res-card-link { color: var(--accent-section); }
+  :global([data-theme="light"]) .res-latest-all { color: var(--accent-section); }
+  :global([data-theme="light"]) .res-latest-badge { color: var(--accent-section); }
   :global([data-theme="light"]) .res-icon-radar { color: #106b32; }
-  :global([data-theme="light"]) .res-icon-shield { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .res-icon-shield { color: var(--accent-section); }
   :global([data-theme="light"]) .res-icon-file { color: #106b32; }
   :global([data-theme="light"]) .res-icon-scale { color: var(--blue-dim); }
   :global([data-theme="light"]) .res-icon-layers { color: var(--blue-dim); }

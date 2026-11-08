@@ -40,13 +40,19 @@ export const BOILERPLATE =
   "takedowns for look-alike domains and phishing URLs under the customer's authorization. Hosting providers and " +
   "registrars decide whether to remove content. A free domain scan needs no signup.";
 
-/** Brand assets served by the Worker from packages/averrow-worker/public (same paths the old press page linked). */
+/**
+ * R3 brand assets (facelift 2026-11, BRAND_BRIEF §9 G1). Shipped from
+ * packages/averrow-marketing/public/ (overlaid into the Worker's public/ by
+ * scripts/sync-to-worker.mjs) under new filenames, so the frozen pre-R3 files
+ * in packages/averrow-worker/public stay untouched and caches never serve a
+ * stale logo. Sources: docs/brand/logo/.
+ */
 export const BRAND_ASSETS = [
-  { name: "Open Graph image", detail: "1200 x 630, PNG", href: "/brand/averrow-og.png" },
-  { name: "Logo, 256px", detail: "PNG, transparent", href: "/brand/averrow-256.png" },
-  { name: "Logo, 512px", detail: "PNG, transparent", href: "/brand/averrow-512.png" },
-  { name: "Social tile, 400px", detail: "PNG", href: "/brand/averrow-social-400.png" },
-  { name: "Social tile, 800px", detail: "PNG", href: "/brand/averrow-social-800.png" },
-  { name: "Social tile, 1500px", detail: "PNG", href: "/brand/averrow-social-1500.png" },
-  { name: "Favicon", detail: "SVG, scalable", href: "/favicon.svg" },
+  { name: "Open Graph image", detail: "1200 x 630, PNG", href: "/brand/og-r3-2026.png" },
+  { name: "Lockup, dark backgrounds", detail: "SVG, scalable", href: "/brand/averrow-r3-lockup-dark.svg" },
+  { name: "Lockup, light backgrounds", detail: "SVG, scalable", href: "/brand/averrow-r3-lockup-light.svg" },
+  { name: "Lockup with tagline, dark", detail: "SVG, scalable", href: "/brand/averrow-r3-lockup-tagline-dark.svg" },
+  { name: "Mark, red", detail: "SVG, transparent", href: "/brand/averrow-r3-mark.svg" },
+  { name: "App icon, 512px", detail: "PNG", href: "/brand/averrow-r3-512.png" },
+  { name: "Favicon", detail: "SVG, scalable", href: "/favicon-r3.svg" },
 ] as const;

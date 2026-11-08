@@ -71,7 +71,7 @@ const articleJsonLd = {
 
   {related.length > 0 && (
     <section class="related-section" aria-label="Related posts">
-      <div class="related-label">Keep Reading</div>
+      <div class="related-label">Keep reading</div>
       <div class="related-grid">
         {related.map(rel => {
           const relSlug = categorySlug(rel.data.category);
@@ -98,24 +98,23 @@ const articleJsonLd = {
   }
   .blog-post-badge {
     display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 600;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
     padding: 0.25rem 0.7rem;
     border-radius: 100px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 1.5rem;
   }
-  .blog-post-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(229,168,50,0.22); }
-  .blog-post-badge-threat-intel { background: rgba(229,168,50,0.10); color: var(--amber-text); border: 1px solid rgba(229,168,50,0.25); }
+  .blog-post-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
+  .blog-post-badge-threat-intel { background: color-mix(in srgb, var(--magenta) 10%, transparent); color: var(--magenta-text); border: 1px solid color-mix(in srgb, var(--magenta) 30%, transparent); }
   .blog-post-badge-engineering  { background: var(--green-bg); color: var(--green-text); border: 1px solid rgba(60,184,120,0.25); }
   .blog-post-badge-company      { background: rgba(10,138,181,0.10); color: var(--blue-text); border: 1px solid rgba(10,138,181,0.25); }
 
   .blog-post-hero h1 {
     font-family: var(--font-display);
     font-size: clamp(2rem, 4vw, 2.75rem);
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1.15;
     margin-bottom: 1.25rem;
@@ -124,7 +123,7 @@ const articleJsonLd = {
     margin-right: auto;
   }
   .blog-post-meta {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.78rem;
     color: var(--text-tertiary);
   }
@@ -150,11 +149,11 @@ const articleJsonLd = {
   }
   .blog-post-body :global(strong) { color: var(--text-primary); font-weight: 600; }
   .blog-post-body :global(a) {
-    color: var(--amber-text);
+    color: var(--accent);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
-  .blog-post-body :global(a:hover) { color: var(--amber-text); opacity: 0.85; }
+  .blog-post-body :global(a:hover) { color: var(--accent); opacity: 0.85; }
   .blog-post-body :global(ul), .blog-post-body :global(ol) {
     color: var(--text-secondary);
     line-height: 1.85;
@@ -176,7 +175,7 @@ const articleJsonLd = {
     gap: 0.5rem;
     font-size: 0.9rem;
     font-weight: 600;
-    color: var(--amber-text);
+    color: var(--accent);
     margin-top: 2rem;
     padding-top: 2rem;
     border-top: 1px solid var(--border);
@@ -196,11 +195,10 @@ const articleJsonLd = {
     border-top: 1px solid var(--border);
   }
   .related-label {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     color: var(--text-tertiary);
     text-align: center;
     margin-bottom: 1.25rem;
@@ -221,7 +219,7 @@ const articleJsonLd = {
     transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
   }
   .related-card:hover {
-    border-color: var(--amber);
+    border-color: var(--primary);
     transform: translateY(-2px);
     box-shadow: 0 6px 18px rgba(0,0,0,0.10);
     text-decoration: none;
@@ -234,17 +232,16 @@ const articleJsonLd = {
   }
   .related-badge {
     display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    font-weight: 600;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
     padding: 0.18rem 0.55rem;
     border-radius: 100px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.55rem;
   }
-  .related-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(229,168,50,0.22); }
-  .related-badge-threat-intel { background: rgba(229,168,50,0.10); color: var(--amber-text); border: 1px solid rgba(229,168,50,0.25); }
+  .related-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
+  .related-badge-threat-intel { background: color-mix(in srgb, var(--magenta) 10%, transparent); color: var(--magenta-text); border: 1px solid color-mix(in srgb, var(--magenta) 30%, transparent); }
   .related-badge-engineering  { background: var(--green-bg); color: var(--green-text); border: 1px solid rgba(60,184,120,0.25); }
   .related-badge-company      { background: rgba(10,138,181,0.10); color: var(--blue-text); border: 1px solid rgba(10,138,181,0.25); }
   .related-title {
@@ -256,10 +253,10 @@ const articleJsonLd = {
     color: var(--text-primary);
   }
   .related-meta {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.7rem;
     color: var(--text-tertiary);
-    letter-spacing: 0.02em;
+    letter-spacing: var(--type-label-tracking);
   }
   @media (max-width: 720px) {
     .related-grid { grid-template-columns: 1fr; }

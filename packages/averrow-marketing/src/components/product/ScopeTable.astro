@@ -67,9 +67,8 @@ const { rows, caption = "What is and is not covered" } = Astro.props;
   .st-table th, .st-table td { text-align: left; vertical-align: top; padding: 14px 16px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
   .st-table tbody tr:last-child > * { border-bottom: 0; }
   .st-table thead th {
-    font: 600 12px var(--font-mono);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font: 500 12px var(--font-display);
+    letter-spacing: var(--type-label-tracking);
     color: var(--text-secondary);
     background: var(--bg-tertiary);
   }
@@ -100,10 +99,10 @@ const { rows, caption = "What is and is not covered" } = Astro.props;
   .st-d summary::-webkit-details-marker { display: none; }
   .st-d summary::after { content: "+"; font: 600 18px var(--font-mono); color: var(--text-secondary); margin-left: auto; }
   .st-d[open] summary::after { content: "\2212"; }
-  .st-d summary:focus-visible { outline: 2px solid var(--amber-text); outline-offset: -2px; }
+  .st-d summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   .st-d h3 { margin: 0; font: 700 15px var(--font-display); color: var(--text-primary); }
   .st-db { margin: 0; padding: 0 12px 14px; display: grid; gap: 4px; }
-  .st-db dt { font: 600 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); margin-top: 6px; }
+  .st-db dt { font: 500 12px var(--font-display); letter-spacing: var(--type-label-tracking); color: var(--text-secondary); margin-top: 6px; }
   .st-db dd { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-primary); }
 
   @media (max-width: 640px) {

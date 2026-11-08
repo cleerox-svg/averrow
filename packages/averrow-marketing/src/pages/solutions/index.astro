@@ -159,13 +159,13 @@ const roles: RoleCard[] = [
   .sh-link { color: inherit; text-decoration: none; }
   .sh-link::after { content: ""; position: absolute; inset: 0; border-radius: 14px; }
   .sh-link:focus-visible { outline: none; }
-  .sh-link:focus-visible::after { outline: 2px solid var(--amber-text); outline-offset: 2px; }
-  .sh-role { font: 600 12px var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-section, var(--accent)); }
-  .sh-card h3 { margin: 0; font: 800 20px/1.2 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); text-wrap: pretty; }
+  .sh-link:focus-visible::after { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .sh-role { font: 500 12px var(--font-display); letter-spacing: var(--type-label-tracking); color: var(--accent-section, var(--accent)); }
+  .sh-card h3 { margin: 0; font: 600 20px/1.2 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); text-wrap: pretty; }
   .sh-card p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
   .sh-sample { display: grid; gap: 10px; margin-top: auto; padding: 12px; background: var(--bg-primary, var(--bg-secondary)); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
-  .sh-tag { justify-self: start; font: 700 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber-text); border: 1px solid var(--amber-text); border-radius: 999px; padding: 1px 9px; }
-  .sh-go { font: 700 14px var(--font-display); color: var(--amber-text); }
+  .sh-tag { justify-self: start; font: 500 12px var(--font-display); letter-spacing: var(--type-label-tracking); color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 9px; }
+  .sh-go { font: 700 14px var(--font-display); color: var(--accent); }
   .sh-help .sh-go { margin-top: auto; }
   @media (max-width: 1000px) {
     .sh-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

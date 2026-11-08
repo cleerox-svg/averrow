@@ -55,15 +55,14 @@ const { label, rows, note, footer } = Astro.props;
     border-bottom: 1px solid var(--border);
   }
   .sf-tag {
-    font: 700 12px var(--font-mono);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--amber-text);
-    border: 1px solid var(--amber-text);
+    font: 500 12px var(--font-display);
+    letter-spacing: var(--type-label-tracking);
+    color: var(--accent);
+    border: 1px solid var(--accent);
     border-radius: 999px;
     padding: 1px 9px;
   }
-  .sf-fict { font: 500 12px var(--font-mono); color: var(--text-secondary); }
+  .sf-fict { font: 500 12px var(--font-display); color: var(--text-secondary); }
   .sf-b { padding: 16px; display: grid; gap: 12px; min-width: 0; }
   .sf-f {
     padding: 11px 16px;

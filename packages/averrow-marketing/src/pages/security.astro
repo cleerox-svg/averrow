@@ -110,7 +110,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <div class="sec-body">
     <div class="sec-section" id="security-practices">
-      <div class="sec-section-label">Security Practices</div>
+      <div class="sec-section-label">Security practices</div>
       <h2 class="sec-section-title">Built with security at every layer</h2>
       <div class="sec-cards">
         <div class="sec-card">
@@ -192,7 +192,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
 
     <div class="sec-section">
-      <div class="sec-section-label">Responsible Disclosure</div>
+      <div class="sec-section-label">Responsible disclosure</div>
       <h2 class="sec-section-title">We welcome security researchers</h2>
       <div class="sec-disclosure">
         <p>We believe that working with skilled security researchers is essential to keeping our platform and users safe. If you discover a vulnerability in Averrow, we encourage you to report it responsibly. We are committed to investigating all legitimate reports and resolving issues as quickly as possible.</p>
@@ -216,7 +216,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
 
     <div class="sec-section" id="data-handling">
-      <div class="sec-section-label">Data Handling</div>
+      <div class="sec-section-label">Data handling</div>
       <h2 class="sec-section-title">What we collect and what we don&apos;t</h2>
       <div class="sec-data-bg">
         <div class="sec-data-block sec-collect">
@@ -240,7 +240,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           </ul>
         </div>
         <div class="sec-data-block sec-retention" style="margin-top:2rem;">
-          <h4><span style="color: var(--amber-text);">&#9679;</span> Retention</h4>
+          <h4><span style="color: var(--slate-text);">&#9679;</span> Retention</h4>
           <ul>
             <li>Active account data retained during subscription</li>
             <li>Scan results cached 24 hours</li>
@@ -267,7 +267,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .sec-hero h1 {
     font-family: var(--font-display);
     font-size: clamp(2.4rem, 5vw, 3.2rem);
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1.1;
     margin-bottom: 1rem;
@@ -284,12 +284,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .sec-section { padding: 3rem 0; }
   .sec-section + .sec-section { border-top: 1px solid var(--border); }
   .sec-section-label {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    font-weight: 600;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
     color: var(--accent-section, var(--accent));
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.75rem;
   }
   .sec-section-title {
@@ -323,7 +322,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
   }
   .sec-trust-tile:hover {
-    border-color: rgba(229,168,50,0.4);
+    border-color: color-mix(in srgb, var(--primary) 40%, transparent);
     transform: translateY(-1px);
     box-shadow: 0 4px 18px rgba(0,0,0,0.10);
     text-decoration: none;
@@ -363,10 +362,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     line-height: 1.2;
   }
   .sec-trust-tile-sub {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.7rem;
     color: var(--text-tertiary);
-    letter-spacing: 0.04em;
+    letter-spacing: var(--type-label-tracking);
   }
   @media (max-width: 900px) { .sec-trust-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 540px) { .sec-trust-grid { grid-template-columns: 1fr; } }
@@ -377,18 +376,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     gap: 6px;
     padding: 2px 10px;
     border-radius: 100px;
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     margin-left: 8px;
     vertical-align: middle;
   }
   .sec-status-pill::before { content: ""; width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
   .sec-status-pill.in-place { color: var(--green-text); background: var(--green-bg); border: 1px solid rgba(60,184,120,0.3); }
   .sec-status-pill.in-place::before { background: var(--green); }
-  .sec-status-pill.scheduled { color: var(--amber-text); background: rgba(229,168,50,0.10); border: 1px solid rgba(229,168,50,0.3); }
+  .sec-status-pill.scheduled { color: var(--amber-text); background: color-mix(in srgb, var(--amber) 10%, transparent); border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent); }
   .sec-status-pill.scheduled::before { background: var(--amber); }
 
   /* Practice cards */
@@ -418,7 +416,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     flex-shrink: 0;
   }
   .sec-card-icon-teal { background: var(--accent-bg); color: var(--accent); }
-  .sec-card-icon-coral { background: rgba(229,168,50,0.10); color: var(--amber-text); }
+  .sec-card-icon-coral { background: color-mix(in srgb, var(--blue) 12%, transparent); color: var(--blue-text); }
   .sec-card-icon-green { background: var(--green-bg); color: var(--green-text); }
   .sec-card h3 { font-family: var(--font-display); font-size: 1.1rem; font-weight: 700; }
   .sec-card p { font-size: 0.92rem; color: var(--text-secondary); line-height: 1.75; }
@@ -495,12 +493,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     box-shadow: 0 0 0 4px var(--accent-bg);
   }
   .sec-timeline-date {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.75rem;
-    font-weight: 600;
+    font-weight: var(--type-label-weight);
     color: var(--accent);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.3rem;
   }
   .sec-timeline-title {
@@ -539,12 +536,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border-radius: var(--radius-md);
   }
   .sec-detail-label {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    font-weight: 600;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
     color: var(--text-tertiary);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.35rem;
   }
   .sec-detail-value {
@@ -598,7 +594,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .sec-collect li::before { background: var(--accent); }
   .sec-no-collect li::before { background: var(--green); }
-  .sec-retention li::before { background: var(--amber); }
+  .sec-retention li::before { background: var(--slate); }
   .sec-data-bg {
     background: var(--bg-secondary);
     border: 1px solid var(--border);

@@ -9,13 +9,65 @@
 
 @import "./tokens.css";
 
+/* ── FONTS ── Geist + Geist Mono (SIL OFL 1.1, /fonts/OFL.txt), self-hosted
+   latin variable files copied from packages/shared/src/theme/fonts/. The
+   upright sans + mono are preloaded in Layout.astro; the italics load only
+   if a page actually renders italic text. */
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/averrow-geist-sans-var.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/averrow-geist-sans-italic-var.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/averrow-geist-mono-var.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "calt" 0, "liga" 0;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/averrow-geist-mono-italic-var.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+  font-feature-settings: "calt" 0, "liga" 0;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* ── RESET ── */
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 html { scroll-behavior: smooth; scroll-padding-top: 96px; } /* clear the 64px sticky nav on anchor jumps and focus */
 
+/* G3: contextual alternates off page-wide (most mono is styled by class via
+   var(--font-mono), which no selector can target; Geist sans loses nothing
+   visible); tabular figures everywhere (G3). Mono elements also drop ligatures. */
+:root { font-feature-settings: "calt" 0; font-variant-numeric: tabular-nums; }
+:is(code, kbd, samp, pre, .mono) {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+  font-feature-settings: "calt" 0, "liga" 0;
+  font-variant-numeric: tabular-nums;
+}
+
 body {
   font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
   background: var(--bg-primary);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
@@ -28,7 +80,7 @@ a {
   color: var(--accent);
   text-decoration: none;
 }
-a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 a:hover { text-decoration: underline; }
 
 button { font-family: inherit; cursor: pointer; }
@@ -37,8 +89,8 @@ input, select, textarea { font-family: inherit; }
 img, video, svg { max-width: 100%; height: auto; }
 
 ::selection {
-  background: var(--amber);
-  color: #060A14;
+  background: var(--primary);
+  color: var(--primary-ink);
 }
 
 /* Reduced motion is honoured everywhere reveals are used. */
@@ -49,6 +101,19 @@ img, video, svg { max-width: 100%; height: auto; }
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Visually hidden, still announced (the home scan form's label relied on a
+   page-scoped rule that only scan.astro / pricing.astro defined). */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Shared label (G3): eyebrows, captions, chips, column headings. */
+.label {
+  font-family: var(--font-display);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-tracking);
+  line-height: 1.3;
 }
 
 /* ── LAYOUT PRIMITIVES ── */
@@ -83,12 +148,11 @@ img, video, svg { max-width: 100%; height: auto; }
 }
 
 .section-label {
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: var(--type-label-weight);
   color: var(--accent-section, var(--accent));
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: var(--type-label-tracking);
   margin-bottom: 0.75rem;
 }
 
@@ -107,7 +171,7 @@ img, video, svg { max-width: 100%; height: auto; }
   border: 1px solid transparent;
   cursor: pointer;
 }
-/* Primary = platform amber gradient, dark ink, both themes. */
+/* Primary = solid indigo (--primary) with light ink, both themes. */
 .btn-primary {
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
@@ -117,14 +181,14 @@ img, video, svg { max-width: 100%; height: auto; }
   background: var(--btn-primary-bg-hover);
   color: var(--btn-primary-ink);
   text-decoration: none;
-  box-shadow: 0 0 20px rgba(229, 168, 50, 0.35);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--primary) 35%, transparent);
 }
 .btn:focus-visible,
 .nav-link:focus-visible,
 .footer-col a:focus-visible,
 .theme-toggle:focus-visible,
 .nav-hamburger:focus-visible {
-  outline: 2px solid var(--amber-text);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .btn-outline {
@@ -133,8 +197,8 @@ img, video, svg { max-width: 100%; height: auto; }
   color: var(--text-primary);
 }
 .btn-outline:hover {
-  border-color: var(--amber);
-  color: var(--amber-text);
+  border-color: var(--primary);
+  color: var(--accent);
   text-decoration: none;
 }
 
@@ -174,22 +238,17 @@ img, video, svg { max-width: 100%; height: auto; }
   flex-shrink: 0;
 }
 .nav-brand:hover { text-decoration: none; }
-.nav-brand-text {
-  font-family: var(--font-display);
-  font-size: 17px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  line-height: 1;
-  display: block;
-}
+/* R3 lockup tagline (BrandLockup.astro). Live text, 12px minimum (G3);
+   tracked out to roughly the outlined wordmark's width, as in the lockup. */
 .nav-brand-sub {
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
+  line-height: 1;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: nowrap;
   color: var(--text-tertiary);
-  margin-top: 2px;
   display: block;
 }
 
@@ -220,11 +279,11 @@ img, video, svg { max-width: 100%; height: auto; }
 }
 .nav-link:hover {
   color: var(--text-primary);
-  background: rgba(229, 168, 50, 0.07);
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
   text-decoration: none;
 }
 .nav-link.is-active {
-  color: var(--amber-text);
+  color: var(--accent);
   font-weight: 600;
 }
 .nav-link.is-active::after {
@@ -234,7 +293,7 @@ img, video, svg { max-width: 100%; height: auto; }
   right: 12px;
   bottom: -3px;
   height: 2px;
-  background: var(--amber);
+  background: var(--primary);
   border-radius: 1px;
 }
 .nav-chevron {
@@ -286,7 +345,7 @@ img, video, svg { max-width: 100%; height: auto; }
   text-decoration: none;
 }
 .nav-menu a:hover,
-.nav-menu a:focus-visible { background: rgba(229, 168, 50, 0.08); color: var(--text-primary); text-decoration: none; }
+.nav-menu a:focus-visible { background: color-mix(in srgb, var(--primary) 8%, transparent); color: var(--text-primary); text-decoration: none; }
 .nav-menu a small { display: block; font-size: 12px; font-weight: 400; color: var(--text-tertiary); margin-top: 2px; }
 
 .nav-right { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
@@ -317,7 +376,7 @@ img, video, svg { max-width: 100%; height: auto; }
   font-size: 13px;
   font-weight: 500;
 }
-.theme-toggle:hover { border-color: var(--amber); color: var(--amber-text); }
+.theme-toggle:hover { border-color: var(--primary); color: var(--accent); }
 .theme-icon-wrap {
   display: inline-flex;
   align-items: center;
@@ -340,7 +399,7 @@ img, video, svg { max-width: 100%; height: auto; }
   color: var(--text-secondary);
   transition: all 0.2s;
 }
-.nav-hamburger:hover { border-color: var(--amber); color: var(--amber-text); }
+.nav-hamburger:hover { border-color: var(--primary); color: var(--accent); }
 
 .mobile-menu {
   display: none;
@@ -376,14 +435,14 @@ img, video, svg { max-width: 100%; height: auto; }
   transition: all 0.15s ease;
 }
 .mobile-link:hover {
-  background: rgba(229,168,50,0.07);
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
   color: var(--text-primary);
   text-decoration: none;
 }
 .mobile-link.is-active {
-  color: var(--amber-text);
+  color: var(--accent);
   background: var(--accent-bg);
-  border-left: 2px solid var(--amber);
+  border-left: 2px solid var(--primary);
   padding-left: 12px;
   font-weight: 600;
 }
@@ -449,11 +508,10 @@ img, video, svg { max-width: 100%; height: auto; }
   max-width: 260px;
 }
 .footer-col-title {
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-tracking);
   color: var(--text-tertiary);
   margin-bottom: 0.85rem;
 }
@@ -468,7 +526,7 @@ img, video, svg { max-width: 100%; height: auto; }
   font-size: 0.92rem;
   transition: color 0.2s;
 }
-.footer-col a:hover { color: var(--amber-text); text-decoration: none; }
+.footer-col a:hover { color: var(--accent); text-decoration: none; }
 .footer-bottom {
   padding-top: 1.75rem;
   border-top: 1px solid var(--border);
@@ -479,7 +537,7 @@ img, video, svg { max-width: 100%; height: auto; }
   flex-wrap: wrap;
 }
 .footer-legal {
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   font-size: 0.75rem;
   color: var(--text-tertiary);
 }

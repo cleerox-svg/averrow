@@ -12,7 +12,7 @@ const PAGES: Array<{
   title: RegExp;
   heading: RegExp;
 }> = [
-  { path: "/",             title: /Averrow/,             heading: /who is attacking your brand/i },
+  { path: "/",             title: /Averrow/,             heading: /brand protection that traces the operation/i },
   { path: "/platform",     title: /Platform/,            heading: /every place your brand is impersonated/i },
   { path: "/pricing",      title: /^Plans — Averrow/,     heading: /plans built around\s*what you need watched/i },
   // Keep this loose: copy on About changes, the page's subject (threat actors) does not.
@@ -138,7 +138,9 @@ test.describe("homepage hero", () => {
   test("H1, lede and scan form", async ({ page: p }) => {
     await p.goto("/");
     await expect(p.locator("h1")).toHaveCount(1);
-    await expect(p.locator("h1")).toHaveText(/See who is attacking your brand, and shut them down\./);
+    await expect(p.locator("h1")).toHaveText(/^Brand protection that traces the operation\.$/);
+    await expect(p.locator("h1 em")).toHaveText("traces the operation");
+    await expect(p.locator(".hero-lede").first()).toContainText("files takedowns for lookalike domains");
 
     const form = p.locator("form#scanForm");
     await expect(form).toHaveAttribute("action", /\/assess$/);
@@ -320,7 +322,7 @@ test.describe("homepage: follow one operation", () => {
     await p.goto("/");
     const s = p.locator("#operation-story");
     for (const t of TITLES) await expect(s.getByRole("heading", { level: 3, name: t })).toBeVisible();
-    await expect(s.getByText("OP-2291 · Payroll-portal phishing kit")).toBeVisible();
+    await expect(s.getByText("OP-2291 · Acme payroll sign-in impersonation")).toBeVisible();
     await expect(s.getByText("8 of 14")).toBeVisible();
     await expect(s.locator("svg[role=img]")).toHaveAttribute("aria-label", /14 domains/);
     await expect(s.getByRole("tab")).toHaveCount(0);

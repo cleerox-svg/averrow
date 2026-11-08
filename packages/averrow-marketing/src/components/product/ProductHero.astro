@@ -70,13 +70,12 @@ const hasSample = Astro.slots.has("sample");
     align-items: center;
     flex-wrap: wrap;
     gap: 10px;
-    font: 600 12px var(--font-mono);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    font: 500 12px var(--font-display);
+    letter-spacing: var(--type-label-tracking);
     color: var(--accent-section, var(--accent));
   }
   .ph-plan {
-    letter-spacing: 0.06em;
+    letter-spacing: var(--type-label-tracking);
     border: 1px solid var(--border-strong);
     border-radius: 999px;
     padding: 2px 10px;
@@ -88,10 +87,10 @@ const hasSample = Astro.slots.has("sample");
   .ph-h {
     margin: 0;
     font-family: var(--font-display);
-    font-weight: 800;
-    font-size: clamp(34px, 5vw, 56px);
-    line-height: 1.05;
-    letter-spacing: -0.03em;
+    font-weight: var(--type-hero-weight);
+    font-size: var(--type-hero-size);
+    line-height: var(--type-hero-lh);
+    letter-spacing: var(--type-hero-tracking);
     text-wrap: balance;
     color: var(--text-primary);
   }

@@ -38,9 +38,9 @@ const { rows, note } = Astro.props;
   .sr-t { font-size: 13px; color: var(--text-primary); overflow-wrap: anywhere; min-width: 0; }
   .sr-t.mono { font-family: var(--font-mono); font-size: 12.5px; }
   .sr-s { grid-column: 1 / -1; font-size: 12px; line-height: 1.4; color: var(--text-secondary); }
-  .sr-note { font: 500 12px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+  .sr-note { font: 500 12px var(--font-display); color: var(--text-secondary); overflow-wrap: anywhere; }
   .sr-pill {
-    font: 600 12px var(--font-mono);
+    font: 600 12px var(--font-display);
     border: 1px solid currentColor;
     border-radius: 999px;
     padding: 1px 9px;
@@ -49,7 +49,7 @@ const { rows, note } = Astro.props;
   .sr-pill.high { color: var(--sev-high-text); background: color-mix(in srgb, var(--sev-high) 12%, transparent); }
   .sr-pill.med  { color: var(--sev-medium-text); background: color-mix(in srgb, var(--sev-medium) 12%, transparent); }
   .sr-pill.low  { color: var(--sev-low-text); background: color-mix(in srgb, var(--sev-low) 12%, transparent); }
-  .sr-pill.new  { color: var(--amber-text); background: var(--accent-bg); }
-  .sr-pill.hold { color: var(--amber-text); background: var(--accent-bg); }
+  .sr-pill.new  { color: var(--amber-text); background: color-mix(in srgb, var(--amber) 12%, transparent); }
+  .sr-pill.hold { color: var(--amber-text); background: color-mix(in srgb, var(--amber) 12%, transparent); }
   .sr-pill.ok   { color: var(--green-text); background: color-mix(in srgb, var(--green) 12%, transparent); }
 </style>

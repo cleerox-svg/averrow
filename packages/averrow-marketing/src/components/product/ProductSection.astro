@@ -27,18 +27,17 @@ const hid = id ? `${id}-title` : undefined;
   .ps-sec { max-width: 1280px; margin: 0 auto; padding: 56px 24px 40px; display: grid; gap: 24px; scroll-margin-top: 80px; }
   .ps-head { display: grid; gap: 10px; min-width: 0; }
   .ps-eyebrow {
-    font: 600 12px var(--font-mono);
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
+    font: 500 12px var(--font-display);
+    letter-spacing: var(--type-label-tracking);
     color: var(--accent-section, var(--accent));
   }
   .ps-h {
     margin: 0;
     font-family: var(--font-display);
-    font-weight: 800;
-    font-size: clamp(24px, 3vw, 30px);
-    line-height: 1.1;
-    letter-spacing: -0.025em;
+    font-weight: var(--type-section-weight);
+    font-size: var(--type-section-size);
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
     text-wrap: balance;
     color: var(--text-primary);
   }

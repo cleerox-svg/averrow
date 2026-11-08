@@ -30,34 +30,34 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="value-prop">
     <div class="value-prop-inner">
-      <div class="section-label" style="text-align:center;">What You Replace</div>
+      <div class="section-label" style="text-align:center;">What you replace</div>
       <div class="value-prop-grid">
         <div class="value-prop-item">
           <div class="value-prop-icon">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
-          <div class="value-prop-title">Brand Protection Platform</div>
+          <div class="value-prop-title">Brand protection platform</div>
           <div class="value-prop-desc">Averrow detects impersonation, phishing domains, and social media abuse.</div>
         </div>
         <div class="value-prop-item">
           <div class="value-prop-icon">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2 8 12 14 22 8"/></svg>
           </div>
-          <div class="value-prop-title">Email Security Monitoring</div>
+          <div class="value-prop-title">Email security monitoring</div>
           <div class="value-prop-desc">Continuous SPF, DKIM, DMARC assessment with A+ through F grading.</div>
         </div>
         <div class="value-prop-item">
           <div class="value-prop-icon">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
           </div>
-          <div class="value-prop-title">Threat Intelligence Feeds</div>
+          <div class="value-prop-title">Threat intelligence feeds</div>
           <div class="value-prop-desc">40+ threat &amp; intelligence sources ingested and correlated automatically.</div>
         </div>
         <div class="value-prop-item">
           <div class="value-prop-icon">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           </div>
-          <div class="value-prop-title">Analyst Workload</div>
+          <div class="value-prop-title">Analyst workload</div>
           <div class="value-prop-desc">Automated triage and rule-based correlation, running around the clock, so your team reviews decisions instead of raw alerts.</div>
         </div>
       </div>
@@ -143,7 +143,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="compare-section" id="compare">
     <div class="container" style="text-align:center;">
-      <div class="section-label" style="text-align:center;">Compare Plans</div>
+      <div class="section-label" style="text-align:center;">Compare plans</div>
       <h2 class="compare-heading">Everything you need, at every stage</h2>
     </div>
     <p class="compare-swipe-hint" aria-hidden="true">Swipe to compare &rarr;</p>
@@ -227,9 +227,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .pricing-hero { padding: 5rem 0 2.5rem; text-align: center; background: var(--gradient-hero); }
   .pricing-hero h1 {
     font-family: var(--font-display);
-    font-size: clamp(36px, 5vw, 64px);
-    font-weight: 800;
+    font-size: var(--type-hero-size);
+    font-weight: var(--type-hero-weight);
     margin-bottom: 1rem;
+    line-height: var(--type-hero-lh);
+    letter-spacing: var(--type-hero-tracking);
   }
   .pricing-hero p {
     font-size: 18px;
@@ -261,12 +263,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .value-prop-icon { font-size: 1.5rem; margin-bottom: 0.75rem; }
   .value-prop-title {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.78rem;
-    font-weight: 600;
+    font-weight: var(--type-label-weight);
     color: var(--accent-section, var(--accent));
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.5rem;
   }
   .value-prop-desc {
@@ -311,15 +312,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   .pricing-grid-hint {
     text-align: center;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     color: var(--text-tertiary);
     margin-bottom: 1.75rem;
   }
-  .pricing-grid-hint-arrow { color: var(--amber-text); margin: 0 6px; }
+  .pricing-grid-hint-arrow { color: var(--accent); margin: 0 6px; }
 
   .price-card.free-scan {
     background: transparent;
@@ -327,17 +327,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     position: relative;
   }
   .price-card.free-scan::before {
-    content: "TRY FIRST";
+    content: "Try first";
     position: absolute;
     top: -10px;
     left: 16px;
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.7rem;
     font-weight: 700;
-    letter-spacing: 0.12em;
+    letter-spacing: var(--type-label-tracking);
     background: var(--bg-primary);
     padding: 2px 8px;
-    color: var(--amber-text);
+    color: var(--accent);
     border-radius: 6px;
     border: 1px solid var(--border);
   }
@@ -349,12 +349,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     transform: translateX(-50%);
     background: var(--btn-primary-bg);
     color: var(--btn-primary-ink);
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.7rem;
     font-weight: 600;
     padding: 0.25rem 0.75rem;
     border-radius: 100px;
-    letter-spacing: 0.05em;
+    letter-spacing: var(--type-label-tracking);
   }
   .price-tier {
     font-family: var(--font-display);
@@ -392,8 +392,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .compare-section { padding: 3rem 0; background: var(--bg-tertiary); }
   .compare-heading {
     font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 36px);
-    font-weight: 700;
+    font-size: var(--type-section-size);
+    font-weight: var(--type-section-weight);
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
   }
   .compare-table-wrap {
     max-width: 1400px;
@@ -411,11 +413,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border: 1px solid var(--border);
   }
   .compare-table th {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     color: var(--text-tertiary);
     text-align: left;
     padding: 1rem;
@@ -451,8 +452,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .faq-section { padding: 3rem 0; }
   .faq-heading {
     font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 36px);
-    font-weight: 700;
+    font-size: var(--type-section-size);
+    font-weight: var(--type-section-weight);
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
   }
   .faq-list { max-width: 720px; margin: 2rem auto 0; padding: 0 2rem; }
   .faq-item { border-bottom: 1px solid var(--border); }
@@ -491,9 +494,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .cta-block { padding: 3rem 0; text-align: center; background: var(--bg-tertiary); }
   .cta-block h2 {
     font-family: var(--font-display);
-    font-size: clamp(28px, 3vw, 36px);
-    font-weight: 700;
+    font-size: var(--type-section-size);
+    font-weight: var(--type-section-weight);
     margin-bottom: 1rem;
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
   }
   .cta-block p { color: var(--text-secondary); max-width: 480px; margin: 0 auto 2rem; }
   .cta-actions {
@@ -519,7 +524,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     .value-prop-grid { grid-template-columns: 1fr; }
     .compare-swipe-hint {
       display: block; text-align: right; padding: 0 1rem; margin: 1rem 0 0;
-      font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-tertiary);
+      font-family: var(--font-display); font-size: 0.7rem; color: var(--text-tertiary);
     }
     .compare-table-wrap { padding: 0 1rem; }
     .compare-table th:first-child,
