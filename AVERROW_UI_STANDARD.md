@@ -914,28 +914,42 @@ on hover, 44px minimum target.
 
 ## TABLE ROW STANDARD
 
-Every clickable data row in every table:
+Every clickable data row in every table. Hover is token-driven and **never
+amber**, and never lightens the surface (Phase 6, screen 3a):
+
+- Dark: a faint `--bg-page` fill (darker than the card), text moves to
+  `--text-primary`.
+- Light: `color-mix(in srgb, var(--text-primary) 6%, transparent)` (darkens).
+- Transition: `background-color var(--motion-fast, 120ms) var(--ease-standard, ease)`.
+- Focus (keyboard control inside the row): `outline: 2px solid var(--focus-ring)`
+  (light: `--text-primary`), offset 2px. The row click is a mouse convenience;
+  a real `<button>` inside the row is the keyboard control.
+- A selected row uses `--primary-tint`.
+- Severity rows keep their severity left border (`--sev-*-border`) on hover;
+  there is no amber / primary left-border slide.
 
 ```css
-/* Standard data row */
-.data-row {
-  border-left: 2px solid transparent;
-  transition: background 0.12s ease, border-color 0.12s ease;
-  cursor: pointer;
-}
-
-/* Hover state — amber left border + subtle glow */
-.data-row:hover {
-  background: linear-gradient(90deg, rgba(229,168,50,0.04) 0%, transparent 40%);
-  border-left-color: rgba(229,168,50,0.45);
-}
-
-/* Severity-colored rows — use sev color instead of amber */
-.data-row[data-severity="critical"]:hover {
-  background: linear-gradient(90deg, rgba(239,68,68,0.06) 0%, transparent 40%);
-  border-left-color: rgba(239,68,68,0.50);
+.data-row { border-left: 2px solid transparent; cursor: pointer;
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease); }
+:root[data-accent] .data-row:hover { background: var(--bg-page); }
+:root[data-accent][data-theme="light"] .data-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 ```
+
+First adopter: the Alerts tab (`features/alerts/alerts.css`, scoped under
+`.alerts-v4`). The global `.data-row` rules in `index.css` still carry the
+legacy primary-glow hover and migrate screen by screen.
+
+**Console chrome and Alerts (Phase 6, screen 3a).** The Console crumb is a
+sentence-case `--type-label-*` label, the title uses `--type-display-*`, there
+is no "LIVE" ping, and the section switcher is the kit `Tabs`
+(`variant="underline" size="md"`: `role="tablist"`, `aria-selected`, arrow keys).
+Tab bodies sit in a `role="tabpanel"`. The Alerts tab uses `alerts.css` roles
+(`al-label`, `al-body`, `al-chip`, `al-pill`) instead of mono/uppercase utility
+classes: mono only for domains, handles and ids; tabular figures for counts,
+times and scores; chips and pills are token-coloured; actions are `KitButton`.
+Kit `StatTile` hover ring is `--border-strong` (not the tile accent).
 
 ---
 

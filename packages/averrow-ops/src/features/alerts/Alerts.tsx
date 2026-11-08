@@ -11,7 +11,7 @@ import {
   PageHeader,
   DataRow,
   Badge,
-  Button,
+  KitButton,
   type Severity,
 } from '@/design-system/components';
 import { SeverityDot } from '@/components/ui/DataRow';
@@ -27,6 +27,8 @@ import { roleHasPermission } from '@/lib/permissions';
 import { parseInitials } from '@/lib/avatar';
 import { Bell, Star, X } from 'lucide-react';
 import { useArrivalFlash } from '@averrow/shared/ui';
+import { sentenceCase } from '@/lib/sentence-case';
+import './alerts.css';
 
 const prefersReducedMotion = (): boolean =>
   typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -95,8 +97,10 @@ function extractScore(summary: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+const HANDLE_RE = /@[\w.]+/;
+
 function extractHandle(title: string): string {
-  const m = title.match(/@[\w.]+/);
+  const m = title.match(HANDLE_RE);
   return m ? m[0] : title;
 }
 
@@ -112,31 +116,8 @@ function extractPlatform(title: string): string {
   return 'Social';
 }
 
-// Platform brand colors. Inline styles (not Tailwind arbitrary-value
-// classes) so they survive Tailwind config changes. These are the
-// social platforms' official accents — kept as hex for brand
-// recognition. Anything not in the map falls back to a neutral
-// design-system blue.
-function platformBadgeStyle(platform: string): React.CSSProperties {
-  const accent = (
-    platform === 'TikTok'    ? '#00d4ff' :
-    platform === 'YouTube'   ? '#ef4444' :
-    platform === 'GitHub'    ? '#a78bfa' :
-    platform === 'LinkedIn'  ? '#0a8ab5' :
-    platform === 'Instagram' ? '#ec4899' :
-    platform === 'Facebook'  ? '#3b82f6' :
-    platform === 'X'         ? 'rgba(255,255,255,0.80)' :
-                               'var(--blue)'  // Social fallback
-  );
-  return {
-    background: `${accent}26`, // ~15% opacity
-    color: accent,
-    border: `1px solid ${accent}4d`, // ~30% opacity
-  };
-}
-
 // alerts.severity is now lowercase post-migration 0120, so the
-// uppercase→lowercase translation map is gone. Direct cast.
+// upper-to-lower-case translation map is gone. Direct cast.
 function severityToBadge(s: string): Severity {
   if (s === 'critical' || s === 'high' || s === 'medium' || s === 'low') return s;
   return 'low'; // defensive fallback for legacy rows
@@ -164,10 +145,11 @@ function parseAiAssessment(raw: string | null): ParsedAiAssessment | null {
   return { verdict: m[1] as AiVerdict, confidence: parseInt(m[2], 10) };
 }
 
-const AI_VERDICT_STYLE: Record<AiVerdict, { label: string; color: string; bg: string }> = {
-  active_threat: { label: 'AI: Threat',      color: 'var(--sev-critical-text)', bg: 'rgba(239,68,68,0.12)' },
-  needs_human:   { label: 'AI: Review',      color: 'var(--sev-medium-text)', bg: 'rgba(251,191,36,0.12)' },
-  likely_safe:   { label: 'AI: Likely Safe', color: '#4ade80', bg: 'rgba(74,222,128,0.12)' },
+// Chip tones live in alerts.css (data-tone); severity tokens only.
+const AI_VERDICT_STYLE: Record<AiVerdict, { label: string; tone: 'critical' | 'medium' | 'ok' }> = {
+  active_threat: { label: 'AI: Threat',      tone: 'critical' },
+  needs_human:   { label: 'AI: Review',      tone: 'medium' },
+  likely_safe:   { label: 'AI: Likely safe', tone: 'ok' },
 };
 
 // ── Saved views ─────────────────────────────────────────────────
@@ -238,18 +220,15 @@ interface PillGroupProps {
 
 function PillGroup({ label, options, selected, onChange }: PillGroupProps) {
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="font-mono text-[9px] uppercase tracking-widest text-white/55 mr-1">{label}</span>
+    <div role="group" aria-label={label} className="al-pillgroup">
+      <span className="al-label" aria-hidden="true">{label}</span>
       {options.map(o => (
         <button
           key={o.value}
+          type="button"
+          aria-pressed={selected === o.value}
           onClick={() => onChange(o.value)}
-          className={cn(
-            'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all',
-            selected === o.value
-              ? 'bg-primary-tint text-[var(--primary-text)] border-primary/30'
-              : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
-          )}
+          className="al-pill"
         >
           {o.label}
         </button>
@@ -311,8 +290,10 @@ function BrandGroupCard({
     <Card style={{ padding: 0, overflow: 'hidden' }}>
       {/* Group header */}
       <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/[0.03] transition-colors"
+        aria-expanded={expanded}
+        className="al-group-head"
       >
         <img
           src={`https://www.google.com/s2/favicons?domain=${group.brand_domain ?? 'example.com'}&sz=32`}
@@ -321,15 +302,17 @@ function BrandGroupCard({
         />
         <div className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-display text-sm font-bold uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>
-              {group.brand_name ?? 'Unknown Brand'}
+            <span className="al-group-name">
+              {group.brand_name ?? 'Unknown brand'}
             </span>
-            <Badge variant="critical">{group.alerts.length} alerts</Badge>
+            <span className="al-chip al-num">{group.alerts.length} alerts</span>
           </div>
-          <div className="font-mono text-[10px] text-[var(--text-secondary)]">{group.brand_domain ?? ''}</div>
+          <div className="al-mono">{group.brand_domain ?? ''}</div>
         </div>
         <svg
-          className={cn('w-4 h-4 text-[var(--text-secondary)] transition-transform', expanded && 'rotate-180')}
+          aria-hidden="true"
+          className="al-chevron"
+          data-open={expanded}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -343,6 +326,7 @@ function BrandGroupCard({
             {visibleAlerts.map(alert => {
               const score = extractScore(alert.summary);
               const handle = extractHandle(alert.title);
+              const hasHandle = HANDLE_RE.test(alert.title);
               const platform = extractPlatform(alert.title);
               const isSelected = selectedAlertId === alert.id;
 
@@ -353,16 +337,12 @@ function BrandGroupCard({
                   severity={sev}
                   unread={alert.status === 'new'}
                   onClick={() => onSelectAlert(alert)}
-                  className={cn('flex items-center gap-3', isSelected && 'bg-[var(--primary-glow)]', arrived?.has(alert.id) && 'motion-arrive')}
+                  className={cn('al-row flex items-center gap-3', isSelected && 'al-row--selected', arrived?.has(alert.id) && 'motion-arrive')}
                 >
                   {/* Severity dot — uses the shared design-system
-                      primitive so the dot color + pulse semantics
-                      stay consistent across pages. R8 migration. */}
-                  <SeverityDot
-                    severity={sev}
-                    size={8}
-                    pulse={alert.severity === 'critical' || alert.severity === 'high'}
-                  />
+                      primitive so the dot colour
+                      stays consistent (no looping ping: no ambient motion) across pages. R8 migration. */}
+                  <SeverityDot severity={sev} size={8} />
 
                   {/* Handle + platform. The real <button> is the row's keyboard
                       control (standard: row click is a mouse convenience only). */}
@@ -372,120 +352,106 @@ function BrandGroupCard({
                     aria-expanded={isSelected}
                     aria-controls={`alert-detail-${alert.id}`}
                     onClick={e => { e.stopPropagation(); onSelectAlert(alert); }}
-                    className="ds-focusable flex-1 min-w-0 text-left rounded-sm"
+                    className="al-row-title ds-focusable text-left rounded-sm"
                   >
                     <span className="block">
-                      <span className="font-mono text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>{handle}</span>
-                      <span className="font-mono text-[10px] ml-1.5" style={{ color: 'var(--text-tertiary)' }}>on</span>
-                      <span
-                        className="ml-1.5 inline-flex items-center font-mono text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
-                        style={platformBadgeStyle(platform)}
-                      >
-                        {platform}
-                      </span>
+                      <span className={hasHandle ? 'al-mono al-mono--strong' : 'al-title-prose'}>{handle}</span>
+                      {' '}
+                      <span className="al-label ml-1.5">· {platform}</span>
                     </span>
                     {alert.saas_technique_name && alert.saas_technique_phase_label && (
-                      <span
-                        className="block"
-                        style={{
-                          fontSize:   9,
-                          color:      'var(--text-muted)',
-                          fontFamily: 'var(--font-mono)',
-                          marginTop:  2,
-                          letterSpacing: '0.06em',
-                          textTransform: 'uppercase',
-                        }}
-                      >
+                      <span className="al-label mt-0.5 block">
                         {alert.saas_technique_name} · {alert.saas_technique_phase_label}
                       </span>
                     )}
                   </button>
 
-                  {/* Score */}
-                  {score !== null && (
-                    <span className={cn(
-                      'font-mono text-[12px] font-bold tabular-nums',
-                      score >= 75 ? 'text-[#fb923c]' : 'text-[var(--text-tertiary)]',
-                    )}>
-                      {score}%
+                  {/* Badges + time. Fixed slots first (severity, status) so they
+                      align across rows; optional chips follow and only shift
+                      themselves. Wraps under the title on narrow containers. */}
+                  <div className="al-row-meta">
+                    <span className="al-slot al-slot--sev">
+                      <Badge severity={sev} size="md" font="sans">{sentenceCase(alert.severity)}</Badge>
                     </span>
-                  )}
 
-                  {/* Severity badge */}
-                  <Badge severity={sev}>{alert.severity}</Badge>
-
-                  {/* AI verdict badge — visible when Tier 3 judge has
-                      stamped a verdict on this alert. Lets operators
-                      scan the residual queue at a glance instead of
-                      opening every row. */}
-                  {(() => {
-                    const v = parseAiAssessment(alert.ai_assessment);
-                    if (!v) return null;
-                    const s = AI_VERDICT_STYLE[v.verdict];
-                    return (
-                      <span
-                        className="font-mono text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded"
-                        style={{ background: s.bg, color: s.color }}
-                        title={`AI confidence ${v.confidence}%`}
-                      >
-                        {s.label}
-                      </span>
-                    );
-                  })()}
-
-                  {/* Status — shared Badge primitive. R8 migration:
-                      replaces an inline pill that had its own color
-                      mapping. */}
-                  <Badge
-                    status={
-                      alert.status === 'new'           ? 'pending'  :
-                      alert.status === 'acknowledged'  ? 'warning'  :
-                      alert.status === 'resolved'      ? 'success'  :
-                                                         'inactive'
-                    }
-                    label={alert.status === 'false_positive' ? 'dismissed' : alert.status}
-                    size="sm"
-                  />
-
-                  {/* Owner — who has claimed this signal (W9). */}
-                  {alert.staff_assigned_to && (
-                    <span
-                      className="font-mono text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
-                      style={{ background: 'rgba(124,138,255,0.14)', color: '#9aa6ff' }}
-                      title={alert.staff_assigned_to === currentUserId
-                        ? 'Assigned to you'
-                        : `Assigned to ${alert.staff_assigned_to_name ?? alert.staff_assigned_to_email ?? 'analyst'}`}
-                    >
-                      {alert.staff_assigned_to === currentUserId
-                        ? 'You'
-                        : parseInitials(alert.staff_assigned_to_name, alert.staff_assigned_to_email)}
+                    {/* Status — shared Badge primitive. (New stays on the
+                        Badge "pending" tone: the kit has no primary status
+                        tone, and a kit-wide change is out of scope here.) */}
+                    <span className="al-slot al-slot--status">
+                      <Badge
+                        status={
+                          alert.status === 'new'           ? 'pending'  :
+                          alert.status === 'acknowledged'  ? 'warning'  :
+                          alert.status === 'resolved'      ? 'success'  :
+                                                             'inactive'
+                        }
+                        label={sentenceCase(alert.status === 'false_positive' ? 'dismissed' : alert.status)}
+                        size="md"
+                        font="sans"
+                      />
                     </span>
-                  )}
 
-                  {/* SLA / aging — only flagged once an open alert is
-                      approaching (warn) or past (breach) its window. */}
-                  {(() => {
-                    const sla = slaFor(alert);
-                    if (!sla.open || sla.state === 'ok') return null;
-                    const breach = sla.state === 'breach';
-                    return (
-                      <span
-                        className="font-mono text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
-                        style={{
-                          background: breach ? 'rgba(239,68,68,0.12)' : 'rgba(251,191,36,0.12)',
-                          color: breach ? '#f87171' : '#fbbf24',
-                        }}
-                        title={`${alert.severity} SLA ${SLA_MINUTES[severityToBadge(alert.severity)]}m`}
-                      >
-                        {breach ? `Overdue ${formatSpan(sla.overdueMs)}` : `Due ${formatSpan(sla.remainingMs)}`}
+                    {/* Score */}
+                    {score !== null && (
+                      <span className={cn('al-score', score >= 75 && 'al-score--hi')}>
+                        {score}%
                       </span>
-                    );
-                  })()}
+                    )}
 
-                  {/* Time */}
-                  <span className="font-mono text-[10px] text-[var(--text-secondary)] tabular-nums w-14 text-right flex-shrink-0">
-                    {timeAgo(alert.created_at)}
-                  </span>
+                    {/* AI verdict badge — visible when Tier 3 judge has
+                        stamped a verdict on this alert. */}
+                    {(() => {
+                      const v = parseAiAssessment(alert.ai_assessment);
+                      if (!v) return null;
+                      const s = AI_VERDICT_STYLE[v.verdict];
+                      return (
+                        <span
+                          className="al-chip"
+                          data-tone={s.tone}
+                          title={`AI confidence ${v.confidence}%`}
+                        >
+                          {s.label}
+                        </span>
+                      );
+                    })()}
+
+                    {/* Owner — who has claimed this signal (W9). */}
+                    {alert.staff_assigned_to && (
+                      <span
+                        className="al-chip"
+                        data-tone="primary"
+                        title={alert.staff_assigned_to === currentUserId
+                          ? 'Assigned to you'
+                          : `Assigned to ${alert.staff_assigned_to_name ?? alert.staff_assigned_to_email ?? 'analyst'}`}
+                      >
+                        {alert.staff_assigned_to === currentUserId
+                          ? 'You'
+                          : parseInitials(alert.staff_assigned_to_name, alert.staff_assigned_to_email)}
+                      </span>
+                    )}
+
+                    {/* SLA / aging — only flagged once an open alert is
+                        approaching (warn) or past (breach) its window. */}
+                    {(() => {
+                      const sla = slaFor(alert);
+                      if (!sla.open || sla.state === 'ok') return null;
+                      const breach = sla.state === 'breach';
+                      return (
+                        <span
+                          className="al-chip"
+                          data-tone={breach ? 'critical' : 'medium'}
+                          title={`${alert.severity} SLA ${SLA_MINUTES[severityToBadge(alert.severity)]}m`}
+                        >
+                          {breach ? `Overdue ${formatSpan(sla.overdueMs)}` : `Due ${formatSpan(sla.remainingMs)}`}
+                        </span>
+                      );
+                    })()}
+
+                    {/* Time */}
+                    <span className="al-time">
+                      {timeAgo(alert.created_at)}
+                    </span>
+                  </div>
                 </DataRow>
               );
             })}
@@ -496,16 +462,18 @@ function BrandGroupCard({
             <div className="flex items-center gap-2">
               {remaining > 0 && !showAll && (
                 <button
+                  type="button"
                   onClick={() => setShowAll(true)}
-                  className="font-mono text-[10px] font-semibold hover:opacity-80 transition-colors" style={{ color: 'var(--primary-text)' }}
+                  className="al-link al-link--accent"
                 >
                   + {remaining} more
                 </button>
               )}
               {showAll && remaining > 0 && (
                 <button
+                  type="button"
                   onClick={() => setShowAll(false)}
-                  className="font-mono text-[10px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                  className="al-link"
                 >
                   Show less
                 </button>
@@ -516,28 +484,29 @@ function BrandGroupCard({
                 <span
                   role="note"
                   aria-label={READ_ONLY_COPY}
-                  className="font-mono text-[10px] uppercase tracking-wide text-[var(--text-secondary)]"
+                  className="al-readonly-note"
                 >
                   Read-only
                 </span>
               )}
               {canEdit && newCount > 0 && (
-                <button
+                <KitButton
+                  variant="secondary"
+                  size="sm"
                   onClick={onAcknowledgeAll}
                   disabled={bulkBusy}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md border border-[color-mix(in_srgb,var(--primary)_25%,transparent)] text-[var(--primary-text)] hover:bg-[var(--primary-glow)] transition-all disabled:opacity-50"
                 >
-                  {bulk?.kind === 'ack' ? bulk.text : 'Acknowledge All'}
-                </button>
+                  {bulk?.kind === 'ack' ? bulk.text : 'Acknowledge all'}
+                </KitButton>
               )}
               {canEdit && canTakedown && (
-              <button
+              <KitButton
+                size="sm"
                 onClick={onCreateTakedowns}
                 disabled={bulkBusy}
-                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-accent hover:bg-accent/80 transition-all disabled:opacity-50" style={{ color: 'var(--text-primary)' }}
               >
-                {bulk?.kind === 'takedown' ? bulk.text : 'Create Takedowns'}
-              </button>
+                {bulk?.kind === 'takedown' ? bulk.text : 'Create takedowns'}
+              </KitButton>
               )}
             </div>
           </div>
@@ -583,42 +552,36 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <Badge severity={severityToBadge(alert.severity)}>{alert.severity}</Badge>
+          <Badge severity={severityToBadge(alert.severity)} size="md" font="sans">{sentenceCase(alert.severity)}</Badge>
           <span
-            className="font-mono text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded"
-            style={{
-              background:
-                alert.status === 'new' ? 'var(--sev-high-bg)' :
-                alert.status === 'acknowledged' ? 'var(--amber-glow)' :
-                alert.status === 'resolved' ? 'var(--sev-info-bg)' :
-                alert.status === 'false_positive' ? 'var(--border-base)' :
-                'transparent',
-              color:
-                alert.status === 'new' ? 'var(--sev-high)' :
-                alert.status === 'acknowledged' ? 'var(--amber)' :
-                alert.status === 'resolved' ? 'var(--sev-info)' :
-                alert.status === 'false_positive' ? 'var(--text-tertiary)' :
-                'var(--text-secondary)',
-            }}
+            className="al-chip"
+            data-tone={
+              alert.status === 'new' ? 'high' :
+              alert.status === 'acknowledged' ? 'medium' :
+              alert.status === 'resolved' ? 'ok' :
+              undefined
+            }
           >
-            {alert.status === 'false_positive' ? 'dismissed' : alert.status}
+            {sentenceCase(alert.status === 'false_positive' ? 'dismissed' : alert.status)}
           </span>
-          <Badge status="running" label={humanizeType(alert.alert_type)} size="xs" />
+          <Badge status="running" label={humanizeType(alert.alert_type)} size="md" font="sans" />
           {isAutoTriaged(alert.resolution_notes) && (
-            <Badge status="inactive" label="Auto-triaged" size="xs" />
+            <Badge status="inactive" label="Auto-triaged" size="md" font="sans" />
           )}
         </div>
-        <Button variant="ghost" size="sm" aria-label="Close alert detail" onClick={onClose} icon={<X size={14} aria-hidden />} />
+        <KitButton variant="ghost" size="icon" aria-label="Close alert detail" onClick={onClose}>
+          <X size={14} aria-hidden />
+        </KitButton>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         {/* LEFT — Alert Details */}
         <div className="space-y-3">
-          <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Alert Details</div>
+          <h3 className="al-section">Alert details</h3>
 
           <Link
             to={`/brands/${alert.brand_id}`}
-            className="flex items-center gap-2 group"
+            className="al-brand-link flex items-center gap-2 group"
             title="Open brand"
           >
             <img
@@ -626,8 +589,8 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               alt=""
               className="w-4 h-4 rounded-sm"
             />
-            <span className="font-display text-sm font-bold group-hover:text-[var(--primary-text)] transition-colors" style={{ color: 'var(--text-primary)' }}>{alert.brand_name ?? 'Unknown'}</span>
-            <span className="font-mono text-[10px] text-[var(--text-secondary)]">{alert.brand_domain ?? ''}</span>
+            <span className="al-group-name">{alert.brand_name ?? 'Unknown'}</span>
+            <span className="al-mono">{alert.brand_domain ?? ''}</span>
           </Link>
 
           {/* Outbound pivots — the detail used to be a dead-end (no links
@@ -637,44 +600,34 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
             {alert.source_type === 'threat' && alert.source_id && (
               <Link
                 to={`/console?tab=threats&q=${encodeURIComponent(alert.source_id)}`}
-                className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--primary-text)] transition-colors"
+                className="al-link"
               >
                 View source threat →
               </Link>
             )}
             <Link
               to={`/console?tab=threats&brand_id=${encodeURIComponent(alert.brand_id)}`}
-              className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--primary-text)] transition-colors"
+              className="al-link"
             >
               View brand's threats →
             </Link>
           </div>
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Platform</div>
-            <span
-              className="inline-flex items-center font-mono text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded"
-              style={platformBadgeStyle(platform)}
-            >
-              {platform}
-            </span>
+            <div className="al-label mb-0.5">Platform</div>
+            <span className="al-chip">{platform}</span>
           </div>
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Handle Detected</div>
-            <span className="font-mono text-[13px] font-bold" style={{ color: 'var(--text-primary)' }}>{handle}</span>
+            <div className="al-label mb-0.5">Handle detected</div>
+            <span className="al-mono al-mono--strong">{handle}</span>
           </div>
 
           {score !== null && (
             <div>
-              <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Impersonation Score</div>
+              <div className="al-label mb-1">Impersonation score</div>
               <div className="flex items-baseline gap-2">
-                <span
-                  className="font-display text-[28px] font-extrabold tabular-nums leading-none"
-                  style={score >= 75
-                    ? { color: 'var(--sev-high-text)', textShadow: '0 0 20px rgba(251,146,60,0.7)' }
-                    : { color: 'var(--text-secondary)' }}
-                >
+                <span className={cn('al-score-big', score >= 75 && 'al-score-big--hi')}>
                   {score}%
                 </span>
               </div>
@@ -682,13 +635,13 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           )}
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Detected</div>
-            <span className="font-mono text-[11px] text-[var(--text-secondary)]">{timeAgo(alert.created_at)}</span>
+            <div className="al-label mb-0.5">Detected</div>
+            <span className="al-value al-num">{timeAgo(alert.created_at)}</span>
           </div>
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Source</div>
-            <span className="font-mono text-[11px] text-[var(--text-tertiary)]">
+            <div className="al-label mb-0.5">Source</div>
+            <span className="al-value">
               {alert.source_type ? humanizeType(alert.source_type) : 'Social Monitor Agent'}
             </span>
           </div>
@@ -696,52 +649,46 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
 
         {/* CENTER — Evidence & Assessment */}
         <div className="space-y-3 md:border-l md:border-[var(--border-base)] md:pl-5">
-          <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Evidence & Assessment</div>
+          <h3 className="al-section">Evidence & assessment</h3>
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Summary</div>
-            <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">{alert.summary}</p>
+            <div className="al-label mb-1">Summary</div>
+            <p className="al-body">{alert.summary}</p>
           </div>
 
           {score !== null && (
             <div>
-              <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Score</div>
-              <div className="w-full h-2 rounded-full bg-white/[0.06] overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{
-                    width: `${score}%`,
-                    backgroundColor: score >= 75 ? '#fb923c' : score >= 50 ? '#fbbf24' : '#78A0C8',
-                  }}
-                />
+              <div className="al-label mb-1">Score</div>
+              <div className="al-bar">
+                <span data-level={score >= 75 ? 'hi' : score >= 50 ? 'mid' : 'lo'} style={{ width: `${score}%` }} />
               </div>
             </div>
           )}
 
           <div className="pt-2">
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">AI Assessment</div>
+            <div className="al-label mb-1">AI assessment</div>
             {alert.ai_assessment ? (
               <div className="space-y-2">
-                <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">{alert.ai_assessment}</p>
+                <p className="al-body">{alert.ai_assessment}</p>
                 {alert.ai_recommendations && (
                   <div>
-                    <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Recommendations</div>
-                    <p className="text-[12px] text-[var(--text-tertiary)] leading-relaxed">{alert.ai_recommendations}</p>
+                    <div className="al-label mb-1">Recommendations</div>
+                    <p className="al-body al-body--muted">{alert.ai_recommendations}</p>
                   </div>
                 )}
               </div>
             ) : (
-              <div className="text-[11px] text-[var(--text-secondary)] italic">No AI assessment yet</div>
+              <div className="al-body">No AI assessment yet</div>
             )}
           </div>
         </div>
 
         {/* RIGHT — Actions */}
         <div className="space-y-3 md:border-l md:border-[var(--border-base)] md:pl-5">
-          <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Actions</div>
+          <h3 className="al-section">Actions</h3>
 
           {!canEdit && (
-            <p id={`alert-readonly-${alert.id}`} className="text-[11px] leading-relaxed text-[var(--text-secondary)]">
+            <p id={`alert-readonly-${alert.id}`} className="al-body">
               {READ_ONLY_COPY}
             </p>
           )}
@@ -751,35 +698,33 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           <div className="pb-2 mb-1 border-b border-[var(--border-base)] space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide">Averrow owner</div>
-                <div className="font-mono text-[11px] truncate" style={{ color: alert.staff_assigned_to ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <div className="al-label">Averrow owner</div>
+                <div className="al-value truncate" style={{ color: alert.staff_assigned_to ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
                   {alert.staff_assigned_to
                     ? (alert.staff_assigned_to === currentUserId ? 'You' : (alert.staff_assigned_to_name || alert.staff_assigned_to_email || 'Assigned'))
                     : 'Unassigned'}
                 </div>
               </div>
               {!canEdit ? null : alert.staff_assigned_to === currentUserId ? (
-                <button
-                  onClick={() => onAssign(null)}
-                  disabled={isAssigning}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50 flex-shrink-0"
-                >
+                <KitButton variant="secondary" size="sm" className="shrink-0" onClick={() => onAssign(null)} disabled={isAssigning}>
                   Unassign
-                </button>
+                </KitButton>
               ) : (
-                <button
+                <KitButton
+                  variant="secondary"
+                  size="sm"
+                  className="shrink-0"
                   onClick={() => currentUserId && onAssign(currentUserId)}
                   disabled={isAssigning || !currentUserId}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-[color-mix(in_srgb,var(--primary)_25%,transparent)] text-[var(--primary-text)] hover:bg-[var(--primary-glow)] transition-all disabled:opacity-50 flex-shrink-0"
                 >
                   {alert.staff_assigned_to ? 'Take over' : 'Assign to me'}
-                </button>
+                </KitButton>
               )}
             </div>
             {alert.assigned_to && (
               <div className="min-w-0">
-                <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide">Customer assignee</div>
-                <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>
+                <div className="al-label">Customer assignee</div>
+                <div className="al-value truncate">
                   {alert.assigned_to_name || alert.assigned_to_email || 'Assigned'}
                 </div>
               </div>
@@ -789,65 +734,41 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           <div className="flex flex-col gap-2">
             {canEdit && alert.status === 'new' && (
               <>
-                <button
-                  onClick={() => onUpdate('acknowledged')}
-                  disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-[color-mix(in_srgb,var(--primary)_25%,transparent)] text-[var(--primary-text)] hover:bg-[var(--primary-glow)] transition-all disabled:opacity-50"
-                >
+                <KitButton className="w-full" onClick={() => onUpdate('acknowledged')} disabled={isUpdating}>
                   Acknowledge
-                </button>
-                <button
-                  onClick={() => onUpdate('false_positive')}
-                  disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
-                >
+                </KitButton>
+                <KitButton variant="secondary" className="w-full" onClick={() => onUpdate('false_positive')} disabled={isUpdating}>
                   Dismiss
-                </button>
+                </KitButton>
               </>
             )}
             {canEdit && alert.status === 'acknowledged' && (
               <>
-                <button
-                  onClick={() => onUpdate('resolved')}
-                  disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md bg-[#28A050] text-white hover:bg-[#28A050]/80 transition-all disabled:opacity-50"
-                >
-                  Mark Resolved
-                </button>
-                <button
-                  onClick={() => onUpdate('new')}
-                  disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
-                >
+                <KitButton className="w-full" onClick={() => onUpdate('resolved')} disabled={isUpdating}>
+                  Mark resolved
+                </KitButton>
+                <KitButton variant="secondary" className="w-full" onClick={() => onUpdate('new')} disabled={isUpdating}>
                   Re-open
-                </button>
+                </KitButton>
               </>
             )}
             {canEdit && alert.status === 'resolved' && (
-              <button
-                onClick={() => onUpdate('new')}
-                disabled={isUpdating}
-                className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
-              >
+              <KitButton variant="secondary" className="w-full" onClick={() => onUpdate('new')} disabled={isUpdating}>
                 Re-open
-              </button>
+              </KitButton>
             )}
             {canEdit && alert.status === 'false_positive' && (
-              <button
-                onClick={() => onUpdate('new')}
-                disabled={isUpdating}
-                className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
-              >
+              <KitButton variant="secondary" className="w-full" onClick={() => onUpdate('new')} disabled={isUpdating}>
                 Re-open
-              </button>
+              </KitButton>
             )}
           </div>
 
           {/* Notes */}
           <div className="pt-2">
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Internal notes — not visible to customers</div>
+            <div className="al-label mb-1">Internal notes — not visible to customers</div>
             {!canEdit && !(alert.staff_notes ?? '') ? (
-              <p className="font-mono text-[11px] text-[var(--text-secondary)]">No notes</p>
+              <p className="al-body">No notes</p>
             ) : (
             <textarea
               value={notes}
@@ -857,17 +778,18 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               readOnly={!canEdit}
               aria-describedby={canEdit ? undefined : `alert-readonly-${alert.id}`}
               rows={3}
-              className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[color-mix(in_srgb,var(--primary)_25%,transparent)] resize-none font-mono" style={{ color: 'var(--text-primary)' }}
+              className="al-textarea"
             />
             )}
             {canEdit && notes !== (alert.staff_notes ?? '') && (
-              <button
+              <KitButton
+                size="sm"
+                className="mt-1.5"
                 onClick={() => onUpdate(alert.status, notes.trim() ? notes : null)}
                 disabled={isUpdating}
-                className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-[var(--primary-glow)] text-[var(--primary-text)] border border-[color-mix(in_srgb,var(--primary)_25%,transparent)] hover:bg-[var(--primary-glow)] transition-all disabled:opacity-50"
               >
-                Save Notes
-              </button>
+                Save notes
+              </KitButton>
             )}
           </div>
 
@@ -878,13 +800,13 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               auto-dismissed instead of it silently vanishing. */}
           {(alert.status === 'resolved' || alert.status === 'false_positive') && alert.resolution_notes && (
             <div className="pt-2">
-              <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">
+              <div className="al-label mb-1">
                 {alert.status === 'false_positive' ? 'Dismissal reason' : 'Resolution notes'}
                 {isAutoTriaged(alert.resolution_notes) && (
-                  <span className="ml-1.5 text-[var(--text-muted)] normal-case">· auto-triaged</span>
+                  <span className="ml-1.5">· auto-triaged</span>
                 )}
               </div>
-              <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">{alert.resolution_notes}</p>
+              <p className="al-body">{alert.resolution_notes}</p>
             </div>
           )}
         </div>
@@ -1240,7 +1162,7 @@ export function Alerts() {
   }, [detailFetchFailed, alertParam]);
 
   return (
-    <div className="space-y-5">
+    <div className="alerts-v4 space-y-5">
       <div ref={listHeadingRef} tabIndex={-1} className="outline-none">
         <PageHeader title="Alerts" subtitle="Brand alerts across all monitored brands — SOC triage view" />
       </div>
@@ -1261,7 +1183,6 @@ export function Alerts() {
             value={statValue(stats?.open_critical)}
             error={statsError && !stats}
             accent="var(--red)"
-            live
           />
         )}
         <StatTile
@@ -1298,45 +1219,46 @@ export function Alerts() {
       )}
 
       {!canEdit && (
-        <div id={READ_ONLY_NOTE_ID} className="font-mono text-[11px] text-[var(--text-secondary)]" role="note">{READ_ONLY_COPY}</div>
+        <div id={READ_ONLY_NOTE_ID} className="al-readonly-note" role="note">{READ_ONLY_COPY}</div>
       )}
 
       {/* Saved views (W6) — presets + user-pinned filter sets */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-widest text-white/55 mr-0.5">
-          <Star size={11} /> Views
+      <div role="group" aria-label="Saved views" className="al-pillgroup">
+        <span className="al-label inline-flex items-center gap-1">
+          <Star size={12} aria-hidden="true" /> Views
         </span>
         {allViews.map(v => {
           const active = sameView(currentView, v.filters);
           const isPreset = v.id.startsWith('preset:');
           return (
-            <span
-              key={v.id}
-              className={cn(
-                'group inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2.5 py-1 rounded-md border transition-all cursor-pointer',
-                active
-                  ? 'bg-primary-tint text-[var(--primary-text)] border-primary/30'
-                  : 'bg-white/[0.03] text-[var(--text-tertiary)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-secondary)]',
-              )}
-              onClick={() => applyView(v.filters)}
-            >
-              {v.name}
+            <span key={v.id} className="al-pill-wrap" data-removable={!isPreset} data-active={active}>
+              <button
+                type="button"
+                aria-pressed={active}
+                onClick={() => applyView(v.filters)}
+                className="al-pill"
+              >
+                {v.name}
+              </button>
               {!isPreset && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); removeView(v.id); }}
-                  className="opacity-40 hover:opacity-100 transition-opacity"
+                  type="button"
+                  onClick={() => removeView(v.id)}
+                  className="al-pill-x"
                   title="Delete view"
+                  aria-label={`Delete view ${v.name}`}
                 >
-                  <X size={10} />
+                  <X size={12} aria-hidden="true" />
                 </button>
               )}
             </span>
           );
         })}
         <button
+          type="button"
           onClick={onSaveView}
           disabled={viewIsEmpty(currentView)}
-          className="font-mono text-[10px] font-semibold px-2.5 py-1 rounded-md border border-dashed border-white/15 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-white/25 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+          className="al-pill al-pill--dashed"
           title={viewIsEmpty(currentView) ? 'Apply some filters first' : 'Save current filters as a view'}
         >
           + Save current
@@ -1344,6 +1266,7 @@ export function Alerts() {
       </div>
 
       <FilterBar
+        size="md"
         search={{ value: search, onChange: setSearch, placeholder: 'Search alerts...' }}
         filters={[
           // Migration 0120 normalized alerts.severity to lowercase. The
@@ -1388,13 +1311,13 @@ export function Alerts() {
               // but never 'App Store' specifically. Added here so
               // operators can isolate the app-store family for bulk
               // triage actions.
-              { value: 'app_store_impersonation', label: 'App Store' },
+              { value: 'app_store_impersonation', label: 'App store' },
               { value: 'phishing_detected', label: 'Phishing' },
               { value: 'lookalike_domain_active', label: 'Lookalike' },
-              { value: 'bimi_removed', label: 'BIMI Removed' },
-              { value: 'dmarc_downgraded', label: 'DMARC Downgraded' },
-              { value: 'vmc_expiring', label: 'VMC Expiring' },
-              { value: 'typosquat_bimi', label: 'BIMI Spoofing' },
+              { value: 'bimi_removed', label: 'BIMI removed' },
+              { value: 'dmarc_downgraded', label: 'DMARC downgraded' },
+              { value: 'vmc_expiring', label: 'VMC expiring' },
+              { value: 'typosquat_bimi', label: 'BIMI spoofing' },
             ]}
             selected={filters.alert_type ?? 'all'}
             onChange={v => setFilter('alert_type', v)}
@@ -1409,12 +1332,12 @@ export function Alerts() {
               `/api/admin/alerts/run-ai-judge`. Filter is applied
               client-side over the page's returned set. */}
           <PillGroup
-            label="AI Verdict"
+            label="AI verdict"
             options={[
               { value: 'all',           label: 'All' },
               { value: 'active_threat', label: 'AI: Threat' },
               { value: 'needs_human',   label: 'AI: Review' },
-              { value: 'likely_safe',   label: 'AI: Likely Safe' },
+              { value: 'likely_safe',   label: 'AI: Likely safe' },
               { value: 'unjudged',      label: 'Unjudged' },
             ]}
             selected={aiVerdictFilter}
@@ -1435,14 +1358,11 @@ export function Alerts() {
           />
           {/* Mine — signals this analyst has claimed (W9). */}
           <button
+            type="button"
             onClick={() => setMineOnly(m => !m)}
             disabled={!currentUserId}
-            className={cn(
-              'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all disabled:opacity-30',
-              mineOnly
-                ? 'bg-primary-tint text-[var(--primary-text)] border-primary/30'
-                : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
-            )}
+            aria-pressed={mineOnly}
+            className="al-pill"
             title="Show only signals assigned to me"
           >
             Mine
@@ -1455,7 +1375,7 @@ export function Alerts() {
       )}
 
       {slaListNote && (
-        <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>{slaListNote}</p>
+        <p className="al-readonly-note" style={{ margin: 0 }}>{slaListNote}</p>
       )}
 
       {listKind === 'loading' && <PageState kind="loading" layout="table" />}
@@ -1544,7 +1464,7 @@ export function Alerts() {
 
       {/* Total count */}
       {!alertsLoading && alertsData && (
-        <div className="text-center font-mono text-[10px] text-white/55 pb-4">
+        <div className="al-footer-count">
           Showing {alerts.length} of {alertsData.total} alerts
         </div>
       )}

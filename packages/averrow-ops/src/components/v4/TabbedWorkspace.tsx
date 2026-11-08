@@ -12,6 +12,7 @@ import { Suspense, type ComponentType } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import { Button, WorkspaceEmbedContext } from '@averrow/shared/ui';
+import { sentenceCase } from '@/lib/sentence-case';
 import { PageState } from '@/design-system/components';
 import '@/features/console/console.css';
 
@@ -52,7 +53,7 @@ export function TabbedWorkspace({
     <div className="console-v4">
       <div className="console-head">
         <div>
-          <div className="console-crumb">{crumb}</div>
+          <div className="console-crumb">{sentenceCase(crumb)}</div>
           <h1 className="console-title">{title}</h1>
         </div>
         <span className="console-live"><span className="dot" />LIVE</span>
