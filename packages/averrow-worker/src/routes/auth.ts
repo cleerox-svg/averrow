@@ -6,7 +6,7 @@ import { rateLimit } from "../middleware/rateLimit";
 import {
   handleOAuthLogin, handleOAuthInviteLogin, handleOAuthCallback,
   handleRefreshToken, handleLogout, handleMe,
-  handleMagicLinkRequest, handleMagicLinkVerify,
+  handleMagicLinkRequest, handleMagicLinkVerify, handleMagicLinkLanding,
 } from "../handlers/auth";
 import {
   handlePasskeyRegisterBegin, handlePasskeyRegisterFinish,
@@ -109,19 +109,27 @@ export function registerAuthRoutes(router: RouterType<IRequest>): void {
   // ─── Magic-link sign-in (public — no auth required) ─────────────
   // POST /api/auth/magic-link/request — body: { email, return_to? }
   // GET  /api/auth/magic-link/:token  — clicked from the email body;
-  //   on success, mints a session and 302s to the SPA exactly like the
-  //   OAuth callback does, so the React shell hydrates the session
-  //   without any new client-side code path.
+  //   validates WITHOUT consuming (mail scanners prefetch links) and
+  //   renders a "Sign in to Averrow" interstitial whose button POSTs:
+  // POST /api/auth/magic-link/verify  — form body { token }; consumes the
+  //   single-use token, mints a session and 302s to the SPA exactly like
+  //   the OAuth callback does. Failures 302 to /v2/login?error=<code>.
   router.post("/api/auth/magic-link/request", async (request: Request, env: Env) => {
     const limited = await rateLimit(request, env, "auth");
     if (limited) return limited;
     return handleMagicLinkRequest(request, env);
   });
 
+  router.post("/api/auth/magic-link/verify", async (request: Request, env: Env) => {
+    const limited = await rateLimit(request, env, "auth");
+    if (limited) return limited;
+    return handleMagicLinkVerify(request, env);
+  });
+
   router.get("/api/auth/magic-link/:token", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const limited = await rateLimit(request, env, "auth");
     if (limited) return limited;
-    return handleMagicLinkVerify(request, env, request.params["token"] ?? "");
+    return handleMagicLinkLanding(request, env, request.params["token"] ?? "");
   });
 
   // ─── Passkeys (WebAuthn) ────────────────────────────────────────

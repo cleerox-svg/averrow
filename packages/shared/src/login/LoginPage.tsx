@@ -21,6 +21,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { LoginPageProps, SignInMethod } from './types';
 import { applyThemePreference, readStoredTheme } from '../theme/useTheme';
 import { APPEARANCE_PICKER_ENABLED } from '../theme/appearanceDefaults';
+import { AUTH_ERROR_COPY } from '../auth-error-codes';
 
 type MagicLinkState =
   | { kind: 'idle' }
@@ -28,13 +29,10 @@ type MagicLinkState =
   | { kind: 'sent'; email: string; minutes: number }
   | { kind: 'error'; message: string };
 
-const DEFAULT_ERROR_COPY: Record<string, string> = {
-  invalid_link:         'That sign-in link looks malformed.',
-  link_used_or_invalid: 'That sign-in link was already used or is invalid.',
-  link_expired:         'That sign-in link expired. Request a new one below.',
-  account_deactivated:  'This account has been deactivated.',
-  signin_failed:        'Sign-in failed. Try again.',
-};
+// Sign-in failure codes the worker redirects here with (?error=<code>) and
+// their copy live in ../auth-error-codes so the worker and this page share
+// one list.
+const DEFAULT_ERROR_COPY: Record<string, string> = AUTH_ERROR_COPY;
 
 // Only well-formed codes are echoed back; anything else is attacker-supplied
 // text (content spoofing via ?error=<sentence>) and gets generic copy.
