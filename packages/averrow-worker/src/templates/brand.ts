@@ -26,10 +26,12 @@ export const R3_MARK_RED = "#C83C3C";
 export const R3_TILE_FILL = "#121B31";
 
 /** Hosted R3 mark for emails: 144x144 transparent PNG, shown at 38x38.
- *  Lives in packages/averrow-ops/public/email/ (Vite copies it to
- *  public/v2/email/, served by the Worker's static assets). New filename
- *  so mail-proxy caches of the old /logo-email-mark.png don't apply. */
-export const EMAIL_LOGO_URL = "https://averrow.com/v2/email/averrow-mark-r3.png";
+ *  The file lives in packages/averrow-ops/public/email/ (Vite copies it to
+ *  public/v2/email/). Emails reference the Worker route /email/… instead,
+ *  which re-serves it with a one-year immutable cache for Gmail's image
+ *  proxy (handlers/emailAssets.ts). New filename so mail-proxy caches of
+ *  the old /logo-email-mark.png don't apply. */
+export const EMAIL_LOGO_URL = "https://averrow.com/email/averrow-mark-r3.png";
 
 /** Facelift palette (docs/brand/palettes/indigo.css, graphite + light). */
 export const FACELIFT = {
@@ -95,10 +97,11 @@ export function r3WordmarkSvg(height: number, fill = "currentColor", className?:
   return `<svg width="${w}" height="${height}" viewBox="0 0 116.4 21"${cls} data-logo="r3-wordmark" role="img" aria-label="Averrow"><path transform="translate(2 18) scale(0.01007)" d="${R3_WORDMARK_PATH}" fill="${fill}"/></svg>`;
 }
 
-/** Inline favicon (docs/brand/logo/favicon.svg) as a data URI, so the
+/** Inline favicon — byte-identical to docs/brand/logo/favicon.svg (pinned
+ *  by test) — as a data URI, so the
  *  pages don't depend on the frozen legacy /favicon.svg. */
 export const R3_FAVICON_DATA_URI =
   "data:image/svg+xml," +
   encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="${R3_TILE_FILL}"/><path transform="translate(-1.02 -0.86) scale(1.06)" d="${R3_MARK_PATH}" fill="${R3_MARK_RED}"/></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Averrow"><rect width="32" height="32" rx="6" fill="${R3_TILE_FILL}"/><path transform="translate(-1.02 -0.86) scale(1.06)" d="${R3_MARK_PATH}" fill="${R3_MARK_RED}"/></svg>`,
   );

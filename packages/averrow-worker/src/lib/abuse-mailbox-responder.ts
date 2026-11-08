@@ -395,12 +395,12 @@ function brandLayout(opts: BrandLayoutOptions): string {
   //
   // Source asset (facelift Phase 4): the R3 mark, docs/brand/logo/
   // mark-red.svg rendered to packages/averrow-ops/public/email/
-  // averrow-mark-r3.png → served at /v2/email/averrow-mark-r3.png
-  // (EMAIL_LOGO_URL). The old /logo-email-mark.png stays in the frozen
-  // legacy public/ for already-sent mail. The new path is outside the
-  // _headers long-cache rule (public/ is frozen), so it gets the default
-  // static-asset caching; the new filename means no proxy holds a stale
-  // copy of the old mark.
+  // averrow-mark-r3.png (shipped at /v2/email/) and re-served by the
+  // Worker route /email/averrow-mark-r3.png (EMAIL_LOGO_URL,
+  // handlers/emailAssets.ts) with the same one-year immutable
+  // Cache-Control the PR-BF _headers rule gives the old PNGs (public/ is
+  // frozen, so that rule can't be extended). The old /logo-email-mark.png
+  // stays in the frozen legacy public/ for already-sent mail.
   const logoCell = `<img class="av-brand-logo" src="${escapeAttr(b.logoUrl)}" width="38" height="38" alt="${escapeAttr(b.logoAlt)}" style="display:block;width:38px;height:38px;border:0;outline:none;">`;
   return `<!doctype html>
 <html><head>

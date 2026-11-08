@@ -111,7 +111,6 @@ export function renderFooter(): string {
         <p style="margin-top:1rem;font-size:0.82rem;color:var(--text-tertiary)">
           <a href="mailto:hello@averrow.com" style="color:var(--text-tertiary);transition:color 0.2s;" onmouseover="this.style.color='var(--primary-text)'" onmouseout="this.style.color='var(--text-tertiary)'">hello@averrow.com</a>
         </p>
-        ${r3MarkSvg({ size: 36, decorative: true, className: "footer-orbital-mark" })}
       </div>
       <div class="footer-col">
         <div class="footer-col-title">Product</div>
@@ -164,6 +163,7 @@ export function renderHead(title: string, description: string): string {
 <title>${title}</title>
 <meta name="description" content="${description}">
 <link rel="icon" href="${R3_FAVICON_DATA_URI}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/v2/apple-touch-icon.png">
 <link rel="alternate" type="application/rss+xml" title="Averrow Blog" href="/blog/feed.xml">
 <link rel="alternate" type="application/rss+xml" title="Averrow Changelog" href="/changelog/feed.xml">
 <noscript>
@@ -717,10 +717,6 @@ section {
   background: linear-gradient(90deg, transparent 0%, transparent 10%, var(--accent) 50%, transparent 90%, transparent 100%);
   opacity: 0.55;
 }
-.footer-orbital-mark {
-  opacity: 0.35;
-  margin-top: 1.25rem;
-}
 
 .footer-grid {
   display: grid;
@@ -896,7 +892,6 @@ section {
   .footer-brand-block { grid-column: 1 / -1; text-align: center; margin-bottom: 1rem; }
   .footer-brand-block a { justify-content: center; }
   .footer-brand-block p { text-align: center; max-width: 100%; }
-  .footer-orbital-mark { margin: 0.5rem auto 0; }
   .footer-col { text-align: center; }
   .footer-col ul { align-items: center; }
   .footer-bottom { text-align: center; justify-content: center; padding-top: 1.5rem; gap: 0.5rem; }
@@ -1149,15 +1144,11 @@ section {
 }
 
 
-/* ──────────────────────────────────────────────────────────
-   wrapPage — full HTML document wrapper
-   ────────────────────────────────────────────────────────── */
-export function wrapPage(title: string, description: string, content: string): string {
-  return `<!DOCTYPE html>
-<html lang="en" data-theme="dark">
-<head>
-${renderHead(title, description)}
-<script>
+/**
+ * Pre-paint theme script, shared by every Worker-rendered page (wrapPage
+ * and the 404). Put it in <head> after `<html data-theme="dark">`.
+ */
+export const THEME_PREPAINT_SCRIPT = `<script>
   // Pre-paint theme load — avoids a flash from the dark default to a
   // saved-light preference. Three modes match the back-end sidebar:
   //   auto  -> follow OS prefers-color-scheme
@@ -1177,7 +1168,17 @@ ${renderHead(title, description)}
       document.documentElement.setAttribute('data-theme', resolved);
     } catch (e) {}
   })();
-</script>
+</script>`;
+
+/* ──────────────────────────────────────────────────────────
+   wrapPage — full HTML document wrapper
+   ────────────────────────────────────────────────────────── */
+export function wrapPage(title: string, description: string, content: string): string {
+  return `<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+${renderHead(title, description)}
+${THEME_PREPAINT_SCRIPT}
 </head>
 <body>
 

@@ -13,9 +13,11 @@
  *
  * Visual contract (facelift Phase 4 — R3 logo, indigo on graphite):
  *   - Logo: hosted R3 mark PNG at EMAIL_LOGO_URL
- *     (https://averrow.com/v2/email/averrow-mark-r3.png, 144x144 shown at
- *     38x38). Same asset as the abuse-mailbox-responder default. It has a
- *     new filename so no mail-proxy cache of the old mark applies.
+ *     (https://averrow.com/email/averrow-mark-r3.png, 144x144 shown at
+ *     38x38) — a Worker route that re-serves the ops-built PNG with a
+ *     one-year immutable cache for Gmail's image proxy
+ *     (handlers/emailAssets.ts). Same asset as the abuse-mailbox-responder
+ *     default. New filename, so no mail-proxy cache of the old mark applies.
  *   - Primary (CTA buttons, links, accent strip) is indigo #4c5cf8 with
  *     white text (5.0:1); #96acff for primary-coloured text on the dark
  *     card. Amber (#E5A832) is a STATUS colour only (warn badges).

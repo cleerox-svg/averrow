@@ -8,7 +8,7 @@
 
 import { logger } from './logger';
 import { MAGIC_LINK_EXPIRY_MINUTES } from './magic-link';
-import { emailShell, escapeHtml, EMAIL_COLORS } from './email-layout';
+import { emailShell, escapeHtml, EMAIL_CTA_STYLE } from './email-layout';
 
 const FROM_ADDRESS = 'Averrow <noreply@averrow.com>';
 
@@ -69,7 +69,7 @@ function buildHtml({ signInUrl, ipAddress, userAgent }: MagicLinkEmailParams): s
     </p>
   </td></tr>
   <tr><td style="padding:24px 28px 8px;" align="center">
-    <a class="av-cta" href="${escapeHtml(signInUrl)}" style="display:inline-block;padding:14px 36px;background-color:${EMAIL_COLORS.primary};background:${EMAIL_COLORS.primary};color:#FFFFFF;font-family:'SF Mono','Menlo',Consolas,monospace;font-size:12px;font-weight:700;letter-spacing:0.18em;text-decoration:none;border-radius:8px;text-transform:uppercase;">
+    <a class="av-cta" href="${escapeHtml(signInUrl)}" style="${EMAIL_CTA_STYLE}">
       Sign in to Averrow
     </a>
   </td></tr>

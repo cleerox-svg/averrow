@@ -15,7 +15,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  R3_MARK_PATH, R3_WORDMARK_PATH, R3_MARK_RED, R3_TILE_FILL, EMAIL_LOGO_URL, FACELIFT,
+  R3_MARK_PATH, R3_WORDMARK_PATH, R3_MARK_RED, R3_TILE_FILL, EMAIL_LOGO_URL, FACELIFT, R3_FAVICON_DATA_URI,
   r3MarkSvg, r3WordmarkSvg,
 } from "../src/templates/brand";
 import { wrapPage } from "../src/templates/shared";
@@ -31,6 +31,7 @@ import { sendInviteEmail } from "../src/lib/invite-email";
 import { sendMagicLinkEmail } from "../src/lib/magic-link-email";
 import { sendLeadOutreachEmail } from "../src/lib/lead-outreach-email";
 import { DEFAULT_ABUSE_BRANDING } from "../src/lib/abuse-mailbox-branding";
+import { sendAck, sendDetermination } from "../src/lib/abuse-mailbox-responder";
 import { buildContactEmail } from "../src/lib/contact-notify";
 import { buildContentSecurityPolicy } from "../src/middleware/security";
 import type { ComprehensiveBriefing } from "../src/handlers/briefing";
@@ -68,6 +69,12 @@ describe("R3 geometry matches docs/brand/logo", () => {
     expect(appIcon).toContain(`fill="${R3_TILE_FILL}"`);
     expect(kit).toContain(`'${R3_MARK_PATH}'`);
     expect(kit).toContain(`'${R3_WORDMARK_PATH}'`);
+  });
+
+  it("the inline favicon is byte-identical to docs/brand/logo/favicon.svg", () => {
+    const src = readFileSync(resolve(REPO, "docs/brand/logo/favicon.svg"), "utf8").trim();
+    expect(R3_FAVICON_DATA_URI.startsWith("data:image/svg+xml,")).toBe(true);
+    expect(decodeURIComponent(R3_FAVICON_DATA_URI.slice("data:image/svg+xml,".length))).toBe(src);
   });
 
   it("renders tile and bare marks with the R3 marker", () => {
@@ -116,6 +123,26 @@ describe("server-rendered pages", () => {
     expect(html).not.toMatch(/(?<![-\w])var\(--amber\)/);
   });
 
+  it("404 opens dark and resolves the shared 'averrow-theme' key before paint", () => {
+    const html = renderNotFoundPage();
+    expect(html).toContain('<html lang="en" data-theme="dark">');
+    const head = html.slice(0, html.indexOf("</head>"));
+    expect(head).toContain("localStorage.getItem('averrow-theme')");
+    expect(head.indexOf("averrow-theme")).toBeLessThan(head.indexOf("<style>"));
+    expect(html).not.toContain("av-theme'");
+    // Same script as the wrapPage pages.
+    const shared = wrapPage("T", "d", "");
+    const script = (h: string) => h.slice(h.indexOf("<script>"), h.indexOf("</script>"));
+    expect(script(head)).toBe(script(shared));
+  });
+
+  it("shared chrome links the R3 apple-touch icon and has one footer mark", () => {
+    const html = wrapPage("T", "d", "");
+    expect(html).toContain('<link rel="apple-touch-icon" href="/v2/apple-touch-icon.png">');
+    expect(html).not.toContain("footer-orbital-mark");
+    expect(existsSync(resolve(REPO, "packages/averrow-ops/public/apple-touch-icon.png"))).toBe(true);
+  });
+
   it("invite accept CTA is indigo with white text", () => {
     const html = renderInviteAcceptPage({
       email: "a@b.example", role: "analyst", authUrl: "https://averrow.com/auth", expiresAt: "2026-12-01T00:00:00Z",
@@ -147,14 +174,14 @@ describe("emails", () => {
     }
   }
 
-  it("the hosted logo is a 144x144 PNG shipped in the ops public dir (served at /v2/email/)", () => {
+  it("the hosted logo is a 144x144 PNG shipped in the ops public dir (built to /v2/email/, served via /email/)", () => {
     const file = resolve(REPO, "packages/averrow-ops/public/email/averrow-mark-r3.png");
     expect(existsSync(file)).toBe(true);
     const buf = readFileSync(file);
     expect(buf.subarray(1, 4).toString("ascii")).toBe("PNG");
     expect(buf.readUInt32BE(16)).toBe(144);
     expect(buf.readUInt32BE(20)).toBe(144);
-    expect(EMAIL_LOGO_URL).toBe("https://averrow.com/v2/email/averrow-mark-r3.png");
+    expect(EMAIL_LOGO_URL).toBe("https://averrow.com/email/averrow-mark-r3.png");
   });
 
   it("emailShell: R3 logo, indigo accent by default, graphite surfaces", () => {
@@ -221,6 +248,42 @@ describe("emails", () => {
     );
     expect(html).not.toContain("#E5A832");
     expect(html).toContain("color:#2a44d3");
+  });
+
+  it("abuse ack + determination honour an org accent override (echo border, inbox alias, strip)", async () => {
+    const sent = captureResend();
+    const env = {
+      RESEND_API_KEY: "re_test",
+      DB: { prepare: () => ({ bind: () => ({ first: async () => null }) }) },
+    } as unknown as import("../src/types").Env;
+    const branding = { ...DEFAULT_ABUSE_BRANDING, accent: "#12AB34", headerBg: "#202122" };
+    const ack = await sendAck(env, "reporter@example.org", {
+      messageId: "11111111-2222-3333-4444-555555555555", originalSubject: "Your account is locked", inboundAlias: "phishing@averrow.ca",
+    }, branding);
+    expect(ack.ok).toBe(true);
+    const html = sent[0]!.html;
+    expect(html).toContain("border-left:3px solid #12AB34;");
+    expect(html).toMatch(/color:#12AB34;">phishing@averrow\.ca</);
+    expect(html).toContain(".av-accent-line  { background:#12AB34 !important; }");
+    expect(html).toContain("background:#202122");
+    expect(html).not.toContain("#E5A832");
+    expectR3Email(html);
+
+    await sendDetermination(env, "reporter@example.org", {
+      messageId: "11111111-2222-3333-4444-555555555555", inboundAlias: "phishing@averrow.ca",
+      originalSubject: "Your account is locked", classification: "phishing", confidence: 66,
+      action: "escalate", classifiedBy: "rules", rulesRule: "H1",
+    } as unknown as Parameters<typeof sendDetermination>[2], branding);
+    const det = sent[1]!.html;
+    expectR3Email(det);
+    expect(det).toContain("background:#202122");
+
+    // Default branding: indigo strip + AA tagline tint.
+    await sendAck(env, "reporter@example.org", {
+      messageId: "22222222-2222-3333-4444-555555555555", originalSubject: null, inboundAlias: "abuse@averrow.ca",
+    });
+    expect(sent[2]!.html).toContain(".av-accent-line  { background:#4c5cf8 !important; }");
+    expect(sent[2]!.html).toMatch(/color:#96acff;font-weight:700;[^"]*">Abuse Triage</);
   });
 
   it("abuse responder default branding is R3 + indigo on graphite", () => {

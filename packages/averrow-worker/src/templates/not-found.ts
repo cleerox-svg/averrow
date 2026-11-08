@@ -9,12 +9,14 @@
  */
 
 import { r3MarkSvg, r3WordmarkSvg, R3_FAVICON_DATA_URI, FONT_SANS_STACK, FONT_MONO_STACK } from "./brand";
+import { THEME_PREPAINT_SCRIPT } from "./shared";
 
 export function renderNotFoundPage(): string {
   return `
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark">
 <head>
+${THEME_PREPAINT_SCRIPT}
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Page Not Found — Averrow</title>
@@ -491,7 +493,7 @@ img { max-width: 100%; }
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
-        <span id="theme-icon">\u2600</span>
+        <span id="theme-icon">\u263E</span>
       </button>
       <a href="/login" class="btn btn-outline" style="font-size:0.82rem;padding:0.45rem 1rem;">Login</a>
       <a href="/scan" class="btn btn-primary" style="font-size:0.82rem;padding:0.45rem 1rem;">Free Scan</a>
@@ -577,21 +579,20 @@ img { max-width: 100%; }
 </footer>
 
 <script>
+// Theme: same 'averrow-theme' key as the other Worker pages (the pre-paint
+// script in <head> resolves it before first paint, dark by default).
+function paintThemeIcon() {
+  var icon = document.getElementById('theme-icon');
+  if (icon) icon.textContent = document.documentElement.getAttribute('data-theme') === 'light' ? '\\u2600' : '\\u263E';
+}
 function toggleTheme() {
-  const html = document.documentElement;
-  const current = html.getAttribute('data-theme');
-  const next = current === 'light' ? 'dark' : 'light';
+  var html = document.documentElement;
+  var next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
   html.setAttribute('data-theme', next);
-  document.getElementById('theme-icon').textContent = next === 'light' ? '\\u2600' : '\\u263E';
-  localStorage.setItem('av-theme', next);
+  try { localStorage.setItem('averrow-theme', next); } catch (e) {}
+  paintThemeIcon();
 }
-
-// Load saved theme
-const saved = localStorage.getItem('av-theme');
-if (saved) {
-  document.documentElement.setAttribute('data-theme', saved);
-  document.getElementById('theme-icon').textContent = saved === 'light' ? '\\u2600' : '\\u263E';
-}
+paintThemeIcon();
 
 // Mobile menu
 function toggleMobileMenu() {

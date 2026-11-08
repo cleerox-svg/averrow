@@ -4,7 +4,7 @@
  * and footer match every other Averrow transactional email.
  */
 import { logger } from "./logger";
-import { emailShell, escapeHtml, EMAIL_COLORS } from "./email-layout";
+import { emailShell, escapeHtml, EMAIL_COLORS, EMAIL_CTA_STYLE } from "./email-layout";
 
 const FROM_ADDRESS = "Averrow <noreply@averrow.com>";
 
@@ -98,7 +98,7 @@ function buildInviteEmail(params: InviteEmailParams): string {
     </p>
   </td></tr>
   <tr><td style="padding:28px 28px 8px;" align="center">
-    <a class="av-cta" href="${escapeHtml(acceptUrl)}" style="display:inline-block;padding:14px 36px;background-color:${EMAIL_COLORS.primary};background:${EMAIL_COLORS.primary};color:#FFFFFF;font-family:'SF Mono','Menlo',Consolas,monospace;font-size:12px;font-weight:700;letter-spacing:0.18em;text-decoration:none;border-radius:8px;text-transform:uppercase;">
+    <a class="av-cta" href="${escapeHtml(acceptUrl)}" style="${EMAIL_CTA_STYLE}">
       Accept Invitation
     </a>
   </td></tr>

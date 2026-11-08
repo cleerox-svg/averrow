@@ -86,6 +86,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | GET | `/status/incidents` | Public incident archive (HTML). Lists every public incident, newest first, grouped by month. Linked from the recent-incidents section on `/status`. Same visibility gate as the rest. |
 | GET | `/status/feed.xml` | RSS 2.0 feed of public incidents (Content-Type `application/rss+xml`). Most recent 50, newest first by latest activity. Each item links to the `/status/incidents/:id` permalink. Cached 5 min. |
 | GET | `/status/incidents/:id` | Public incident permalink (HTML). Mirrors the `/api/v1/public/incidents` visibility gate — only renders when the incident's `visibility='public'` AND `public_title` is set. Returns 404 with the same shell otherwise (no information leak about whether the id exists). Linked from each card on `/status`. |
+| GET, HEAD | `/email/averrow-mark-r3.png` | Hosted R3 logo for emails (`EMAIL_LOGO_URL`; facelift Phase 4). Re-serves the ops-built PNG (`/v2/email/averrow-mark-r3.png`, from the `ASSETS` binding) with `Cache-Control: public, max-age=31536000, immutable`, `Content-Type: image/png` and the asset's `ETag` / `Last-Modified`; conditional requests pass through (304). Exists because Gmail's image proxy needs a long immutable cache and the frozen `public/_headers` can't cover the ops path. No static asset may be shipped at `/email/…` (assets match before the Worker). 404 `no-store` if the file is missing. `handlers/emailAssets.ts`. |
 
 ## Public API v1
 

@@ -181,7 +181,7 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
     .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin: 16px 0; }
     .stat { background: var(--panel); padding: 16px; border-radius: 6px; border: 1px solid var(--border); }
     .stat .label { color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .stat .value { font-size: 24px; font-weight: 700; color: var(--primary-text); margin-top: 4px; }
+    .stat .value { font-size: 24px; font-weight: 700; color: var(--text); /* data, not a primary action */ margin-top: 4px; }
     .stat .value.green { color: var(--green); }
     .stat .value.red { color: var(--red); }
     .narrative { font-size: 15px; line-height: 1.7; color: var(--text); }
@@ -194,7 +194,8 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
       .panel, .grade-card, .stat { background: #f7f7f7; border-color: #ddd; }
       th { color: #555; }
       .header { border-color: #ccc; }
-      section h2, .header .averrow, .stat .value { color: #2a44d3; }
+      section h2, .header .averrow { color: #2a44d3; }
+      .stat .value { color: #111; }
     }
     @media (max-width: 720px) {
       .container { padding: 32px 16px; }
