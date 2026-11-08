@@ -33,12 +33,31 @@ export interface PublicEmailView {
   bimi: { present: boolean };
 }
 
-/** The anonymous response: the grade and a registered-lookalike count only. */
+/** Plain-language spoofing protection shown next to the grade. */
+export type ProtectionLevel = "strong" | "partial" | "weak";
+
+/**
+ * The protection level, from the stored checks rather than the grade alone:
+ * the grade is a point total and does not track DMARC enforcement (a domain
+ * with no DMARC can score a C; a locked-down parked domain scores a C too).
+ * - weak: no DMARC, or `p=none` — forged mail is delivered.
+ * - strong: DMARC enforcing AND (grade A/A+, or a non-mail domain with
+ *   SPF `-all` — the recommended parked-domain lockdown).
+ * - partial: DMARC enforcing, but SPF/DKIM gaps remain.
+ */
+export function protectionLevel(e: PublicEmailView): ProtectionLevel {
+  if (e.dmarc.policy === "missing" || e.dmarc.policy === "none") return "weak";
+  if (e.grade === "A+" || e.grade === "A") return "strong";
+  if (!e.mx.present && e.spf.status === "pass") return "strong";
+  return "partial";
+}
+
+/** The anonymous response: the grade, the level and a registered-lookalike count only. */
 export interface PublicScanData {
   id: string;
   domain: string;
   checked_at: string;
-  email: { grade: EmailGrade };
+  email: { grade: EmailGrade; level: ProtectionLevel };
   /** null when no lookalike name got a definite DNS answer. */
   lookalikes: { registered: number | null };
 }
@@ -135,7 +154,7 @@ export function toPublicScanData(id: string, domain: string, view: StoredPublicV
     id,
     domain,
     checked_at: view.checked_at,
-    email: { grade: view.email.grade },
+    email: { grade: view.email.grade, level: protectionLevel(view.email) },
     lookalikes: { registered: view.lookalikes.checked > 0 ? view.lookalikes.registered : null },
   };
 }

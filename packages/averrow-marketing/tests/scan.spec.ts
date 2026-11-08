@@ -10,7 +10,7 @@ const SCAN = {
   domain: "acme.example",
   checked_at: "2026-10-05T12:00:00Z",
   // Public shape: a score and a registered count only (lib/free-scan-view.ts).
-  email: { grade: "C" },
+  email: { grade: "C", level: "partial" },
   lookalikes: { registered: 6 },
 };
 
@@ -56,7 +56,7 @@ test.describe("scan page: input and results", () => {
     await expect(page.locator("#gradeLetter")).toHaveText("C");
     await expect(page.locator("#gradeSr")).toHaveText("Grade C, partial protection.");
     await expect(page.locator("#gradeLevel")).toHaveText("Partial");
-    await expect(page.locator("#emailSentence")).toContainText("could still be delivered");
+    await expect(page.locator("#emailSentence")).toContainText("could still get through");
     await expect(page.locator("#lookSentence")).toHaveText("6 lookalike domains are already registered. Some may be yours; the full report lists them.");
     // Score + summary only: no per-check breakdown and no sample size on the page.
     await expect(page.locator("[data-check]")).toHaveCount(0);
@@ -125,9 +125,10 @@ test.describe("scan page: input and results", () => {
     await expect(page.getByLabel("Domain to scan")).toBeVisible();
   });
 
-  test("grade colour tokens by band, grade letter always shown", async ({ page }) => {
-    for (const [grade, tone] of [["A+", "ok"], ["B", "mid"], ["F", "bad"]] as const) {
-      await mockScan(page, { ...SCAN, email: { grade } });
+  test("tone follows the server's protection level, grade letter always shown", async ({ page }) => {
+    // C + weak: a grade can look middling while DMARC isn't enforcing.
+    for (const [grade, level, tone] of [["A+", "strong", "ok"], ["B", "partial", "mid"], ["C", "weak", "bad"], ["F", "weak", "bad"]] as const) {
+      await mockScan(page, { ...SCAN, email: { grade, level } });
       await scanFromInput(page);
       await expect(page.locator("#gradeLetter")).toHaveText(grade);
       await expect(page.locator("#gradeLetter")).toHaveAttribute("data-tone", tone);

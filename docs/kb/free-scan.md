@@ -27,10 +27,10 @@ returned to anonymous callers.
 | Data | Public `/scan` page + API | Stored (`brand_scans.public_view`) | Emailed full report |
 |---|---|---|---|
 | Email grade (A+–F) | yes | yes | yes |
-| Protection level (Strong / Partial / Weak) | yes (derived from the grade on the page) | — | — |
+| Protection level (Strong / Partial / Weak) | yes (`protectionLevel`, computed server-side from the stored checks) | derived on read | — |
 | Registered lookalike **count** | yes (`null` if nothing could be checked) | yes | yes |
 | SPF / DKIM / DMARC / MX / BIMI status | **no** | yes | yes |
-| Lookalike sample size (how many we checked) | **no** | yes (`checked`) | — |
+| Lookalike names that got a definite DNS answer (≤ 40; the sample size) | **no** | yes (`checked`) | — |
 | Registered lookalike **names** | no | yes (`registered_lookalikes`) | yes |
 | Threat-feed data | never | never (public rows store NULL) | — |
 
@@ -38,7 +38,7 @@ Public response shape:
 
 ```json
 { "id": "…", "domain": "acme.com", "checked_at": "…",
-  "email": { "grade": "B" },
+  "email": { "grade": "B", "level": "partial" },
   "lookalikes": { "registered": 4 } }
 ```
 
@@ -65,11 +65,20 @@ BIMI is checked but **does not affect the grade**.
 
 ### Protection level shown on the page
 
-| Grade | Level | Public summary line |
+The level is **not** derived from the grade alone. The grade is a point total
+and doesn't track whether DMARC is enforcing: a domain with no DMARC can still
+total a C, and a correctly locked-down parked domain (DMARC reject, SPF `-all`,
+no MX/DKIM) also lands on a C. `protectionLevel` (`lib/free-scan-view.ts`)
+uses the stored checks:
+
+| Level | Rule | Public summary line |
 |---|---|---|
-| A+, A | Strong | Receivers can reject email forged to look like it comes from *domain*. |
-| B, C | Partial | Some email forged to look like it comes from *domain* could still be delivered. |
-| D, F | Weak | Anyone can send email that looks like it comes from *domain*. |
+| Weak | DMARC missing or `p=none` | Anyone can send email that looks like it comes from *domain*. |
+| Strong | DMARC enforcing AND (grade A/A+, or no MX with SPF `-all`) | Receivers can reject email forged to look like it comes from *domain*. |
+| Partial | DMARC enforcing, other gaps | Protection is in place, but gaps remain, so some email forged to look like it comes from *domain* could still get through. |
+
+The grade letter and level word share the level's colour, so a "C" can be red
+(Weak) on a domain with no DMARC.
 
 ## 3. The individual checks (drill-down)
 

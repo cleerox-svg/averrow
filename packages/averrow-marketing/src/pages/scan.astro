@@ -302,7 +302,9 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     checked_at?: string;
     // Score + summary only. The per-check breakdown is in the emailed
     // report, not the public API (lib/free-scan-view.ts).
-    email: { grade: Grade };
+    // level is worked out server-side from the stored checks (DMARC
+    // enforcement), not from the grade alone.
+    email: { grade: Grade; level: Level };
     lookalikes: { registered: number | null };
   }
   interface ApiEnvelope<T> { success: boolean; data?: T; error?: string }
@@ -311,6 +313,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     reset: (id?: string) => void;
   }
   type Tone = "ok" | "mid" | "bad";
+  type Level = "strong" | "partial" | "weak";
 
   const FREEMAIL = new Set([
     "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com",
@@ -463,13 +466,17 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   }
 
   /* ---- Rendering ------------------------------------------------------ */
-  function gradeTone(g: Grade): Tone { return g === "A+" || g === "A" ? "ok" : g === "B" || g === "C" ? "mid" : "bad"; }
+  const TONE: Record<Level, Tone> = { strong: "ok", partial: "mid", weak: "bad" };
+  function levelOf(d: ScanData): Level {
+    const l = d.email.level;
+    return l === "strong" || l === "partial" || l === "weak" ? l : "partial";
+  }
 
   const LEVEL: Record<Tone, string> = { ok: "Strong", mid: "Partial", bad: "Weak" };
 
   function emailSentence(d: ScanData, tone: Tone): string {
     if (tone === "ok") return `Receivers can reject email forged to look like it comes from ${d.domain}.`;
-    if (tone === "mid") return `Some email forged to look like it comes from ${d.domain} could still be delivered.`;
+    if (tone === "mid") return `Protection is in place, but gaps remain, so some email forged to look like it comes from ${d.domain} could still get through.`;
     return `Anyone can send email that looks like it comes from ${d.domain}.`;
   }
 
@@ -490,7 +497,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     el("scanMeta").textContent = whenText;
 
     const g = d.email.grade;
-    const tone = gradeTone(g);
+    const tone = TONE[levelOf(d)];
     const gl = el("gradeLetter");
     gl.textContent = g;
     gl.dataset.tone = tone;
