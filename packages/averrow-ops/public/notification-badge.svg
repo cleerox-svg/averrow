@@ -1,13 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- Averrow "A" mark — white silhouette on transparent background.
-       Used as the Android push-notification status-bar icon (badge).
-       Android's small icon spec requires monochrome white-on-transparent;
-       multi-color icons get stripped to a generic glyph fallback.
-       fill-rule="evenodd" cuts the inner triangle to a transparent hole
-       so the A's crossbar gap reads against any system background. -->
-  <path
-    d="M16 5L26 26H18L16 21L14 26H6Z M14.5 22H17.5L16 18Z"
-    fill="#FFFFFF"
-    fill-rule="evenodd"
-  />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="96" height="96">
+  <!-- Averrow R3 mark: white silhouette on a transparent background.
+       Android draws the push-notification status-bar icon (badge) from the
+       alpha channel only, so it must be single-colour white on transparent;
+       a multi-colour icon is replaced by a generic glyph. Same path and
+       transform as favicon.svg (docs/brand/logo). notification-badge.png is
+       the 96x96 render the service worker sends (many Android versions
+       ignore an SVG badge). -->
+  <path transform="translate(-1.02 -0.86) scale(1.06)" d="M19.76 4L26.5 27.5L18.9 25L17.39 23.5L19.74 23.5L17.84 16L13.54 23.5L15.89 23.5L13.9 25L5.5 27.5Z" fill="#FFFFFF"/>
 </svg>

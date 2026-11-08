@@ -30,7 +30,7 @@
  * Bump VERSION on any change here so old caches are evicted on activate.
  */
 
-const VERSION = '2026-10-02.1';
+const VERSION = '2026-11-08.1';
 const SHELL_CACHE   = `averrow-shell-${VERSION}`;
 const RUNTIME_CACHE = `averrow-runtime-${VERSION}`;
 
@@ -38,16 +38,23 @@ const RUNTIME_CACHE = `averrow-runtime-${VERSION}`;
 // caches are still evicted on activate and by the CLEAR_API_CACHE message.
 const API_CACHE_PREFIX = 'averrow-api-';
 
-// Minimal precache: the SPA shell, manifest, and root favicon. Everything
-// else fills in opportunistically through SWR + cache-first as the user
-// navigates.
+// Minimal precache: the SPA shell, manifest, favicons, app icons and the
+// notification icon + badge (so a push shown while offline still has them).
+// Everything else fills in opportunistically through SWR + cache-first as
+// the user navigates.
 const SHELL_PRECACHE = [
   '/v2/',
   '/v2/index.html',
   '/v2/manifest.json',
   '/v2/favicon.svg',
+  '/v2/favicon.ico',
+  '/v2/apple-touch-icon.png',
+  '/v2/icon-192.png',
+  '/v2/icon-512.png',
+  '/v2/icon-512-maskable.png',
   '/v2/icon-192.svg',
   '/v2/icon-512.svg',
+  '/v2/notification-badge.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -251,14 +258,17 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Averrow';
   const options = {
     body: data.body || '',
-    icon: '/v2/icon-192.svg',
+    // PNG, not SVG: Chrome on Android does not render SVG notification
+    // images, so an SVG icon/badge falls back to a generic glyph.
+    icon: '/v2/icon-192.png',
     // Android renders `badge` as the status-bar small icon and
-    // expects a monochrome white-on-transparent silhouette.
-    // icon-192 is multi-color (dark fill + red gradient), so Android
-    // can't extract a clean silhouette and shows a generic file
-    // glyph fallback. notification-badge.svg is the proper
-    // monochrome Averrow A mark. iOS/desktop ignore `badge`.
-    badge: '/v2/notification-badge.svg',
+    // expects a monochrome white-on-transparent silhouette (it uses the
+    // alpha channel only). icon-192 is multi-color (navy tile + red
+    // mark), so Android can't extract a clean silhouette and shows a
+    // generic glyph fallback. notification-badge.png is the 96x96
+    // white R3 mark (source: notification-badge.svg). iOS/desktop
+    // ignore `badge`.
+    badge: '/v2/notification-badge.png',
     tag: data.tag || `averrow-${data.type || 'generic'}`,
     renotify: true,
     // Stash the click target + in-app id on the notification itself so the
