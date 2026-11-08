@@ -93,13 +93,14 @@ describe('Threats aggregate — degraded sections (fail-soft 200)', () => {
     expect(screen.queryByText("Couldn't load")).not.toBeInTheDocument();
     expect(screen.getByText('5')).toBeInTheDocument(); // Active tile
     expect(screen.getByText(/multi-brand unavailable/)).toBeInTheDocument();
+    expect(screen.getByText('Retrying automatically.')).toBeInTheDocument();
     expect(screen.getByText(/No surging signals/)).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('button', { name: "Try again: Couldn't load multi-brand patterns" }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it('degraded headline: hero tiles show the error, not zeros, and the slice strip is hidden', () => {
-    agg.mockReturnValue({ data: { ...EMPTY_AGG, total: 0, active: 0, degraded_sections: ['headline'] }, isError: false, refetch: vi.fn() });
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, total: 5, degraded_sections: ['headline'] }, isError: false, refetch: vi.fn() });
     renderWithProviders(<Threats />);
     expect(screen.getAllByText("Couldn't load")).toHaveLength(4);
     expect(screen.queryByText('0%')).not.toBeInTheDocument();
@@ -111,6 +112,9 @@ describe('Threats aggregate — degraded sections (fail-soft 200)', () => {
     agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['attribution'] }, isError: false, refetch: vi.fn() });
     renderWithProviders(<Threats />);
     expect(screen.getAllByText("Couldn't load")).toHaveLength(1);
+    expect(screen.getByText(/attribution unavailable/)).toBeInTheDocument(); // Addressed tile
+    expect(screen.getByText('unavailable')).toBeInTheDocument(); // slice strip stat
+    expect(screen.getByText('Correlated / Attributed')).toBeInTheDocument();
   });
 
   it('degraded top_brands: only that leaderboard errors; all four degraded collapses to one panel error', () => {

@@ -75,6 +75,9 @@ export function useThreatAggregate(filters: ThreatAggregateFilters) {
       const res = await api.get<ThreatAggregate>(`/api/threats/aggregate${toQuery(filters)}`);
       return (res.data ?? null) as ThreatAggregate | null;
     },
-    staleTime: 5 * 60_000,
+    // A fail-soft body carries `degraded_sections`: never treat it as fresh for
+    // 5 min, and poll until the server's 60s degraded cache expires and it heals.
+    staleTime: (query) => (query.state.data?.degraded_sections?.length ? 0 : 5 * 60_000),
+    refetchInterval: (query) => (query.state.data?.degraded_sections?.length ? 60_000 : false),
   });
 }
