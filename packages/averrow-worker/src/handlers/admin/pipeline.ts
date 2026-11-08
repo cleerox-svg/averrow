@@ -265,6 +265,14 @@ function computeReferenceDatasetVerdict(
   return { label: 'STABLE', tone: 'inactive' };
 }
 
+interface PipelineAgentRun {
+  agent_id: string;
+  last_run_at: string;
+  records_processed: number;
+  duration_ms: number;
+  status: string;
+}
+
 export async function handlePipelineStatus(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
 
@@ -287,14 +295,22 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
       WHERE recorded_at > datetime('now', '-1 day')
     `).all<{ backlog_name: string; count: number; recorded_at: string; rn: number }>(),
 
-    // Last run per agent for "last processed" timestamp and throughput
-    env.DB.prepare(`
+    // Last run per agent for "last processed" timestamp and throughput.
+    // Seeks idx_agent_runs_completed (migration 0321) — one day of runs
+    // instead of the whole table (~132.7K rows/call before, 2026-11-08);
+    // `GROUP BY +agent_id` stops the planner walking idx_agent_runs_agent
+    // for the grouping. Also KV-cached 5 min (cachedValue) so a refill of
+    // the outer pipeline_status key doesn't recompute it.
+    cachedValue<PipelineAgentRun[]>(env, 'pipeline.agent_last_runs_24h', 300, async () => {
+      const r = await env.DB.prepare(`
       SELECT agent_id, MAX(completed_at) AS last_run_at,
              records_processed, duration_ms, status
       FROM agent_runs
       WHERE completed_at > datetime('now', '-24 hours')
-      GROUP BY agent_id
-    `).all<{ agent_id: string; last_run_at: string; records_processed: number; duration_ms: number; status: string }>(),
+      GROUP BY +agent_id
+    `).all<PipelineAgentRun>();
+      return r.results;
+    }).then((results) => ({ results })),
   ]);
 
   // Build latest + previous per backlog

@@ -58,13 +58,32 @@ export const DEFAULT_REAP_AGE_MINUTES = 90;
 export const REAP_BUFFER_MINUTES = 30;
 
 /**
- * Coarse pre-filter — any row younger than this is definitely alive
- * (faster than the shortest-declared stallThresholdMinutes + buffer)
- * and we skip it in SQL without a per-row check. 15 min sits below
- * the shortest agent threshold (5 min + 30 buffer = 35), so this
- * never under-reaps.
+ * Coarse pre-filter — any row younger than 15 minutes is definitely alive
+ * (faster than the shortest-declared stallThresholdMinutes + buffer) and we
+ * skip it in SQL without a per-row check. 15 min sits below the shortest
+ * agent threshold (5 min + 30 buffer = 35), so this never under-reaps.
+ * Written literally ('-15 minutes') in the SQL below so the statement is a
+ * plain template the plan test can extract.
+ *
+ * Index (migration 0320): `idx_agent_runs_open ON agent_runs(started_at)
+ * WHERE completed_at IS NULL AND status IN ('partial', 'running')` holds
+ * only open rows. The SELECT pins it with INDEXED BY — without the pin the
+ * planner prefers idx_agent_runs_status (every finished 'partial' row) or
+ * idx_agent_runs_started (nearly the whole table, since the bound is
+ * "older than 15 min"). Before 0320 the only time term was the
+ * non-sargable datetime() one and every 5-min tick read the whole table
+ * (~132.7K rows/call, 2026-11-08).
+ *
+ * Two stored formats (SQLite 'YYYY-MM-DD HH:MM:SS' and ISO
+ * 'YYYY-MM-DDTHH:MM:SS[.sss]Z' — feedRunner/nexus write ISO): the plain
+ * range `started_at <= strftime('%Y-%m-%dT%H:%M:%SZ', <bound>)` is a
+ * SUPERSET of the exact window for both. A SQLite-text row on the bound's
+ * date sorts below the ISO bound (' ' < 'T'), so it is only ever
+ * over-included; an ISO row compares field by field and, at an equal
+ * second, '.' / 'Z' / '+' sort <= 'Z'. The original
+ * `datetime(started_at) <= datetime(<bound>)` term stays as the exact
+ * filter, so the result set is unchanged (test/agent-runs-open-index.test.ts).
  */
-const PRE_FILTER_MINUTES = 15;
 
 interface CandidateRow {
   id: string;
@@ -109,19 +128,19 @@ export async function reapOrphanAgentRuns(env: Env): Promise<number> {
   try {
     const thresholds = await loadAgentThresholds();
 
-    // Pre-filter in SQL — anything younger than PRE_FILTER_MINUTES
-    // is alive by definition (shortest declared agent threshold is
-    // 5 min, plus the 30-min buffer = 35 min, which is > 15). The
-    // datetime() wrapper on both sides defends against the
-    // ISO-vs-sqlite-format string-comparison footgun (see
-    // feed-pull-reaper.ts for the bug receipts).
+    // Pre-filter in SQL — anything younger than 15 min is alive by
+    // definition (see the pre-filter note above). The plain started_at
+    // range seeks idx_agent_runs_open; the datetime() term keeps the exact
+    // ISO-vs-sqlite-safe semantics (see feed-pull-reaper.ts for the bug
+    // receipts).
     const candidates = await env.DB.prepare(
       `SELECT id, agent_id, started_at,
               CAST((julianday('now') - julianday(started_at)) * 1440 AS INTEGER) AS age_minutes
-         FROM agent_runs
+         FROM agent_runs INDEXED BY idx_agent_runs_open
         WHERE status IN ('partial', 'running')
           AND completed_at IS NULL
-          AND datetime(started_at) <= datetime('now', '-${PRE_FILTER_MINUTES} minutes')`,
+          AND started_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-15 minutes')
+          AND datetime(started_at) <= datetime('now', '-15 minutes')`,
     ).all<CandidateRow>();
 
     if (candidates.results.length === 0) return 0;

@@ -125,15 +125,39 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
           .first<{ n: number }>()
           .catch(() => ({ n: 0 }));
 
+    // Brand tiles. Global path: the two shared brand counters that
+    // brand_stats (handlers/brands.ts) already keeps warm — same keys, same
+    // TTLs (`count.brands.total` 1h, `count.brands.new_this_week` 30 min),
+    // so a dashboard miss usually reads both from KV. Was one
+    // `COUNT(*), SUM(CASE first_seen …)` scan of the whole brands table
+    // (~133K rows) on every outer-cache miss (~148 calls/day, 2026-11-08).
+    // Scoped (tenant brand set) requests keep the raw, bounded query.
+    const brandsP: Promise<{ tracked: number; new_7d: number }> = useGlobalCache
+      ? Promise.all([
+          cachedCount(env, 'count.brands.total', 3600, async () => {
+            const r = await session.prepare("SELECT COUNT(*) AS n FROM brands").first<{ n: number }>();
+            return r?.n ?? 0;
+          }),
+          cachedCount(env, 'count.brands.new_this_week', 1800, async () => {
+            const r = await session.prepare(
+              "SELECT COUNT(*) AS n FROM brands WHERE first_seen >= datetime('now', '-7 days')"
+            ).first<{ n: number }>();
+            return r?.n ?? 0;
+          }),
+        ]).then(([tracked, new_7d]) => ({ tracked, new_7d })).catch(() => ({ tracked: 0, new_7d: 0 }))
+      : session.prepare(`
+          SELECT COUNT(*) AS tracked,
+                 SUM(CASE WHEN first_seen >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS new_7d
+          FROM brands ${brandScope.clause}
+        `).bind(...brandScope.params).first<{ tracked: number; new_7d: number }>()
+          .then((r) => ({ tracked: r?.tracked ?? 0, new_7d: r?.new_7d ?? 0 }))
+          .catch(() => ({ tracked: 0, new_7d: 0 }));
+
     const [threatCount, threatActive, threat24h, brands, providers, campaigns, feeds] = await Promise.all([
       threatCountP,
       threatActiveP,
       threat24hP,
-      session.prepare(`
-        SELECT COUNT(*) AS tracked,
-               SUM(CASE WHEN first_seen >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS new_7d
-        FROM brands ${brandScope.clause}
-      `).bind(...brandScope.params).first<{ tracked: number; new_7d: number }>().catch(() => ({ tracked: 0, new_7d: 0 })),
+      brandsP,
       session.prepare(`
         SELECT COUNT(DISTINCT hosting_provider_id) AS tracked
         FROM threats WHERE hosting_provider_id IS NOT NULL ${threatScopeAnd.clause}

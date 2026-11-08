@@ -393,9 +393,17 @@ export async function handleListBrands(request: Request, env: Env, scope?: OrgSc
       session.prepare(
         `SELECT COUNT(*) AS n FROM monitored_brands ${mbScopeFilter.clause}`
       ).bind(...mbScopeFilter.params).first<{ n: number }>(),
-      session.prepare(
-        `SELECT COUNT(*) AS n FROM brands ${brandScopeFilter.clause}`
-      ).bind(...brandScopeFilter.params).first<{ n: number }>(),
+      // Unscoped: the shared `count.brands.total` counter (1h, same TTL as
+      // brand_stats / admin stats / public stats) instead of a ~133K-row
+      // scan on every list page. Scoped: bounded raw count.
+      brandScopeFilter.params.length === 0
+        ? cachedCount(env, 'count.brands.total', 3600, async () => {
+            const r = await session.prepare("SELECT COUNT(*) AS n FROM brands").first<{ n: number }>();
+            return r?.n ?? 0;
+          }).then((n) => ({ n }))
+        : session.prepare(
+            `SELECT COUNT(*) AS n FROM brands ${brandScopeFilter.clause}`
+          ).bind(...brandScopeFilter.params).first<{ n: number }>(),
     ]);
     // 3 .first() count queries — meta unavailable, but the
     // `under_attack` one scans active threats (200K+ rows) and is the

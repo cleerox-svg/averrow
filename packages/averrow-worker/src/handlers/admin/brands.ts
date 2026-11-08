@@ -101,8 +101,15 @@ export async function handleAdminListBrands(request: Request, env: Env): Promise
       LIMIT ? OFFSET ?
     `).bind(...params).all();
 
-    const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM brands b ${where}`)
-      .bind(...params.slice(0, -2)).first<{ n: number }>();
+    // Unfiltered: the shared `count.brands.total` counter (1h, same TTL as
+    // every other caller) instead of a full brands scan per page load.
+    const total = where === ""
+      ? { n: await cachedCount(env, 'count.brands.total', 3600, async () => {
+          const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM brands").first<{ n: number }>();
+          return r?.n ?? 0;
+        }) }
+      : await env.DB.prepare(`SELECT COUNT(*) AS n FROM brands b ${where}`)
+          .bind(...params.slice(0, -2)).first<{ n: number }>();
 
     // Source breakdown
     const sources = await env.DB.prepare(
