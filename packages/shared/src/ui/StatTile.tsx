@@ -1,7 +1,8 @@
 // @averrow/shared/ui — StatTile
 //
 // KPI tile ("Instrument glass"): gradient-hairline surface, sans label, big
-// count-up number, optional delta chip, sparkline, sub-line, critical pill and
+// number (rendered immediately: BRAND_BRIEF §4 bans count-up animations), optional
+// delta chip, sparkline, sub-line, critical pill and
 // footer. Styles live in theme/tokens.css (`.ds-stat*`). API from averrow-ops
 // `components/ui/StatTile`.
 //
@@ -19,7 +20,6 @@
 import type { CSSProperties, HTMLAttributes, MouseEventHandler, ReactNode } from 'react';
 import { Slot, Slottable } from '@radix-ui/react-slot';
 import { cn } from './cn';
-import { useCountUp } from './lib/useCountUp';
 import { resolveStatAccent, statNumeric, STAT_NEUTRAL } from './lib/stat-accent';
 import { COMPACT_FROM, formatCompact, formatFull } from './lib/compact-number';
 
@@ -156,12 +156,10 @@ export function StatTile({
   const failed = isNull && error;
   const loading = isNull && !error;
   const accent = resolveStatAccent(value, accentProp ?? TONE_COLOR[tone]);
-  // Hooks run unconditionally regardless of loading state.
-  const counted = useCountUp(typeof value === 'number' ? value : 0);
   const isCompact = compact && typeof value === 'number' && Math.abs(value) >= COMPACT_FROM;
   const display = isNull
     ? '—'
-    : typeof value === 'number' ? (isCompact ? formatCompact(counted) : formatFull(counted)) : value;
+    : typeof value === 'number' ? (isCompact ? formatCompact(value) : formatFull(value)) : value;
   const critCount = critical ?? 0;
   const clickable = !!onClick || asChild;
 
@@ -193,8 +191,7 @@ export function StatTile({
         {critCount > 0 ? null : deltaChip}
       </span>
       {compact && !isNull ? (
-        // The value scales to the tile (container query, sized by its final width so it does not jump while counting
-        // up): a 6-character count in a 140px tile shrinks instead of clipping.
+        // The value scales to the tile (container query, sized by its final width): a 6-character count in a 140px tile shrinks instead of clipping.
         <span className="ds-stat-fit">
           <span
             className="ds-stat-value ds-stat-value--fit"

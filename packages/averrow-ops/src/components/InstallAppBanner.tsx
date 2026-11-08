@@ -11,7 +11,7 @@
 // wrapper — when hidden.
 
 import { useState, type ReactNode } from 'react';
-import { Card, Button, SectionLabel } from '@/design-system/components';
+import { Card, Button } from '@/design-system/components';
 import { useInstallPrompt } from '@/hooks/useInstallPrompt';
 import { InstallSteps } from './InstallSteps';
 import './install-app.css';
@@ -47,10 +47,10 @@ export function InstallAppBanner() {
     return (
       <Gutter>
         <section aria-labelledby="install-banner-title">
-          <Card>
+          <Card variant="flat">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex-1">
-                <SectionLabel className="mb-1">Install</SectionLabel>
+                <div className="install-label">Install</div>
                 <h3 id="install-banner-title" className="font-semibold" style={{ color: 'var(--text-primary)', fontSize: 14 }}>
                   Install Averrow as an app
                 </h3>
@@ -84,10 +84,10 @@ export function InstallAppBanner() {
     return (
       <Gutter>
         <section aria-labelledby="install-banner-title">
-          <Card>
+          <Card variant="flat">
             <div className="flex flex-col gap-3">
               <div>
-                <SectionLabel className="mb-1">Install · iOS</SectionLabel>
+                <div className="install-label">Install · iOS</div>
                 <h3 id="install-banner-title" className="font-semibold" style={{ color: 'var(--text-primary)', fontSize: 14 }}>
                   Add Averrow to your Home Screen
                 </h3>

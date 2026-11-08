@@ -34,24 +34,26 @@ export interface BriefingShellProps {
   emptyTitle?: string;
   emptyDescription?: string;
   loadingTitle?: string;
+  /** Card surface. Home passes `flat` (facelift); the admin tab keeps the default. */
+  cardVariant?: 'base' | 'flat';
   children?: ReactNode;
 }
 
 export interface Freshness {
-  label: 'FRESH' | 'TODAY' | 'STALE';
+  label: 'Fresh' | 'Today' | 'Stale';
   status: BadgeStatus;
 }
 
-/** < 1h FRESH, < 24h TODAY, otherwise STALE. Null for a missing/invalid date. */
+/** < 1h Fresh, < 24h Today, otherwise Stale. Null for a missing/invalid date. */
 export function briefingFreshness(generatedAt: string | null | undefined, now: number = Date.now()): Freshness | null {
   if (!generatedAt) return null;
   const t = parseUtc(generatedAt).getTime();
   if (Number.isNaN(t)) return null;
   const age = now - t;
   const hour = 60 * 60 * 1000;
-  if (age < hour) return { label: 'FRESH', status: 'active' };
-  if (age < 24 * hour) return { label: 'TODAY', status: 'running' };
-  return { label: 'STALE', status: 'warning' };
+  if (age < hour) return { label: 'Fresh', status: 'active' };
+  if (age < 24 * hour) return { label: 'Today', status: 'running' };
+  return { label: 'Stale', status: 'warning' };
 }
 
 export function BriefingShell({
@@ -60,29 +62,30 @@ export function BriefingShell({
   emptyTitle = 'No briefing generated yet',
   emptyDescription,
   loadingTitle = 'Loading briefing…',
+  cardVariant = 'base',
   children,
 }: BriefingShellProps) {
   const freshness = status === 'ready' ? briefingFreshness(generatedAt) : null;
 
   return (
-    <Card data-briefing-source={source} padding="lg" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <Card data-briefing-source={source} variant={cardVariant} padding="lg" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           {eyebrow && <div className="mb-1.5 flex flex-wrap items-center gap-2">{eyebrow}</div>}
-          <h2 className="font-display text-lg font-bold" style={{ color: 'var(--text-primary)', margin: 0 }}>
+          <h2 className="text-type-h2" style={{ color: 'var(--text-primary)', margin: 0 }}>
             {title}
           </h2>
           {status === 'ready' && (generatedAt || meta) && (
-            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] leading-4" style={{ color: 'var(--text-secondary)' }}>
               {generatedAt && (
-                <span>
+                <span className="font-mono">
                   Generated {parseUtc(generatedAt).toLocaleString('en-US', {
                     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
                   })}
                 </span>
               )}
               {meta}
-              {freshness && <Badge status={freshness.status} label={freshness.label} size="xs" />}
+              {freshness && <Badge status={freshness.status} label={freshness.label} size="md" font="sans" />}
             </div>
           )}
         </div>

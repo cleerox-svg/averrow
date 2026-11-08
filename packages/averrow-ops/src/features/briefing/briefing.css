@@ -1,0 +1,26 @@
+/* Briefing shell text styles (sans, sentence case, 12-13px; mono is for timestamps only).
+   Tokens only; transitions use the motion tokens with literal fallbacks. */
+.briefing-chip {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 4px 10px; border-radius: 6px;
+  font-family: var(--font-sans); font-size: 12px; line-height: 16px; font-weight: 500;
+  color: var(--text-primary); text-decoration: none;
+  background: var(--bg-card-deep); border: 1px solid var(--border-base);
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+              border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+.briefing-chip:hover { background: var(--bg-page); border-color: var(--border-strong); }
+[data-theme="light"] .briefing-chip:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.briefing-chip:focus-visible, .briefing-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+[data-theme="light"] .briefing-chip:focus-visible, [data-theme="light"] .briefing-link:focus-visible { outline-color: var(--text-primary); }
+
+.briefing-link {
+  font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 500; text-decoration: none;
+  transition: color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+.briefing-link:hover { text-decoration: underline; }
+@media (max-width: 480px) {
+  .briefing-chip { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .briefing-chip, .briefing-link { transition: none; }
+}

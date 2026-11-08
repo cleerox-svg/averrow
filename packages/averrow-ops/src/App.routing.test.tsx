@@ -83,13 +83,13 @@ describe('App routing — "/" is OverviewV4 inside ShellV4 for every staff user'
     // OverviewV4's hero (lazy chunk -> findBy*). The first test pays the cold
     // dynamic-import/transform cost of the whole Overview graph, which can
     // exceed findBy's 1s default on a loaded machine.
-    expect(await screen.findByText('COMMAND CENTER', {}, { timeout: 10000 })).toBeInTheDocument();
+    expect(await screen.findByText('Command center', {}, { timeout: 10000 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: /Ada/ })).toBeInTheDocument();
 
     // ...rendered inside ShellV4's chrome: the Overview nav row + outlet wrapper
     const shell = container.querySelector('.shell-v4');
     expect(shell).not.toBeNull();
-    expect(shell!.querySelector('.v4-outlet')).toContainElement(screen.getByText('COMMAND CENTER'));
+    expect(shell!.querySelector('.v4-outlet')).toContainElement(screen.getByText('Command center'));
     expect(screen.getByRole('link', { name: /Overview/ })).toHaveAttribute('href', '/');
   });
 });

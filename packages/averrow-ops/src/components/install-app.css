@@ -13,7 +13,18 @@
   font-family: var(--font-mono); font-size: 11px; font-weight: 900;
   background: var(--primary);
   color: var(--primary-ink);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 45%, transparent);
+}
+
+/* Section label: sans sentence case at the --type-label-* scale, --text-tertiary
+   (local to the install surfaces: SectionLabel stays mono for the screens still on it). */
+.install-label {
+  margin-bottom: 4px;
+  font-family: var(--font-sans);
+  font-size: var(--type-label-size, 12px);
+  line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500);
+  letter-spacing: var(--type-label-tracking, 0.01em);
+  color: var(--text-tertiary);
 }
 
 /* Touch targets: >=44px tall on coarse pointers (phones/tablets). */

@@ -28,27 +28,20 @@ export function Digest() {
   ];
 
   return (
-    <Card padding="md" role="region" aria-labelledby="home-digest-title">
+    <Card variant="flat" padding="md" role="region" aria-labelledby="home-digest-title">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2
-          id="home-digest-title"
-          className="font-mono text-[10px] font-bold uppercase tracking-[0.18em]"
-          style={{ color: 'var(--text-secondary)', margin: 0 }}
-        >
-          Everything else
-        </h2>
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>no action needed</span>
+        <h2 id="home-digest-title" className="home-label">Everything else</h2>
+        <span className="home-label">No action needed</span>
       </div>
       <nav aria-labelledby="home-digest-title" className="flex flex-wrap gap-2">
         {links.map((l) => (
           <Link
             key={l.key}
             to={l.to}
-            className="rounded-full px-3 py-1.5 font-mono text-[11px] no-underline hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
-            style={{ background: 'var(--border-base)', color: 'var(--text-primary)', border: '1px solid var(--border-strong)' }}
+            className="digest-chip"
           >
             {l.label}
-            {l.count !== undefined && <span style={{ color: 'var(--text-secondary)' }}> ↑ {l.count}</span>}
+            {l.count !== undefined && <span className="digest-chip-count">&nbsp;↑ {l.count}</span>}
           </Link>
         ))}
       </nav>

@@ -12,6 +12,7 @@ import type { BadgeStatus } from '@/design-system/components';
 import type { CategoryRollup, CategoryStatus } from '@averrow/shared';
 import { CATEGORY_LABELS } from '@averrow/shared';
 import { PlatformStatusFlyout } from '@/components/PlatformStatusFlyout';
+import { sentenceCase } from '@/lib/sentence-case';
 import { usePlatformStatus } from '@/hooks/usePlatformStatus';
 
 const BADGE: Record<CategoryStatus, { status: BadgeStatus; label: string }> = {
@@ -24,11 +25,9 @@ function Cell({ rollup }: { rollup: CategoryRollup }) {
   const b = BADGE[rollup.realtime];
   return (
     <div className="min-w-0" data-pulse-cell={rollup.category}>
-      <div className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
-        {CATEGORY_LABELS[rollup.category]}
-      </div>
-      <div className="mt-1.5"><Badge status={b.status} label={b.label} size="xs" /></div>
-      <div className="mt-1.5 font-mono text-[10px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+      <div className="home-label">{sentenceCase(CATEGORY_LABELS[rollup.category])}</div>
+      <div className="mt-1.5"><Badge status={b.status} label={b.label} size="md" font="sans" /></div>
+      <div className="pulse-note">
         {rollup.realtime_note || `${rollup.uptime_30d_pct.toFixed(1)}% 30-day uptime`}
       </div>
     </div>
@@ -40,15 +39,9 @@ export function PlatformPulse() {
 
   return (
     <section aria-labelledby="home-pulse-title" className="flex flex-col gap-3">
-      <h2
-        id="home-pulse-title"
-        className="font-mono text-[10px] font-bold uppercase tracking-[0.18em]"
-        style={{ color: 'var(--text-secondary)', margin: 0 }}
-      >
-        Platform pulse
-      </h2>
+      <h2 id="home-pulse-title" className="home-label">Platform pulse</h2>
       <PlatformStatusFlyout />
-      <Card padding="md">
+      <Card variant="flat" padding="md">
         {isLoading && <PageState kind="loading" layout="inline" compact title="Checking platform status…" />}
         {!isLoading && !data && (
           <PageState
@@ -61,7 +54,7 @@ export function PlatformPulse() {
           />
         )}
         {data && (
-          <div className="grid grid-cols-3 gap-3">
+          <div className="pulse-grid">
             {data.categories.map((c) => <Cell key={c.category} rollup={c} />)}
           </div>
         )}

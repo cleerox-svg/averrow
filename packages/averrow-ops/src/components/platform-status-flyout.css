@@ -1,0 +1,68 @@
+/* PlatformStatusFlyout: the Overview "Platform pulse" status bar and its
+   availability panel. Tokens only; motion uses --motion-* / --ease-standard
+   with literal fallbacks. Sans sentence case at >= 12px; mono only for the
+   uptime figure (a fact). */
+.psf { position: relative; }
+
+.psf-trigger {
+  width: 100%; min-height: 44px; padding: 11px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--bg-card); color: inherit; text-align: left; cursor: pointer;
+  border: 1px solid var(--border-base); border-radius: var(--radius-md, 12px);
+  transition: border-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+              background-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+.psf-trigger:hover { border-color: var(--border-strong); background: var(--bg-card-deep); }
+[data-theme="light"] .psf-trigger:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.psf-trigger:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+[data-theme="light"] .psf-trigger:focus-visible { outline-color: var(--text-primary); }
+
+.psf-chevron {
+  flex: 0 0 auto; color: var(--text-tertiary);
+  transition: transform var(--motion-base, 160ms) var(--ease-standard, ease);
+}
+.psf-chevron[data-open="true"] { transform: rotate(180deg); }
+
+.psf-panel {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
+  /* Wide enough for "X.XX% 30-day uptime" without truncation; clamps on small viewports. */
+  width: min(420px, calc(100vw - 64px));
+  background: var(--bg-elevated); border: 1px solid var(--border-base);
+  border-radius: var(--radius-md, 12px); box-shadow: var(--card-shadow-elevated);
+  overflow: hidden;
+  animation: psf-in var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+@keyframes psf-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.psf-head { padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.psf-head-label { font-family: var(--font-sans); font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: var(--type-label-tracking, 0.01em); color: var(--text-tertiary); }
+.psf-head-note { font-family: var(--font-sans); font-size: 12px; line-height: 16px; color: var(--text-secondary); text-align: right; }
+
+.psf-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--border-base); }
+.psf-row-main { flex: 1; min-width: 0; }
+.psf-row-name { font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 600; color: var(--text-primary); }
+.psf-row-note { margin-top: 1px; font-family: var(--font-sans); font-size: 12px; line-height: 16px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.psf-row-pct { flex-shrink: 0; min-width: 56px; text-align: right; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+
+.psf-loading { padding: 24px 14px; border-top: 1px solid var(--border-base); text-align: center; font-family: var(--font-sans); font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+
+.psf-foot {
+  display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 14px;
+  border-top: 1px solid var(--border-base);
+  font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 500;
+  color: var(--link); text-decoration: none;
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+.psf-foot:hover { background: var(--bg-card-deep); text-decoration: underline; }
+[data-theme="light"] .psf-foot:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.psf-foot:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+[data-theme="light"] .psf-foot:focus-visible { outline-color: var(--text-primary); }
+
+/* Reduced motion: state change by fade only (no travel), no chevron spin, no hover fades. */
+@media (prefers-reduced-motion: reduce) {
+  .psf-panel { animation: none; }
+  .psf-chevron, .psf-trigger, .psf-foot { transition: none; }
+}

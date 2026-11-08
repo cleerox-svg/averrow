@@ -10,17 +10,17 @@ import { computeTempo, type Tempo, type TempoState } from '@/lib/threat-tempo';
 
 const STATE_ACCENT: Record<TempoState, string> = {
   surge: 'var(--sev-high)',
-  normal: 'var(--blue)',
+  normal: 'var(--text-secondary)',
   quiet: 'var(--text-tertiary)',
   unknown: 'var(--text-tertiary)',
 };
 
 export function tempoChipText(t: Tempo): string {
   if (t.ratio === null) {
-    return t.state === 'quiet' ? 'quiet · no ingest in 7d' : 'baseline unavailable';
+    return t.state === 'quiet' ? 'Quiet · no ingest in 7d' : 'Baseline unavailable';
   }
   const x = `${t.ratio.toFixed(1)}× baseline`;
-  return t.state === 'quiet' ? `quiet · ${x}` : x;
+  return t.state === 'quiet' ? `Quiet · ${x}` : x;
 }
 
 function Chip({ tempo }: { tempo: Tempo }) {
@@ -28,7 +28,7 @@ function Chip({ tempo }: { tempo: Tempo }) {
   return (
     <span
       data-tempo-state={tempo.state}
-      className="inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider"
+      className="tempo-chip"
       style={{
         color: surge ? 'var(--sev-high-text)' : 'var(--text-secondary)',
         background: surge ? 'var(--sev-high-bg)' : 'var(--border-base)',
@@ -90,6 +90,7 @@ export function TempoBand() {
               height={36}
               color={STATE_ACCENT[tempo.state]}
               baseline="zero"
+              animate={false}
               label="Threats ingested per hour, last 24 hours"
             />
           </span>
