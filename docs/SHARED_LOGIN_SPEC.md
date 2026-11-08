@@ -171,6 +171,13 @@ same tokens) to stay identical to Averrow** — this replaces the previous
 - **Product name:** "Averrow" / "FarmTrack".
 - **Tagline:** Averrow uses `AI-FIRST THREAT INTELLIGENCE`. FarmTrack uses `AN AVERROW PRODUCT` (parent-brand attribution since Averrow is the parent).
 - **Footer pillars:** Averrow uses `DETECT · ANALYZE · CORRELATE · RESPOND`. FarmTrack uses `PROJECTIONS · CAPTURE · TRANSPORT · QA`.
+- **2026-11 facelift (parity suspended, CLAUDE.md §5):** Averrow's login now
+  renders these in sentence case, sans, ≥12px, authored that way in the source
+  (no CSS uppercase): tagline `AI-first threat intelligence`, pillars
+  `Detect · Analyze · Correlate · Respond`, buttons `Sign in with Google` /
+  `Sign in with passkey` / `Send link`. The brand mark is the shared kit R3
+  `AverrowMark` (48px). When FarmTrack adopts the facelift, author its strings
+  in sentence case too; don't reintroduce uppercase styling.
 - **OAuth `return_to`:** points to each product's main interior route (`/v2/` for Averrow, which lands on the Home / Command Center; `/` for FarmTrack).
 
 ### Forbidden deltas
