@@ -42,7 +42,7 @@ const { summary, open = false } = Astro.props;
   .mf-d summary::-webkit-details-marker { display: none; }
   .mf-d summary::after { content: "+"; font: 600 18px var(--font-mono); color: var(--text-secondary); }
   .mf-d[open] summary::after { content: "\2212"; }
-  .mf-d summary:focus-visible { outline: 2px solid var(--amber-text); outline-offset: -2px; }
+  .mf-d summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   .mf-b { padding: 0 12px 14px; }
   @media (max-width: 640px) {
     .mf-full { display: none; }

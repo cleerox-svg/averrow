@@ -147,8 +147,9 @@ test.describe("/company hub", () => {
     const assets = await press.locator("a[download]").evaluateAll((as) => as.map((a) => (a as HTMLAnchorElement).getAttribute("href")));
     expect(assets.length).toBe(7);
     for (const h of assets) {
-      expect(h, "asset path").toMatch(/^\/(brand\/averrow-[\w-]+\.png|favicon\.svg)$/);
-      expect(fs.existsSync(path.join(ROOT, "..", "averrow-worker", "public", h!)), `${h} exists in the Worker's public/`).toBe(true);
+      // R3 assets (facelift 2026-11) ship from the marketing package's own public/.
+      expect(h, "asset path").toMatch(/^\/(brand\/(averrow-r3-[\w-]+|og-r3-2026)\.(png|svg)|favicon-r3\.svg)$/);
+      expect(fs.existsSync(path.join(ROOT, "public", h!)), `${h} exists in packages/averrow-marketing/public/`).toBe(true);
     }
     expect((await mainText(page)).toLowerCase()).not.toContain("as seen in");
   });

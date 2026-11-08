@@ -2,7 +2,7 @@
 /*
  * Top navigation bar. Five hub links (Platform / Solutions / Plans /
  * Research / Company), a text "Log in", a secondary "Book a demo" and
- * the primary amber "Scan your domain". The theme toggle lives in the
+ * the primary "Scan your domain". The theme toggle lives in the
  * footer. Active link is decided server-side from the current path so
  * there's no hydration flash.
  *
@@ -15,6 +15,7 @@
  *
  * Pages that include this Layout get the Nav automatically.
  */
+import BrandLockup from "./BrandLockup.astro";
 import { NAV_LINKS, LOGIN_HREF, activeFor } from "../lib/nav";
 
 const currentPath = Astro.url.pathname;
@@ -28,21 +29,7 @@ const withBase = (href: string) => `${base}${href}`;
 <nav class="nav" aria-label="Main">
   <div class="nav-inner">
     <a href={withBase("/")} class="nav-brand" aria-label="Averrow home">
-      <svg width="28" height="28" viewBox="0 0 32 32" style="flex-shrink:0" aria-hidden="true">
-        <defs>
-          <linearGradient id="deep-arrow-nav" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#6B1010" />
-            <stop offset="100%" stop-color="#C83C3C" />
-          </linearGradient>
-        </defs>
-        <rect width="32" height="32" rx="6" fill="#080E18" />
-        <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#deep-arrow-nav)" />
-        <path d="M14.5 22H17.5L16 18Z" fill="#080E18" />
-      </svg>
-      <div>
-        <span class="nav-brand-text">AVERROW</span>
-        <span class="nav-brand-sub">THREAT INTELLIGENCE</span>
-      </div>
+      <BrandLockup tagline />
     </a>
 
     <ul class="nav-links">

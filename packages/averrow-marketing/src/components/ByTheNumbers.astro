@@ -172,10 +172,10 @@ const checks = [
   }
   .num-h {
     font-family: var(--font-display);
-    font-weight: 800;
-    font-size: clamp(24px, 3vw, 30px);
-    line-height: 1.1;
-    letter-spacing: -0.025em;
+    font-weight: var(--type-section-weight);
+    font-size: var(--type-section-size);
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
     margin: 0;
     text-wrap: balance;
     color: var(--text-primary);
@@ -218,9 +218,9 @@ const checks = [
     padding: 2px 0;
   }
   .num-bar-tr { display: block; height: 12px; border-radius: 0 4px 4px 0; background: var(--border); overflow: hidden; }
-  .num-bar-f { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--amber); }
+  .num-bar-f { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--primary); }
   /* Light theme: fills must clear 3:1 against the track (#E2DDD5). */
-  [data-theme="light"] .num-bar-f { background: var(--accent-section, #8A5F0F); }
+  [data-theme="light"] .num-bar-f { background: var(--accent-section); }
   .num-bar.grp .num-bar-f { background: var(--slate); }
   [data-theme="light"] .num-bar.grp .num-bar-f { background: var(--slate-text); }
   .num-bar-v { font: 600 12px var(--font-mono); color: var(--text-primary); text-align: right; font-variant-numeric: tabular-nums; }
@@ -254,7 +254,7 @@ const checks = [
     min-width: 0;
   }
   .num-tile { background: var(--bg-secondary); padding: 14px 16px; display: grid; gap: 3px; align-content: start; min-width: 0; }
-  .num-tile b { font: 800 24px/1.1 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); font-variant-numeric: tabular-nums; min-height: 1.1em; }
+  .num-tile b { font: 600 24px/1.1 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); font-variant-numeric: tabular-nums; min-height: 1.1em; }
   .num-tl { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
   .num-td { font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
 
@@ -274,8 +274,8 @@ const checks = [
   .num-card:hover { border-color: var(--accent); transform: translateY(-2px); text-decoration: none; }
   .num-card b { font-size: 14px; color: var(--text-primary); }
   .num-card span { font-size: 12.5px; line-height: 1.45; color: var(--text-secondary); }
-  .num-card em { font-style: normal; font-size: 12.5px; font-weight: 700; color: var(--amber-text); margin-top: 4px; }
-  [data-theme="light"] .num-card em { color: var(--accent-section, #8A5F0F); }
+  .num-card em { font-style: normal; font-size: 12.5px; font-weight: 700; color: var(--accent); margin-top: 4px; }
+  [data-theme="light"] .num-card em { color: var(--accent-section); }
 
   .num .trust-line { padding-top: 6px; border-top: 1px solid var(--border); padding-top: 18px; }
 

@@ -175,7 +175,7 @@ const icons: Record<string, string> = {
   .docs-hub-hero h1 {
     font-family: var(--font-display);
     font-size: clamp(32px, 5vw, 52px);
-    font-weight: 800;
+    font-weight: 600;
     margin-bottom: 1rem;
     line-height: 1.1;
   }
@@ -197,14 +197,14 @@ const icons: Record<string, string> = {
     margin: 0 auto;
     padding: 1.75rem 2rem;
     border-radius: var(--radius-lg);
-    border: 1px solid rgba(229,168,50,0.28);
-    background: rgba(229,168,50,0.07);
+    border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
+    background: color-mix(in srgb, var(--primary) 7%, transparent);
     text-decoration: none;
     color: inherit;
     transition: all 0.25s;
   }
   .docs-hub-start-card:hover {
-    border-color: rgba(229,168,50,0.5);
+    border-color: color-mix(in srgb, var(--primary) 50%, transparent);
     transform: translateY(-3px);
     box-shadow: 0 10px 28px rgba(0,0,0,0.18);
     text-decoration: none;
@@ -214,8 +214,8 @@ const icons: Record<string, string> = {
     height: 52px;
     flex-shrink: 0;
     border-radius: var(--radius-md);
-    background: rgba(229,168,50,0.14);
-    color: var(--amber-text);
+    background: color-mix(in srgb, var(--primary) 14%, transparent);
+    color: var(--accent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -228,7 +228,7 @@ const icons: Record<string, string> = {
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--amber-text);
+    color: var(--accent);
     margin-bottom: 0.3rem;
   }
   .docs-hub-start-text h2 {
@@ -247,7 +247,7 @@ const icons: Record<string, string> = {
     font-family: var(--font-mono);
     font-size: 0.8rem;
     font-weight: 600;
-    color: var(--amber-text);
+    color: var(--accent);
     white-space: nowrap;
     flex-shrink: 0;
   }
@@ -281,7 +281,7 @@ const icons: Record<string, string> = {
   }
   :global([data-theme="light"]) .docs-hub-card { background: rgba(255,255,255,0.6); }
   .docs-hub-card:hover {
-    border-color: rgba(229,168,50,0.4);
+    border-color: color-mix(in srgb, var(--primary) 40%, transparent);
     transform: translateY(-4px);
     box-shadow: 0 8px 24px rgba(0,0,0,0.18);
     text-decoration: none;
@@ -333,7 +333,7 @@ const icons: Record<string, string> = {
     font-family: var(--font-mono);
     font-size: 0.75rem;
     font-weight: 600;
-    color: var(--amber-text);
+    color: var(--accent);
   }
 
   /* ── API CALLOUT ── */
@@ -400,9 +400,9 @@ const icons: Record<string, string> = {
      (4.5:1) as text on the light theme's pale tinted pills/sections.
      Darkened here for [data-theme="light"] only; dark theme values
      are untouched. */
-  :global([data-theme="light"]) .docs-hub-start-eyebrow { color: var(--accent-section, #8A5F0F); }
-  :global([data-theme="light"]) .docs-hub-start-cta { color: var(--accent-section, #8A5F0F); }
-  :global([data-theme="light"]) .docs-hub-card-link { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .docs-hub-start-eyebrow { color: var(--accent-section); }
+  :global([data-theme="light"]) .docs-hub-start-cta { color: var(--accent-section); }
+  :global([data-theme="light"]) .docs-hub-card-link { color: var(--accent-section); }
   :global([data-theme="light"]) .docs-hub-api-icon { color: #106b32; }
 
   /* ── RESPONSIVE ── */

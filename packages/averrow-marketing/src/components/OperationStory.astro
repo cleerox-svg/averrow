@@ -161,7 +161,7 @@ const app = { x: 395, y: 108 };
 const side = [
   { p: social, step: 4, tone: "blue", title: "Related profile", sub: "@acme_hr_support" },
   { p: app, step: 4, tone: "blue", title: "Related app", sub: "“Acme Pay”" },
-  { p: cert, step: 2, tone: "amber", title: "TLS certificate", sub: "1 shared serial" },
+  { p: cert, step: 2, tone: "accent", title: "TLS certificate", sub: "1 shared serial" },
   { p: hostA, step: 2, tone: "high", title: "Hosting network", sub: "AS64500" },
   { p: hostB, step: 4, tone: "high", title: "Hosting network", sub: "AS64501" },
 ];
@@ -449,11 +449,12 @@ const finalLabel = steps[steps.length - 1].graphLabel;
   }
   .opstory-title {
     font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 36px);
-    font-weight: 700;
+    font-size: var(--type-section-size);
+    font-weight: var(--type-section-weight);
     color: var(--text-primary);
     margin-bottom: 8px;
-    letter-spacing: -0.01em;
+    letter-spacing: var(--type-section-tracking);
+    line-height: var(--type-section-lh);
   }
   .opstory-lede { max-width: 62ch; font-size: 16px; line-height: 1.65; color: var(--text-secondary); margin-bottom: 24px; }
 
@@ -528,7 +529,7 @@ const finalLabel = steps[steps.length - 1].graphLabel;
   .os-graph.final .dom.pending { stroke: var(--amber-text); }
   .os-graph.final .dom.queued { stroke: var(--text-secondary); stroke-dasharray: 3 2; }
   .os-graph .side.blue { stroke: var(--blue-text); }
-  .os-graph .side.amber { stroke: var(--amber-text); }
+  .os-graph .side.accent { stroke: var(--accent); }
   .os-graph .side.high { stroke: var(--sev-high-text); }
   .os-graph .hub { fill: var(--red-bg); stroke: var(--red-text); stroke-width: 1.5; }
   .os-graph.final .lb-name[data-until] { display: none; }
@@ -565,7 +566,7 @@ const finalLabel = steps[steps.length - 1].graphLabel;
     color: var(--text-secondary);
   }
   .os-tab:hover { background: var(--bg-secondary); }
-  .os-tab:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .os-tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .os-tab[aria-selected="true"] { background: var(--bg-secondary); border-color: var(--accent); color: var(--text-primary); }
   .os-tab .os-dn {
     grid-row: span 2;
@@ -612,13 +613,13 @@ const finalLabel = steps[steps.length - 1].graphLabel;
     cursor: pointer;
   }
   .os-ctl:hover { border-color: var(--accent); }
-  .os-ctl:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .os-ctl:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .os-ctl[hidden] { display: inline-block; visibility: hidden; }
   .os-illus { font: 500 11.5px var(--font-mono); color: var(--text-secondary); }
   .os-ctas { display: flex; align-items: center; gap: 16px 20px; flex-wrap: wrap; }
   .os-link { color: var(--text-primary); font-weight: 700; font-size: 14px; text-decoration: none; border-bottom: 1px solid var(--border-strong); }
   .os-link:hover { border-bottom-color: var(--accent); text-decoration: none; }
-  .os-link:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 3px; }
+  .os-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 
   @media (max-width: 1100px) {
     .opstory[data-enhanced] .os-stage { grid-template-columns: minmax(0, 1fr); }

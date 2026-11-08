@@ -156,7 +156,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin: 0 auto 1rem;
     font-family: var(--font-display);
     font-size: clamp(36px, 5vw, 64px);
-    font-weight: 800;
+    font-weight: 600;
   }
   .abuse-hero .section-desc {
     max-width: 620px;
@@ -185,7 +185,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
   }
   .abuse-card:hover {
-    border-color: rgba(229,168,50,0.4);
+    border-color: color-mix(in srgb, var(--primary) 40%, transparent);
     transform: translateY(-2px);
     box-shadow: 0 8px 24px rgba(0,0,0,0.12);
   }
@@ -252,7 +252,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     width: 4px;
     height: 4px;
     border-radius: 50%;
-    background: var(--amber);
+    background: var(--primary);
     margin-top: 8px;
     flex-shrink: 0;
   }
@@ -279,7 +279,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--btn-primary-ink);
     border-color: var(--accent);
     text-decoration: none;
-    box-shadow: 0 0 18px rgba(229,168,50,0.25);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--primary) 25%, transparent);
   }
   .abuse-mailto svg {
     width: 14px;
@@ -317,7 +317,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .abuse-step {
     padding: 1.25rem 1.5rem;
-    border-left: 2px solid var(--amber);
+    border-left: 2px solid var(--primary);
     background: var(--bg-tertiary);
     border-radius: 0 var(--radius-md) var(--radius-md) 0;
   }
@@ -328,7 +328,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-weight: 700;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--amber-text);
+    color: var(--accent);
     margin-bottom: 0.5rem;
   }
   .abuse-step-title {

@@ -1,82 +1,64 @@
 /*
- * Design tokens — aligned with the platform (CLAUDE.md §5) and ported
- * from packages/averrow-worker/src/templates/shared.ts.
+ * Design tokens — marketing site (facelift Phase 5, 2026-11).
  *
- * The averrow-worker copy remains authoritative until R6 cuts over
- * production. At that point shared.ts retires and this file becomes
- * the single source of truth.
+ * Source of truth for colour: docs/brand/palettes/indigo.css, as shipped
+ * in packages/shared/src/theme/appearance.css (indigo / graphite / light).
+ *   - Dark  = its GRAPHITE block (not the navy default block).
+ *   - Light = its light block.
+ * Marketing uses exactly indigo on graphite / indigo light — no accent or
+ * background picker (BRAND_BRIEF §9 G2). Hex values only (the palette's hex
+ * fallbacks); keep them in sync with indigo.css if it is regenerated.
+ *
+ * Marketing-only names (--accent, --accent-*, --btn-primary-*, --bg-primary
+ * etc.) are kept as aliases so component CSS did not have to be renamed:
+ *   --accent        = --primary-text  (indigo as TEXT/outline, AA in both themes)
+ *   --btn-primary-* = --primary / --primary-hover / --primary-ink
+ *
+ * Reserved colours:
+ *   --amber  status / severity ONLY (pending, scheduled, "waits for you", …).
+ *            Never an accent, CTA, link, focus ring or active state.
+ *   --red    the logo mark and critical severity only.
+ *
+ * Type: Geist + Geist Mono, self-hosted from /fonts (see global.css
+ * @font-face). Scale = BRAND_BRIEF §9 G3 marketing scale.
  */
 
 :root {
-  --font-display: "Plus Jakarta Sans", sans-serif;
-  --font-body:    "Plus Jakarta Sans", sans-serif;
-  --font-mono:    "IBM Plex Mono", monospace;
+  --font-display: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-body:    "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:    "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /*
-   * Accent — platform amber (CLAUDE.md §5: amber = primary actions, active
-   * states, nav; red is reserved for alerts / critical severity / the logo,
-   * and lives on --red / --sev-critical below). Dark values here; the light
-   * theme overrides --accent to an AA-safe darker amber because #E5A832 as
-   * TEXT on a light page is only ~2:1.
-   */
-  --accent:           #E5A832;
-  --accent-hover:     #F2BE55;
-  --accent-light:     #F2C25B;
-  --accent-bg:        rgba(229, 168, 50, 0.10);
-  --accent-bg-strong: rgba(229, 168, 50, 0.18);
+  /* G3 marketing scale. Hero/section clamp down on narrow screens. */
+  --type-hero-size:      clamp(44px, 6.6vw, 84px);
+  --type-hero-lh:        0.98;
+  --type-hero-weight:    600;
+  --type-hero-tracking:  -0.045em;
+  --type-section-size:   clamp(30px, 4vw, 44px);
+  --type-section-lh:     1.06;
+  --type-section-weight: 600;
+  --type-section-tracking: -0.03em;
+  --type-body-size:      18px;
+  --type-body-lh:        1.6;
 
-  /*
-   * Primary button — identical in both themes: amber gradient with dark ink
-   * (8.8:1 on #E5A832, 5.5:1 on #B8821F). Independent of --accent so the
-   * light theme's darker text-amber doesn't dim the button.
-   */
-  --btn-primary-bg:       linear-gradient(180deg, #E5A832 0%, #B8821F 100%);
-  --btn-primary-bg-hover: linear-gradient(180deg, #F2BE55 0%, #C8922A 100%);
-  --btn-primary-ink:      #1A1306;
-  --accent-ink:           #1A1306; /* text colour for anything filled with --accent */
-
-  /* Platform palette parity */
-  --red:        #C83C3C;
+  /* Status / severity — identical in both themes (decorative fills, dots, bars). */
+  --amber:      #E5A832; /* status only — see header */
+  --amber-dim:  #B8821F;
+  --red:        #c83c3c;
   --red-dim:    #8B1A1A;
   --red-bg:     rgba(200, 60, 60, 0.08);
-  --amber:      #E5A832;
-  --amber-dim:  #B8821F;
-  --green:      #3CB878;
+  --green:      #3cb878;
   --green-dim:  #1A6B3C;
   --green-bg:   rgba(60, 184, 120, 0.08);
-  --blue:       #0A8AB5;
+  --blue:       #0a8ab5;
   --blue-dim:   #065A78;
-  --slate:      #8A8F9C; /* sixth "agent row" identity color (Timeline & Narrative) — decorative, stays flat across themes */
+  --slate:      #8A8F9C; /* sixth "agent row" identity colour — decorative */
 
-  /* Severity */
   --sev-critical: #f87171;
   --sev-high:     #fb923c;
   --sev-medium:   #fbbf24;
   --sev-low:      #60a5fa;
-
-  /*
-   * Theme-aware TEXT variants — same convention as the platform's
-   * `--sev-*-text` tokens (CLAUDE.md §5 / AVERROW_UI_STANDARD SEVERITY
-   * SYSTEM): the *-dot* hex above is decorative and intentionally stays
-   * identical across themes (RESTRUCTURE_SPEC: "Severity stays the same
-   * in light mode"), but a badge/pill/status label rendered in that raw
-   * hue as small TEXT loses AA contrast once its own translucent tint
-   * background composites against a light page (dark: ~5-8:1, light:
-   * ~1.5-2.5:1 — measured). These resolve to the dot color in dark mode
-   * (byte-identical) and to an AA-safe darker variant in light mode.
-   * Use for badge/chip/status/grade TEXT only — decorative dots, bars,
-   * icons, and borders keep using the flat --sev-* / --green / --amber /
-   * --blue tokens above, unchanged.
-   */
-  --sev-critical-text: var(--sev-critical);
-  --sev-high-text:     var(--sev-high);
-  --sev-medium-text:   var(--sev-medium);
-  --sev-low-text:      var(--sev-low);
-  --red-text:          var(--sev-critical);
-  --green-text:        var(--green);
-  --amber-text:        var(--amber);
-  --blue-text:         var(--blue);
-  --slate-text:        var(--slate);
+  --sev-critical-bg:     rgba(248, 113, 113, 0.1);
+  --sev-critical-border: rgba(248, 113, 113, 0.3);
 
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -84,75 +66,114 @@
   --radius-xl: 24px;
 }
 
-[data-theme="light"] {
-  --bg-primary:    #F8F7F5;
-  --bg-secondary:  #FFFFFF;
-  --bg-tertiary:   #FAFAF8;
-  --bg-code:       #F0EDE8;
-  --bg-elevated:   #FFFFFF;
-  --text-primary:  #1A1F2E;
-  --text-secondary:#5A6170;
-  --text-tertiary: #6B7280; /* darkened from #8A8F9C (~3.0:1) to ~4.6:1 on light bg; dark theme unaffected (own --text-tertiary below) */
-  --text-inverse:  #F0EDE8;
-  --border:        #E2DDD5;
-  --border-strong: rgba(226, 221, 213, 0.6);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
-  --shadow-md: 0 4px 24px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.8);
-  --shadow-lg: 0 12px 40px rgba(0,0,0,0.08);
-  --shadow-glow: 0 0 40px rgba(154,106,16,0.12);
-  --gradient-hero: linear-gradient(135deg, #F8F7F5 0%, #FAFAF8 50%, #F8F7F5 100%);
-  /* Amber as TEXT/outline on light: #8A5F0F = 5.3:1 on page bg, 5.7:1 on white. */
-  --accent: #8A5F0F;
-  --accent-hover: #6F4C0B;
-  --accent-bg: rgba(154,106,16,0.08);
-  --accent-bg-strong: rgba(154,106,16,0.14);
-  --accent-section: #8A5F0F; /* darkened from #C88B1E (2.74:1) to meet 4.5:1 on light bg; dark theme unaffected (no override there, falls back to --accent) */
-  --nav-bg: rgba(248,247,245,0.8);
-  --glass-card-bg: rgba(255,255,255,0.6);
-  --glass-card-border: rgba(226,221,213,0.5);
-  --glass-card-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
-  --glass-card-hover-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+/* ── Dark: indigo on graphite (default; <html data-theme="dark">) ── */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
 
-  /*
-   * Badge/status/grade TEXT overrides — AA-checked against both white
-   * and the page bg (measured, not eyeballed). Reuses the platform's
-   * existing "dim" severity hexes from AVERROW_UI_STANDARD's SEV config
-   * (sev-critical.dim/sev-high.dim/sev-medium.dim/sev-low.dim) and the
-   * existing --green-dim / --blue-dim gradient-pair tokens above, all of
-   * which already clear 4.5:1. --amber-dim (#B8821F, ~3.1:1) does NOT
-   * clear AA as text, so amber-text gets its own darker value.
-   */
-  --sev-critical-text: #7f1d1d; /* 9.4:1 on page bg */
-  --sev-high-text:     #7c2d12; /* 8.7:1 */
-  --sev-medium-text:   #78350f; /* 8.5:1 */
-  --sev-low-text:      #1e3a5f; /* 10.7:1 */
-  --red-text:          var(--red-dim);    /* #8B1A1A, 8.68:1 */
-  --green-text:        var(--green-dim);  /* #1A6B3C, 6.1:1 */
-  --blue-text:         var(--blue-dim);   /* #065A78, 7.1:1 */
-  --amber-text:        #8A5F0F;           /* 5.3:1 on page bg — --amber-dim fails AA (~3.1:1), so not reused here */
-  --slate-text:        #475569;           /* 7.6:1 — flat #8A8F9C only clears ~3.2:1 as text on light bg */
+  --bg-primary:    #0a0b0e; /* palette --bg-page */
+  --bg-secondary:  #151619; /* --bg-card */
+  --bg-tertiary:   #1a1b1f; /* between card and elevated */
+  --bg-elevated:   #1f2024;
+  --bg-code:       #0f1013; /* --bg-card-deep */
+  --text-primary:  #f6f7f7;
+  --text-secondary:#c2c2c4;
+  --text-tertiary: #a1a1a3; /* 7.6:1 on page, 6.3:1 on elevated */
+  --text-muted:    #8b8c8d;
+  --text-inverse:  #151619;
+  --border:        rgba(245, 245, 246, 0.11);
+  --border-strong: rgba(245, 245, 246, 0.2);
+
+  /* L2 semantic primary (indigo) */
+  --primary:         #4c5cf8;
+  --primary-hover:   #4350ec;
+  --primary-pressed: #3640d0;
+  --primary-ink:     #fbfcff; /* 4.9:1 on --primary, 5.6:1 on hover */
+  --primary-text:    #96acff; /* 9.0:1 on page, 7.5:1 on elevated */
+  --primary-tint:    rgba(76, 92, 248, 0.14);
+  --focus-ring:      #96acff;
+
+  /* Marketing aliases */
+  --accent:           var(--primary-text);
+  --accent-hover:     var(--primary-hover);
+  --accent-light:     #4f60ff;
+  --accent-section:   var(--primary-text);
+  --accent-ink:       var(--primary-ink);
+  --accent-bg:        rgba(76, 92, 248, 0.1);
+  --accent-bg-strong: rgba(76, 92, 248, 0.18);
+  --btn-primary-bg:       var(--primary);
+  --btn-primary-bg-hover: var(--primary-hover);
+  --btn-primary-ink:      var(--primary-ink);
+
+  /* Theme-aware TEXT variants (badge/pill/status labels) — palette values. */
+  --sev-critical-text: #ffc8c5;
+  --sev-high-text:     #ffcba8;
+  --sev-medium-text:   #f3d392;
+  --sev-low-text:      #bddaff;
+  --red-text:          #ff958e;
+  --green-text:        #74ce99;
+  --blue-text:         #75c3e7;
+  --amber-text:        var(--amber); /* 9.4:1 on page */
+  --slate-text:        var(--slate);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.4);
+  --shadow-glow: 0 0 60px rgba(76, 92, 248, 0.18);
+  --gradient-hero: linear-gradient(135deg, #0a0b0e 0%, #151619 50%, #0a0b0e 100%);
+  --nav-bg: rgba(10, 11, 14, 0.85);
+  --glass-card-bg: rgba(21, 22, 25, 0.85);
+  --glass-card-border: rgba(245, 245, 246, 0.10);
+  --glass-card-shadow: 0 4px 24px rgba(0, 0, 0, 0.30);
+  --glass-card-hover-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
 }
 
-[data-theme="dark"] {
-  --bg-primary:    #060A14;
-  --bg-secondary:  #0E1A2B;
-  --bg-tertiary:   #142236;
-  --bg-code:       #0C1420;
-  --bg-elevated:   #1A2E48;
-  --text-primary:  rgba(255,255,255,0.92);
-  --text-secondary:rgba(255,255,255,0.60);
-  --text-tertiary: rgba(255,255,255,0.56); /* 6.4:1 on #060A14 (was .40 = 3.8:1) */
-  --text-inverse:  #1A1F2E;
-  --border:        rgba(120, 160, 200, 0.08);
-  --border-strong: rgba(120, 160, 200, 0.15);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
-  --shadow-md: 0 4px 16px rgba(0,0,0,0.3);
-  --shadow-lg: 0 12px 40px rgba(0,0,0,0.4);
-  --shadow-glow: 0 0 60px rgba(229,168,50,0.18);
-  --gradient-hero: linear-gradient(135deg, #060A14 0%, #0E1A2B 50%, #060A14 100%);
-  --nav-bg: rgba(6,10,20,0.85);
-  --glass-card-bg: rgba(22,30,48,0.85);
-  --glass-card-border: rgba(120,160,200,0.10);
-  --glass-card-shadow: 0 4px 24px rgba(0,0,0,0.30);
-  --glass-card-hover-shadow: 0 8px 32px rgba(0,0,0,0.45);
+/* ── Light: indigo ── */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-primary:    #f0f2f8;
+  --bg-secondary:  #ffffff;
+  --bg-tertiary:   #f6f8fb;
+  --bg-elevated:   #ffffff;
+  --bg-code:       #e9ecf3;
+  --text-primary:  #0f1216;
+  --text-secondary:#383b40;
+  --text-tertiary: #4c4e54; /* 7.4:1 on page */
+  --text-muted:    #606369;
+  --text-inverse:  #eceef4;
+  --border:        rgba(18, 22, 29, 0.14);
+  --border-strong: rgba(18, 22, 29, 0.24);
+
+  --primary:         #3250f0;
+  --primary-hover:   #2941d9;
+  --primary-pressed: #2031c2;
+  --primary-ink:     #fafcff; /* 5.8:1 on --primary, 7.2:1 on hover */
+  --primary-text:    #2a44d3; /* 6.6:1 on page, 7.3:1 on white */
+  --primary-tint:    rgba(50, 80, 240, 0.1);
+  --focus-ring:      #2a44d3;
+
+  --accent-bg:        rgba(50, 80, 240, 0.08);
+  --accent-bg-strong: rgba(50, 80, 240, 0.18);
+
+  --sev-critical-text: #942129;
+  --sev-high-text:     #7e3f00;
+  --sev-medium-text:   #6a4d00;
+  --sev-low-text:      #005884;
+  --red-text:          #932b2b;
+  --green-text:        #006339;
+  --blue-text:         #005e7d;
+  --amber-text:        #6a4d00; /* 7.0:1 on page */
+  --slate-text:        #475569;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.08);
+  --shadow-glow: 0 0 40px rgba(50, 80, 240, 0.12);
+  --gradient-hero: linear-gradient(135deg, #f0f2f8 0%, #f6f8fb 50%, #f0f2f8 100%);
+  --nav-bg: rgba(240, 242, 248, 0.85);
+  --glass-card-bg: rgba(255, 255, 255, 0.6);
+  --glass-card-border: rgba(18, 22, 29, 0.10);
+  --glass-card-shadow: 0 4px 24px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --glass-card-hover-shadow: 0 8px 32px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }

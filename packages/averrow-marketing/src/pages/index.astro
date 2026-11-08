@@ -49,12 +49,12 @@ const coverage = COVERAGE.map((c) => c.name);
 
 // Illustrative operation graph. Coordinates are in the SVG's 400x190 space.
 // tone -> colour token: crit = critical severity, high = high severity,
-// amber / blue / green = platform palette.
-type Tone = "crit" | "high" | "amber" | "blue" | "green";
+// accent = brand primary (indigo); blue / green = platform palette.
+type Tone = "crit" | "high" | "accent" | "blue" | "green";
 const opNodes: Array<{ x: number; y: number; tone: Tone; title: string; sub: string }> = [
   { x: 70, y: 40, tone: "crit", title: "14 domains", sub: "acme-payroll-login.example" },
   { x: 60, y: 120, tone: "high", title: "2 hosting ASNs", sub: "AS64500 · AS64501" },
-  { x: 95, y: 168, tone: "amber", title: "1 TLS cert", sub: "shared serial" },
+  { x: 95, y: 168, tone: "accent", title: "1 TLS cert", sub: "shared serial" },
   { x: 330, y: 38, tone: "blue", title: "Social profile", sub: "@acme_hr_support" },
   { x: 345, y: 110, tone: "blue", title: "Cloned app", sub: "\"Acme Pay\"" },
   { x: 305, y: 168, tone: "green", title: "Email", sub: "DMARC p=none" },
@@ -62,7 +62,7 @@ const opNodes: Array<{ x: number; y: number; tone: Tone; title: string; sub: str
 const toneVar: Record<Tone, string> = {
   crit: "var(--sev-critical)",
   high: "var(--sev-high)",
-  amber: "var(--amber)",
+  accent: "var(--primary)",
   blue: "var(--blue)",
   green: "var(--green)",
 };
@@ -247,7 +247,7 @@ const toneVar: Record<Tone, string> = {
     margin: 0 auto;
     padding: 64px 24px 48px;
   }
-  /* Faint grid + amber glow behind the operation card. */
+  /* Faint grid + accent glow behind the operation card. */
   .hero-wrap::before {
     content: "";
     position: absolute;
@@ -268,7 +268,7 @@ const toneVar: Record<Tone, string> = {
     width: 55%;
     height: 120%;
     z-index: -1;
-    background: radial-gradient(closest-side, rgba(229, 168, 50, 0.11), transparent);
+    background: radial-gradient(closest-side, color-mix(in srgb, var(--primary) 11%, transparent), transparent);
     pointer-events: none;
   }
   .hero-copy { min-width: 0; }
@@ -278,23 +278,25 @@ const toneVar: Record<Tone, string> = {
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--amber-text);
+    color: var(--accent);
     margin-bottom: 18px;
   }
   .hero-h1 {
     font-family: var(--font-display);
-    font-size: clamp(32px, 3.6vw, 50px);
-    font-weight: 800;
-    line-height: 1.05;
-    letter-spacing: -0.035em;
+    /* G3 hero tokens; size capped to fit the two-column hero (the full-width
+       84px hero lands with the G5 operation-graph hero). */
+    font-size: clamp(44px, 4.6vw, 84px);
+    font-weight: var(--type-hero-weight);
+    line-height: var(--type-hero-lh);
+    letter-spacing: var(--type-hero-tracking);
     margin-bottom: 18px;
     color: var(--text-primary);
     text-wrap: balance;
   }
-  .hero-h1 em { font-style: normal; color: var(--amber-text); }
+  .hero-h1 em { font-style: normal; color: var(--accent); }
   .hero-lede {
-    font-size: 16.5px;
-    line-height: 1.6;
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-lh);
     color: var(--text-secondary);
     max-width: 54ch;
     margin-bottom: 26px;
@@ -312,7 +314,7 @@ const toneVar: Record<Tone, string> = {
     transition: border-color 0.2s, box-shadow 0.2s;
   }
   .scan-box:focus-within {
-    border-color: var(--amber);
+    border-color: var(--primary);
     box-shadow: 0 0 0 3px var(--accent-bg-strong);
   }
   .scan-input {
@@ -359,7 +361,7 @@ const toneVar: Record<Tone, string> = {
     font-weight: 600;
     border-bottom: 1px solid var(--border-strong);
   }
-  .scan-meta a:hover { text-decoration: none; border-bottom-color: var(--amber); }
+  .scan-meta a:hover { text-decoration: none; border-bottom-color: var(--primary); }
   .scan-meta-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-tertiary); }
 
   /* ── OPERATION CARD ── */
@@ -435,7 +437,7 @@ const toneVar: Record<Tone, string> = {
   }
   .band-m { padding: 14px 18px; border-right: 1px solid var(--border); }
   .band-m:last-child { border-right: 0; }
-  .band-m b { display: block; font: 800 20px/1.1 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .band-m b { display: block; font: 600 20px/1.1 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); font-variant-numeric: tabular-nums; }
   .band-m span { font-size: 12px; color: var(--text-secondary); }
   .cover {
     max-width: 1280px;
@@ -466,7 +468,7 @@ const toneVar: Record<Tone, string> = {
   }
   @media (max-width: 959px) {
     .hero { grid-template-columns: minmax(0, 1fr); padding: 32px 16px 28px; gap: 28px; }
-    .hero-lede { font-size: 14.5px; }
+    .hero-lede { font-size: 16px; }
     .hero-lede-short { display: block; }
     .hero-lede:not(.hero-lede-short) { display: none; }
     .band-lbl { padding: 12px 16px; white-space: normal; }
@@ -498,7 +500,7 @@ const toneVar: Record<Tone, string> = {
     content: "";
     position: absolute;
     inset: 0;
-    background: radial-gradient(ellipse at 50% 0%, rgba(229, 168, 50, 0.08) 0%, transparent 65%);
+    background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--primary) 8%, transparent) 0%, transparent 65%);
     pointer-events: none;
   }
   .cta-inner::after {
@@ -506,16 +508,18 @@ const toneVar: Record<Tone, string> = {
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(229, 168, 50, 0.5), transparent);
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--primary) 50%, transparent), transparent);
   }
   .cta-headline {
     font-family: var(--font-display);
-    font-size: clamp(28px, 3vw, 36px);
-    font-weight: 700;
+    font-size: var(--type-section-size);
+    font-weight: var(--type-section-weight);
     color: var(--text-primary);
     margin-bottom: 32px;
     position: relative;
     z-index: 1;
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
   }
   .cta-buttons {
     display: flex;

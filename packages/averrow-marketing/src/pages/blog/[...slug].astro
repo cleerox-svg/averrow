@@ -107,15 +107,15 @@ const articleJsonLd = {
     text-transform: uppercase;
     margin-bottom: 1.5rem;
   }
-  .blog-post-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(229,168,50,0.22); }
-  .blog-post-badge-threat-intel { background: rgba(229,168,50,0.10); color: var(--amber-text); border: 1px solid rgba(229,168,50,0.25); }
+  .blog-post-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
+  .blog-post-badge-threat-intel { background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber-text); border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent); }
   .blog-post-badge-engineering  { background: var(--green-bg); color: var(--green-text); border: 1px solid rgba(60,184,120,0.25); }
   .blog-post-badge-company      { background: rgba(10,138,181,0.10); color: var(--blue-text); border: 1px solid rgba(10,138,181,0.25); }
 
   .blog-post-hero h1 {
     font-family: var(--font-display);
     font-size: clamp(2rem, 4vw, 2.75rem);
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1.15;
     margin-bottom: 1.25rem;
@@ -150,11 +150,11 @@ const articleJsonLd = {
   }
   .blog-post-body :global(strong) { color: var(--text-primary); font-weight: 600; }
   .blog-post-body :global(a) {
-    color: var(--amber-text);
+    color: var(--accent);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
-  .blog-post-body :global(a:hover) { color: var(--amber-text); opacity: 0.85; }
+  .blog-post-body :global(a:hover) { color: var(--accent); opacity: 0.85; }
   .blog-post-body :global(ul), .blog-post-body :global(ol) {
     color: var(--text-secondary);
     line-height: 1.85;
@@ -176,7 +176,7 @@ const articleJsonLd = {
     gap: 0.5rem;
     font-size: 0.9rem;
     font-weight: 600;
-    color: var(--amber-text);
+    color: var(--accent);
     margin-top: 2rem;
     padding-top: 2rem;
     border-top: 1px solid var(--border);
@@ -221,7 +221,7 @@ const articleJsonLd = {
     transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
   }
   .related-card:hover {
-    border-color: var(--amber);
+    border-color: var(--primary);
     transform: translateY(-2px);
     box-shadow: 0 6px 18px rgba(0,0,0,0.10);
     text-decoration: none;
@@ -243,8 +243,8 @@ const articleJsonLd = {
     text-transform: uppercase;
     margin-bottom: 0.55rem;
   }
-  .related-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(229,168,50,0.22); }
-  .related-badge-threat-intel { background: rgba(229,168,50,0.10); color: var(--amber-text); border: 1px solid rgba(229,168,50,0.25); }
+  .related-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
+  .related-badge-threat-intel { background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber-text); border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent); }
   .related-badge-engineering  { background: var(--green-bg); color: var(--green-text); border: 1px solid rgba(60,184,120,0.25); }
   .related-badge-company      { background: rgba(10,138,181,0.10); color: var(--blue-text); border: 1px solid rgba(10,138,181,0.25); }
   .related-title {

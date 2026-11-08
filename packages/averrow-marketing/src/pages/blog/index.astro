@@ -86,7 +86,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .blog-hero h1 {
     font-family: var(--font-display);
     font-size: clamp(2.2rem, 4vw, 3rem);
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1.12;
     margin-bottom: 1rem;
@@ -108,15 +108,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--amber-text);
-    border: 1px solid rgba(229,168,50,0.30);
-    background: rgba(229,168,50,0.06);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+    background: color-mix(in srgb, var(--primary) 6%, transparent);
     padding: 0.45rem 0.8rem;
     border-radius: 100px;
     text-decoration: none;
     transition: background 0.2s, border-color 0.2s, color 0.2s;
   }
-  .blog-rss:hover { background: rgba(229,168,50,0.12); border-color: rgba(229,168,50,0.50); color: var(--amber-text); text-decoration: none; }
+  .blog-rss:hover { background: color-mix(in srgb, var(--primary) 12%, transparent); border-color: color-mix(in srgb, var(--primary) 50%, transparent); color: var(--accent); text-decoration: none; }
   .blog-rss svg { width: 12px; height: 12px; }
 
   .blog-filter-strip {
@@ -142,12 +142,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     cursor: pointer;
     transition: all 0.2s;
   }
-  .blog-filter-chip:hover { color: var(--text-primary); border-color: var(--amber); }
+  .blog-filter-chip:hover { color: var(--text-primary); border-color: var(--primary); }
   .blog-filter-chip.active {
-    background: var(--amber);
+    background: var(--primary);
     color: var(--bg-primary);
-    border-color: var(--amber);
-    box-shadow: 0 0 12px rgba(229,168,50,0.25);
+    border-color: var(--primary);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--primary) 25%, transparent);
   }
   :global([data-theme="light"]) .blog-filter-chip.active { color: #fff; }
 
@@ -182,9 +182,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     height: 3px;
     opacity: 0;
     transition: opacity 0.3s;
-    background: var(--amber);
+    background: var(--primary);
   }
-  .blog-card:hover { border-color: var(--amber); box-shadow: var(--shadow-glow); transform: translateY(-2px); }
+  .blog-card:hover { border-color: var(--primary); box-shadow: var(--shadow-glow); transform: translateY(-2px); }
   .blog-card:hover::before { opacity: 1; }
 
   .blog-card-meta-top {
@@ -210,8 +210,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
-  .blog-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(229,168,50,0.22); }
-  .blog-badge-threat-intel { background: rgba(229,168,50,0.10); color: var(--amber-text); border: 1px solid rgba(229,168,50,0.25); }
+  .blog-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
+  .blog-badge-threat-intel { background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber-text); border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent); }
   .blog-badge-engineering  { background: var(--green-bg); color: var(--green-text); border: 1px solid rgba(60,184,120,0.25); }
   .blog-badge-company      { background: rgba(10,138,181,0.10); color: var(--blue-text); border: 1px solid rgba(10,138,181,0.25); }
 
@@ -253,7 +253,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-family: var(--font-body);
     font-size: 0.88rem;
     font-weight: 600;
-    color: var(--amber-text);
+    color: var(--accent);
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;

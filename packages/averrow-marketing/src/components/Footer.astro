@@ -5,6 +5,7 @@
  * Astro base prefix so they work whether we're under /marketing/*
  * (pre-cutover) or / (post-cutover). Hosts the site's theme toggle.
  */
+import BrandLockup from "./BrandLockup.astro";
 import ThemeCycle from "../islands/ThemeCycle";
 import { LOGIN_HREF, NAV_LINKS } from "../lib/nav";
 
@@ -23,20 +24,7 @@ const companyPages = NAV_LINKS.find((l) => l.href === "/company")?.children ?? [
     <div class="footer-grid">
       <div class="footer-brand-block">
         <a href={withBase("/")} class="nav-brand" style="margin-bottom:0.5rem" aria-label="Averrow home">
-          <svg width="24" height="24" viewBox="0 0 32 32" style="flex-shrink:0">
-            <defs>
-              <linearGradient id="deep-arrow-foot" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stop-color="#6B1010" />
-                <stop offset="100%" stop-color="#C83C3C" />
-              </linearGradient>
-            </defs>
-            <rect width="32" height="32" rx="6" fill="#080E18" />
-            <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#deep-arrow-foot)" />
-            <path d="M14.5 22H17.5L16 18Z" fill="#080E18" />
-          </svg>
-          <div>
-            <span class="nav-brand-text" style="font-size:18px">AVERROW</span>
-          </div>
+          <BrandLockup size="footer" />
         </a>
         <p>Brand protection and threat-actor intelligence. Find the fakes aimed at your brand, trace the operation behind them, and take them down.</p>
       </div>

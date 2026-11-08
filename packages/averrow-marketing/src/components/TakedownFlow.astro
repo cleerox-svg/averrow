@@ -222,10 +222,10 @@ const timeline = [
   }
   .tf-h {
     font-family: var(--font-display);
-    font-weight: 800;
-    font-size: clamp(24px, 3vw, 30px);
-    line-height: 1.1;
-    letter-spacing: -0.025em;
+    font-weight: var(--type-section-weight);
+    font-size: var(--type-section-size);
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
     margin: 0;
     text-wrap: balance;
     color: var(--text-primary);
@@ -255,7 +255,7 @@ const timeline = [
   }
   .tf-mode button:hover { color: var(--text-primary); }
   .tf-mode button[aria-checked="true"] { background: var(--btn-primary-bg); color: var(--btn-primary-ink); }
-  .tf-mode button:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .tf-mode button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
   .tf-flow, .tf-who, .tf-mlist { list-style: none; margin: 0; padding: 0; }
   .tf-flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
@@ -269,11 +269,11 @@ const timeline = [
     border-radius: 12px;
     padding: 12px;
   }
-  .tf-st.hl { border-color: color-mix(in srgb, var(--amber) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 9%, transparent); }
-  [data-theme="light"] .tf-st.hl { border-color: color-mix(in srgb, var(--amber) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 14%, transparent); }
+  .tf-st.hl { border-color: color-mix(in srgb, var(--primary) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 9%, transparent); }
+  [data-theme="light"] .tf-st.hl { border-color: color-mix(in srgb, var(--primary) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent); }
   .tf-sn { display: flex; align-items: center; gap: 8px; font: 700 14px var(--font-display); color: var(--text-primary); }
   .tf-sn .num-dot { --nd: 20px; }
-  .tf-st.hl .tf-sn .num-dot { border-color: var(--amber-text); color: var(--amber-text); }
+  .tf-st.hl .tf-sn .num-dot { border-color: var(--accent); color: var(--accent); }
   .tf-card {
     border: 1px solid var(--border);
     border-radius: 9px;
@@ -293,7 +293,7 @@ const timeline = [
   .tf-cap { font: 500 12px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
   .tf-ev { gap: 4px; }
   .tf-ev div { display: flex; gap: 6px; align-items: baseline; font-size: 12px; }
-  .tf-ev i { width: 6px; height: 6px; border-radius: 2px; background: var(--amber); flex: none; transform: translateY(-1px); }
+  .tf-ev i { width: 6px; height: 6px; border-radius: 2px; background: var(--primary); flex: none; transform: translateY(-1px); }
   .tf-btns { display: flex; gap: 6px; }
   .tf-b { cursor: default; pointer-events: none; font: 700 12px var(--font-display); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); color: var(--text-primary); }
   .tf-b.pri { background: var(--btn-primary-bg); color: var(--btn-primary-ink); border-color: transparent; }
@@ -311,7 +311,7 @@ const timeline = [
     white-space: nowrap;
   }
   .tf-pill.high { color: var(--sev-high-text); background: color-mix(in srgb, var(--sev-high) 14%, transparent); border-color: color-mix(in srgb, var(--sev-high) 38%, transparent); }
-  .tf-pill.amber { color: var(--amber-text); background: var(--accent-bg); border-color: color-mix(in srgb, var(--amber) 38%, transparent); }
+  .tf-pill.amber { color: var(--amber-text); background: color-mix(in srgb, var(--amber) 12%, transparent); border-color: color-mix(in srgb, var(--amber) 38%, transparent); }
   .tf-pill.ok   { color: var(--green-text); background: color-mix(in srgb, var(--green) 14%, transparent); border-color: color-mix(in srgb, var(--green) 38%, transparent); }
 
   .tf-who {
@@ -341,7 +341,7 @@ const timeline = [
   .tf-ctas { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
   .tf-link { font: 700 13.5px var(--font-display); color: var(--text-primary); text-decoration: none; border-bottom: 1px solid var(--border-strong); }
   .tf-link:hover { border-bottom-color: var(--accent); }
-  .tf-link:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .tf-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
   /* Mobile timeline: hidden on desktop. */
   .tf-mlist { display: none; }
@@ -369,7 +369,7 @@ const timeline = [
       color: var(--text-secondary);
       margin-left: -12px;
     }
-    .tf-mlist li.hl > span { border-color: var(--amber-text); color: var(--amber-text); }
+    .tf-mlist li.hl > span { border-color: var(--accent); color: var(--accent); }
     .tf-mlist div { display: grid; gap: 2px; font-size: 13px; color: var(--text-secondary); }
     .tf-mlist b { color: var(--text-primary); font-size: 14px; }
     .tf-ctas { width: 100%; }

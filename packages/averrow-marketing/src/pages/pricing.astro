@@ -227,9 +227,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .pricing-hero { padding: 5rem 0 2.5rem; text-align: center; background: var(--gradient-hero); }
   .pricing-hero h1 {
     font-family: var(--font-display);
-    font-size: clamp(36px, 5vw, 64px);
-    font-weight: 800;
+    font-size: var(--type-hero-size);
+    font-weight: var(--type-hero-weight);
     margin-bottom: 1rem;
+    line-height: var(--type-hero-lh);
+    letter-spacing: var(--type-hero-tracking);
   }
   .pricing-hero p {
     font-size: 18px;
@@ -319,7 +321,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--text-tertiary);
     margin-bottom: 1.75rem;
   }
-  .pricing-grid-hint-arrow { color: var(--amber-text); margin: 0 6px; }
+  .pricing-grid-hint-arrow { color: var(--accent); margin: 0 6px; }
 
   .price-card.free-scan {
     background: transparent;
@@ -337,7 +339,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     letter-spacing: 0.12em;
     background: var(--bg-primary);
     padding: 2px 8px;
-    color: var(--amber-text);
+    color: var(--accent);
     border-radius: 6px;
     border: 1px solid var(--border);
   }
@@ -392,8 +394,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .compare-section { padding: 3rem 0; background: var(--bg-tertiary); }
   .compare-heading {
     font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 36px);
-    font-weight: 700;
+    font-size: var(--type-section-size);
+    font-weight: var(--type-section-weight);
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
   }
   .compare-table-wrap {
     max-width: 1400px;
@@ -451,8 +455,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .faq-section { padding: 3rem 0; }
   .faq-heading {
     font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 36px);
-    font-weight: 700;
+    font-size: var(--type-section-size);
+    font-weight: var(--type-section-weight);
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
   }
   .faq-list { max-width: 720px; margin: 2rem auto 0; padding: 0 2rem; }
   .faq-item { border-bottom: 1px solid var(--border); }
@@ -491,9 +497,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .cta-block { padding: 3rem 0; text-align: center; background: var(--bg-tertiary); }
   .cta-block h2 {
     font-family: var(--font-display);
-    font-size: clamp(28px, 3vw, 36px);
-    font-weight: 700;
+    font-size: var(--type-section-size);
+    font-weight: var(--type-section-weight);
     margin-bottom: 1rem;
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
   }
   .cta-block p { color: var(--text-secondary); max-width: 480px; margin: 0 auto 2rem; }
   .cta-actions {

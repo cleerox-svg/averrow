@@ -122,10 +122,10 @@ const surfaces = COVERAGE.map((s) => ({
   }
   .cv-h {
     font-family: var(--font-display);
-    font-weight: 800;
-    font-size: clamp(24px, 3vw, 30px);
-    line-height: 1.1;
-    letter-spacing: -0.025em;
+    font-weight: var(--type-section-weight);
+    font-size: var(--type-section-size);
+    line-height: var(--type-section-lh);
+    letter-spacing: var(--type-section-tracking);
     margin: 0;
     text-wrap: balance;
     color: var(--text-primary);
@@ -204,11 +204,11 @@ const surfaces = COVERAGE.map((s) => ({
   .cv-pill.high { color: var(--sev-high-text); background: color-mix(in srgb, var(--sev-high) 12%, transparent); }
   .cv-pill.med { color: var(--sev-medium-text); background: color-mix(in srgb, var(--sev-medium) 12%, transparent); }
   .cv-pill.low { color: var(--sev-low-text); background: color-mix(in srgb, var(--sev-low) 12%, transparent); }
-  .cv-pill.new { color: var(--amber-text); background: var(--accent-bg); }
+  .cv-pill.new { color: var(--amber-text); background: color-mix(in srgb, var(--amber) 12%, transparent); }
   .cv-grade { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 14px; }
   .cv-g { display: grid; gap: 2px; text-align: center; }
   .cv-g i, .cv-checks i { font: 600 12px var(--font-mono); font-style: normal; color: var(--text-secondary); text-transform: uppercase; }
-  .cv-g b { font: 800 26px var(--font-display); color: var(--text-primary); }
+  .cv-g b { font: 600 26px var(--font-display); color: var(--text-primary); }
   .cv-checks { display: grid; gap: 3px; }
   .cv-checks li { display: flex; justify-content: space-between; gap: 8px; font: 500 12px var(--font-mono); }
   .cv-checks .good { color: var(--green-text); }
@@ -217,7 +217,7 @@ const surfaces = COVERAGE.map((s) => ({
   .cv-nets { display: flex; flex-wrap: wrap; gap: 6px; }
   .cv-nets li { font-size: 12px; font-weight: 600; color: var(--text-secondary); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 8px; }
   .cv .cv-t p.cv-proof, .cv .cv-db p.cv-proof { margin-top: auto; font-size: 12.5px; }
-  .cv-proof b { color: var(--text-primary); font: 800 18px var(--font-display); margin-right: 4px; font-variant-numeric: tabular-nums; }
+  .cv-proof b { color: var(--text-primary); font: 600 18px var(--font-display); margin-right: 4px; font-variant-numeric: tabular-nums; }
   .cv-foot {
     display: flex;
     justify-content: space-between;
@@ -247,11 +247,11 @@ const surfaces = COVERAGE.map((s) => ({
   .cv-d[open] summary::after { content: "\2212"; }
   .cv-d summary .cv-tn { flex: 1; min-width: 0; font-size: 14px; }
   .cv-d summary:focus-visible, .cv-cmp:focus-visible, .cv-more:focus-visible, .cv-tn a:focus-visible {
-    outline: 2px solid var(--amber-text);
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
   }
   .cv-db { padding: 0 12px 14px; display: grid; gap: 10px; }
-  .cv-more { font: 700 12.5px var(--font-display); color: var(--amber-text); text-decoration: none; }
+  .cv-more { font: 700 12.5px var(--font-display); color: var(--accent); text-decoration: none; }
   .cv-more:hover { text-decoration: underline; }
 
   @media (max-width: 1199px) {

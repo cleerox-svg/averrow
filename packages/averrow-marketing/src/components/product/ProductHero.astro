@@ -88,10 +88,10 @@ const hasSample = Astro.slots.has("sample");
   .ph-h {
     margin: 0;
     font-family: var(--font-display);
-    font-weight: 800;
-    font-size: clamp(34px, 5vw, 56px);
-    line-height: 1.05;
-    letter-spacing: -0.03em;
+    font-weight: var(--type-hero-weight);
+    font-size: var(--type-hero-size);
+    line-height: var(--type-hero-lh);
+    letter-spacing: var(--type-hero-tracking);
     text-wrap: balance;
     color: var(--text-primary);
   }
