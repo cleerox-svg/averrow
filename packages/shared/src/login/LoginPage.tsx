@@ -18,6 +18,7 @@
 // finds the right method.
 
 import { useEffect, useId, useRef, useState } from 'react';
+import { Banner, Button, Field, FieldError, Input } from '../ui';
 import type { LoginPageProps, SignInMethod } from './types';
 import { applyThemePreference, readStoredTheme } from '../theme/useTheme';
 import { APPEARANCE_PICKER_ENABLED } from '../theme/appearanceDefaults';
@@ -37,12 +38,6 @@ const DEFAULT_ERROR_COPY: Record<string, string> = AUTH_ERROR_COPY;
 // Only well-formed codes are echoed back; anything else is attacker-supplied
 // text (content spoofing via ?error=<sentence>) and gets generic copy.
 const SAFE_ERROR_CODE = /^[a-z0-9_]{1,40}$/;
-
-// Primary fill + ink (facelift P3-6 review). --btn-primary-* exist only under
-// an accent (appearance.css: flat accent fill, AA ink); without one the
-// fallbacks are exactly the legacy amber gradient and ink.
-const PRIMARY_FILL = 'var(--btn-primary-bg, linear-gradient(135deg, var(--amber), var(--amber-dim)))';
-const PRIMARY_INK = 'var(--btn-primary-ink, var(--text-on-amber, #0A0F1E))';
 
 export function LoginPage(props: LoginPageProps) {
   const {
@@ -85,11 +80,11 @@ export function LoginPage(props: LoginPageProps) {
   const googleInFlight = useRef(false);
   const emailErrorId = useId();
 
-  // The page-level error sits at the bottom of the card (Averrow's layout).
+  // The page-level error sits above the sign-in buttons.
   // When a NEW Google error appears after mount, move focus to it so it is
   // scrolled into view on phones. A ?error= from the URL is not focused
   // (role="alert" announces it) so existing host behaviour is unchanged.
-  const errorRef = useRef<HTMLParagraphElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const pageError = googleError ?? errorMessage;
   useEffect(() => {
     if (googleError) errorRef.current?.focus();
@@ -104,6 +99,14 @@ export function LoginPage(props: LoginPageProps) {
   // Click "Other ways to sign in" to expose every method when the
   // primary doesn't match what they want today.
   const [showAll, setShowAll] = useState(false);
+
+  // Focus management: a control that unmounts on click would otherwise drop
+  // focus to <body>. The flags are set by the click handlers, consumed by the
+  // effects below once the new controls are in the DOM.
+  const menuRef = useRef<HTMLDivElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const focusAfterReveal = useRef(false);
+  const focusEmailAfterReset = useRef(false);
 
   // Brand-lock to dark (login audit F2). The login is a brand surface, so
   // it always renders in the dark brand theme regardless of the OS / stored
@@ -130,6 +133,19 @@ export function LoginPage(props: LoginPageProps) {
       else root.setAttribute('data-theme', prev);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showAll || !focusAfterReveal.current) return;
+    focusAfterReveal.current = false;
+    const next = menuRef.current?.querySelector<HTMLElement>('[data-variant="secondary"]') ?? emailRef.current;
+    next?.focus();
+  }, [showAll]);
+
+  useEffect(() => {
+    if (magicLink.kind !== 'idle' || !focusEmailAfterReset.current) return;
+    focusEmailAfterReset.current = false;
+    emailRef.current?.focus();
+  }, [magicLink.kind]);
 
   // Conditional UI — registered passkeys appear in the email field's
   // autofill dropdown. Spec-required and silent until interaction.
@@ -222,84 +238,43 @@ export function LoginPage(props: LoginPageProps) {
   // ─── Button block builders ─────────────────────────────────
 
   const passkeyButton = (variant: 'primary' | 'secondary') => (
-    <button
+    <Button
       key="passkey"
       type="button"
+      size="lg"
+      variant={variant}
+      className="w-full"
       onClick={() => void handlePasskey()}
       disabled={passkeyBusy}
+      aria-busy={passkeyBusy || undefined}
+      data-variant={variant}
       data-testid="login-passkey"
-      className="inline-flex w-full items-center justify-center gap-2 font-mono uppercase"
-      style={{
-        background: variant === 'primary'
-          ? 'linear-gradient(135deg, var(--green), rgba(60,184,120,0.7))'
-          : 'transparent',
-        color:      variant === 'primary' ? 'var(--text-on-amber, #0A0F1E)' : 'var(--text-primary)',
-        border:     '1px solid rgba(60,184,120,0.60)',
-        padding:    '14px 24px',
-        borderRadius: 12,
-        fontSize:   12,
-        fontWeight: 800,
-        letterSpacing: '0.08em',
-        minHeight:  48,
-        boxShadow: variant === 'primary'
-          ? [
-              '0 4px 16px rgba(60,184,120,0.30)',
-              '0 2px 4px rgba(0,0,0,0.40)',
-              'inset 0 1px 0 rgba(255,255,255,0.30)',
-            ].join(', ')
-          : 'none',
-        cursor: passkeyBusy ? 'wait' : 'pointer',
-      }}
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth="2.4"
+        stroke="currentColor" strokeWidth="2"
         strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <rect x="4" y="11" width="16" height="10" rx="2" />
         <path d="M8 11V7a4 4 0 0 1 8 0v4" />
       </svg>
       {passkeyBusy ? 'Waiting…' : 'Sign in with passkey'}
-    </button>
+    </Button>
   );
 
   const googleButton = (variant: 'primary' | 'secondary') => (
-    <button
+    <Button
       key="google"
       type="button"
+      size="lg"
+      variant={variant}
+      className="w-full"
       onClick={() => void handleGoogle()}
       disabled={googleBusy || undefined}
       aria-busy={googleBusy || undefined}
+      data-variant={variant}
       data-testid="login-google"
-      className={`inline-flex w-full items-center justify-center font-mono uppercase${variant === 'primary' ? ' ds-btn-primary' : ''}`}
-      style={{
-        // L2 primary via the --btn-primary-* tokens (set only under an accent,
-        // where the button is flat); the fallbacks are the legacy amber values.
-        background: variant === 'primary'
-          ? PRIMARY_FILL
-          : 'transparent',
-        color:      variant === 'primary' ? PRIMARY_INK : 'var(--text-primary)',
-        border:     variant === 'primary'
-          ? '1px solid var(--btn-primary-border, rgba(229,168,50,0.60))'
-          : '1px solid color-mix(in srgb, var(--primary) 60%, transparent)',
-        padding:    '14px 24px',
-        borderRadius: 12,
-        fontSize:   12,
-        fontWeight: 800,
-        letterSpacing: '0.08em',
-        minHeight:  48,
-        boxShadow: variant === 'primary'
-          ? `var(--btn-primary-shadow, ${[
-              '0 4px 16px var(--amber-glow, rgba(229,168,50,0.40))',
-              '0 2px 4px rgba(0,0,0,0.40)',
-              'inset 0 1px 0 rgba(255,255,255,0.30)',
-              'inset 0 -1px 0 rgba(0,0,0,0.20)',
-            ].join(', ')})`
-          : 'none',
-        cursor: googleBusy ? 'wait' : 'pointer',
-        width:  '100%',
-      }}
     >
       {googleBusy ? 'Signing in…' : 'Sign in with Google'}
-    </button>
+    </Button>
   );
 
   // ─── Render ───────────────────────────────────────────────
@@ -310,315 +285,193 @@ export function LoginPage(props: LoginPageProps) {
   //   Returning Google:         Google primary; passkey + magic-link via "Other ways"
   //   Returning magic-link:     no top buttons; magic-link block primary; others via "Other ways"
   //   Sign-in error / showAll:  full menu (all supported methods)
+  // Exactly one primary CTA per state: "Send link" takes the primary slot
+  // only when no button above it did.
   const showOptions = showAll || !lastMethod || hasError;
   const showPasskey = passkeySupported && (lastMethod === 'passkey' || showAll || hasError);
   const showGoogle  = !lastMethod || lastMethod === 'google' || showAll || hasError;
 
   const buttons: React.ReactNode[] = [];
+  let topPrimary = false;
 
   if (lastMethod === 'passkey' && showPasskey) {
     buttons.push(passkeyButton('primary'));
+    topPrimary = true;
     if (showGoogle) buttons.push(googleButton('secondary'));
   } else if (lastMethod === 'google' && showGoogle) {
     buttons.push(googleButton('primary'));
+    topPrimary = true;
     if (showPasskey) buttons.push(passkeyButton('secondary'));
   } else if (lastMethod === 'magic-link' && showOptions) {
     if (showGoogle)  buttons.push(googleButton('secondary'));
     if (showPasskey) buttons.push(passkeyButton('secondary'));
   } else {
-    if (showGoogle)  buttons.push(googleButton('primary'));
+    if (showGoogle) {
+      buttons.push(googleButton('primary'));
+      topPrimary = true;
+    }
     if (showPasskey && (showAll || hasError)) {
       buttons.push(passkeyButton('secondary'));
     }
   }
 
-  return (
-    <section
-      data-testid="login-page"
-      className="flex min-h-screen items-center justify-center px-4 py-12 sm:px-6 sm:py-24"
-      style={{ background: 'var(--bg-page)' }}
-    >
-      <div
-        className="w-full max-w-md text-center"
-        style={{
-          padding: '40px 32px',
-          background: 'linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep, var(--bg-card)) 100%)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          border: '1px solid var(--border-base)',
-          borderRadius: 'var(--card-radius, 16px)',
-          position: 'relative',
-          overflow: 'hidden',
-          boxShadow: [
-            '0 8px 32px rgba(0,0,0,0.60)',
-            'inset 0 1px 0 var(--border-strong, rgba(255,255,255,0.14))',
-            'inset 0 -1px 0 rgba(0,0,0,0.40)',
-          ].join(', '),
-        }}
-      >
-        {/* primary rim along the top (legacy: --amber-border, unchanged) */}
-        <span
-          aria-hidden
-          style={{
-            position: 'absolute',
-            top: 0, left: 0, right: 0,
-            height: 1,
-            background: 'linear-gradient(90deg, transparent, var(--primary-rim, rgba(229,168,50,0.25)) 25%, var(--primary-rim, rgba(229,168,50,0.25)) 75%, transparent)',
-            pointerEvents: 'none',
-          }}
-        />
+  const sendVariant = topPrimary ? 'secondary' : 'primary';
+  const sending = magicLink.kind === 'sending';
 
-        {/* Brand tile — product logo mark when supplied, else letter monogram */}
+  return (
+    <main
+      data-testid="login-page"
+      className="flex min-h-dvh items-center justify-center bg-[var(--bg-page)] px-4 py-12 sm:px-6 sm:py-24"
+    >
+      <div className="w-full max-w-md rounded-[var(--card-radius,16px)] border border-[var(--border-base)] bg-[var(--bg-card)] px-6 py-8 text-center sm:px-8 sm:py-10">
+        {/* Brand — product logo mark when supplied, else letter monogram */}
         <div className="flex flex-col items-center">
           {branding.brandMark ? (
-            <div style={{ marginBottom: 16 }}>{branding.brandMark}</div>
+            <div className="mb-4">{branding.brandMark}</div>
           ) : (
             <div
-              className="flex items-center justify-center font-bold"
-              style={{
-                width: 56, height: 56,
-                background: PRIMARY_FILL,
-                color: PRIMARY_INK,
-                borderRadius: 14,
-                fontSize: 20,
-                fontFamily: 'var(--font-display, inherit)',
-                boxShadow: '0 0 24px var(--primary-glow, rgba(229,168,50,0.40))',
-                marginBottom: 16,
-              }}
+              aria-hidden
+              className="mb-4 flex h-14 w-14 items-center justify-center rounded-[14px] bg-[var(--primary)] text-[20px] font-bold text-[var(--primary-ink)]"
             >
               {branding.brandLetters}
             </div>
           )}
-          <span
-            className="font-bold tracking-tight"
-            style={{
-              color: 'var(--text-primary)',
-              fontSize: 28,
-              letterSpacing: -0.5,
-            }}
-          >
+          <h1 className="m-0 text-type-display text-[var(--text-primary)]">
             {branding.productName}
-          </span>
-          <span
-            className="mt-2 font-mono uppercase"
-            style={{
-              color: 'var(--primary-text)',
-              fontSize: 9,
-              letterSpacing: '0.24em',
-              fontWeight: 700,
-            }}
-          >
+          </h1>
+          <p className="m-0 mt-2 text-type-label text-[var(--text-secondary)]">
             {branding.tagline}
-          </span>
+          </p>
         </div>
 
-        {/* "Welcome back" pill for returning users */}
+        {/* Welcome line for returning users */}
         {lastMethod && !errorParam && googleError === null && !showAll && (
-          <p
-            className="mt-6 font-mono uppercase"
-            style={{
-              color: 'var(--text-tertiary)',
-              fontSize: 9,
-              letterSpacing: '0.18em',
-              fontWeight: 600,
-            }}
-          >
-            Welcome back · sign in with {labelFor(lastMethod)}
+          <p className="m-0 mt-6 text-type-small text-[var(--text-secondary)]">
+            {welcomeCopy(lastMethod)}
           </p>
         )}
 
-        {/* Primary + (optional) secondary buttons */}
-        <div className="mt-6 space-y-2.5">
-          {buttons}
-        </div>
-
-        {passkeyError && (
-          <p
-            role="alert"
-            data-testid="login-passkey-error"
-            className="mt-2 font-mono"
-            style={{ color: 'var(--sev-critical-text)', fontSize: 11 }}
-          >
-            {passkeyError}
-          </p>
-        )}
-
-        {/* "Other ways to sign in" disclosure */}
-        {lastMethod && !showAll && !errorParam && googleError === null && (
-          <button
-            type="button"
-            onClick={() => setShowAll(true)}
-            className="mt-4 font-mono uppercase"
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-tertiary)',
-              fontSize: 10,
-              letterSpacing: '0.18em',
-              fontWeight: 600,
-              padding: 0,
-              cursor: 'pointer',
-            }}
-          >
-            Other ways to sign in →
-          </button>
-        )}
-
-        {/* Divider */}
-        <div className="mt-6 flex items-center gap-3" style={{ color: 'var(--text-tertiary)' }}>
-          <span style={{ flex: 1, height: 1, background: 'var(--border-base)' }} />
-          <span className="font-mono uppercase" style={{ fontSize: 9, letterSpacing: '0.18em' }}>or</span>
-          <span style={{ flex: 1, height: 1, background: 'var(--border-base)' }} />
-        </div>
-
-        {/* Magic link */}
-        <div className="mt-6 text-left">
-          <label
-            htmlFor="login-email"
-            className="block font-mono uppercase"
-            style={{
-              color: 'var(--text-tertiary)',
-              fontSize: 9,
-              letterSpacing: '0.18em',
-              marginBottom: 6,
-            }}
-          >
-            Email me a sign-in link
-          </label>
-          {magicLink.kind === 'sent' ? (
-            <div
-              role="status"
-              data-testid="login-magic-link-sent"
-              style={{
-                background: 'var(--bg-input)',
-                border: '1px solid var(--green)',
-                borderRadius: 10,
-                padding: '12px 14px',
-                color: 'var(--text-primary)',
-                fontSize: 13,
-                lineHeight: 1.45,
-              }}
-            >
-              {magicLinkSentCopy ? magicLinkSentCopy(magicLink.email) : (
-                <>
-                  <strong style={{ color: 'var(--green-text)' }}>Check your inbox.</strong>
-                  {' '}We sent a sign-in link to{' '}
-                  <span className="font-mono">{magicLink.email}</span>. The link
-                  expires in {magicLink.minutes} minutes and can only be used once.
-                </>
-              )}
-              <button
-                type="button"
-                onClick={() => setMagicLink({ kind: 'idle' })}
-                className="mt-2 block font-mono uppercase"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'var(--primary-text)',
-                  fontSize: 10,
-                  letterSpacing: '0.14em',
-                  fontWeight: 700,
-                  padding: 0,
-                  cursor: 'pointer',
-                }}
-              >
-                Use a different email →
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input
-                id="login-email"
-                type="email"
-                inputMode="email"
-                autoComplete="username webauthn"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                disabled={magicLink.kind === 'sending'}
-                data-testid="login-email"
-                aria-invalid={magicLink.kind === 'error' || undefined}
-                aria-describedby={magicLink.kind === 'error' ? emailErrorId : undefined}
-                style={{
-                  flex: 1,
-                  background: 'var(--bg-input)',
-                  color: 'var(--text-primary)',
-                  border: '1px solid var(--border-base)',
-                  borderRadius: 10,
-                  padding: '12px 14px',
-                  fontSize: 14,
-                  minHeight: 44,
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => void requestLink()}
-                disabled={magicLink.kind === 'sending'}
-                data-testid="login-magic-link-submit"
-                className={`font-mono uppercase${lastMethod === 'magic-link' ? ' ds-btn-primary' : ''}`}
-                style={{
-                  background: lastMethod === 'magic-link'
-                    ? PRIMARY_FILL
-                    : 'linear-gradient(135deg, var(--bg-elevated, var(--bg-card)), var(--bg-card-deep, var(--bg-card)))',
-                  color: lastMethod === 'magic-link'
-                    ? PRIMARY_INK
-                    : 'var(--text-primary)',
-                  border: '1px solid var(--border-strong, var(--border-base))',
-                  borderRadius: 10,
-                  padding: '12px 16px',
-                  fontSize: 11,
-                  fontWeight: 800,
-                  letterSpacing: '0.10em',
-                  minHeight: 44,
-                  cursor: magicLink.kind === 'sending' ? 'wait' : 'pointer',
-                }}
-              >
-                {magicLink.kind === 'sending' ? 'Sending…' : 'Send link'}
-              </button>
-            </div>
-          )}
-          {magicLink.kind === 'error' && (
-            <p
-              id={emailErrorId}
-              role="alert"
-              data-testid="login-magic-link-error"
-              className="mt-2 font-mono"
-              style={{ color: 'var(--sev-critical-text)', fontSize: 11 }}
-            >
-              {magicLink.message}
-            </p>
-          )}
-          {magicLink.kind !== 'sent' && (
-            <p className="mt-2 font-mono" style={{ color: 'var(--text-tertiary)', fontSize: 11, lineHeight: 1.5 }}>
-              Works with any email — Microsoft 365, Outlook, Yahoo, custom
-              domain. No password needed.
-            </p>
-          )}
-        </div>
-
+        {/* Page-level error, above the CTAs. Google errors take focus. */}
         {pageError && (
-          <p
+          <div
             ref={errorRef}
             tabIndex={-1}
             role="alert"
             data-testid="login-error"
-            className="mt-6 font-mono"
-            style={{ color: 'var(--sev-critical-text)', fontSize: 12, outline: 'none' }}
+            className="mt-6 text-left outline-none"
           >
-            {pageError}
-          </p>
+            <Banner tone="critical" density="compact" title={pageError} />
+          </div>
         )}
 
+        {/* Primary + (optional) secondary buttons */}
+        {buttons.length > 0 && (
+          <div ref={menuRef} className="mt-6 flex flex-col gap-2.5">
+            {buttons}
+          </div>
+        )}
+
+        {passkeyError && (
+          <FieldError data-testid="login-passkey-error" className="mt-3 text-left">
+            {passkeyError}
+          </FieldError>
+        )}
+
+        {/* "Other ways to sign in" disclosure */}
+        {lastMethod && !showAll && !errorParam && googleError === null && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="md"
+            className="mt-3 w-full"
+            onClick={() => { focusAfterReveal.current = true; setShowAll(true); }}
+          >
+            Other ways to sign in
+          </Button>
+        )}
+
+        {/* Divider */}
+        {buttons.length > 0 && (
+          <div className="mt-6 flex items-center gap-3 text-type-label text-[var(--text-tertiary)]">
+            <span className="h-px flex-1 bg-[var(--border-base)]" />
+            <span>or</span>
+            <span className="h-px flex-1 bg-[var(--border-base)]" />
+          </div>
+        )}
+
+        {/* Magic link */}
+        <div className={`${buttons.length > 0 ? 'mt-6' : 'mt-8'} text-left`}>
+          {magicLink.kind === 'sent' ? (
+            <div role="status" data-testid="login-magic-link-sent">
+              <Banner
+                tone="success"
+                density="compact"
+                title={magicLinkSentCopy ? magicLinkSentCopy(magicLink.email) : 'Check your inbox.'}
+                actions={(
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => { focusEmailAfterReset.current = true; setMagicLink({ kind: 'idle' }); }}
+                  >
+                    Use a different email
+                  </Button>
+                )}
+              >
+                {magicLinkSentCopy ? null : (
+                  <>
+                    We sent a sign-in link to <strong>{magicLink.email}</strong>. The link
+                    expires in {magicLink.minutes} minutes and can only be used once.
+                  </>
+                )}
+              </Banner>
+            </div>
+          ) : (
+            <>
+              <Field label="Email me a sign-in link">
+                <Input
+                  ref={emailRef}
+                  id="login-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="username webauthn"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  disabled={sending}
+                  data-testid="login-email"
+                  invalid={magicLink.kind === 'error'}
+                  aria-describedby={magicLink.kind === 'error' ? emailErrorId : undefined}
+                />
+                {magicLink.kind === 'error' && (
+                  <FieldError id={emailErrorId} data-testid="login-magic-link-error" className="mt-1.5">
+                    {magicLink.message}
+                  </FieldError>
+                )}
+              </Field>
+              <Button
+                type="button"
+                size="lg"
+                variant={sendVariant}
+                className="mt-3 w-full"
+                onClick={() => void requestLink()}
+                disabled={sending}
+                aria-busy={sending || undefined}
+                data-variant={sendVariant}
+                data-testid="login-magic-link-submit"
+              >
+                {sending ? 'Sending…' : 'Send link'}
+              </Button>
+              <p className="m-0 mt-3 text-type-small text-[var(--text-help)]">
+                Works with any email — Microsoft 365, Outlook, Yahoo, custom
+                domain. No password needed.
+              </p>
+            </>
+          )}
+        </div>
+
         {/* Footer pillars */}
-        <p
-          className="mt-8 font-mono uppercase"
-          style={{
-            color: 'var(--text-muted)',
-            fontSize: 10,
-            letterSpacing: '0.22em',
-            fontWeight: 700,
-          }}
-        >
+        <p className="m-0 mt-8 text-type-label text-[var(--text-muted)] [text-wrap:balance]">
           {branding.footerPillars}
         </p>
 
@@ -628,12 +481,12 @@ export function LoginPage(props: LoginPageProps) {
           </div>
         )}
       </div>
-    </section>
+    </main>
   );
 }
 
-function labelFor(method: SignInMethod): string {
-  if (method === 'passkey') return 'passkey';
-  if (method === 'google')  return 'Google';
-  return 'a sign-in link';
+function welcomeCopy(method: SignInMethod): string {
+  if (method === 'passkey') return 'Welcome back. Use your passkey to sign in.';
+  if (method === 'google')  return 'Welcome back. Use Google to sign in.';
+  return 'Welcome back. Use your email to sign in.';
 }

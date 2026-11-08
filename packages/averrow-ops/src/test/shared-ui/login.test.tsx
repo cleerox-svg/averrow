@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { LoginPage } from '@averrow/shared/login';
 import { AUTH_ERROR_CODES, AUTH_ERROR_COPY } from '@averrow/shared';
 import type {
@@ -281,7 +283,7 @@ describe('onGoogleSignIn', () => {
       lastSignInMethod: { read: () => 'magic-link', write: vi.fn() },
     });
     expect(screen.queryByTestId('login-google')).toBeNull();
-    await userEvent.click(screen.getByText('Other ways to sign in →'));
+    await userEvent.click(screen.getByRole('button', { name: 'Other ways to sign in' }));
     await userEvent.click(screen.getByTestId('login-google'));
     await screen.findByText('gfail');
     expect(screen.getByTestId('login-google')).toBeInTheDocument();
@@ -342,19 +344,109 @@ describe('magicLinkSentCopy', () => {
   });
 });
 
-describe('primary colour (facelift P3-6 review)', () => {
-  // Primary affordances read the L2 / --btn-primary-* tokens; the legacy amber
-  // values only survive as var() fallbacks (legacy-identical without an accent,
-  // since --btn-primary-* are defined only under [data-accent]).
-  it('Google button, letter tile and tagline use primary tokens, not raw amber', () => {
-    const { container } = setup();
-    const google = screen.getByTestId('login-google').getAttribute('style') ?? '';
-    expect(google).toMatch(/var\(--btn-primary-(bg|border|shadow)/);
-    const tile = [...container.querySelectorAll<HTMLElement>('div')].find((d) => d.textContent === 'AV');
-    expect(tile?.getAttribute('style') ?? '').toMatch(/var\(--btn-primary-bg/);
-    expect(tile?.getAttribute('style') ?? '').toMatch(/var\(--primary-glow/);
-    const tagline = screen.getByText('TAG');
-    expect(tagline.getAttribute('style') ?? '').toContain('var(--primary-text)');
-    expect(tagline.getAttribute('style') ?? '').not.toContain('--amber');
+describe('facelift structure', () => {
+  const clickOther = () => userEvent.click(screen.getByRole('button', { name: 'Other ways to sign in' }));
+  const supported: PasskeyLoginAdapter = { ...passkeyAdapter, isSupported: () => true };
+  const primaries = () => [...document.querySelectorAll('[data-testid="login-page"] button')]
+    .filter((b) => b.className.includes('ds-btn-primary'));
+
+  it('has a main landmark and an h1 with the product name', () => {
+    setup();
+    expect(screen.getByRole('main')).toBe(screen.getByTestId('login-page'));
+    expect(screen.getByRole('heading', { level: 1, name: 'Averrow' })).toBeInTheDocument();
   });
+
+  it('first visit: exactly one primary CTA (Google); Send link is secondary', () => {
+    setup();
+    expect(primaries()).toEqual([screen.getByTestId('login-google')]);
+  });
+
+  it('returning passkey: only passkey is primary', () => {
+    setup({ passkeyAdapter: supported, lastSignInMethod: { read: () => 'passkey', write: vi.fn() } });
+    expect(primaries()).toEqual([screen.getByTestId('login-passkey')]);
+  });
+
+  it('returning magic-link: Send link is the only primary, with the welcome line', async () => {
+    setup({ lastSignInMethod: { read: () => 'magic-link', write: vi.fn() } });
+    expect(primaries()).toEqual([screen.getByTestId('login-magic-link-submit')]);
+    expect(screen.getByText('Welcome back. Use your email to sign in.')).toBeInTheDocument();
+    await clickOther();
+    expect(primaries()).toEqual([screen.getByTestId('login-magic-link-submit')]);
+  });
+
+  it('error state with every method shown: still one primary', () => {
+    setup({ passkeyAdapter: supported }, '?error=signin_failed');
+    expect(screen.getByTestId('login-passkey')).toBeInTheDocument();
+    expect(primaries()).toHaveLength(1);
+  });
+
+  it('page error renders before the CTAs, role=alert, not focused for URL errors', () => {
+    setup({}, '?error=signin_failed');
+    const err = screen.getByRole('alert');
+    expect(err).toBe(screen.getByTestId('login-error'));
+    expect(err).not.toHaveFocus();
+    expect(err.compareDocumentPosition(screen.getByTestId('login-google')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(err.compareDocumentPosition(screen.getByTestId('login-magic-link-submit')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('moves focus to the first newly shown control after "Other ways to sign in"', async () => {
+    setup({ passkeyAdapter: supported, lastSignInMethod: { read: () => 'google', write: vi.fn() } });
+    expect(screen.queryByTestId('login-passkey')).toBeNull();
+    await clickOther();
+    expect(screen.queryByRole('button', { name: 'Other ways to sign in' })).toBeNull();
+    expect(screen.getByTestId('login-passkey')).toHaveFocus();
+  });
+
+  it('falls back to the email field when nothing new is revealed', async () => {
+    setup({ lastSignInMethod: { read: () => 'google', write: vi.fn() } });
+    await clickOther();
+    expect(screen.getByTestId('login-email')).toHaveFocus();
+  });
+
+  it('"Use a different email" returns focus to the email field', async () => {
+    setup();
+    await userEvent.type(screen.getByTestId('login-email'), 'a@b.co');
+    await userEvent.click(screen.getByTestId('login-magic-link-submit'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use a different email' }));
+    expect(screen.getByTestId('login-email')).toHaveFocus();
+  });
+
+  it('sent state is a status region with a single primary (Google) still present', async () => {
+    setup();
+    await userEvent.type(screen.getByTestId('login-email'), 'a@b.co');
+    await userEvent.click(screen.getByTestId('login-magic-link-submit'));
+    expect((await screen.findByTestId('login-magic-link-sent'))).toHaveAttribute('role', 'status');
+    expect(primaries()).toHaveLength(1);
+  });
+
+  it('passkey busy state sets aria-busy', async () => {
+    let finish!: (v: boolean) => void;
+    const signIn = vi.fn(() => new Promise<boolean>((r) => { finish = r; }));
+    setup({
+      passkeyAdapter: { ...supported, signIn },
+      lastSignInMethod: { read: () => 'passkey', write: vi.fn() },
+    });
+    const btn = screen.getByTestId('login-passkey');
+    expect(btn).not.toHaveAttribute('aria-busy');
+    await userEvent.click(btn);
+    expect(screen.getByTestId('login-passkey')).toHaveAttribute('aria-busy', 'true');
+    finish(false);
+    await waitFor(() => expect(screen.getByTestId('login-passkey')).not.toHaveAttribute('aria-busy'));
+  });
+
+  it('keeps the security-critical email input attributes', () => {
+    setup();
+    const input = screen.getByTestId('login-email');
+    expect(input).toHaveAttribute('id', 'login-email');
+    expect(input).toHaveAttribute('type', 'email');
+    expect(input).toHaveAttribute('inputmode', 'email');
+    expect(input).toHaveAttribute('autocomplete', 'username webauthn');
+  });
+});
+
+describe('LoginPage.tsx source guard (token-only)', () => {
+  const src = readFileSync(resolve(__dirname, '../../../../shared/src/login/LoginPage.tsx'), 'utf8');
+  it.each([/#[0-9a-fA-F]{3,8}\b/, /rgba?\(/, /linear-gradient/, /backdropFilter/, /backdrop-blur/, /uppercase/, /--amber/, /--text-on-amber/, /font-mono/])(
+    'contains no %s', (re) => { expect(src).not.toMatch(re); },
+  );
 });

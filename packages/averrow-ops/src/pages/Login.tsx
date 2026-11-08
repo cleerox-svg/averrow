@@ -14,7 +14,7 @@ import { LoginPage, makeLastSignInMethodAdapter } from '@averrow/shared/login';
 import type { LoginApiClient, PasskeyLoginAdapter } from '@averrow/shared/login';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { AverrowMark } from '@/components/brand/AverrowMark';
+import { AverrowMark } from '@averrow/shared/ui';
 import {
   isPasskeySupported, signInWithPasskey, startConditionalUI,
 } from '@/lib/passkeys';
@@ -53,9 +53,9 @@ export function Login() {
     <LoginPage
       branding={{
         brandLetters:  'AV',
-        brandMark:     <AverrowMark size={56} />,
+        brandMark:     <AverrowMark size={56} decorative />,
         productName:   'Averrow',
-        tagline:       'AI-First Threat Intelligence',
+        tagline:       'AI-first threat intelligence',
         footerPillars: 'Detect · Analyze · Correlate · Respond',
       }}
       apiClient={apiClient}
