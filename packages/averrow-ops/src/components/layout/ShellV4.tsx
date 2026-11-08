@@ -11,7 +11,7 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, SquareTerminal, Mail, Inbox,
   Globe, Users, Cpu, Rss, ClipboardList, Bell, Target,
-  Search, Menu, X,
+  Search, Menu, X, WifiOff,
   Plug, Building2, DollarSign, ListChecks, Compass, Layers,
   ShieldAlert, Bug, Network, Megaphone, Server,
   KeyRound, Smartphone, EyeOff, Scale, TrendingUp, UserCog, Wrench,
@@ -21,7 +21,8 @@ import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
-import { CommandPalette, sentenceCase, type PaletteCommand } from './CommandPalette';
+import { CommandPalette, type PaletteCommand } from './CommandPalette';
+import { sentenceCase } from '@/lib/sentence-case';
 import { NotificationBell } from '@/components/NotificationBell';
 import { UserAvatar } from '@/components/UserAvatar';
 import { PlatformAlertBanner } from '@/components/PlatformAlertBanner';
@@ -396,8 +397,8 @@ export function ShellV4() {
           {/* Gliding active indicator (motion kit P3-4); renders nothing without data-accent. */}
           <NavIndicator activeKey={navKey} />
           {nav.map(group => (
-            <div key={group.label}>
-              <div className="v4-grp">{sentenceCase(group.label)}</div>
+            <div key={group.label} role="group" aria-labelledby={`v4-grp-${group.label.replace(/\W+/g, '-').toLowerCase()}`}>
+              <div id={`v4-grp-${group.label.replace(/\W+/g, '-').toLowerCase()}`} className="v4-grp">{sentenceCase(group.label)}</div>
               {group.items.map(item => {
                 const Icon = item.icon;
                 return (
@@ -439,9 +440,14 @@ export function ShellV4() {
             <span className="v4-cmdk-label">Search threats, brands, actors…</span>
             <kbd>⌘K</kbd>
           </button>
-          {offline && <span className="v4-offline" role="status">Offline</span>}
-          <div className="v4-bell-slot"><NotificationBell /></div>
-          <UserAvatar />
+          <div className="v4-top-right">
+            {/* Always mounted so assistive tech announces the content change. */}
+            <span className="v4-offline" role="status" aria-live="polite">
+              {offline ? <><WifiOff aria-hidden="true" strokeWidth={2} />Offline</> : ''}
+            </span>
+            <NotificationBell />
+            <UserAvatar />
+          </div>
         </header>
         <div className="v4-outlet">
           {/* Self-gates on its own paths + unread state. The wrapper hides

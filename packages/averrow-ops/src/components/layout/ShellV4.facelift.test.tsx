@@ -49,15 +49,20 @@ beforeEach(() => {
 describe('Offline indicator', () => {
   it('shows nothing while online, "Offline" (role=status) on the offline event, and hides again on online', () => {
     const { container } = renderAt('/');
-    expect(screen.queryByText('Offline')).not.toBeInTheDocument();
+    const region = container.querySelector('.v4-offline') as HTMLElement;
+    expect(region).toHaveAttribute('role', 'status');
+    expect(region).toHaveAttribute('aria-live', 'polite');
+    expect(region).toBeEmptyDOMElement();
     expect(container.querySelector('.v4-live')).toBeNull();
+    expect(region.parentElement).toHaveClass('v4-top-right');
 
     act(() => { window.dispatchEvent(new Event('offline')); });
-    const label = screen.getByText('Offline');
-    expect(label).toHaveAttribute('role', 'status');
+    expect(region).toHaveTextContent('Offline');
+    expect(region.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
 
     act(() => { window.dispatchEvent(new Event('online')); });
-    expect(screen.queryByText('Offline')).not.toBeInTheDocument();
+    expect(region).toBeEmptyDOMElement();
+    expect(container.querySelector('.v4-offline')).toBe(region);
   });
 });
 
@@ -109,5 +114,15 @@ describe('shell-v4.css guard rails', () => {
   it('removes the canvas vignette and grid under an accent and no LIVE pulse remains', () => {
     expect(css).toMatch(/:root\[data-accent\] \.shell-v4::before/);
     expect(css).not.toMatch(/v4-live|v4ping/);
+  });
+
+  it('wraps each sidebar nav group in a labelled role=group', () => {
+    const { container } = renderAt('/');
+    const groups = container.querySelectorAll('.v4-nav [role="group"]');
+    expect(groups.length).toBeGreaterThan(0);
+    groups.forEach((g) => {
+      const label = document.getElementById(g.getAttribute('aria-labelledby')!);
+      expect(label).toHaveClass('v4-grp');
+    });
   });
 });

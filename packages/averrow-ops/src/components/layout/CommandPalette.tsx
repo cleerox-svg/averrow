@@ -20,6 +20,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, CornerDownLeft, Loader2, ArrowRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useGlobalSearch, type SearchResultType } from '@/hooks/useGlobalSearch';
+import { sentenceCase } from '@/lib/sentence-case';
 import { SEARCH_GROUPS, searchPageUrl } from '@/features/search/searchRouting';
 
 export interface PaletteCommand {
@@ -36,12 +37,6 @@ interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
   commands: PaletteCommand[];
-}
-
-/** Group headings are authored in caps; they render in sentence case ("THREAT ACTORS" -> "Threat actors"). */
-export function sentenceCase(label: string): string {
-  const lower = label.toLowerCase();
-  return (lower.charAt(0).toUpperCase() + lower.slice(1)).replace(/\bsoc\b/g, 'SOC');
 }
 
 function scoreMatch(cmd: PaletteCommand, q: string): boolean {
