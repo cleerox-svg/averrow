@@ -44,7 +44,7 @@ describe('OverviewV4 layout', () => {
 
     expect(await screen.findByText('COMMAND CENTER')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: /Ada/ })).toBeInTheDocument();
-    expect(screen.queryByText('LIVE')).not.toBeInTheDocument(); // the top bar owns LIVE
+    expect(screen.queryByText('LIVE')).not.toBeInTheDocument(); // the old LIVE badge is gone (the top bar shows Offline only when offline)
     expect(await screen.findByText(/Threat tempo/)).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Needs you now' })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Daily briefing' })).toBeInTheDocument();

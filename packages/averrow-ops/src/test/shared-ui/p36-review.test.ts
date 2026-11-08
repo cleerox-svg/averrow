@@ -129,14 +129,14 @@ describe('settings tiles + role badge', () => {
 });
 
 describe('shell', () => {
-  it('the top wash follows the accent; the legacy red wash is kept without one', () => {
+  it('the canvas is flat under an accent (Phase 6 D2); the legacy red wash is kept without one', () => {
     const shell = read('averrow-ops/src/components/layout/shell-v4.css');
     expect(shell).toContain('radial-gradient(1200px 700px at 80% -12%, rgba(200,60,60,0.14), transparent 60%)');
-    const i = shell.indexOf(':root[data-accent] .shell-v4::before {');
+    const i = shell.indexOf(':root[data-accent] .shell-v4::before');
     expect(i).toBeGreaterThan(-1);
     const body = shell.slice(i, shell.indexOf('}', i));
-    expect(body).not.toContain('200,60,60');
-    expect(body).toContain('var(--primary)');
+    expect(body).toContain('content: none');
+    expect(body).not.toContain('radial-gradient');
   });
   it('light cards in the shell use a soft ink shadow under an accent', () => {
     const css = read('averrow-ops/src/index.css');

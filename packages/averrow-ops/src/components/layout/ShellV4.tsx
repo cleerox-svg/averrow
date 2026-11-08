@@ -11,7 +11,7 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, SquareTerminal, Mail, Inbox,
   Globe, Users, Cpu, Rss, ClipboardList, Bell, Target,
-  Search, Menu, X,
+  Search, Menu, X, WifiOff,
   Plug, Building2, DollarSign, ListChecks, Compass, Layers,
   ShieldAlert, Bug, Network, Megaphone, Server,
   KeyRound, Smartphone, EyeOff, Scale, TrendingUp, UserCog, Wrench,
@@ -22,6 +22,7 @@ import { roleHasPermission } from '@/lib/permissions';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
+import { sentenceCase } from '@/lib/sentence-case';
 import { NotificationBell } from '@/components/NotificationBell';
 import { UserAvatar } from '@/components/UserAvatar';
 import { PlatformAlertBanner } from '@/components/PlatformAlertBanner';
@@ -234,6 +235,19 @@ function navOrderFor(nav: NavGroup[], pathname: string): number | null {
 /** The settings area runs its own screen transitions; moves inside it don't page-slide. */
 const withinSettings = (a: string, b: string) => /^\/settings(\/|$)/.test(a) && /^\/settings(\/|$)/.test(b);
 
+/** Tracks navigator.onLine; the top bar shows an "Offline" label only while it is false. */
+function useOffline(): boolean {
+  const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
+  useEffect(() => {
+    const down = () => setOffline(true);
+    const up = () => setOffline(false);
+    window.addEventListener('offline', down);
+    window.addEventListener('online', up);
+    return () => { window.removeEventListener('offline', down); window.removeEventListener('online', up); };
+  }, []);
+  return offline;
+}
+
 export function ShellV4() {
   const { user, isSuperAdmin } = useAuth();
   const location = useLocation();
@@ -244,6 +258,7 @@ export function ShellV4() {
   const wasDrawerOpen = useRef(false);
   const skipFocusRestore = useRef(false);
   const openAlerts = useOpenAlertCount();
+  const offline = useOffline();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const closeDrawer = () => setDrawerOpen(false);
@@ -382,8 +397,8 @@ export function ShellV4() {
           {/* Gliding active indicator (motion kit P3-4); renders nothing without data-accent. */}
           <NavIndicator activeKey={navKey} />
           {nav.map(group => (
-            <div key={group.label}>
-              <div className="v4-grp">{group.label}</div>
+            <div key={group.label} role="group" aria-labelledby={`v4-grp-${group.label.replace(/\W+/g, '-').toLowerCase()}`}>
+              <div id={`v4-grp-${group.label.replace(/\W+/g, '-').toLowerCase()}`} className="v4-grp">{sentenceCase(group.label)}</div>
               {group.items.map(item => {
                 const Icon = item.icon;
                 return (
@@ -425,9 +440,14 @@ export function ShellV4() {
             <span className="v4-cmdk-label">Search threats, brands, actors…</span>
             <kbd>⌘K</kbd>
           </button>
-          <div className="v4-live"><span className="dot" />LIVE</div>
-          <NotificationBell />
-          <UserAvatar />
+          <div className="v4-top-right">
+            {/* Always mounted so assistive tech announces the content change. */}
+            <span className="v4-offline" role="status" aria-live="polite">
+              {offline ? <><WifiOff aria-hidden="true" strokeWidth={2} />Offline</> : ''}
+            </span>
+            <NotificationBell />
+            <UserAvatar />
+          </div>
         </header>
         <div className="v4-outlet">
           {/* Self-gates on its own paths + unread state. The wrapper hides
