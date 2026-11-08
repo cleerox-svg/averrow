@@ -198,7 +198,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <OverviewCard title="Total Threats" metric={fmt(p.totalThreats)} metricLabel="total" metricColor="var(--primary-text)">
           <DotRow color="var(--red)" label="New 24h" count={p.last24h ?? 0} />
-          <DotRow color="var(--amber)" label="New 12h" count={p.last12h ?? 0} />
+          <DotRow color="var(--primary)" label="New 12h" count={p.last12h ?? 0} />
         </OverviewCard>
 
         <OverviewCard title="24H Ingest" metric={fmt(p.last24h)} metricLabel="new" metricColor="var(--primary-text)">

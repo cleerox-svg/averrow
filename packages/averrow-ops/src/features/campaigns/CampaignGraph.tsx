@@ -33,7 +33,7 @@ interface GNode {
 interface GEdge { from: string; to: string }
 
 const COLORS: Record<NodeType, string> = {
-  campaign: 'var(--amber)',
+  campaign: 'var(--primary)',
   provider: 'var(--blue)',
   ip: 'var(--text-tertiary)',
   domain: 'var(--sev-high)',

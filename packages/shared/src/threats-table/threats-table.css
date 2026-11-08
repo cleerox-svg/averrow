@@ -19,7 +19,7 @@
   padding: 6px 10px; font-size: 12px; font-family: var(--font-mono);
   color-scheme: dark; outline: none;
 }
-.tt-select:focus, .tt-search:focus { border-color: rgba(229,168,50,0.45); }
+.tt-select:focus, .tt-search:focus { border-color: var(--focus-ring); }
 .tt-search { padding-left: 28px; width: 200px; }
 .tt-search-wrap { position: relative; }
 .tt-search-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 12px; }

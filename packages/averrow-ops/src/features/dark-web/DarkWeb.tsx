@@ -176,7 +176,7 @@ export function DarkWeb() {
           label="Sources active"
           value={statValue(bySource.length)}
           error={listFailed}
-          accent={bySource.length > 1 ? 'var(--amber)' : 'var(--blue)'}
+          accent={bySource.length > 1 ? 'var(--primary)' : 'var(--blue)'}
         />
       </StatGrid>
 

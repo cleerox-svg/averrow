@@ -185,8 +185,13 @@ const OVERRIDES = {
   violet: {
     // Pink NEXUS tag: not teal (cyan-text/healthy/orbital-teal) and clearly not
     // the violet primary.
-    dark: { '--tag-nexus': '#f0abfc', '--primary-hover': '#8338ec', '--primary-pressed': '#7020d6' },
-    light: { '--tag-nexus': '#be185d' },
+    // The violet IconTile tone (Devices & App) would match the violet primary
+    // (Profile), so it moves to rose under this accent.
+    dark: {
+      '--tag-nexus': '#f0abfc', '--primary-hover': '#8338ec', '--primary-pressed': '#7020d6',
+      '--tile-violet': '#fb7185', '--tile-violet-text': '#fda4af',
+    },
+    light: { '--tag-nexus': '#be185d', '--tile-violet': '#e11d48', '--tile-violet-text': '#be123c' },
   },
   mono: {
     // Mono's primary is a neutral, so chart series 1 cannot follow it and five

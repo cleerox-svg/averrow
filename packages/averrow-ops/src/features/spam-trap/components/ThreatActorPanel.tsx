@@ -156,7 +156,7 @@ export function ThreatActorPanel() {
       {/* NEXUS overlap check */}
       <div className="border-t border-white/[0.06] pt-3">
         <div className="flex items-center gap-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-afterburner animate-pulse" />
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary)] animate-pulse" />
           <span className="text-[10px] font-mono text-white/55">
             Checking for infrastructure overlap with known NEXUS clusters…
           </span>

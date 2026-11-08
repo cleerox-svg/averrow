@@ -110,10 +110,10 @@ function StepList({ steps }: { steps: readonly string[] }) {
         <li key={s} className="flex items-start gap-3 text-[15px] leading-[1.5] text-[var(--text-secondary)] min-[768px]:text-[14px]">
           <span
             aria-hidden="true"
-            className="mt-px inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-[var(--violet-text)]"
+            className="mt-px inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-[var(--tile-violet-text)]"
             style={{
-              background: 'color-mix(in srgb, var(--violet) var(--tile-tint-pct, 16%), transparent)',
-              border: '1px solid color-mix(in srgb, var(--violet) 30%, transparent)',
+              background: 'color-mix(in srgb, var(--tile-violet) var(--tile-tint-pct, 16%), transparent)',
+              border: '1px solid color-mix(in srgb, var(--tile-violet) 30%, transparent)',
             }}
           >
             {i + 1}
@@ -224,7 +224,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
         </SettingsGroup>
       ) : (
         <section aria-labelledby="devices-install-title" className="mb-6 min-[1024px]:mb-7">
-          <Card variant="active" accent="var(--violet)" padding={wide ? 'lg' : 20} className="ds-card-vivid">
+          <Card variant="active" accent="var(--tile-violet)" padding={wide ? 'lg' : 20} className="ds-card-vivid">
             <div className="flex flex-col gap-4 min-[640px]:flex-row min-[640px]:items-center">
               <div className="flex min-w-0 flex-1 items-start gap-4">
                 <IconTile tone="violet" size={48}><SmartphoneIcon /></IconTile>

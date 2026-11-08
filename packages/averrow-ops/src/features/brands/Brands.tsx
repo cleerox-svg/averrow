@@ -296,7 +296,7 @@ function HeroStrip({ stats, loading, failed }: { stats: any; loading: boolean; f
       label: 'Total tracked',
       value: stats?.total_tracked != null ? formatNumber(stats.total_tracked) : '—',
       sub: 'across catalog',
-      accent: '#E5A832',
+      accent: 'var(--primary)',
     },
     {
       label: 'New this week',
@@ -332,7 +332,7 @@ function HeroStrip({ stats, loading, failed }: { stats: any; loading: boolean; f
           <div style={{
             position: 'absolute', right: -20, bottom: -20,
             width: 110, height: 110, borderRadius: '50%',
-            background: `radial-gradient(circle, ${t.accent}30, transparent 70%)`,
+            background: `radial-gradient(circle, color-mix(in srgb, ${t.accent} 19%, transparent), transparent 70%)`,
             pointerEvents: 'none',
           }} />
           <div style={{ position: 'relative', marginTop: 4 }}>
@@ -346,7 +346,7 @@ function HeroStrip({ stats, loading, failed }: { stats: any; loading: boolean; f
               fontSize: i === 3 ? 22 : 30,
               fontWeight: 800,
               color: accentText(t.accent),
-              textShadow: `0 0 12px ${t.accent}55`,
+              textShadow: `0 0 12px color-mix(in srgb, ${t.accent} 33%, transparent)`,
               textTransform: i === 3 ? 'capitalize' : 'none',
               lineHeight: 1.05,
             }}>
@@ -939,17 +939,17 @@ function ProspectGroup({ label, emoji, rows, tone = 'info', onPromote, onReject,
           return (
             <div key={c.id} style={{
               padding: 12, borderRadius: 6,
-              border: isRecent ? '1px solid rgba(229,168,50,0.30)' : '1px solid var(--border-base)',
-              background: isRecent ? 'rgba(229,168,50,0.04)' : 'var(--bg-input)',
+              border: isRecent ? '1px solid var(--primary-border)' : '1px solid var(--border-base)',
+              background: isRecent ? 'var(--primary-tint)' : 'var(--bg-input)',
             }}>
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-mono font-semibold text-[var(--text-primary)] truncate flex items-center gap-2">
                     {c.apex_domain}
-                    {isRecent && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 uppercase tracking-wider">New</span>}
+                    {isRecent && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-[var(--primary-tint-strong)] text-[var(--primary-text)] uppercase tracking-wider">New</span>}
                   </div>
                   <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] font-mono">
-                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(229,168,50,0.10)', color: 'var(--amber-text)' }}>
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'var(--primary-tint)', color: 'var(--primary-text)' }}>
                       {c.cert_count} certs
                     </span>
                     <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(10,138,181,0.10)', color: 'var(--blue-text)' }}>

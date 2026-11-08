@@ -327,6 +327,10 @@
      light so it clears 3:1 on white); --scrim backs dialogs and sheets. */
   --violet:        #8B7CF6;
   --violet-text:   #C4B5FD;
+  /* IconTile's violet tone; the Violet accent repoints it (appearance.css) so
+     Devices & App never matches the violet primary on Profile. */
+  --tile-violet:      var(--violet);
+  --tile-violet-text: var(--violet-text);
   --tile-tint-pct: 16%;
   --focus-ring:    var(--amber);
   --scrim:         rgba(4, 7, 14, 0.62);

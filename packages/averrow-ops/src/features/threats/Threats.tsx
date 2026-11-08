@@ -294,7 +294,7 @@ function SliceSummaryStrip({ agg, hasFilters }: {
       className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-mono px-3 py-2 rounded-md"
       style={{
         border: '1px solid var(--border-base)',
-        background: hasFilters ? 'var(--sev-medium-bg, rgba(229,168,50,0.04))' : 'var(--bg-input)',
+        background: hasFilters ? 'var(--primary-tint)' : 'var(--bg-input)',
       }}
     >
       <span style={{ color: 'var(--text-tertiary)' }}>{hasFilters ? 'In slice:' : 'Across catalog:'}</span>

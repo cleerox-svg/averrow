@@ -69,7 +69,7 @@ function Totals({ data }: { data: MarketingVisibilityPayload }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
       <Tile label={`Human views · ${data.windowHours}h`} value={data.humanViews.toLocaleString()} />
-      <Tile label="AI crawler hits" value={data.aiCrawlerViews.toLocaleString()} accent="amber" />
+      <Tile label="AI crawler hits" value={data.aiCrawlerViews.toLocaleString()} accent="primary" />
       <Tile label="AI referral sessions" value={data.aiReferralSessions.toLocaleString()} accent="blue" />
       <Tile label="CTA clicks" value={data.ctaClicks.toLocaleString()} accent="green" />
       <Tile label="Contact submissions" value={data.contactSubs.toLocaleString()} accent="green" />
@@ -82,11 +82,11 @@ function Tile({
 }: {
   label: string;
   value: string;
-  accent?: 'green' | 'amber' | 'blue';
+  accent?: 'green' | 'primary' | 'blue';
 }) {
   const color =
     accent === 'green' ? 'var(--green)' :
-    accent === 'amber' ? 'var(--amber)' :
+    accent === 'primary' ? 'var(--primary-as-text)' :
     accent === 'blue'  ? 'var(--blue)' :
                           'var(--text-primary)';
   return (
@@ -124,14 +124,14 @@ function AiCrawlerBreakdown({ data }: { data: MarketingVisibilityPayload }) {
             <div key={row.crawler_name}>
               <div className="flex items-center justify-between font-mono text-[11px] mb-1">
                 <span style={{ color: 'var(--text-primary)' }}>{row.crawler_name}</span>
-                <span style={{ color: 'var(--amber-text)' }}>{row.hits.toLocaleString()}</span>
+                <span style={{ color: 'var(--primary-text)' }}>{row.hits.toLocaleString()}</span>
               </div>
               <div className="rounded-full overflow-hidden" style={{ height: 3, background: 'var(--border-base)' }}>
                 <div
                   style={{
                     height: '100%',
                     width: `${Math.max((row.hits / maxHits) * 100, 2)}%`,
-                    background: 'var(--amber)',
+                    background: 'var(--primary)',
                   }}
                 />
               </div>

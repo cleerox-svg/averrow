@@ -17,7 +17,7 @@ function statusBlockClass(status: AgentTick['instances'][number]['status']): str
     case 'success': return 'bg-positive';
     case 'failed':  return 'bg-[#C83C3C]';
     case 'partial': return 'bg-[#fbbf24]';
-    case 'running': return 'bg-[#E5A832] animate-pulse';
+    case 'running': return 'bg-[var(--primary)] animate-pulse';
     default:        return 'bg-white/10';
   }
 }
@@ -97,8 +97,8 @@ export function RunStatusBlocks({
               <div
                 className="h-px w-5 mt-0.5 rounded-full"
                 style={{
-                  background: 'var(--amber)',
-                  boxShadow:  '0 0 6px var(--amber)',
+                  background: 'var(--primary)',
+                  boxShadow:  '0 0 6px var(--primary)',
                   opacity:    0.85,
                 }}
               />

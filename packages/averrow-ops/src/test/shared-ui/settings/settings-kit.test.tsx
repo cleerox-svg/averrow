@@ -14,8 +14,8 @@ describe('IconTile', () => {
     const { container } = render(<IconTile tone="violet"><svg /></IconTile>);
     const el = container.firstElementChild as HTMLElement;
     expect(el).toHaveAttribute('aria-hidden', 'true');
-    expect(el.style.getPropertyValue('--ds-tile-tint')).toBe('var(--violet)');
-    expect(el.style.getPropertyValue('--ds-tile-glyph')).toBe('var(--violet-text)');
+    expect(el.style.getPropertyValue('--ds-tile-tint')).toBe('var(--tile-violet)');
+    expect(el.style.getPropertyValue('--ds-tile-glyph')).toBe('var(--tile-violet-text)');
   });
 
   it('applies an explicit size', () => {
