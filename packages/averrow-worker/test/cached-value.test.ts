@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { cachedValue } from "../src/lib/cached-value";
+import { cachedValue, SINGLE_FLIGHT_MAX_WAIT_MS } from "../src/lib/cached-value";
 import type { Env } from "../src/types";
 
 // Mirrors the MockKV from cached-count.test.ts. Kept inline so each
@@ -155,8 +155,10 @@ describe("cachedValue", () => {
     });
   });
 
-  describe("singleFlight (best-effort refill lock)", () => {
+  describe("singleFlight (stale-while-revalidate refill lock)", () => {
     const SF = { lockTtlSeconds: 120, waitMs: 400, pollMs: 10 };
+    const stale = (key: string, v: unknown) =>
+      kv.store.set(`cv:${key}`, JSON.stringify({ v, t: Date.now() - 120_000 })); // 2 min old, ttl 60
 
     it("a caller with no lock takes it, computes, writes, and releases it", async () => {
       let lockDuringCompute: string | undefined;
@@ -171,21 +173,54 @@ describe("cachedValue", () => {
       expect(kv.store.has("cv:test.sf")).toBe(true);
     });
 
-    it("concurrent misses: only the lock holder computes, the waiter reads its write", async () => {
-      let release!: () => void;
-      const gate = new Promise<void>((r) => { release = r; });
-      const compute = vi.fn(async () => { await gate; return { n: 42 }; });
-      const holder = cachedValue(env, "test.herd", 60, compute, { singleFlight: SF });
-      await new Promise((r) => setTimeout(r, 5)); // holder has taken the lock
-      const waiter = cachedValue(env, "test.herd", 60, compute, { singleFlight: SF });
-      await new Promise((r) => setTimeout(r, 20));
-      release();
-      expect(await holder).toEqual({ n: 42 });
-      expect(await waiter).toEqual({ n: 42 });
-      expect(compute).toHaveBeenCalledTimes(1);
+    it("expired entry + lock held elsewhere: serves the stale value at once, no compute, no wait", async () => {
+      stale("test.swr", { n: "old" });
+      kv.store.set("cvlock:test.swr", "1");
+      const compute = vi.fn().mockResolvedValue({ n: "new" });
+      const t0 = Date.now();
+      const v = await cachedValue(env, "test.swr", 60, compute, { singleFlight: { ...SF, waitMs: 5_000 } });
+      expect(v).toEqual({ n: "old" });
+      expect(compute).not.toHaveBeenCalled();
+      expect(Date.now() - t0).toBeLessThan(100);
     });
 
-    it("fails open: a lock whose holder never writes falls through to compute after waitMs", async () => {
+    it("expired entry + no lock: takes the lock and recomputes (the refiller does not serve stale)", async () => {
+      stale("test.refill", { n: "old" });
+      const compute = vi.fn().mockResolvedValue({ n: "new" });
+      const v = await cachedValue(env, "test.refill", 60, compute, { singleFlight: SF });
+      expect(v).toEqual({ n: "new" });
+      expect(compute).toHaveBeenCalledOnce();
+      expect(JSON.parse(kv.store.get("cv:test.refill")!).v).toEqual({ n: "new" });
+      expect(kv.store.has("cvlock:test.refill")).toBe(false);
+    });
+
+    it("re-reads after taking the lock: a refill that landed meanwhile is served, not recomputed", async () => {
+      stale("test.reread", { n: "old" });
+      const origPut = kv.put.bind(kv);
+      kv.put = async (k: string, v: string) => {
+        await origPut(k, v);
+        // Another caller's refill lands right as we take the lock.
+        if (k === "cvlock:test.reread") {
+          kv.store.set("cv:test.reread", JSON.stringify({ v: { n: "theirs" }, t: Date.now() }));
+        }
+      };
+      const compute = vi.fn().mockResolvedValue({ n: "mine" });
+      const v = await cachedValue(env, "test.reread", 60, compute, { singleFlight: SF });
+      expect(v).toEqual({ n: "theirs" });
+      expect(compute).not.toHaveBeenCalled();
+      expect(kv.store.has("cvlock:test.reread")).toBe(false);
+    });
+
+    it("cold key + lock held: waits briefly and returns the holder's write", async () => {
+      kv.store.set("cvlock:test.cold-wait", "1");
+      setTimeout(() => kv.store.set("cv:test.cold-wait", JSON.stringify({ v: { n: 42 }, t: Date.now() })), 30);
+      const compute = vi.fn().mockResolvedValue({ n: 0 });
+      const v = await cachedValue(env, "test.cold-wait", 60, compute, { singleFlight: SF });
+      expect(v).toEqual({ n: 42 });
+      expect(compute).not.toHaveBeenCalled();
+    });
+
+    it("cold key + lock whose holder never writes: computes after the short wait (fail-open)", async () => {
       kv.store.set("cvlock:test.stuck", "1");
       const compute = vi.fn().mockResolvedValue({ n: 7 });
       const t0 = Date.now();
@@ -195,6 +230,20 @@ describe("cachedValue", () => {
       expect(Date.now() - t0).toBeGreaterThanOrEqual(45);
       // A lock it does not own is left to expire, not deleted.
       expect(kv.store.has("cvlock:test.stuck")).toBe(true);
+    });
+
+    it("caps the cold-key wait at SINGLE_FLIGHT_MAX_WAIT_MS", async () => {
+      vi.useFakeTimers();
+      try {
+        kv.store.set("cvlock:test.cap", "1");
+        const compute = vi.fn().mockResolvedValue({ n: 1 });
+        const p = cachedValue(env, "test.cap", 60, compute, { singleFlight: { ...SF, waitMs: 600_000, pollMs: 1000 } });
+        await vi.advanceTimersByTimeAsync(SINGLE_FLIGHT_MAX_WAIT_MS + 1000);
+        expect(await p).toEqual({ n: 1 });
+        expect(compute).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("fails open on KV errors and releases the lock when compute throws", async () => {

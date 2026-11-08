@@ -36,14 +36,15 @@ export const THREAT_AGGREGATE_UNFILTERED_TTL_S = 10800;
 
 /**
  * Single-flight for the unfiltered refill (lib/cached-value.ts
- * `singleFlight`): one request recomputes; others wait up to
- * THREAT_AGGREGATE_SINGLE_FLIGHT_WAIT_MS for its write, then compute
- * themselves (fail-open). A cold miss with several staff tabs open used to
- * send the ~12-scan refill once per tab.
+ * `singleFlight`, stale-while-revalidate): one request recomputes while
+ * others are served the expired entry. Only a cold key (no entry at all)
+ * makes others wait, up to THREAT_AGGREGATE_SINGLE_FLIGHT_WAIT_MS, before
+ * computing themselves (fail-open). A miss with several staff tabs open
+ * used to send the ~12-scan refill once per tab.
  */
 export const THREAT_AGGREGATE_LOCK_TTL_S = 120;
-export const THREAT_AGGREGATE_SINGLE_FLIGHT_WAIT_MS = 30_000;
-export const THREAT_AGGREGATE_SINGLE_FLIGHT_POLL_MS = 2_000;
+export const THREAT_AGGREGATE_SINGLE_FLIGHT_WAIT_MS = 10_000;
+export const THREAT_AGGREGATE_SINGLE_FLIGHT_POLL_MS = 1_000;
 
 /** Anything with `prepare` — `env.DB` or a read-replica `D1DatabaseSession`. */
 export type AggregateReadDb = Pick<D1Database, 'prepare'>;
@@ -181,8 +182,9 @@ export async function threatAggregate(
   if (empty) return emptyAgg();
   const db: AggregateReadDb = readDb ?? env.DB;
   // No filter, no actor and no org scope (a scope always sets `where`): the
-  // slice is "every threat", so leaderboards with an exact pre-computed
-  // source read it instead of a full-table GROUP BY.
+  // slice is "every threat", so leaderboards with a pre-computed source of
+  // the same quantity read it instead of a full-table GROUP BY (counts may
+  // lag the live table — see the per-query notes below).
   const unfiltered = !where && !filters.actor_id;
 
   // Actor filter as a semi-join, not a JOIN: threat_actor_infrastructure has
@@ -263,8 +265,10 @@ export async function threatAggregate(
     const addressed = headline?.addressed ?? 0;
     const remediation_rate = total > 0 ? addressed / total : 0;
 
-    // Unfiltered slice: only top_brands / top_providers have an exact
-    // all-time, all-status pre-computed source. The rest stay on threats:
+    // Unfiltered slice: only top_brands / top_providers have a pre-computed
+    // source of the same all-time, all-status quantity (maintained
+    // counters, so they can lag the live table by hours). The rest stay on
+    // threats:
     //  - by_severity / by_status: threat_cube_status has the right
     //    dimensions but only covers rebuilt hour buckets (healed 2d/14d, see
     //    handlers/public.ts — its SUM under-counts the all-time total), and
@@ -290,8 +294,10 @@ export async function threatAggregate(
         .bind(...queryParams).all<{ country: string; count: number }>(),
       // Unfiltered: brands.threat_count is COUNT(*) of ALL linked threats,
       // every status (lib/brand-count-reconciler.ts, 6-hourly + incremental
-      // bumps) — the exact quantity this GROUP BY computes for an empty
-      // slice. idx_brands_threat_count serves the ORDER BY … LIMIT.
+      // bumps) — the same quantity this GROUP BY computes for an empty
+      // slice, but NOT live: some brand-link writers skip the incremental
+      // bump, so a count can lag by up to the 6h reconcile.
+      // idx_brands_threat_count serves the ORDER BY … LIMIT.
       () => (unfiltered
         ? db.prepare(`SELECT b.id AS brand_id, b.name AS brand_name,
                              b.canonical_domain, b.logo_url, b.threat_count AS count
@@ -310,7 +316,8 @@ export async function threatAggregate(
       // Unfiltered: hosting_providers.total_threat_count is COUNT(*) of
       // threats on the provider, every status (lib/provider-counts.ts,
       // enrichment Stage 5 every 4h) — same quantity as the GROUP BY for an
-      // empty slice, and what /api/dashboard's worst-providers already reads.
+      // empty slice but up to ~4h behind it (no incremental writer), and
+      // what /api/dashboard's worst-providers already reads.
       // ~20K-row provider scan instead of a ~1.84M-row threats GROUP BY.
       () => (unfiltered
         ? db.prepare(`SELECT hp.id AS provider_id, hp.name AS name, hp.asn AS asn,

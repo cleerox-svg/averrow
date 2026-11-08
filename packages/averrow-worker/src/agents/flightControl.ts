@@ -3063,7 +3063,7 @@ export async function scaleAgents(
     if (instances > 1) {
       await logActivity(db, 'flight_control', 'info', 'scaling',
         `Scaling Analyst to ${instances} background instances (backlog: ${analystBacklog}, unlinked: ${totalUnlinked >= UNLINKED_PROBE_CAP ? `>${UNLINKED_TIER_HIGH}` : totalUnlinked}, batch limit: ${limits.analyst_batch})`,
-        { agent: 'analyst', instances, backlog: analystBacklog, total_unlinked: totalUnlinked, batch_limit: limits.analyst_batch }
+        { agent: 'analyst', instances, backlog: analystBacklog, total_unlinked_probe: totalUnlinked, total_unlinked_capped: totalUnlinked >= UNLINKED_PROBE_CAP, batch_limit: limits.analyst_batch }
       );
     }
   } else if (limits.pause_all_ai && analystBacklog > 0) {
