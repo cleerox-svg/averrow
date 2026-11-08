@@ -150,6 +150,10 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
     // default page load always asks for it; share the platform-wide cached
     // counter instead (CLAUDE.md §8 "Counter cache"). Filtered totals stay
     // live — they ride the filter's index.
+    // NOTE: the unfiltered total is therefore APPROXIMATE — it can lag the
+    // real row count by up to THREATS_TOTAL_TTL_S (6h). Fine for a
+    // pagination total on a catalog of millions; don't reuse it where an
+    // exact count matters.
     const countParams = params.slice(0, -2);
     const total = where
       ? (await session.prepare(
@@ -171,7 +175,8 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
 // ─── Threats catalog aggregate ───────────────────────────────────
 // Slice-aware narrative numbers powering /threats Intel surface.
 // Honors the same filters as handleListThreats so aggregates match
-// what the operator sees in the list. Cached 30min via cachedValue (THREAT_AGGREGATE_TTL_S).
+// what the operator sees in the list. Cached 30min via cachedValue (THREAT_AGGREGATE_TTL_S;
+// unfiltered slice 3h + single-flight). Reads go through the read-replica session.
 export async function handleThreatsAggregate(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
@@ -189,7 +194,7 @@ export async function handleThreatsAggregate(request: Request, env: Env, scope?:
       actor_id: url.searchParams.get("actor_id") ?? undefined,
       country:  url.searchParams.get("country") ?? undefined,
       since:    url.searchParams.get("since") ?? undefined,
-    }, scope);
+    }, scope, session);
     return attachBookmark(json({ success: true, data }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);

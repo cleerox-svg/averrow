@@ -185,13 +185,14 @@ describe.skipIf(!hasSqlite())("#2 threatAggregate ASN joins use idx_threats_asn"
     expect(THREAT_AGGREGATE_TTL_S).toBe(1800);
     expect(THREAT_AGGREGATE_UNFILTERED_TTL_S).toBe(10800);
     const s = src("lib/threat-aggregates.ts");
-    expect(s).toMatch(/const ttl = where \|\| filters\.actor_id \? THREAT_AGGREGATE_TTL_S : THREAT_AGGREGATE_UNFILTERED_TTL_S;/);
+    expect(s).toMatch(/const unfiltered = !where && !filters\.actor_id;/);
+    expect(s).toMatch(/const ttl = unfiltered \? THREAT_AGGREGATE_UNFILTERED_TTL_S : THREAT_AGGREGATE_TTL_S;/);
     expect(s).toMatch(/cachedValue<ThreatAggregate>\(env, cacheKey, ttl,/);
   });
 
   it("runs the slice queries sequentially, not as one Promise.all burst (2026-11-08 D1 overload)", async () => {
     const s = src("lib/threat-aggregates.ts");
-    expect(s).not.toMatch(/await Promise\.all\(\[\s*env\.DB/);
+    expect(s).not.toMatch(/await Promise\.all\(\[\s*(env\.DB|db\.prepare)/);
     let inFlight = 0;
     let maxInFlight = 0;
     const task = (v: number) => async () => {

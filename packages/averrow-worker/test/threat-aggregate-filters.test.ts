@@ -80,6 +80,13 @@ function seedDb() {
     ins.run(s.id, s.feed, s.type, s.domain, s.domain, s.asn, s.country,
       s.brand, s.provider, s.campaign, s.status, s.severity, ts, ts);
   }
+  // Pre-computed counters in sync with the seed, as their maintainers
+  // (brand-count-reconciler, provider-counts) leave them: the unfiltered
+  // slice reads top_brands / top_providers from these columns.
+  db.exec(`UPDATE brands SET threat_count =
+             (SELECT COUNT(*) FROM threats WHERE target_brand_id = brands.id)`);
+  db.exec(`UPDATE hosting_providers SET total_threat_count =
+             (SELECT COUNT(*) FROM threats WHERE hosting_provider_id = hosting_providers.id)`);
   return db;
 }
 

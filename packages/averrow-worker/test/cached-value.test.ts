@@ -154,4 +154,58 @@ describe("cachedValue", () => {
       expect(kv.store.has("cv:test.zero")).toBe(false);
     });
   });
+
+  describe("singleFlight (best-effort refill lock)", () => {
+    const SF = { lockTtlSeconds: 120, waitMs: 400, pollMs: 10 };
+
+    it("a caller with no lock takes it, computes, writes, and releases it", async () => {
+      let lockDuringCompute: string | undefined;
+      const compute = vi.fn(async () => {
+        lockDuringCompute = kv.store.get("cvlock:test.sf");
+        return { n: 1 };
+      });
+      const v = await cachedValue(env, "test.sf", 60, compute, { singleFlight: SF });
+      expect(v).toEqual({ n: 1 });
+      expect(lockDuringCompute).toBeDefined();
+      expect(kv.store.has("cvlock:test.sf")).toBe(false);
+      expect(kv.store.has("cv:test.sf")).toBe(true);
+    });
+
+    it("concurrent misses: only the lock holder computes, the waiter reads its write", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      const compute = vi.fn(async () => { await gate; return { n: 42 }; });
+      const holder = cachedValue(env, "test.herd", 60, compute, { singleFlight: SF });
+      await new Promise((r) => setTimeout(r, 5)); // holder has taken the lock
+      const waiter = cachedValue(env, "test.herd", 60, compute, { singleFlight: SF });
+      await new Promise((r) => setTimeout(r, 20));
+      release();
+      expect(await holder).toEqual({ n: 42 });
+      expect(await waiter).toEqual({ n: 42 });
+      expect(compute).toHaveBeenCalledTimes(1);
+    });
+
+    it("fails open: a lock whose holder never writes falls through to compute after waitMs", async () => {
+      kv.store.set("cvlock:test.stuck", "1");
+      const compute = vi.fn().mockResolvedValue({ n: 7 });
+      const t0 = Date.now();
+      const v = await cachedValue(env, "test.stuck", 60, compute, { singleFlight: { ...SF, waitMs: 50 } });
+      expect(v).toEqual({ n: 7 });
+      expect(compute).toHaveBeenCalledOnce();
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(45);
+      // A lock it does not own is left to expire, not deleted.
+      expect(kv.store.has("cvlock:test.stuck")).toBe(true);
+    });
+
+    it("fails open on KV errors and releases the lock when compute throws", async () => {
+      const compute = vi.fn().mockRejectedValue(new Error("boom"));
+      await expect(cachedValue(env, "test.throw", 60, compute, { singleFlight: SF })).rejects.toThrow("boom");
+      expect(kv.store.has("cvlock:test.throw")).toBe(false);
+
+      const broken = { get: async () => { throw new Error("kv down"); }, put: async () => { throw new Error("kv down"); }, delete: async () => {} };
+      const v = await cachedValue({ CACHE: broken } as unknown as Env, "test.kvdown", 60,
+        vi.fn().mockResolvedValue({ ok: true }), { singleFlight: SF });
+      expect(v).toEqual({ ok: true });
+    });
+  });
 });

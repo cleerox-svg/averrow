@@ -40,6 +40,17 @@ import type { Env } from "../types";
 const CACHE_PREFIX = "cv:"; // distinct namespace from cc: (counter cache)
 const STATS_KEY = "cc:_stats"; // shared stats ring with cached-count.ts
 const STATS_RING_SIZE = 50;
+const LOCK_PREFIX = "cvlock:"; // single-flight refill locks
+
+/** Opt-in single-flight refill for `cachedValue` (see its doc). */
+export interface SingleFlightOptions {
+  /** KV TTL of the refill lock (KV minimum 60s). Bounds how long a crashed holder blocks. */
+  lockTtlSeconds: number;
+  /** How long a non-holder waits for the holder's write before computing itself. */
+  waitMs: number;
+  /** Re-read interval while waiting. Default 1000ms. */
+  pollMs?: number;
+}
 
 interface CachedEntry<T> {
   /** Cached payload. JSON-serializable. */
@@ -63,13 +74,17 @@ interface CachedEntry<T> {
  *                     response). The entry is stamped as if written `ttlSeconds - ttlFor`
  *                     ago, so readers (who only know `ttlSeconds`) treat it as expired
  *                     after `ttlFor`. A value <= 0 skips the write. Never lengthens.
+ * @param opts.singleFlight Optional best-effort refill lock: on a miss, a caller
+ *                     that finds the lock waits up to `waitMs` for the holder's
+ *                     write instead of recomputing; otherwise it takes the lock,
+ *                     computes, writes and releases. Fails open on KV errors.
  */
 export async function cachedValue<T>(
   env: Env,
   key: string,
   ttlSeconds: number,
   compute: () => Promise<T>,
-  opts: { ttlFor?: (value: T) => number } = {},
+  opts: { ttlFor?: (value: T) => number; singleFlight?: SingleFlightOptions } = {},
 ): Promise<T> {
   if (ttlSeconds <= 0) {
     const value = await compute();
@@ -79,40 +94,93 @@ export async function cachedValue<T>(
 
   const cacheKey = CACHE_PREFIX + key;
 
-  let cached: CachedEntry<T> | null = null;
-  try {
-    const raw = await env.CACHE.get(cacheKey);
-    if (raw) {
-      const parsed = JSON.parse(raw) as CachedEntry<T>;
-      const ageSeconds = (Date.now() - parsed.t) / 1000;
-      if (ageSeconds < ttlSeconds) {
-        cached = parsed;
+  const readFresh = async (): Promise<CachedEntry<T> | null> => {
+    try {
+      const raw = await env.CACHE.get(cacheKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as CachedEntry<T>;
+        const ageSeconds = (Date.now() - parsed.t) / 1000;
+        if (ageSeconds < ttlSeconds) return parsed;
       }
+    } catch {
+      // KV transient — fall through to compute.
     }
-  } catch {
-    // KV transient — fall through to compute.
-  }
+    return null;
+  };
 
+  const cached = await readFresh();
   if (cached) {
     void recordStat(env, "hit");
     return cached.v;
   }
 
-  const value = await compute();
-  void recordStat(env, "miss");
+  const computeAndStore = async (): Promise<T> => {
+    const value = await compute();
+    void recordStat(env, "miss");
 
-  const effective = opts.ttlFor ? Math.min(ttlSeconds, opts.ttlFor(value)) : ttlSeconds;
-  if (effective <= 0) return value;
-  try {
-    const entry: CachedEntry<T> = { v: value, t: Date.now() - (ttlSeconds - effective) * 1000 };
-    await env.CACHE.put(cacheKey, JSON.stringify(entry), {
-      expirationTtl: Math.max(effective * 2, 60),
-    });
-  } catch {
-    // Non-fatal.
+    const effective = opts.ttlFor ? Math.min(ttlSeconds, opts.ttlFor(value)) : ttlSeconds;
+    if (effective <= 0) return value;
+    try {
+      const entry: CachedEntry<T> = { v: value, t: Date.now() - (ttlSeconds - effective) * 1000 };
+      await env.CACHE.put(cacheKey, JSON.stringify(entry), {
+        expirationTtl: Math.max(effective * 2, 60),
+      });
+    } catch {
+      // Non-fatal.
+    }
+
+    return value;
+  };
+
+  // Single-flight (opt-in): only one caller refills an expensive key. KV is
+  // not transactional, so this is best-effort — it collapses the common
+  // "several tabs miss at once" herd, not every race — and fails open: a
+  // KV error, or a lock holder that never writes within `waitMs`, falls
+  // through to computing here.
+  let ownLock = false;
+  const lockKey = LOCK_PREFIX + key;
+  if (opts.singleFlight) {
+    const sf = opts.singleFlight;
+    let held = false;
+    try {
+      held = (await env.CACHE.get(lockKey)) !== null;
+    } catch {
+      held = false;
+    }
+    if (held) {
+      const deadline = Date.now() + sf.waitMs;
+      const pollMs = sf.pollMs ?? 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, pollMs));
+        const filled = await readFresh();
+        if (filled) {
+          void recordStat(env, "hit");
+          return filled.v;
+        }
+      }
+    } else {
+      try {
+        await env.CACHE.put(lockKey, String(Date.now()), {
+          expirationTtl: Math.max(sf.lockTtlSeconds, 60),
+        });
+        ownLock = true;
+      } catch {
+        // Fail open — compute without the lock.
+      }
+    }
   }
 
-  return value;
+  try {
+    return await computeAndStore();
+  } finally {
+    if (ownLock) {
+      try {
+        await env.CACHE.delete(lockKey);
+      } catch {
+        // Lock expires on its own TTL.
+      }
+    }
+  }
 }
 
 /**

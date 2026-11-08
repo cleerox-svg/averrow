@@ -80,6 +80,26 @@ import {
 const BACKLOG_TTL_LIVE_S = 3900;       // 65 min — survives to next hourly tick
 const BACKLOG_TTL_MONITORING_S = 14400; // 4h   — refresh every ~4th tick
 
+// Analyst scaling tiers on the total unlinked-active backlog (scaleAgents).
+// `backlog.total_unlinked.probe` is a BOUNDED probe capped at
+// UNLINKED_PROBE_CAP = HIGH + 1, so it answers every tier comparison
+// (`> 0`, `> MED`, `> HIGH`) exactly while reading at most CAP index
+// entries. The exact COUNT(*) read ~1.19M idx_threats_brand_status entries
+// per call (prod d1_top_queries_24h, 2026-11-08) to feed a gate that tops
+// out at 50K — a partial index can't help, a COUNT still reads every
+// matching entry. A value of CAP means "more than HIGH", not an exact count.
+export const UNLINKED_TIER_HIGH = 50_000;
+export const UNLINKED_TIER_MED = 10_000;
+export const UNLINKED_PROBE_CAP = UNLINKED_TIER_HIGH + 1;
+export const TOTAL_UNLINKED_PROBE_SQL = `
+      SELECT COUNT(*) as count FROM (
+        SELECT 1 FROM threats
+        WHERE target_brand_id IS NULL
+          AND status = 'active'
+        LIMIT ${UNLINKED_PROBE_CAP}
+      )
+    `;
+
 // ─── Types ───────────────────────────────────────────────────────
 
 interface AgentHealth {
@@ -124,6 +144,7 @@ interface NavigatorHealth {
 export interface Backlog {
   cartographer: number;
   analyst: number;
+  /** Bounded: capped at UNLINKED_PROBE_CAP (= "more than UNLINKED_TIER_HIGH"). */
   totalUnlinked: number;
   totalNoGeo: number;
   surblUnchecked: number;
@@ -2211,11 +2232,11 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
         AND target_brand_id IS NOT NULL
         AND status = 'active'
     `),
-    cacheCount('backlog.total_unlinked', BACKLOG_TTL_LIVE_S, `
-      SELECT COUNT(*) as count FROM threats
-      WHERE target_brand_id IS NULL
-      AND status = 'active'
-    `),
+    // Bounded probe (see UNLINKED_PROBE_CAP): exact for every scaling tier,
+    // ≤ CAP rows read. Live TTL kept — it gates Analyst instance counts.
+    // Key renamed with the semantics so the cutover never serves the old
+    // uncapped value under the new meaning.
+    cacheCount('backlog.total_unlinked.probe', BACKLOG_TTL_LIVE_S, TOTAL_UNLINKED_PROBE_SQL),
     // NOT a scaling input for any instance count — it only gates the
     // low-priority single cartographer `geo_backlog` dispatch at a coarse
     // `> 5000` threshold (see scaleAgents), and cartographer does not read
@@ -3015,8 +3036,8 @@ export async function scaleAgents(
   const analystBacklog = backlogs.analyst;
   const totalUnlinked = backlogs.totalUnlinked;
   if ((analystBacklog > 0 || totalUnlinked > 0) && !limits.pause_all_ai) {
-    const rawInstances = totalUnlinked > 50000 ? 3
-      : totalUnlinked > 10000 ? 2
+    const rawInstances = totalUnlinked > UNLINKED_TIER_HIGH ? 3
+      : totalUnlinked > UNLINKED_TIER_MED ? 2
       : analystBacklog >= SCALING.analyst.high ? SCALING.analyst.max_parallel
       : analystBacklog >= SCALING.analyst.medium ? 2
       : analystBacklog > 0 ? 1
@@ -3041,7 +3062,7 @@ export async function scaleAgents(
 
     if (instances > 1) {
       await logActivity(db, 'flight_control', 'info', 'scaling',
-        `Scaling Analyst to ${instances} background instances (backlog: ${analystBacklog}, unlinked: ${totalUnlinked}, batch limit: ${limits.analyst_batch})`,
+        `Scaling Analyst to ${instances} background instances (backlog: ${analystBacklog}, unlinked: ${totalUnlinked >= UNLINKED_PROBE_CAP ? `>${UNLINKED_TIER_HIGH}` : totalUnlinked}, batch limit: ${limits.analyst_batch})`,
         { agent: 'analyst', instances, backlog: analystBacklog, total_unlinked: totalUnlinked, batch_limit: limits.analyst_batch }
       );
     }
