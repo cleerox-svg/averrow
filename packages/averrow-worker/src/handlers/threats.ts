@@ -4,6 +4,7 @@ import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { enrichThreatsGeo } from "../lib/geoip";
 import { scopeCacheSegment } from "../lib/scope-cache-key";
+import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 import type { Env, UpdateThreatBody } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
@@ -27,6 +28,9 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
     // Whitelisted server-side sort (shared with the tenant endpoint so the
     // shared <ThreatsTable> behaves identically). Severity ranks critical
     // highest so dir=desc puts critical first.
+    // `severity` must stay identical to the expression index in migration
+    // 0318 (idx_threats_severity_rank_created) — the default page load
+    // depends on it to avoid a full-table sort.
     const SORT_COLUMNS: Record<string, string> = {
       severity:   "CASE t.severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END",
       last_seen:  "t.last_seen", first_seen: "t.first_seen", brand: "b.name",
@@ -142,12 +146,25 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
       ).bind(...params).all();
     }
 
+    // The unfiltered total is a full-table COUNT(*) (~1.5M rows) and the
+    // default page load always asks for it; share the platform-wide cached
+    // counter instead (CLAUDE.md §8 "Counter cache"). Filtered totals stay
+    // live — they ride the filter's index.
+    // NOTE: the unfiltered total is therefore APPROXIMATE — it can lag the
+    // real row count by up to THREATS_TOTAL_TTL_S (6h). Fine for a
+    // pagination total on a catalog of millions; don't reuse it where an
+    // exact count matters.
     const countParams = params.slice(0, -2);
-    const total = await session.prepare(
-      `SELECT COUNT(*) as cnt FROM threats t ${where}`
-    ).bind(...countParams).first<{ cnt: number }>();
+    const total = where
+      ? (await session.prepare(
+          `SELECT COUNT(*) as cnt FROM threats t ${where}`
+        ).bind(...countParams).first<{ cnt: number }>())?.cnt ?? 0
+      : await cachedCount(env, 'count.threats.total', THREATS_TOTAL_TTL_S, async () => {
+          const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM threats`).first<{ n: number }>();
+          return r?.n ?? 0;
+        });
 
-    const data = { success: true, data: { threats: rows.results, total: total?.cnt ?? 0 } };
+    const data = { success: true, data: { threats: rows.results, total } };
     await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -158,7 +175,8 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
 // ─── Threats catalog aggregate ───────────────────────────────────
 // Slice-aware narrative numbers powering /threats Intel surface.
 // Honors the same filters as handleListThreats so aggregates match
-// what the operator sees in the list. Cached 30min via cachedValue (THREAT_AGGREGATE_TTL_S).
+// what the operator sees in the list. Cached 30min via cachedValue (THREAT_AGGREGATE_TTL_S;
+// unfiltered slice 3h + single-flight). Reads go through the read-replica session.
 export async function handleThreatsAggregate(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
@@ -176,7 +194,7 @@ export async function handleThreatsAggregate(request: Request, env: Env, scope?:
       actor_id: url.searchParams.get("actor_id") ?? undefined,
       country:  url.searchParams.get("country") ?? undefined,
       since:    url.searchParams.get("since") ?? undefined,
-    }, scope);
+    }, scope, session);
     return attachBookmark(json({ success: true, data }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);

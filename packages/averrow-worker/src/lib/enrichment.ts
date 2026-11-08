@@ -36,6 +36,9 @@ export interface EnrichmentResult {
   corroborationBoosted: number;
 }
 
+/** TTL for the enrichment pipeline's diagnostic backlog counters (6h). */
+export const ENRICH_DIAG_COUNT_TTL_S = 21600;
+
 /**
  * Run the full enrichment pipeline on unenriched threats.
  */
@@ -55,29 +58,34 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
   // Diagnostic counts (cost-sweep 2026-05-16): the 5 inline COUNT(*)
   // subqueries were running once per enrichment cycle uncached,
   // burning ~15M reads / 11 calls = 1.4M reads/call (4 full table
-  // scans + 1 PK count). Wrapped in cachedCount with a 60-min TTL:
-  // these are operator-visibility counters, not gating logic, so
-  // hour-stale is fine.
+  // scans + 1 PK count). Wrapped in cachedCount: these are operator-
+  // visibility counters (only consumer: the diagnostic agent_outputs row
+  // below), not gating logic. TTL raised 3600 → ENRICH_DIAG_COUNT_TTL_S
+  // (6h, 2026-11-08 D1 overload): a 3600s TTL is shorter than the
+  // orchestrator's `hour % 4 === 0` cadence, so every run (plus every
+  // manual POST /api/threats/enrich-all) re-paid the scans — needs_brand
+  // alone read ~1.22M rows/call, 18 calls/24h sampled. 6h makes every
+  // other cron run a hit and absorbs manual re-runs.
   const [needs_dns, needs_geo, needs_whois, needs_brand, total] = await Promise.all([
-    cachedCount(env, 'count.enrich.needs_dns', 3600, async () => {
+    cachedCount(env, 'count.enrich.needs_dns', ENRICH_DIAG_COUNT_TTL_S, async () => {
       const r = await env.DB.prepare(
         `SELECT COUNT(*) AS n FROM threats WHERE malicious_domain IS NOT NULL AND ip_address IS NULL`,
       ).first<{ n: number }>();
       return r?.n ?? 0;
     }),
-    cachedCount(env, 'count.enrich.needs_geo', 3600, async () => {
+    cachedCount(env, 'count.enrich.needs_geo', ENRICH_DIAG_COUNT_TTL_S, async () => {
       const r = await env.DB.prepare(
         `SELECT COUNT(*) AS n FROM threats WHERE ip_address IS NOT NULL AND (country_code IS NULL OR asn IS NULL OR hosting_provider_id IS NULL OR lat IS NULL)`,
       ).first<{ n: number }>();
       return r?.n ?? 0;
     }),
-    cachedCount(env, 'count.enrich.needs_whois', 3600, async () => {
+    cachedCount(env, 'count.enrich.needs_whois', ENRICH_DIAG_COUNT_TTL_S, async () => {
       const r = await env.DB.prepare(
         `SELECT COUNT(*) AS n FROM threats WHERE malicious_domain IS NOT NULL AND registrar IS NULL AND severity IN ('critical', 'high')`,
       ).first<{ n: number }>();
       return r?.n ?? 0;
     }),
-    cachedCount(env, 'count.enrich.needs_brand', 3600, async () => {
+    cachedCount(env, 'count.enrich.needs_brand', ENRICH_DIAG_COUNT_TTL_S, async () => {
       const r = await env.DB.prepare(
         `SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND malicious_domain IS NOT NULL`,
       ).first<{ n: number }>();
