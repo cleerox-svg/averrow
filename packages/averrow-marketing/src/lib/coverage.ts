@@ -55,7 +55,7 @@ export const COVERAGE: readonly CoverageSurface[] = [
     key: "social",
     name: "Social profiles",
     plan: "professional",
-    blurb: "Fake accounts and handle squatting on six major networks.",
+    blurb: "Impersonation accounts and handle squatting on six major networks.",
     link: "/platform/impersonation#fake-profiles",
   },
   {
