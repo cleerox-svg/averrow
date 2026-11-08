@@ -263,11 +263,11 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
     padding: 6px 12px;
     border: 1px dashed var(--accent);
     border-radius: 999px;
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-display);
     color: var(--text-primary);
     background: var(--accent-bg);
   }
-  .rep-eyebrow { font: 600 12px var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent-section, var(--accent)); margin-bottom: 0.75rem; }
+  .rep-eyebrow { font: 500 12px var(--font-display); letter-spacing: var(--type-label-tracking); color: var(--accent-section, var(--accent)); margin-bottom: 0.75rem; }
   .rep-hero h1 { font-family: var(--font-display); font-size: clamp(28px, 4.5vw, 46px); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 1rem; text-wrap: balance; }
   .rep-lede { max-width: 720px; font-size: 16px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 1.5rem; }
   .rep-lede code, .rep-body code { font-family: var(--font-mono); font-size: 0.9em; overflow-wrap: anywhere; }
@@ -276,7 +276,7 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
   .rep-body { max-width: 960px; }
   .rep-body h2 { font-family: var(--font-display); font-size: 22px; font-weight: 700; margin: 2.5rem 0 0.75rem; }
   .rep-body p { color: var(--text-secondary); line-height: 1.7; margin: 0 0 0.9rem; }
-  .rep-note { font: 500 12px var(--font-mono); color: var(--text-secondary); }
+  .rep-note { font: 500 12px var(--font-display); color: var(--text-secondary); }
   .rep-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin: 1rem 0 0; }
   .rep-stats div { background: var(--bg-secondary); padding: 14px 16px; display: grid; gap: 3px; }
   .rep-stats b { font: 600 24px/1.1 var(--font-display); color: var(--text-primary); font-variant-numeric: tabular-nums; }
@@ -292,10 +292,10 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
   .rep-tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); }
   .rep-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .rep-table th, .rep-table td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; color: var(--text-secondary); vertical-align: top; }
-  .rep-table thead th { font: 600 11px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); }
+  .rep-table thead th { font: 500 12px var(--font-display); letter-spacing: var(--type-label-tracking); color: var(--text-secondary); }
   .rep-table tbody th { color: var(--text-primary); font-weight: 600; }
   .rep-table tbody tr:last-child > * { border-bottom: 0; }
-  .rep-pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font: 600 11px var(--font-mono); border: 1px solid var(--border-strong); }
+  .rep-pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font: 600 12px var(--font-display); border: 1px solid var(--border-strong); }
   .rep-removed { background: var(--green); }
   .rep-pending { background: var(--amber); }
   .rep-queued { background: var(--border-strong); }
@@ -313,7 +313,7 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
   .rep-actionlist { margin: 0; padding-left: 1.25rem; display: grid; gap: 12px; color: var(--text-secondary); }
   .rep-actionlist b { color: var(--text-primary); }
   .rep-actionlist p { margin: 2px 0 0; }
-  .rep-body p.rep-foot { margin-top: 2.5rem; font: 500 12px var(--font-mono); color: var(--text-secondary); border-top: 1px solid var(--border); padding-top: 1rem; }
+  .rep-body p.rep-foot { margin-top: 2.5rem; font: 500 12px var(--font-display); color: var(--text-secondary); border-top: 1px solid var(--border); padding-top: 1rem; }
   .rep-foot a { color: var(--text-primary); }
   .rep-cta { padding: 3rem 0 4rem; text-align: center; }
   .rep-cta h2 { font-family: var(--font-display); font-size: clamp(24px, 3vw, 32px); font-weight: 700; margin-bottom: 0.75rem; }

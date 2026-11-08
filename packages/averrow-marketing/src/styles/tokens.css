@@ -39,6 +39,11 @@
   --type-section-tracking: -0.03em;
   --type-body-size:      18px;
   --type-body-lh:        1.6;
+  /* Labels (G3): sentence-case Geist sans, never uppercase-tracked mono.
+     Mono is for facts only (IDs, domains, ASNs, timestamps, counts, code). */
+  --type-label-size:     13px;
+  --type-label-weight:   500;
+  --type-label-tracking: 0.01em;
 
   /* Status / severity — identical in both themes (decorative fills, dots, bars). */
   --amber:      #E5A832; /* status only — see header */

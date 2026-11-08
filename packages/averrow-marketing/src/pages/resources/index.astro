@@ -175,12 +175,11 @@ const categories = [
     background: var(--gradient-hero);
   }
   .res-label {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: var(--type-label-weight);
     color: var(--accent);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.85rem;
   }
   .res-hero h1 {
@@ -300,7 +299,7 @@ const categories = [
     font-weight: 700;
   }
   .res-latest-all {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.8rem;
     font-weight: 600;
     color: var(--accent);
@@ -338,11 +337,10 @@ const categories = [
     margin-bottom: 0.85rem;
   }
   .res-latest-badge {
-    font-family: var(--font-mono);
-    font-size: 0.64rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     padding: 0.22rem 0.6rem;
     border-radius: 100px;
     background: color-mix(in srgb, var(--primary) 10%, transparent);
@@ -350,7 +348,7 @@ const categories = [
     border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
   }
   .res-latest-read {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.68rem;
     color: var(--text-tertiary);
   }

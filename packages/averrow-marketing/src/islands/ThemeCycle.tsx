@@ -59,6 +59,10 @@ export default function ThemeCycle() {
       // localStorage unavailable — the toggle still works for this page view
     }
     document.documentElement.setAttribute("data-theme", next);
+    // Keep the browser chrome colour in step (Layout.astro theme-color pair).
+    document.querySelectorAll('meta[name="theme-color"]').forEach((m) =>
+      m.setAttribute("content", next === "light" ? "#f0f2f8" : "#0a0b0e"),
+    );
     setTheme(next);
   }
 

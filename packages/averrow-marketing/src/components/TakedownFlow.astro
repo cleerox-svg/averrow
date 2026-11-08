@@ -214,9 +214,8 @@ const timeline = [
   .tf [hidden] { display: none !important; }
   .tf-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
   .tf-eyebrow {
-    font: 600 12px var(--font-mono);
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
+    font: 500 12px var(--font-display);
+    letter-spacing: var(--type-label-tracking);
     color: var(--accent-section, var(--accent));
     margin-bottom: 10px;
   }
@@ -242,7 +241,7 @@ const timeline = [
     padding: 4px;
     background: var(--bg-secondary);
   }
-  .tf-k { font: 600 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); padding: 0 8px; }
+  .tf-k { font: 500 12px var(--font-display); letter-spacing: var(--type-label-tracking); color: var(--text-secondary); padding: 0 8px; }
   .tf-mode button {
     font: 600 12.5px var(--font-display);
     color: var(--text-secondary);
@@ -290,7 +289,7 @@ const timeline = [
   .tf-card b { color: var(--text-primary); font-size: 12.5px; }
   .tf-r { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; min-width: 0; }
   .tf-mono { font-family: var(--font-mono); color: var(--text-primary); font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
-  .tf-cap { font: 500 12px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+  .tf-cap { font: 500 12px var(--font-display); color: var(--text-secondary); overflow-wrap: anywhere; }
   .tf-ev { gap: 4px; }
   .tf-ev div { display: flex; gap: 6px; align-items: baseline; font-size: 12px; }
   .tf-ev i { width: 6px; height: 6px; border-radius: 2px; background: var(--primary); flex: none; transform: translateY(-1px); }
@@ -302,9 +301,8 @@ const timeline = [
   .tf-st p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
 
   .tf-pill {
-    font: 700 12px var(--font-mono);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    font: 500 12px var(--font-display);
+    letter-spacing: var(--type-label-tracking);
     border: 1px solid transparent;
     border-radius: 999px;
     padding: 2px 8px;

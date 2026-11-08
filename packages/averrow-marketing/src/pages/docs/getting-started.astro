@@ -62,7 +62,7 @@ const steps = [
   <section class="docs-gs-hero">
     <div class="container">
       <a href={`${base}/docs`} class="docs-gs-back">&larr; Documentation</a>
-      <div class="docs-gs-eyebrow">Getting Started</div>
+      <div class="docs-gs-eyebrow">Getting started</div>
       <h1>From zero to your first<br /><span class="docs-gs-accent">Brand Exposure Score.</span></h1>
       <p class="docs-gs-lede">
         Five steps, plain language. This is the real product flow &mdash;
@@ -133,7 +133,7 @@ const steps = [
   }
   .docs-gs-back {
     display: inline-block;
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 13px;
     color: var(--text-tertiary);
     text-decoration: none;
@@ -141,12 +141,11 @@ const steps = [
   }
   .docs-gs-back:hover { color: var(--accent); }
   .docs-gs-eyebrow {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: var(--type-label-weight);
     color: var(--accent);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.85rem;
   }
   .docs-gs-hero h1 {
@@ -222,7 +221,7 @@ const steps = [
     margin-top: 1rem;
   }
   .docs-gs-step-link {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.85rem;
     font-weight: 600;
     color: var(--accent);

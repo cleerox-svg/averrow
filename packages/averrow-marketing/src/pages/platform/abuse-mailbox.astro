@@ -197,13 +197,12 @@ const scope: ScopeRow[] = [
   .ae { display: grid; gap: 12px; }
   .ae-meta { margin: 0; display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
   .ae-meta > div { display: flex; gap: 10px; font-size: 13px; min-width: 0; }
-  .ae-meta dt { flex: none; min-width: 58px; font: 600 12px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
+  .ae-meta dt { flex: none; min-width: 58px; font: 500 12px var(--font-display); letter-spacing: var(--type-label-tracking); color: var(--text-secondary); }
   .ae-meta dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; min-width: 0; }
   .ae-body { display: grid; gap: 8px; justify-items: start; }
   .ae-verdict {
-    font: 700 12px var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font: 500 12px var(--font-display);
+    letter-spacing: var(--type-label-tracking);
     color: var(--sev-high-text);
     background: color-mix(in srgb, var(--sev-high) 12%, transparent);
     border: 1px solid currentColor;
@@ -211,7 +210,7 @@ const scope: ScopeRow[] = [
     padding: 1px 10px;
   }
   .ae-lead { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-primary); }
-  .ae-h { margin: 6px 0 0; font: 600 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); }
+  .ae-h { margin: 6px 0 0; font: 500 12px var(--font-display); letter-spacing: var(--type-label-tracking); color: var(--text-secondary); }
   .ae-list { list-style: disc; margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
   .ae-mono { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary); overflow-wrap: anywhere; }
 

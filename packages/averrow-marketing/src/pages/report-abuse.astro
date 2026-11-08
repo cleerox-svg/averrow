@@ -15,7 +15,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 >
   <section class="abuse-hero">
     <div class="container">
-      <div class="section-label">Report Abuse</div>
+      <div class="section-label">Report abuse</div>
       <h1 class="section-title">Saw something suspicious?</h1>
       <p class="section-desc">
         If you&rsquo;ve received a phishing email, found a fake account
@@ -112,7 +112,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   </div>
 
   <section class="abuse-process">
-    <div class="section-label" style="text-align:center;">What Happens Next</div>
+    <div class="section-label" style="text-align:center;">What happens next</div>
     <h2>Every report goes through the same three steps.</h2>
     <p>Processing is automated. You&rsquo;ll get an acknowledgment within seconds and a determination within one business day.</p>
 
@@ -323,11 +323,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   :global([data-theme="light"]) .abuse-step { background: rgba(255,255,255,0.55); }
   .abuse-step-num {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     color: var(--accent);
     margin-bottom: 0.5rem;
   }

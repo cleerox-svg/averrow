@@ -71,7 +71,7 @@ const articleJsonLd = {
 
   {related.length > 0 && (
     <section class="related-section" aria-label="Related posts">
-      <div class="related-label">Keep Reading</div>
+      <div class="related-label">Keep reading</div>
       <div class="related-grid">
         {related.map(rel => {
           const relSlug = categorySlug(rel.data.category);
@@ -98,13 +98,12 @@ const articleJsonLd = {
   }
   .blog-post-badge {
     display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 600;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
     padding: 0.25rem 0.7rem;
     border-radius: 100px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 1.5rem;
   }
   .blog-post-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
@@ -124,7 +123,7 @@ const articleJsonLd = {
     margin-right: auto;
   }
   .blog-post-meta {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.78rem;
     color: var(--text-tertiary);
   }
@@ -196,11 +195,10 @@ const articleJsonLd = {
     border-top: 1px solid var(--border);
   }
   .related-label {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     color: var(--text-tertiary);
     text-align: center;
     margin-bottom: 1.25rem;
@@ -234,13 +232,12 @@ const articleJsonLd = {
   }
   .related-badge {
     display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    font-weight: 600;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
     padding: 0.18rem 0.55rem;
     border-radius: 100px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
     margin-bottom: 0.55rem;
   }
   .related-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
@@ -256,10 +253,10 @@ const articleJsonLd = {
     color: var(--text-primary);
   }
   .related-meta {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.7rem;
     color: var(--text-tertiary);
-    letter-spacing: 0.02em;
+    letter-spacing: var(--type-label-tracking);
   }
   @media (max-width: 720px) {
     .related-grid { grid-template-columns: 1fr; }

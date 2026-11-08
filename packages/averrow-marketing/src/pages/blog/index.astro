@@ -103,11 +103,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     color: var(--accent);
     border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
     background: color-mix(in srgb, var(--primary) 6%, transparent);
@@ -129,11 +128,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin: 1.75rem 0 0.25rem;
   }
   .blog-filter-chip {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
     padding: 0.45rem 1rem;
     border-radius: 100px;
     border: 1px solid var(--border);
@@ -155,9 +153,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     text-align: center;
     padding: 3rem 1rem;
     color: var(--text-tertiary);
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.85rem;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--type-label-tracking);
   }
 
   .blog-grid-section { padding: 2.5rem 0; }
@@ -194,21 +192,20 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin-bottom: 1rem;
   }
   .blog-card-read {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.7rem;
     color: var(--text-tertiary);
-    letter-spacing: 0.04em;
+    letter-spacing: var(--type-label-tracking);
   }
 
   .blog-badge {
     display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 0.66rem;
-    font-weight: 600;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: var(--type-label-weight);
     padding: 0.25rem 0.7rem;
     border-radius: 100px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: var(--type-label-tracking);
   }
   .blog-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
   .blog-badge-threat-intel { background: color-mix(in srgb, var(--magenta) 10%, transparent); color: var(--magenta-text); border: 1px solid color-mix(in srgb, var(--magenta) 30%, transparent); }
@@ -240,11 +237,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     display: flex;
     align-items: center;
     gap: 6px;
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: 0.72rem;
     color: var(--text-tertiary);
     margin-bottom: 1rem;
-    letter-spacing: 0.02em;
+    letter-spacing: var(--type-label-tracking);
   }
   .blog-card-author { color: var(--text-secondary); font-weight: 600; }
   .blog-card-dot { opacity: 0.6; }

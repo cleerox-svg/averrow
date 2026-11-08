@@ -74,12 +74,14 @@ const orgJsonLd = {
     <meta property="og:image" content={ogImageUrl} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Averrow — threat intelligence" />
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImageUrl} />
+    <meta name="twitter:image:alt" content="Averrow — threat intelligence" />
 
     <!-- Structured data -->
     <script is:inline type="application/ld+json" set:html={JSON.stringify(orgJsonLd)} />
@@ -88,7 +90,11 @@ const orgJsonLd = {
     <link rel="icon" href="/favicon-r3.ico" sizes="32x32" />
     <link rel="icon" href="/favicon-r3.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon-r3.png" />
-    <meta name="theme-color" content="#0a0b0e" />
+    <!-- Browser chrome colour per theme (graphite / light page). The pre-paint
+         script below pins both to the stored theme, since the site ignores
+         prefers-color-scheme. -->
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0b0e" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f0f2f8" />
     <link rel="alternate" type="application/rss+xml" title="Averrow Blog" href="/blog/feed.xml" />
     <link rel="alternate" type="application/rss+xml" title="Averrow Changelog" href="/changelog/feed.xml" />
     <!-- Self-hosted Geist (see global.css @font-face). Both faces render above the fold. -->
@@ -105,6 +111,8 @@ const orgJsonLd = {
           if (localStorage.getItem("averrow-theme") === "light") theme = "light";
         } catch (e) {}
         document.documentElement.setAttribute("data-theme", theme);
+        var tc = document.querySelectorAll('meta[name="theme-color"]');
+        for (var i = 0; i < tc.length; i++) tc[i].setAttribute("content", theme === "light" ? "#f0f2f8" : "#0a0b0e");
       })();
     </script>
   </head>

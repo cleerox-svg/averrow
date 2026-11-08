@@ -107,6 +107,15 @@ img, video, svg { max-width: 100%; height: auto; }
    page-scoped rule that only scan.astro / pricing.astro defined). */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
+/* Shared label (G3): eyebrows, captions, chips, column headings. */
+.label {
+  font-family: var(--font-display);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-tracking);
+  line-height: 1.3;
+}
+
 /* ── LAYOUT PRIMITIVES ── */
 .container {
   max-width: 1200px;
@@ -139,12 +148,11 @@ img, video, svg { max-width: 100%; height: auto; }
 }
 
 .section-label {
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: var(--type-label-weight);
   color: var(--accent-section, var(--accent));
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: var(--type-label-tracking);
   margin-bottom: 0.75rem;
 }
 
@@ -500,11 +508,10 @@ img, video, svg { max-width: 100%; height: auto; }
   max-width: 260px;
 }
 .footer-col-title {
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-tracking);
   color: var(--text-tertiary);
   margin-bottom: 0.85rem;
 }
@@ -530,7 +537,7 @@ img, video, svg { max-width: 100%; height: auto; }
   flex-wrap: wrap;
 }
 .footer-legal {
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   font-size: 0.75rem;
   color: var(--text-tertiary);
 }

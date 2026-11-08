@@ -179,7 +179,7 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
 </ProductPage>
 
 <style>
-  .pv-status { max-width: 1280px; margin: 0 auto; padding: 4px 24px 0; font: 500 13px var(--font-mono); color: var(--text-secondary); }
+  .pv-status { max-width: 1280px; margin: 0 auto; padding: 4px 24px 0; font: 500 13px var(--font-display); color: var(--text-secondary); }
 
   .pv-stages { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
   .pv-stage {
@@ -196,13 +196,13 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
   .pv-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
   .pv-stage h3 { margin: 0; font: 700 16px var(--font-display); color: var(--text-primary); }
   .pv-plan {
-    font: 600 12px var(--font-mono);
+    font: 600 12px var(--font-display);
     color: var(--btn-primary-ink);
     background: var(--btn-primary-bg);
     border-radius: 999px;
     padding: 1px 9px;
   }
-  .pv-role { font: 600 12px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
+  .pv-role { font: 500 12px var(--font-display); letter-spacing: var(--type-label-tracking); color: var(--text-secondary); }
   .pv-stage p { margin: 4px 0 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
 
   .pv-rate { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: center; margin-top: 16px; }
@@ -225,7 +225,7 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
   .pv-int span { font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
   .pv-int em {
     justify-self: start;
-    font: 600 12px var(--font-mono);
+    font: 600 12px var(--font-display);
     font-style: normal;
     border: 1px solid var(--border-strong);
     border-radius: 999px;
