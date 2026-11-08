@@ -8,16 +8,16 @@
 // monitoring config has weekly_digest=true. All numbers are 7-day windows.
 
 import type { Env } from "../types";
-import { emailShell, escapeHtml } from "./email-layout";
+import { emailShell, escapeHtml, EMAIL_COLORS } from "./email-layout";
 
 const FROM_ADDRESS = "Averrow Intelligence <digest@averrow.com>";
 
 const COLOR = {
-  bgCard:   "#111A2C",
+  bgCard:   "#1f2024", // graphite elevated, on the #151619 shell card
   border:   "rgba(255,255,255,0.07)",
-  text:     "#E8ECF2",
-  textDim:  "#9AAABF",
-  amber:    "#E5A832",
+  text:     "#f6f7f7",
+  textDim:  "#c2c2c4",
+  amber:    "#E5A832", // status only
   red:      "#F87171",
   orange:   "#FB923C",
   yellow:   "#FBBF24",
@@ -152,7 +152,7 @@ export function buildTenantDigestEmail(data: OrgDigestData): DigestEmail {
 
     <div style="color:${COLOR.textDim};font-size:12px;margin-top:18px;">
       You receive this because weekly digest is enabled for these brands.
-      Manage delivery in <a href="https://averrow.com/tenant/settings" style="color:${COLOR.amber};">notification settings</a>.
+      Manage delivery in <a href="https://averrow.com/tenant/settings" style="color:${EMAIL_COLORS.primaryText};">notification settings</a>.
     </div>`;
 
   const html = emailShell({

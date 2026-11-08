@@ -222,7 +222,7 @@ export function buildContactEmail(
 <body style="margin:0;padding:0;background:#f7f7f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
   <div style="max-width:560px;margin:0 auto;padding:24px;background:#fff;color:#222;line-height:1.6;">
     <div style="margin:0 0 12px;padding:8px 12px;background:#fff7e6;border:1px solid #f0c36d;border-radius:4px;color:#7a4b00;font-size:13px;font-weight:600;">${UNVERIFIED_LINE}</div>
-    <div style="color:#E5A832;font-weight:600;letter-spacing:2px;font-size:11px;text-transform:uppercase;margin-bottom:12px;">Website form · Averrow</div>
+    <div style="color:#2a44d3;font-weight:600;letter-spacing:2px;font-size:11px;text-transform:uppercase;margin-bottom:12px;">Website form · Averrow</div>
     <h2 style="font-size:18px;margin:0 0 16px;color:#111;">${escapeHtml(label)}</h2>
     <table style="width:100%;border-collapse:collapse;font-size:14px;">
       ${rowHtml}

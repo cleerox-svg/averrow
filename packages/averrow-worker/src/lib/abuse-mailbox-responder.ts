@@ -334,17 +334,18 @@ export function defangForEcho(s: string): string {
 //    on a fresh device before the @font-face fetch completes.
 //
 // Brand language follows AVERROW_UI_STANDARD.md and CLAUDE.md §5:
-//   - amber #E5A832 for accents + brand colour
-//   - red    #C83C3C for the brandmark + critical verdicts
-//   - dark slate header (#0F1828) matching --bg-page
+//   - indigo #4c5cf8 for accents + brand colour (facelift Phase 4;
+//     amber #E5A832 is a status colour only — the "suspicious" verdict)
+//   - red    #C83C3C for the R3 brandmark + critical verdicts
+//   - graphite header (#151619) matching the platform card
 //   - off-white body for readability in email clients
 //
 // Layout: 600px-wide centered card on a neutral background. Header
 // bar with logo + product name. Accent stripe under header. Body.
 // Footer with marketing-page link + "why am I getting this".
 
-const FONT_BODY = `'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`;
-const FONT_MONO = `'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace`;
+const FONT_BODY = `'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`;
+const FONT_MONO = `'Geist Mono',ui-monospace,Menlo,Consolas,monospace`;
 
 
 interface BrandLayoutOptions {
@@ -363,6 +364,10 @@ interface BrandLayoutOptions {
 function brandLayout(opts: BrandLayoutOptions): string {
   const b = opts.branding;
   const accent = opts.accent ?? b.accent;
+  // Indigo at 10px on the dark header is below AA; the default primary
+  // gets its AA text tint there. Other accents (verdicts, org overrides)
+  // keep theirs, as before.
+  const taglineColor = accent.toLowerCase() === "#4c5cf8" ? "#96acff" : accent;
   // Logo: hosted PNG of the platform favicon, mark-only.
   //
   // PR-BF (2026-05-18): reverted PR-BB's `data:image/png;base64,...`
@@ -388,9 +393,14 @@ function brandLayout(opts: BrandLayoutOptions): string {
   // the logo's designed crimson red survives. Harmless when no
   // dark-mode marker attribute is present.
   //
-  // Source asset: public/favicon-mark.svg + scripts/generate-logo-assets.py
-  // → public/logo-email-mark.png (served at the URL below with the
-  //   PR-BF long-cache header from _headers).
+  // Source asset (facelift Phase 4): the R3 mark, docs/brand/logo/
+  // mark-red.svg rendered to packages/averrow-ops/public/email/
+  // averrow-mark-r3.png → served at /v2/email/averrow-mark-r3.png
+  // (EMAIL_LOGO_URL). The old /logo-email-mark.png stays in the frozen
+  // legacy public/ for already-sent mail. The new path is outside the
+  // _headers long-cache rule (public/ is frozen), so it gets the default
+  // static-asset caching; the new filename means no proxy holds a stale
+  // copy of the old mark.
   const logoCell = `<img class="av-brand-logo" src="${escapeAttr(b.logoUrl)}" width="38" height="38" alt="${escapeAttr(b.logoAlt)}" style="display:block;width:38px;height:38px;border:0;outline:none;">`;
   return `<!doctype html>
 <html><head>
@@ -460,7 +470,7 @@ function brandLayout(opts: BrandLayoutOptions): string {
               <td style="vertical-align:middle;">${logoCell}</td>
               <td style="vertical-align:middle;padding-left:12px;">
                 <div style="font-family:${FONT_BODY};font-size:20px;font-weight:800;color:#FFFFFF;letter-spacing:-0.01em;line-height:1.1;">${escapeHtml(b.productName)}</div>
-                <div style="font-family:${FONT_BODY};font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:${accent};font-weight:700;margin-top:3px;line-height:1;">${escapeHtml(b.tagline)}</div>
+                <div style="font-family:${FONT_BODY};font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:${taglineColor};font-weight:700;margin-top:3px;line-height:1;">${escapeHtml(b.tagline)}</div>
               </td>
             </tr>
           </table>
@@ -521,7 +531,7 @@ export function ackExplainer(productName: string): string {
 function ackHtml(ctx: AckContext, b: AbuseBranding): string {
   const echoSubject = ctx.originalSubject
     ? `<div style="margin:18px 0 10px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8895AA;">Subject we received</div>
-       <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid #E5A832;background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(defangForEcho(ctx.originalSubject))}</div>`
+       <div style="margin:0 0 18px;padding:12px 16px;border-left:3px solid ${b.accent};background:#FAFBFC;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#1A2536;border-radius:0 6px 6px 0;">${escapeHtml(defangForEcho(ctx.originalSubject))}</div>`
     : "";
   const body = `
     <p style="margin:0 0 14px;">Thanks for the report. Your submission is in our system and queued for automated inspection.</p>
@@ -534,7 +544,7 @@ function ackHtml(ctx: AckContext, b: AbuseBranding): string {
       </tr>
       <tr>
         <td style="padding:4px 12px 4px 0;font-size:12px;color:#8895AA;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Inbox</td>
-        <td style="padding:4px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#E5A832;">${escapeHtml(ctx.inboundAlias)}</td>
+        <td style="padding:4px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:${b.accent};">${escapeHtml(ctx.inboundAlias)}</td>
       </tr>
     </table>
   `;

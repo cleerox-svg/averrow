@@ -3,7 +3,12 @@
  *
  * Centered, minimal page with large 404 display,
  * subtitle, description, and two action buttons.
+ *
+ * Facelift Phase 4: R3 logo, indigo primary, graphite dark palette, system
+ * font stack (no Google Fonts). See ./brand.ts.
  */
+
+import { r3MarkSvg, r3WordmarkSvg, R3_FAVICON_DATA_URI, FONT_SANS_STACK, FONT_MONO_STACK } from "./brand";
 
 export function renderNotFoundPage(): string {
   return `
@@ -14,27 +19,29 @@ export function renderNotFoundPage(): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Page Not Found — Averrow</title>
 <meta name="description" content="The page you're looking for doesn't exist or has been moved.">
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="${R3_FAVICON_DATA_URI}" type="image/svg+xml">
 <style>
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --font-display: 'Plus Jakarta Sans', sans-serif;
-  --font-body: 'Plus Jakarta Sans', sans-serif;
-  --font-mono: 'IBM Plex Mono', monospace;
-  --accent: #C83C3C;
-  --accent-hover: #A82E2E;
-  --accent-light: #E87070;
-  --accent-ultra: #F5B3B3;
-  --accent-bg: rgba(200, 60, 60, 0.08);
-  --accent-bg-strong: rgba(200, 60, 60, 0.15);
+  --font-display: ${FONT_SANS_STACK};
+  --font-body: ${FONT_SANS_STACK};
+  --font-mono: ${FONT_MONO_STACK};
+  /* Primary — indigo (fill). --primary-text is the AA text colour. */
+  --accent: #3250f0;
+  --accent-hover: #2941d9;
+  --accent-light: #2a44d3;
+  --accent-ultra: #8f9dff;
+  --primary-text: #2a44d3;
+  --accent-bg: rgba(50, 80, 240, 0.06);
+  --accent-bg-strong: rgba(50, 80, 240, 0.12);
   --coral: #E8923C;
   --coral-bg: rgba(232, 146, 60, 0.08);
-  --green: #28A050;
-  --green-bg: rgba(40, 160, 80, 0.08);
+  --green: #3CB878;
+  --green-bg: rgba(60, 184, 120, 0.08);
   --red: #C83C3C;
   --red-bg: rgba(200, 60, 60, 0.08);
-  --amber: #DCAA32;
+  --amber: #E5A832; /* status only */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
@@ -42,43 +49,50 @@ export function renderNotFoundPage(): string {
 }
 
 [data-theme="light"] {
-  --bg-primary: #fafbfc;
+  --bg-primary: #f0f2f8;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #f1f5f9;
-  --bg-code: #f8fafc;
+  --bg-tertiary: #f6f8fb;
+  --bg-code: #f6f8fb;
   --bg-elevated: #ffffff;
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-tertiary: #94a3b8;
+  --text-primary: #0f1216;
+  --text-secondary: #383b40;
+  --text-tertiary: #4c4e54;
   --text-inverse: #ffffff;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
+  --border: rgba(18, 22, 29, 0.14);
+  --border-strong: rgba(18, 22, 29, 0.24);
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
   --shadow-md: 0 4px 16px rgba(0,0,0,0.06);
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.08);
-  --shadow-glow: 0 0 40px rgba(200,60,60,0.12);
-  --gradient-hero: linear-gradient(135deg, #fafbfc 0%, #fef5f5 50%, #f0fdf4 100%);
-  --nav-bg: rgba(250,251,252,0.85);
+  --shadow-glow: 0 0 40px rgba(50,80,240,0.12);
+  --gradient-hero: linear-gradient(135deg, #f0f2f8 0%, #f6f8fb 50%, #f0f2f8 100%);
+  --nav-bg: rgba(240,242,248,0.85);
 }
 
 [data-theme="dark"] {
-  --bg-primary: #0b1120;
-  --bg-secondary: #111827;
-  --bg-tertiary: #1a2332;
-  --bg-code: #162036;
-  --bg-elevated: #1e293b;
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-tertiary: #64748b;
-  --text-inverse: #0f172a;
-  --border: #1e293b;
-  --border-strong: #334155;
+  --accent: #4c5cf8;
+  --accent-hover: #4f60ff;
+  --accent-light: #96acff;
+  --accent-ultra: #b9c6ff;
+  --primary-text: #96acff;
+  --accent-bg: rgba(76, 92, 248, 0.10);
+  --accent-bg-strong: rgba(76, 92, 248, 0.18);
+  --bg-primary: #0a0b0e;
+  --bg-secondary: #151619;
+  --bg-tertiary: #0f1013;
+  --bg-code: #0f1013;
+  --bg-elevated: #1f2024;
+  --text-primary: #f6f7f7;
+  --text-secondary: #c2c2c4;
+  --text-tertiary: #a1a1a3;
+  --text-inverse: #151619;
+  --border: rgba(245, 245, 246, 0.09);
+  --border-strong: rgba(245, 245, 246, 0.16);
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
   --shadow-md: 0 4px 16px rgba(0,0,0,0.3);
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.4);
-  --shadow-glow: 0 0 60px rgba(200,60,60,0.15);
-  --gradient-hero: linear-gradient(135deg, #080E18 0%, #0E1A2B 50%, #080E18 100%);
-  --nav-bg: rgba(11,17,32,0.85);
+  --shadow-glow: 0 0 60px rgba(76,92,248,0.16);
+  --gradient-hero: linear-gradient(135deg, #0a0b0e 0%, #151619 50%, #0a0b0e 100%);
+  --nav-bg: rgba(10,11,14,0.85);
 }
 
 html { scroll-behavior: smooth; }
@@ -132,14 +146,14 @@ img { max-width: 100%; }
   gap: 0.6rem;
 }
 
-.nav-brand svg { transition: transform 0.3s; }
-.nav-brand:hover svg { transform: rotate(15deg); }
+.nav-brand svg { transition: opacity 0.3s; }
+.nav-brand:hover svg { opacity: 0.85; }
 
 .nav-brand-text {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 1.1rem;
-  letter-spacing: -0.02em;
+  /* R3 wordmark SVG (fill: currentColor) */
+  display: block;
+  line-height: 0;
+  color: var(--text-primary);
 }
 
 .nav-brand-sub {
@@ -196,7 +210,7 @@ img { max-width: 100%; }
 
 .theme-toggle:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--primary-text);
 }
 
 /* ── BUTTONS ── */
@@ -237,7 +251,7 @@ img { max-width: 100%; }
 
 .btn-primary:hover {
   background: var(--accent-hover);
-  box-shadow: 0 0 20px rgba(200,60,60,0.35);
+  box-shadow: 0 0 20px rgba(76,92,248,0.35);
   transform: translateY(-1px);
 }
 
@@ -249,7 +263,7 @@ img { max-width: 100%; }
 
 .btn-outline:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--primary-text);
 }
 
 .btn-lg {
@@ -275,7 +289,7 @@ img { max-width: 100%; }
   font-family: var(--font-display);
   font-size: 6rem;
   font-weight: 800;
-  color: var(--accent);
+  color: var(--primary-text);
   line-height: 1;
   letter-spacing: -0.04em;
   margin-bottom: 1rem;
@@ -350,7 +364,7 @@ img { max-width: 100%; }
   transition: color 0.2s;
 }
 
-.footer-col a:hover { color: var(--accent); }
+.footer-col a:hover { color: var(--primary-text); }
 
 .footer-bottom {
   display: flex;
@@ -416,7 +430,7 @@ img { max-width: 100%; }
   color: var(--text-secondary);
   transition: all 0.2s;
 }
-.nav-hamburger:hover { border-color: var(--accent); color: var(--accent); }
+.nav-hamburger:hover { border-color: var(--accent); color: var(--primary-text); }
 
 .mobile-menu {
   display: none;
@@ -442,7 +456,7 @@ img { max-width: 100%; }
   border-radius: var(--radius-sm);
   transition: all 0.2s;
 }
-.mobile-menu a:hover { background: var(--accent-bg); color: var(--accent); }
+.mobile-menu a:hover { background: var(--accent-bg); color: var(--primary-text); }
 
 @media (max-width: 768px) {
   .nav-hamburger { display: flex; }
@@ -458,15 +472,9 @@ img { max-width: 100%; }
 <nav class="nav">
   <div class="nav-inner">
     <a href="/" class="nav-brand">
-      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-        <polygon points="14,2 26,24 2,24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
-        <line x1="8" y1="18" x2="20" y2="18" stroke="var(--accent)" stroke-width="1.5"/>
-        <ellipse cx="14" cy="13" rx="10" ry="5" fill="none" stroke="var(--accent)" stroke-width="1" opacity="0.4">
-          <animateTransform attributeName="transform" type="rotate" from="0 14 13" to="360 14 13" dur="6s" repeatCount="indefinite"/>
-        </ellipse>
-      </svg>
+      ${r3MarkSvg({ size: 28, tile: false, decorative: true })}
       <div>
-        <span class="nav-brand-text">Averrow</span>
+        <span class="nav-brand-text">${r3WordmarkSvg(16)}</span>
         <span class="nav-brand-sub">Threat Intelligence</span>
       </div>
     </a>
@@ -518,17 +526,14 @@ img { max-width: 100%; }
     <div class="footer-grid">
       <div class="footer-brand-block">
         <a href="/" class="nav-brand" style="margin-bottom:0.5rem">
-          <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
-            <polygon points="14,2 26,24 2,24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
-            <line x1="8" y1="18" x2="20" y2="18" stroke="var(--accent)" stroke-width="1.5"/>
-          </svg>
+          ${r3MarkSvg({ size: 24, tile: false, decorative: true })}
           <div>
-            <span class="nav-brand-text" style="font-size:1rem">Averrow</span>
+            <span class="nav-brand-text">${r3WordmarkSvg(14)}</span>
           </div>
         </a>
         <p>AI-powered threat intelligence platform by LRX Enterprises Inc. Continuous monitoring for brand impersonation, phishing, and domain abuse.</p>
         <p style="margin-top:1rem;font-size:0.82rem;color:var(--text-tertiary)">
-          <a href="mailto:hello@averrow.com" style="color:var(--text-tertiary);transition:color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-tertiary)'">hello@averrow.com</a>
+          <a href="mailto:hello@averrow.com" style="color:var(--text-tertiary);transition:color 0.2s;" onmouseover="this.style.color='var(--primary-text)'" onmouseout="this.style.color='var(--text-tertiary)'">hello@averrow.com</a>
         </p>
       </div>
       <div class="footer-col">

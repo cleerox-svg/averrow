@@ -37,7 +37,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
 .hero-bg {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at 50% 30%, rgba(200, 60, 60, 0.04) 0%, transparent 70%);
+  background: radial-gradient(ellipse at 50% 30%, rgba(76, 92, 248, 0.04) 0%, transparent 70%);
   pointer-events: none;
 }
 
@@ -52,7 +52,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.3em;
-  color: var(--accent-section, var(--accent));
+  color: var(--accent-section, var(--primary-text));
   margin-bottom: 16px;
   text-transform: uppercase;
 }
@@ -82,7 +82,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   padding: 14px 18px 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--glass-card-bg, rgba(22,30,48,0.55));
+  background: var(--glass-card-bg, rgba(21,22,25,0.55));
   backdrop-filter: blur(12px) saturate(160%);
   text-align: left;
   font-family: var(--font-mono);
@@ -98,21 +98,21 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--amber);
+  color: var(--primary-text);
   margin-bottom: 10px;
 }
 .hero-ticker-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--amber);
-  box-shadow: 0 0 0 0 rgba(229,168,50,0.6);
+  background: var(--primary-text);
+  box-shadow: 0 0 0 0 rgba(76,92,248,0.6);
   animation: ticker-pulse 1.8s ease-out infinite;
 }
 @keyframes ticker-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(229,168,50,0.55); }
-  70%  { box-shadow: 0 0 0 8px rgba(229,168,50,0); }
-  100% { box-shadow: 0 0 0 0 rgba(229,168,50,0); }
+  0%   { box-shadow: 0 0 0 0 rgba(76,92,248,0.55); }
+  70%  { box-shadow: 0 0 0 8px rgba(76,92,248,0); }
+  100% { box-shadow: 0 0 0 0 rgba(76,92,248,0); }
 }
 .hero-ticker-viewport {
   height: 84px;
@@ -148,7 +148,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
 }
 @media (prefers-reduced-motion: reduce) {
   .hero-ticker-list { animation: none; }
-  .hero-ticker-dot  { animation: none; box-shadow: 0 0 0 4px rgba(229,168,50,0.20); }
+  .hero-ticker-dot  { animation: none; box-shadow: 0 0 0 4px rgba(76,92,248,0.20); }
 }
 @media (max-width: 560px) {
   .hero-ticker { font-size: 12px; padding: 12px 14px; }
@@ -175,7 +175,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
 
 .scan-box:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 30px rgba(200, 60, 60, 0.1);
+  box-shadow: 0 0 30px rgba(76, 92, 248, 0.1);
 }
 
 .scan-input {
@@ -231,7 +231,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
 
 .scan-btn:hover {
   background: var(--accent-hover);
-  box-shadow: 0 0 20px rgba(200, 60, 60, 0.35);
+  box-shadow: 0 0 20px rgba(76, 92, 248, 0.35);
 }
 
 .scan-btn:disabled {
@@ -331,13 +331,13 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
 }
 
 .risk-p.bad {
-  background: rgba(200, 60, 60, 0.1);
-  color: var(--accent);
+  background: rgba(76, 92, 248, 0.1);
+  color: var(--primary-text);
 }
 
 .risk-p.warn {
-  background: rgba(232, 146, 60, 0.1);
-  color: var(--amber);
+  background: var(--accent-bg);
+  color: var(--primary-text);
 }
 
 .risk-p.ok {
@@ -420,7 +420,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
 }
 
 .gate-error {
-  color: var(--accent);
+  color: var(--primary-text);
 }
 
 /* ── SCANNING ANIMATION ── */
@@ -447,7 +447,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--primary-text);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -471,7 +471,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.2em;
-  color: var(--accent-section, var(--accent));
+  color: var(--accent-section, var(--primary-text));
   text-transform: uppercase;
   margin-bottom: 10px;
 }
@@ -575,7 +575,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   font-family: var(--font-display);
   font-size: 40px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--primary-text);
   line-height: 1;
   margin-bottom: 10px;
 }
@@ -660,7 +660,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   width: 32px;
   height: 32px;
   margin-bottom: 14px;
-  color: var(--accent);
+  color: var(--primary-text);
   display: block;
 }
 
@@ -741,7 +741,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   font-family: var(--font-body);
   font-size: 12.5px;
   color: var(--text-primary);
-  border-left: 2px solid var(--amber);
+  border-left: 2px solid var(--primary-text);
   padding-left: 10px;
   line-height: 1.55;
 }
@@ -755,7 +755,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--red), var(--amber));
+  background: linear-gradient(135deg, var(--red), var(--primary-text));
   flex-shrink: 0;
   font-family: var(--font-display);
   display: flex;
@@ -796,7 +796,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at 50% 0%, rgba(200, 60, 60, 0.07) 0%, transparent 65%);
+  background: radial-gradient(ellipse at 50% 0%, rgba(76, 92, 248, 0.07) 0%, transparent 65%);
   pointer-events: none;
 }
 
@@ -805,7 +805,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(200, 60, 60, 0.5), transparent);
+  background: linear-gradient(90deg, transparent, rgba(76, 92, 248, 0.5), transparent);
 }
 
 .cta-headline {
@@ -846,7 +846,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
 
 .cta-btn-primary:hover {
   background: var(--accent-hover);
-  box-shadow: 0 0 20px rgba(200, 60, 60, 0.35);
+  box-shadow: 0 0 20px rgba(76, 92, 248, 0.35);
 }
 
 .cta-btn-secondary {
@@ -857,9 +857,9 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   text-transform: uppercase;
   padding: 13px 30px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(200, 60, 60, 0.4);
+  border: 1px solid rgba(76, 92, 248, 0.4);
   background: transparent;
-  color: var(--accent);
+  color: var(--primary-text);
   cursor: pointer;
   text-decoration: none;
   display: inline-block;
@@ -868,7 +868,7 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
 
 .cta-btn-secondary:hover {
   border-color: var(--accent);
-  background: rgba(200, 60, 60, 0.06);
+  background: rgba(76, 92, 248, 0.06);
 }
 
 /* ── LIGHT THEME GLASS EFFECTS ── */
@@ -878,24 +878,24 @@ export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
   background: rgba(255,255,255,0.6);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-color: rgba(226,221,213,0.5);
+  border-color: rgba(18,22,29,0.5);
   box-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
 }
 [data-theme="light"] .result-card:hover,
 [data-theme="light"] .agent-card:hover,
 [data-theme="light"] .cap-card:hover {
   box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
-  border-color: rgba(226,221,213,0.7);
+  border-color: rgba(18,22,29,0.7);
 }
 [data-theme="light"] .scan-box {
   background: rgba(255,255,255,0.7);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-color: rgba(226,221,213,0.5);
+  border-color: rgba(18,22,29,0.5);
 }
 [data-theme="light"] .cta-btn-secondary:hover {
-  border-color: #B53030;
-  background: rgba(181,48,48,0.06);
+  border-color: var(--accent);
+  background: var(--accent-bg);
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -987,7 +987,7 @@ html { scroll-behavior: smooth; }
   font-family: var(--font-display);
   font-size: clamp(32px, 4vw, 48px);
   font-weight: 800;
-  color: var(--accent);
+  color: var(--primary-text);
   line-height: 1;
   margin-bottom: 6px;
   letter-spacing: -0.02em;
@@ -1096,17 +1096,17 @@ ${pageStyles}
         </radialGradient>
       </defs>
       <!-- Grid lines -->
-      <line x1="0" y1="100" x2="500" y2="100" stroke="var(--accent, #C83C3C)" stroke-width="0.5" opacity="0.15"/>
-      <line x1="0" y1="200" x2="500" y2="200" stroke="var(--accent, #C83C3C)" stroke-width="0.5" opacity="0.2"/>
-      <line x1="0" y1="300" x2="500" y2="300" stroke="var(--accent, #C83C3C)" stroke-width="0.5" opacity="0.15"/>
-      <line x1="125" y1="0" x2="125" y2="400" stroke="var(--accent, #C83C3C)" stroke-width="0.5" opacity="0.15"/>
-      <line x1="250" y1="0" x2="250" y2="400" stroke="var(--accent, #C83C3C)" stroke-width="0.5" opacity="0.2"/>
-      <line x1="375" y1="0" x2="375" y2="400" stroke="var(--accent, #C83C3C)" stroke-width="0.5" opacity="0.15"/>
+      <line x1="0" y1="100" x2="500" y2="100" stroke="var(--accent, #4c5cf8)" stroke-width="0.5" opacity="0.15"/>
+      <line x1="0" y1="200" x2="500" y2="200" stroke="var(--accent, #4c5cf8)" stroke-width="0.5" opacity="0.2"/>
+      <line x1="0" y1="300" x2="500" y2="300" stroke="var(--accent, #4c5cf8)" stroke-width="0.5" opacity="0.15"/>
+      <line x1="125" y1="0" x2="125" y2="400" stroke="var(--accent, #4c5cf8)" stroke-width="0.5" opacity="0.15"/>
+      <line x1="250" y1="0" x2="250" y2="400" stroke="var(--accent, #4c5cf8)" stroke-width="0.5" opacity="0.2"/>
+      <line x1="375" y1="0" x2="375" y2="400" stroke="var(--accent, #4c5cf8)" stroke-width="0.5" opacity="0.15"/>
       <!-- Concentric defense circles -->
-      <circle cx="250" cy="200" r="50"  stroke="var(--accent, #C83C3C)" stroke-width="1.5" stroke-dasharray="4 3" fill="none" opacity="0.4"/>
-      <circle cx="250" cy="200" r="95"  stroke="var(--accent, #C83C3C)" stroke-width="1.8" stroke-dasharray="5 4" fill="none" opacity="0.5"/>
-      <circle cx="250" cy="200" r="140" stroke="var(--accent, #C83C3C)" stroke-width="1.8" stroke-dasharray="5 4" fill="none" opacity="0.45"/>
-      <circle cx="250" cy="200" r="192" stroke="var(--accent, #C83C3C)" stroke-width="1.5" stroke-dasharray="5 4" fill="none" opacity="0.35"/>
+      <circle cx="250" cy="200" r="50"  stroke="var(--accent, #4c5cf8)" stroke-width="1.5" stroke-dasharray="4 3" fill="none" opacity="0.4"/>
+      <circle cx="250" cy="200" r="95"  stroke="var(--accent, #4c5cf8)" stroke-width="1.8" stroke-dasharray="5 4" fill="none" opacity="0.5"/>
+      <circle cx="250" cy="200" r="140" stroke="var(--accent, #4c5cf8)" stroke-width="1.8" stroke-dasharray="5 4" fill="none" opacity="0.45"/>
+      <circle cx="250" cy="200" r="192" stroke="var(--accent, #4c5cf8)" stroke-width="1.5" stroke-dasharray="5 4" fill="none" opacity="0.35"/>
       <!-- Rotating radar sweep arm -->
       <g class="radar-sweep-arm" style="transform-origin: 250px 200px; transform-box: view-box;">
         <line x1="250" y1="200" x2="250" y2="8" stroke="#C83C3C" stroke-width="2" opacity="0.75" stroke-linecap="round"/>
@@ -1513,7 +1513,7 @@ document.getElementById('scanForm').addEventListener('submit', function(e) {
 
     if (!data.success) {
       rs.querySelector('#results-content').innerHTML =
-        '<div class="result-card"><div class="result-domain">' + esc(domain) + '</div><p style="color:var(--accent)">Scan failed: ' + esc(data.error || 'Unknown error') + '</p></div>';
+        '<div class="result-card"><div class="result-domain">' + esc(domain) + '</div><p style="color:var(--sev-critical)">Scan failed: ' + esc(data.error || 'Unknown error') + '</p></div>';
       return;
     }
 
@@ -1526,7 +1526,7 @@ document.getElementById('scanForm').addEventListener('submit', function(e) {
     btn.disabled = false;
     btn.textContent = 'LAUNCH SORTIE';
     rs.querySelector('#results-content').innerHTML =
-      '<div class="result-card"><p style="color:var(--accent)">Scan failed. Please check the domain and try again.</p></div>';
+      '<div class="result-card"><p style="color:var(--sev-critical)">Scan failed. Please check the domain and try again.</p></div>';
   });
 });
 

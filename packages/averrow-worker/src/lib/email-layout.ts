@@ -11,20 +11,40 @@
  *     (head, dark-mode meta, brand header, content, footer).
  *   - `escapeHtml(s)` for safe value interpolation.
  *
- * Visual contract:
- *   - Logo: hosted PNG at https://averrow.com/logo-email-mark.png (38x38).
- *     This is the same asset abuse-mailbox-responder.ts uses — keeping the
- *     URL stable means Gmail's image proxy keeps it cached across every
- *     email family. See the long PR-BF note in abuse-mailbox-responder.ts
- *     for the cache-control reasoning.
+ * Visual contract (facelift Phase 4 — R3 logo, indigo on graphite):
+ *   - Logo: hosted R3 mark PNG at EMAIL_LOGO_URL
+ *     (https://averrow.com/v2/email/averrow-mark-r3.png, 144x144 shown at
+ *     38x38). Same asset as the abuse-mailbox-responder default. It has a
+ *     new filename so no mail-proxy cache of the old mark applies.
+ *   - Primary (CTA buttons, links, accent strip) is indigo #4c5cf8 with
+ *     white text (5.0:1); #96acff for primary-coloured text on the dark
+ *     card. Amber (#E5A832) is a STATUS colour only (warn badges).
  *   - Dark-mode armor: `data-ogsc` / `data-ogsb` counter-invert rules so
  *     Gmail Android + iOS Mail don't flip our intentionally-red mark to
  *     pink-on-white. Same pattern proven on the abuse-triage emails.
- *   - Header uses #0F1828 (locked via !important) so dark-mode clients
- *     don't auto-paint over it.
+ *   - Header uses graphite #151619 (locked via !important) so dark-mode
+ *     clients don't auto-paint over it.
  */
 
-const LOGO_URL = "https://averrow.com/logo-email-mark.png";
+import { EMAIL_LOGO_URL, FACELIFT } from "../templates/brand";
+
+const LOGO_URL = EMAIL_LOGO_URL;
+
+/** Email palette — inline hex only (no CSS variables in mail clients). */
+export const EMAIL_COLORS = {
+  pageBg: FACELIFT.bgPage,          // #0a0b0e
+  card: FACELIFT.bgCard,            // #151619
+  footer: FACELIFT.bgCardDeep,      // #0f1013
+  primary: FACELIFT.primary,        // #4c5cf8 — CTA fill, accent strip
+  primaryText: FACELIFT.primaryText, // #96acff — links / eyebrows on the card
+  text: FACELIFT.textPrimary,       // #f6f7f7
+  textDim: FACELIFT.textSecondary,  // #c2c2c4
+  textMuted: FACELIFT.textMuted,    // #8b8c8d
+} as const;
+
+/** Inline style for the primary CTA button: indigo fill, white text. */
+export const EMAIL_CTA_STYLE =
+  `display:inline-block;padding:14px 36px;background-color:${FACELIFT.primary};background:${FACELIFT.primary};color:#FFFFFF;font-family:'SF Mono','Menlo',Consolas,monospace;font-size:12px;font-weight:700;letter-spacing:0.18em;text-decoration:none;border-radius:8px;text-transform:uppercase;`;
 const FONT_BODY =
   "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const FONT_MONO =
@@ -37,7 +57,8 @@ export interface EmailShellOptions {
   preheader: string;
   /** Tagline rendered under "AVERROW" in the header. */
   tagline?: string;
-  /** Accent colour for the thin strip below the header. Defaults to amber. */
+  /** Accent colour for the thin strip below the header. Defaults to indigo
+   *  (primary). Pass a status colour only for a status email (alerts). */
   accent?: string;
   /** Optional right-hand badge in the header (e.g. an OPERATIONAL chip). */
   headerBadge?: string;
@@ -45,13 +66,16 @@ export interface EmailShellOptions {
   body: string;
   /** Optional footer note rendered above the brand line (e.g. recipient hint). */
   footerNote?: string;
-  /** Override the default page background. Defaults to #060A14 (Deep Space). */
+  /** Override the default page background. Defaults to graphite #0a0b0e. */
   pageBg?: string;
 }
 
 export function emailShell(opts: EmailShellOptions): string {
-  const accent = opts.accent ?? "#E5A832";
-  const pageBg = opts.pageBg ?? "#060A14";
+  const accent = opts.accent ?? EMAIL_COLORS.primary;
+  // Indigo at 9px on the card is below AA; use the primary-text tint for
+  // the tagline when the accent is the primary. Status accents keep theirs.
+  const taglineColor = accent === EMAIL_COLORS.primary ? EMAIL_COLORS.primaryText : accent;
+  const pageBg = opts.pageBg ?? EMAIL_COLORS.pageBg;
   const tagline = opts.tagline ?? "THREAT INTERCEPTOR";
   return `<!doctype html>
 <html lang="en"><head>
@@ -64,19 +88,19 @@ export function emailShell(opts: EmailShellOptions): string {
   :root{color-scheme:light dark;supported-color-schemes:light dark;}
   /* Lock the dark-by-design surfaces so dark-mode helpers don't repaint them. */
   .av-page         { background:${pageBg} !important; }
-  .av-card         { background:#0F1828 !important; }
-  .av-brand-header { background:#0F1828 !important; }
+  .av-card         { background:${EMAIL_COLORS.card} !important; }
+  .av-brand-header { background:${EMAIL_COLORS.card} !important; }
   .av-brand-logo   { background:transparent !important; }
   .av-accent-line  { background:${accent} !important; }
   @media (prefers-color-scheme: dark) {
     .av-page         { background:${pageBg} !important; }
-    .av-card         { background:#0F1828 !important; }
-    .av-brand-header { background:#0F1828 !important; }
+    .av-card         { background:${EMAIL_COLORS.card} !important; }
+    .av-brand-header { background:${EMAIL_COLORS.card} !important; }
     .av-brand-logo   { background:transparent !important; }
     .av-accent-line  { background:${accent} !important; }
   }
   /* Gmail Android + iOS Mail counter-invert: re-flip the auto-inversion
-     so the crimson Avro Arrow stays crimson. See abuse-mailbox-responder
+     so the red R3 mark stays red. See abuse-mailbox-responder
      for the full PR-BB write-up. */
   [data-ogsc] .av-brand-logo,
   [data-ogsb] .av-brand-logo { filter: invert(1) hue-rotate(180deg) !important; }
@@ -91,13 +115,13 @@ export function emailShell(opts: EmailShellOptions): string {
   }
 </style>
 </head>
-<body class="av-page" style="margin:0;padding:0;background:${pageBg};font-family:${FONT_BODY};color:#E2E8F0;-webkit-font-smoothing:antialiased;">
+<body class="av-page" style="margin:0;padding:0;background:${pageBg};font-family:${FONT_BODY};color:${EMAIL_COLORS.text};-webkit-font-smoothing:antialiased;">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(opts.preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${pageBg};padding:32px 16px;">
   <tr><td align="center">
-    <table role="presentation" class="av-shell" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#0F1828;border:1px solid rgba(255,255,255,0.06);border-radius:14px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.55);">
+    <table role="presentation" class="av-shell" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:${EMAIL_COLORS.card};border:1px solid rgba(255,255,255,0.06);border-radius:14px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.55);">
       <!-- Header -->
-      <tr><td class="av-brand-header av-pad-x" style="background:#0F1828;padding:22px 28px;border-bottom:1px solid rgba(255,255,255,0.06);">
+      <tr><td class="av-brand-header av-pad-x" style="background:${EMAIL_COLORS.card};padding:22px 28px;border-bottom:1px solid rgba(255,255,255,0.06);">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="vertical-align:middle;width:46px;">
@@ -105,7 +129,7 @@ export function emailShell(opts: EmailShellOptions): string {
             </td>
             <td style="vertical-align:middle;padding-left:14px;">
               <div style="font-family:${FONT_BODY};font-size:18px;font-weight:800;color:#FFFFFF;letter-spacing:0.06em;line-height:1.1;">AVERROW</div>
-              <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.24em;color:${accent};margin-top:3px;text-transform:uppercase;">${escapeHtml(tagline)}</div>
+              <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.24em;color:${taglineColor};margin-top:3px;text-transform:uppercase;">${escapeHtml(tagline)}</div>
             </td>
             ${opts.headerBadge ? `<td style="vertical-align:middle;text-align:right;">${opts.headerBadge}</td>` : ""}
           </tr>
@@ -114,16 +138,16 @@ export function emailShell(opts: EmailShellOptions): string {
       <!-- Accent strip -->
       <tr><td class="av-accent-line" style="height:3px;font-size:0;line-height:0;background:${accent};">&nbsp;</td></tr>
       <!-- Body -->
-      <tr><td class="av-pad-x" style="padding:0;background:#0F1828;">${opts.body}</td></tr>
+      <tr><td class="av-pad-x" style="padding:0;background:${EMAIL_COLORS.card};">${opts.body}</td></tr>
       <!-- Footer -->
-      <tr><td class="av-pad-x" style="padding:22px 28px;border-top:1px solid rgba(255,255,255,0.06);background:#0B1320;">
+      <tr><td class="av-pad-x" style="padding:22px 28px;border-top:1px solid rgba(255,255,255,0.06);background:${EMAIL_COLORS.footer};">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td>
-              ${opts.footerNote ? `<div style="font-family:${FONT_BODY};font-size:11px;line-height:1.55;color:#6B7A90;margin-bottom:10px;">${opts.footerNote}</div>` : ""}
-              <div style="font-family:${FONT_MONO};font-size:10px;letter-spacing:0.22em;color:#8896AB;text-transform:uppercase;">AVERROW · THREAT INTERCEPTOR</div>
-              <div style="font-family:${FONT_BODY};font-size:11px;color:#6B7A90;margin-top:4px;">
-                <a href="https://averrow.com" style="color:${accent};text-decoration:none;">averrow.com</a>
+              ${opts.footerNote ? `<div style="font-family:${FONT_BODY};font-size:11px;line-height:1.55;color:${EMAIL_COLORS.textMuted};margin-bottom:10px;">${opts.footerNote}</div>` : ""}
+              <div style="font-family:${FONT_MONO};font-size:10px;letter-spacing:0.22em;color:#a1a1a3;text-transform:uppercase;">AVERROW · THREAT INTERCEPTOR</div>
+              <div style="font-family:${FONT_BODY};font-size:11px;color:${EMAIL_COLORS.textMuted};margin-top:4px;">
+                <a href="https://averrow.com" style="color:${EMAIL_COLORS.primaryText};text-decoration:none;">averrow.com</a>
                 &nbsp;·&nbsp;
                 LRX Enterprises Inc.
               </div>

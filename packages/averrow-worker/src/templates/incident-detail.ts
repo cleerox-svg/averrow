@@ -89,7 +89,7 @@ function renderNotFound(): string {
 .notfound-shell { max-width: 600px; margin: 6rem auto 4rem; padding: 0 1.5rem; text-align: center; }
 .notfound-title { font-family: var(--font-display); font-size: 28px; font-weight: 700; margin-bottom: 0.5rem; color: var(--text-primary); }
 .notfound-sub { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); letter-spacing: 0.04em; }
-.notfound-link { display: inline-block; margin-top: 1.5rem; font-family: var(--font-mono); font-size: 13px; color: var(--accent, var(--amber, #E5A832)); text-decoration: none; border-bottom: 1px dashed currentColor; }
+.notfound-link { display: inline-block; margin-top: 1.5rem; font-family: var(--font-mono); font-size: 13px; color: var(--primary-text, #96acff); text-decoration: none; border-bottom: 1px dashed currentColor; }
 @media (max-width: 600px) { .notfound-shell { margin: 5rem auto 3rem; padding: 0 1rem; } }
 </style>
 <div class="notfound-shell">
@@ -146,7 +146,7 @@ export async function renderIncidentDetailPage(env: Env, id: string): Promise<In
 .incident-detail-pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .incident-detail-pill { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 10px; border-radius: 100px; }
 
-.incident-detail-summary { background: var(--bg-card, rgba(22,30,48,0.65)); border: 1px solid var(--border-base, rgba(255,255,255,0.08)); border-radius: 12px; padding: 1.1rem 1.25rem; margin-bottom: 1.25rem; backdrop-filter: blur(8px); }
+.incident-detail-summary { background: var(--bg-card, var(--bg-secondary)); border: 1px solid var(--border-base, rgba(255,255,255,0.08)); border-radius: 12px; padding: 1.1rem 1.25rem; margin-bottom: 1.25rem; backdrop-filter: blur(8px); }
 .incident-detail-summary-text { font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin: 0; }
 
 .incident-detail-meta { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px dashed rgba(255,255,255,0.06); letter-spacing: 0.04em; }
@@ -154,7 +154,7 @@ export async function renderIncidentDetailPage(env: Env, id: string): Promise<In
 
 .incident-detail-section-title { font-family: var(--font-display); font-size: 16px; font-weight: 700; color: var(--text-primary); margin: 1.5rem 0 0.75rem; }
 
-.incident-detail-update { background: var(--bg-card, rgba(22,30,48,0.55)); border: 1px solid var(--border-base, rgba(255,255,255,0.06)); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
+.incident-detail-update { background: var(--bg-card, var(--bg-secondary)); border: 1px solid var(--border-base, rgba(255,255,255,0.06)); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
 .incident-detail-update-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; margin-bottom: 6px; letter-spacing: 0.04em; }
 .incident-detail-update-status { font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em; }
 .incident-detail-update-body { font-size: 14px; color: var(--text-primary); line-height: 1.55; }

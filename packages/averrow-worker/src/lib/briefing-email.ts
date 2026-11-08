@@ -21,13 +21,17 @@ const FROM_ADDRESS = "Averrow Intelligence <briefing@averrow.com>";
 // ─── Tokens (mirror the SPA design system) ─────────────────────
 
 const COLOR = {
-  bgCard:     "#111A2C",
-  bgCardAlt:  "#0D1626",
+  bgCard:     "#1f2024",   // graphite elevated, on the #151619 shell card
+  bgCardAlt:  "#18191c",
   border:     "rgba(255,255,255,0.07)",
   borderHard: "rgba(255,255,255,0.10)",
-  text:       "#E8ECF2",
-  textDim:    "#9AAABF",
-  textMuted:  "#6B7A90",
+  text:       "#f6f7f7",
+  textDim:    "#c2c2c4",
+  textMuted:  "#8b8c8d",
+  // Facelift (Phase 4): indigo is the brand/primary colour; amber is a
+  // STATUS colour only (degraded, warnings, anomalies).
+  primary:    "#4c5cf8",   // CTA fill (white text, 5.0:1)
+  accent:     "#96acff",   // primary-coloured text on the dark card
   amber:      "#E5A832",
   red:        "#F87171",
   orange:     "#FB923C",
@@ -131,7 +135,7 @@ function severityColor(sev: string): string {
 /** Section: title strip + card body, with consistent spacing. */
 function section(title: string, bodyHtml: string, opts?: { eyebrow?: string }): string {
   const eyebrow = opts?.eyebrow
-    ? `<div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:2px;">${escapeHtml(opts.eyebrow)}</div>`
+    ? `<div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.accent};text-transform:uppercase;margin-bottom:2px;">${escapeHtml(opts.eyebrow)}</div>`
     : "";
   return `
   <tr><td style="padding:22px 28px 6px;">
@@ -150,7 +154,7 @@ function card(innerHtml: string, opts?: { accent?: string }): string {
 }
 
 /** Stat tile (used in the 4-up overview grid). */
-function statTile(value: string, label: string, color: string = COLOR.amber): string {
+function statTile(value: string, label: string, color: string = COLOR.accent): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${COLOR.bgCard};border:1px solid ${COLOR.border};border-radius:10px;">
     <tr><td style="padding:14px 12px;text-align:center;">
       <div style="font-family:${FONT_MONO};font-size:22px;font-weight:800;color:${color};line-height:1.1;letter-spacing:-0.02em;">${value}</div>
@@ -198,7 +202,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
   // 1) Title + date
   const titleBlock = `
   <tr><td style="padding:24px 28px 6px;">
-    <div style="font-family:${FONT_MONO};font-size:10px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;">Daily Operations Briefing</div>
+    <div style="font-family:${FONT_MONO};font-size:10px;letter-spacing:0.22em;color:${COLOR.accent};text-transform:uppercase;">Daily Operations Briefing</div>
     <div style="font-size:20px;font-weight:700;color:${COLOR.text};margin-top:6px;line-height:1.25;">${escapeHtml(dateStr)}</div>
     <div style="font-size:12px;color:${COLOR.textDim};margin-top:4px;">${fmt(p.brandsMonitored)} brands monitored · ${fmt(p.brandsClassified)} classified</div>
   </td></tr>`;
@@ -217,10 +221,10 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
           <div style="font-size:12px;color:${COLOR.text};line-height:1.6;">
             Status <strong style="color:${COLOR.red};">${escapeHtml(gc.status.toUpperCase())}</strong>
             · Priority <strong style="color:${COLOR.orange};">${escapeHtml(gc.briefing_priority.toUpperCase())}</strong>
-            · Since <strong style="color:${COLOR.amber};">${escapeHtml(gc.start_date)}</strong>
+            · Since <strong style="color:${COLOR.accent};">${escapeHtml(gc.start_date)}</strong>
           </div>
           <div style="font-size:12px;color:${COLOR.text};line-height:1.6;margin-top:4px;">
-            ${fmt(gc.total_threats)} threats total · <strong style="color:${COLOR.amber};">${fmt(gc.new_24h)}</strong> new in 24h · ${fmt(gc.brands_hit)} brands targeted
+            ${fmt(gc.total_threats)} threats total · <strong style="color:${COLOR.accent};">${fmt(gc.new_24h)}</strong> new in 24h · ${fmt(gc.brands_hit)} brands targeted
           </div>
           ${actors.length > 0 ? `<div style="font-family:${FONT_MONO};font-size:11px;color:${COLOR.orange};margin-top:6px;">Actors: ${escapeHtml(actors.join(", "))}</div>` : ""}
           ${gc.notes ? `<div style="font-size:12px;color:${COLOR.textDim};margin-top:6px;font-style:italic;">${escapeHtml(gc.notes)}</div>` : ""}
@@ -253,7 +257,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
     ${thead([{ text: "Source" }, { text: "Count", align: "right", width: "80px" }])}
     ${b.newThreats.bySource.map(s => tr([
       { html: escapeHtml(s.source_feed), mono: true },
-      { html: fmt(s.count), align: "right", mono: true, color: COLOR.amber, bold: true },
+      { html: fmt(s.count), align: "right", mono: true, color: COLOR.accent, bold: true },
     ])).join("")}
   `) : "";
 
@@ -269,7 +273,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
     "New Threats",
     `<div style="margin-bottom:10px;">
       <span style="font-family:${FONT_MONO};font-size:11px;color:${COLOR.textDim};">Last 12h:</span>
-      <span style="font-family:${FONT_MONO};font-size:14px;color:${COLOR.amber};font-weight:700;margin-left:4px;">${fmt(total12h)}</span>
+      <span style="font-family:${FONT_MONO};font-size:14px;color:${COLOR.accent};font-weight:700;margin-left:4px;">${fmt(total12h)}</span>
     </div>
     <div style="margin-bottom:14px;">${severityChips}</div>
     ${bySourceTable}
@@ -286,7 +290,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
       ${b.feedProduction.slice(0, 12).map(f => tr([
         { html: escapeHtml(f.feed_name), mono: true },
         { html: fmt(f.runs), align: "right", mono: true, color: COLOR.textDim },
-        { html: fmt(f.ingested), align: "right", mono: true, color: COLOR.amber, bold: true },
+        { html: fmt(f.ingested), align: "right", mono: true, color: COLOR.accent, bold: true },
       ])).join("")}
     `);
 
@@ -336,7 +340,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
       ${enrichmentRows.map(e => tr([
         { html: escapeHtml(e.name), mono: true },
         { html: fmt(e.checked), align: "right", mono: true, color: COLOR.textDim },
-        { html: fmt(e.hits), align: "right", mono: true, color: e.hits > 0 ? COLOR.amber : COLOR.textMuted, bold: e.hits > 0 },
+        { html: fmt(e.hits), align: "right", mono: true, color: e.hits > 0 ? COLOR.accent : COLOR.textMuted, bold: e.hits > 0 },
         { html: pct(e.hits, e.checked), align: "right", mono: true, color: COLOR.textDim },
         { html: e.checked > 0 ? statusDot(COLOR.green) : statusDot(COLOR.amber), align: "center" },
       ])).join("")}
@@ -355,7 +359,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
           const lr = a.last_run ? new Date(a.last_run).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false }) + " UTC" : "—";
           return tr([
             { html: escapeHtml(a.agent_id), mono: true },
-            { html: fmt(a.runs), align: "right", mono: true, color: COLOR.amber },
+            { html: fmt(a.runs), align: "right", mono: true, color: COLOR.accent },
             { html: lr, align: "right", mono: true, color: COLOR.textDim },
             { html: statusDot(COLOR.green), align: "center" },
           ]);
@@ -367,27 +371,27 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
   // 8) Spam trap + honeypot — compact summary cards side by side
   const spamTrapCard = card(`
     <tr><td style="padding:14px 16px;">
-      <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:6px;">Spam Trap</div>
+      <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.accent};text-transform:uppercase;margin-bottom:6px;">Spam Trap</div>
       <div style="font-size:12px;color:${COLOR.text};line-height:1.8;">
-        Seeds: <strong style="color:${COLOR.amber};">${fmt(b.spamTrap.totalSeeds)}</strong><br>
-        Captures: <strong style="color:${COLOR.amber};">${fmt(b.spamTrap.totalCaptures)}</strong>
+        Seeds: <strong style="color:${COLOR.accent};">${fmt(b.spamTrap.totalSeeds)}</strong><br>
+        Captures: <strong style="color:${COLOR.accent};">${fmt(b.spamTrap.totalCaptures)}</strong>
         <span style="color:${COLOR.textDim};">(${fmt(b.spamTrap.captures12h)} new in 12h)</span>
       </div>
     </td></tr>
   `);
   const honeypotCard = card(`
     <tr><td style="padding:14px 16px;">
-      <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:6px;">Honeypot</div>
+      <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.accent};text-transform:uppercase;margin-bottom:6px;">Honeypot</div>
       <div style="font-size:12px;color:${COLOR.text};line-height:1.8;">
-        Visits: <strong style="color:${COLOR.amber};">${fmt(b.honeypot.totalVisits)}</strong>
+        Visits: <strong style="color:${COLOR.accent};">${fmt(b.honeypot.totalVisits)}</strong>
         <span style="color:${COLOR.textDim};">(${fmt(b.honeypot.botVisits)} bots · ${fmt(b.honeypot.humanVisits)} humans)</span><br>
-        Last 12h: <strong style="color:${COLOR.amber};">${fmt(b.honeypot.visits12h)}</strong>
+        Last 12h: <strong style="color:${COLOR.accent};">${fmt(b.honeypot.visits12h)}</strong>
       </div>
     </td></tr>
   `);
   const trapsBlock = `
   <tr><td style="padding:22px 28px 6px;">
-    <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:2px;">Section 5</div>
+    <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.accent};text-transform:uppercase;margin-bottom:2px;">Section 5</div>
     <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;color:${COLOR.text};">Traps &amp; Honeypots</div>
   </td></tr>
   <tr><td style="padding:0 28px 4px;">
@@ -421,7 +425,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
       : card(b.topTargetedBrands.slice(0, 10).map((brand, i) => tr([
           { html: `<span style="color:${COLOR.textMuted};font-family:${FONT_MONO};">${(i + 1).toString().padStart(2, "0")}</span>`, width: "32px" },
           { html: escapeHtml(brand.name), bold: true },
-          { html: fmt(brand.threats_24h), align: "right", mono: true, color: COLOR.amber, bold: true, width: "80px" },
+          { html: fmt(brand.threats_24h), align: "right", mono: true, color: COLOR.accent, bold: true, width: "80px" },
         ])).join("")),
     { eyebrow: "Section 6" }
   );
@@ -469,7 +473,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
   // 11) Brand coverage — compact one-liner
   const brandCoverageBlock = b.brandCoverage.length === 0 ? "" : `
   <tr><td style="padding:22px 28px 6px;">
-    <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.amber};text-transform:uppercase;margin-bottom:2px;">Section 8</div>
+    <div style="font-family:${FONT_MONO};font-size:9px;letter-spacing:0.22em;color:${COLOR.accent};text-transform:uppercase;margin-bottom:2px;">Section 8</div>
     <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;color:${COLOR.text};">Brand Coverage</div>
   </td></tr>
   <tr><td style="padding:0 28px 18px;">
@@ -494,7 +498,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
           <td width="20%" style="padding:0 4px;">${statTile(fmt(mv.aiCrawlerViews), "AI Crawler Hits", COLOR.blue)}</td>
           <td width="20%" style="padding:0 4px;">${statTile(fmt(mv.aiReferralSessions), "AI Referrals", COLOR.green)}</td>
           <td width="20%" style="padding:0 4px;">${statTile(fmt(mv.ctaClicks), "CTA Clicks")}</td>
-          <td width="20%" style="padding:0 0 0 4px;">${statTile(fmt(mv.contactSubs), "Contact Subs", COLOR.amber)}</td>
+          <td width="20%" style="padding:0 0 0 4px;">${statTile(fmt(mv.contactSubs), "Contact Subs", COLOR.accent)}</td>
         </tr>
       </table>
       ${mv.aiCrawlerBreakdown.length === 0 ? "" : `
@@ -505,7 +509,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
         ${thead([{ text: "Top Page" }, { text: "Views", align: "right", width: "80px" }])}
         ${mv.topPages.map(pg => tr([
           { html: escapeHtml(pg.page), mono: true },
-          { html: fmt(pg.views), align: "right", mono: true, color: COLOR.amber, bold: true },
+          { html: fmt(pg.views), align: "right", mono: true, color: COLOR.accent, bold: true },
         ])).join("")}
       `)}
       ${mv.aiReferralBySource.length === 0 ? "" : `
@@ -521,7 +525,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
   const ctaBlock = `
   <tr><td style="padding:10px 28px 24px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
-      <a class="av-cta" href="https://averrow.com/v2/admin" style="display:inline-block;padding:13px 28px;background:linear-gradient(180deg,${COLOR.amber} 0%,#B8821F 100%);color:#0B1320;font-family:${FONT_MONO};font-size:11px;font-weight:700;letter-spacing:0.16em;text-decoration:none;border-radius:8px;text-transform:uppercase;">Open Admin Dashboard</a>
+      <a class="av-cta" href="https://averrow.com/v2/admin" style="display:inline-block;padding:13px 28px;background-color:${COLOR.primary};background:${COLOR.primary};color:#FFFFFF;font-family:${FONT_MONO};font-size:11px;font-weight:700;letter-spacing:0.16em;text-decoration:none;border-radius:8px;text-transform:uppercase;">Open Admin Dashboard</a>
     </td></tr></table>
   </td></tr>`;
 
@@ -548,7 +552,7 @@ function buildBriefingHtml(b: ComprehensiveBriefing, title: string): string {
   return emailShell({
     title: `${title} — Averrow`,
     preheader: `${b.statusBadge}: ${fmt(b.platformOverview.last24h)} new threats · ${fmt(b.platformOverview.brandsMonitored)} brands monitored`,
-    accent: ok ? "#E5A832" : "#FB923C",
+    accent: ok ? COLOR.primary : "#FB923C",
     tagline: "INTELLIGENCE BRIEFING",
     headerBadge: headerStatusBadge(b.statusBadge, ok ? "ok" : "warn"),
     body: buildBriefingBody(b),
@@ -622,9 +626,9 @@ export async function sendPlatformEscalationEmail(
   <div style="font-family:${FONT_MONO};font-size:11px;letter-spacing:0.08em;color:${COLOR.orange};margin-bottom:8px;">PLATFORM ALERT · ${escapeHtml(alert.severity.toUpperCase())}</div>
   <div style="font-size:18px;font-weight:600;color:${COLOR.text};margin-bottom:12px;">${escapeHtml(alert.title)}</div>
   <div style="font-size:14px;line-height:1.55;color:${COLOR.textDim};margin-bottom:16px;">${escapeHtml(alert.message)}</div>
-  <div style="font-family:${FONT_MONO};font-size:11px;letter-spacing:0.08em;color:${COLOR.amber};margin-bottom:6px;">RECOMMENDED ACTION</div>
+  <div style="font-family:${FONT_MONO};font-size:11px;letter-spacing:0.08em;color:${COLOR.accent};margin-bottom:6px;">RECOMMENDED ACTION</div>
   <div style="font-size:13px;line-height:1.55;color:${COLOR.text};margin-bottom:16px;">${escapeHtml(alert.recommended_action)}</div>
-  <a href="${escapeHtml(link)}" style="color:${COLOR.amber};font-size:13px;">Open in Averrow</a>
+  <a href="${escapeHtml(link)}" style="color:${COLOR.accent};font-size:13px;">Open in Averrow</a>
 </div>`;
 
   try {

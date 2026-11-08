@@ -4,7 +4,7 @@
  * and footer match every other Averrow transactional email.
  */
 import { logger } from "./logger";
-import { emailShell, escapeHtml } from "./email-layout";
+import { emailShell, escapeHtml, EMAIL_COLORS } from "./email-layout";
 
 const FROM_ADDRESS = "Averrow <noreply@averrow.com>";
 
@@ -84,28 +84,28 @@ function buildInviteEmail(params: InviteEmailParams): string {
 
   const body = `
   <tr><td style="padding:32px 28px 8px;">
-    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#E8ECF2;line-height:1.3;">
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#f6f7f7;line-height:1.3;">
       You've been invited to join<br>
-      <span style="color:#E5A832;">${escapeHtml(orgName)}</span>
+      <span style="color:${EMAIL_COLORS.primaryText};">${escapeHtml(orgName)}</span>
     </h1>
-    <p style="margin:14px 0 0;font-size:14px;line-height:1.6;color:#9AAABF;">
-      <strong style="color:#E8ECF2;">${escapeHtml(invitedByName)}</strong> has invited you to join as
-      <strong style="color:#E8ECF2;">${escapeHtml(displayRole)}</strong>.
+    <p style="margin:14px 0 0;font-size:14px;line-height:1.6;color:#c2c2c4;">
+      <strong style="color:#f6f7f7;">${escapeHtml(invitedByName)}</strong> has invited you to join as
+      <strong style="color:#f6f7f7;">${escapeHtml(displayRole)}</strong>.
     </p>
-    <p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#9AAABF;">
+    <p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#c2c2c4;">
       Averrow is an AI-powered threat intelligence platform that detects brand impersonation,
       phishing, and cyber threats in real-time.
     </p>
   </td></tr>
   <tr><td style="padding:28px 28px 8px;" align="center">
-    <a class="av-cta" href="${escapeHtml(acceptUrl)}" style="display:inline-block;padding:14px 36px;background:linear-gradient(180deg,#E5A832 0%,#B8821F 100%);color:#0B1320;font-family:'SF Mono','Menlo',Consolas,monospace;font-size:12px;font-weight:700;letter-spacing:0.18em;text-decoration:none;border-radius:8px;text-transform:uppercase;">
+    <a class="av-cta" href="${escapeHtml(acceptUrl)}" style="display:inline-block;padding:14px 36px;background-color:${EMAIL_COLORS.primary};background:${EMAIL_COLORS.primary};color:#FFFFFF;font-family:'SF Mono','Menlo',Consolas,monospace;font-size:12px;font-weight:700;letter-spacing:0.18em;text-decoration:none;border-radius:8px;text-transform:uppercase;">
       Accept Invitation
     </a>
   </td></tr>
   <tr><td style="padding:20px 28px 28px;">
     <div style="margin:0;padding:14px 16px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;">
-      <p style="margin:0;font-size:12px;color:#9AAABF;line-height:1.55;">
-        This invitation expires on <strong style="color:#E8ECF2;">${escapeHtml(formattedExpiry)}</strong>.<br>
+      <p style="margin:0;font-size:12px;color:#c2c2c4;line-height:1.55;">
+        This invitation expires on <strong style="color:#f6f7f7;">${escapeHtml(formattedExpiry)}</strong>.<br>
         If you didn't expect this invitation, you can safely ignore this email.
       </p>
     </div>
