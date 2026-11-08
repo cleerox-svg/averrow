@@ -11,7 +11,6 @@
 // Replaces the 12 equal-weight sections of the pre-PR7 Home.
 
 import { useAuth } from '@/lib/auth';
-import { sentenceCase } from '@/lib/sentence-case';
 import { InstallAppBanner } from '@/components/InstallAppBanner';
 import { Briefing } from '@/features/briefing/Briefing';
 import { useHomeQueue } from '@/features/home/useHomeQueue';
@@ -62,7 +61,7 @@ function Hero({ queue }: { queue: HomeQueue }) {
     <div className="console-v4" style={{ paddingBottom: 6 }}>
       <div className="console-head">
         <div>
-          <div className="console-crumb">{sentenceCase('COMMAND CENTER')}</div>
+          <div className="console-crumb">Command center</div>
           <h1 className="console-title">{greeting}, {name}</h1>
           {parts && (
             <p className="home-hero-sub" aria-live="polite">

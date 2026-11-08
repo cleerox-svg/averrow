@@ -8,25 +8,19 @@
 // the moment AI_MODE flips.
 
 import { Badge, Card, PageState } from '@/design-system/components';
-import type { BadgeStatus } from '@/design-system/components';
-import type { CategoryRollup, CategoryStatus } from '@averrow/shared';
+import type { CategoryRollup } from '@averrow/shared';
 import { CATEGORY_LABELS } from '@averrow/shared';
 import { PlatformStatusFlyout } from '@/components/PlatformStatusFlyout';
-import { sentenceCase } from '@/lib/sentence-case';
+import { STATUS_BADGE } from '@/components/platform-status-ui';
+import { HOME_CARD_VARIANT } from '@/features/home/homeCard';
 import { usePlatformStatus } from '@/hooks/usePlatformStatus';
 
-const BADGE: Record<CategoryStatus, { status: BadgeStatus; label: string }> = {
-  operational: { status: 'healthy', label: 'Operational' },
-  degraded: { status: 'degraded', label: 'Degraded' },
-  outage: { status: 'failed', label: 'Outage' },
-};
-
 function Cell({ rollup }: { rollup: CategoryRollup }) {
-  const b = BADGE[rollup.realtime];
+  const b = STATUS_BADGE[rollup.realtime];
   return (
     <div className="min-w-0" data-pulse-cell={rollup.category}>
-      <div className="home-label">{sentenceCase(CATEGORY_LABELS[rollup.category])}</div>
-      <div className="mt-1.5"><Badge status={b.status} label={b.label} size="md" font="sans" /></div>
+      <div className="home-label">{CATEGORY_LABELS[rollup.category]}</div>
+      <div className="mt-1.5"><Badge {...b.tone} label={b.label} size="md" font="sans" /></div>
       <div className="pulse-note">
         {rollup.realtime_note || `${rollup.uptime_30d_pct.toFixed(1)}% 30-day uptime`}
       </div>
@@ -41,7 +35,7 @@ export function PlatformPulse() {
     <section aria-labelledby="home-pulse-title" className="flex flex-col gap-3">
       <h2 id="home-pulse-title" className="home-label">Platform pulse</h2>
       <PlatformStatusFlyout />
-      <Card variant="flat" padding="md">
+      <Card variant={HOME_CARD_VARIANT} padding="md">
         {isLoading && <PageState kind="loading" layout="inline" compact title="Checking platform status…" />}
         {!isLoading && !data && (
           <PageState

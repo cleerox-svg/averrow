@@ -18,8 +18,13 @@
   transition: color var(--motion-fast, 120ms) var(--ease-standard, ease);
 }
 .briefing-link:hover { text-decoration: underline; }
-@media (max-width: 480px) {
+@media (max-width: 480px), (pointer: coarse) {
   .briefing-chip { min-height: 44px; }
+}
+@media (pointer: coarse) {
+  a.briefing-link { display: inline-flex; align-items: center; min-height: 44px; }
+  /* A flex summary would drop the disclosure marker, so pad it to 44px instead. */
+  summary.briefing-link { padding-block: 13px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .briefing-chip, .briefing-link { transition: none; }

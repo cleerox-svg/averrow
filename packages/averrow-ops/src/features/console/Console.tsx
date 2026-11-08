@@ -1,6 +1,6 @@
 // SOC Console — the v4 analyst daily-driver workspace.
 //
-// A BOLD cinematic header (big glowing count-up KPI hero + deep-linkable tab
+// A BOLD cinematic header (big KPI hero + deep-linkable tab
 // bar) over the existing queue pages mounted as tab bodies. Built on
 // @averrow/shared/ui + live data — no page-logic rewrites. The hero is the
 // "this is clearly v4" surface (matches the approved prototype).
@@ -82,7 +82,7 @@ export function Console() {
         <span className="console-live"><span className="dot" />LIVE</span>
       </div>
 
-      {/* KPI hero — glowing count-up numbers; each tile jumps to its queue. */}
+      {/* KPI hero — numbers render immediately (no count-up); each tile jumps to its queue. */}
       <div className="kpi-grid">
         {canTriage && (
           <StatTile tone="amber" label="Open alerts"        value={openSignals}       sub="awaiting triage" onClick={() => selectTab('alerts')} error={signalsError} />

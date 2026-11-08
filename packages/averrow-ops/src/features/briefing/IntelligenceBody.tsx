@@ -13,6 +13,7 @@ import { Badge } from '@/design-system/components';
 import { relativeTime } from '@/lib/time';
 import { parseIdList, splitBriefing, truncateText } from '@/lib/briefing-text';
 import { tabUrl } from '@/lib/workspaceRoutes';
+import { HOME_CARD_VARIANT } from '@/features/home/homeCard';
 import { BriefingShell } from './BriefingShell';
 import './briefing.css';
 
@@ -101,7 +102,7 @@ export function IntelligenceBriefingBody() {
     <BriefingShell
       source="intelligence"
       title="Daily briefing"
-      eyebrow={<Badge status="active" label="Observer" size="xs" />}
+      eyebrow={<Badge status="active" label="Observer" size="md" font="sans" />}
       generatedAt={latest?.created_at}
       status={status}
       onRetry={() => { void refetch(); }}
@@ -109,12 +110,12 @@ export function IntelligenceBriefingBody() {
       emptyTitle="No briefing generated yet"
       emptyDescription="Observer publishes a briefing as threat data accumulates."
       loadingTitle="Loading the daily briefing…"
-      cardVariant="flat"
+      cardVariant={HOME_CARD_VARIANT}
     >
       {latest && (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            {sev && <Badge severity={sev} size="xs" />}
+            {sev && <Badge severity={sev} size="md" font="sans" />}
             <span className="font-mono text-[12px] leading-4" style={{ color: 'var(--text-secondary)' }}>
               {relativeTime(latest.created_at)}
             </span>

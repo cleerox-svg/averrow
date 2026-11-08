@@ -11,6 +11,7 @@ import {
   type QueueSourceId,
 } from '@/lib/home-queue';
 import { relativeTime } from '@/lib/time';
+import { HOME_CARD_VARIANT } from '@/features/home/homeCard';
 
 /** How many ranked rows Home shows; the rest are summarised as "N of M open". */
 export const QUEUE_VISIBLE = 5;
@@ -65,7 +66,7 @@ function QueueRow({ item, rank }: { item: QueueItem; rank: number }) {
           {item.title}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <Badge severity={item.severity} size="xs" />
+          <Badge severity={item.severity} size="md" font="sans" />
           <span className="queue-source">{SOURCE_CHIP[item.source]}</span>
           {item.ts && (
             <span className="queue-time">{relativeTime(item.ts)}</span>
@@ -103,7 +104,7 @@ function FailedRow({ id, onRetry }: { id: QueueSourceId; onRetry: (id: QueueSour
           This is not an all-clear. Anything waiting in {label} is not shown above.
         </div>
       </div>
-      <KitButton variant="secondary" size="sm" onClick={() => onRetry(id)} aria-label={`Retry ${label}`}>
+      <KitButton className="queue-fail-act" variant="secondary" size="sm" onClick={() => onRetry(id)} aria-label={`Retry ${label}`}>
         Retry
       </KitButton>
     </li>
@@ -115,7 +116,7 @@ export function NeedsYouNow({ queue, onRetry }: { queue: HomeQueue; onRetry: (id
   const visible = items.slice(0, QUEUE_VISIBLE);
 
   return (
-    <Card variant="flat" padding="lg" role="region" aria-labelledby="home-queue-title">
+    <Card variant={HOME_CARD_VARIANT} padding="lg" role="region" aria-labelledby="home-queue-title">
       <div className="mb-2 flex items-center justify-between gap-3">
         <h2 id="home-queue-title" className="home-label">
           Needs you now

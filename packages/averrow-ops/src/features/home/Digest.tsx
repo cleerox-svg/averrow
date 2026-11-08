@@ -6,6 +6,7 @@ import { skipToken, useQuery } from '@tanstack/react-query';
 import { Card } from '@/design-system/components';
 import { BRAND_MOVERS_QUERY_KEY, type BrandMoversData } from '@/hooks/useBrandMovers';
 import { tabUrl } from '@/lib/workspaceRoutes';
+import { HOME_CARD_VARIANT } from '@/features/home/homeCard';
 
 interface DigestLink {
   key: string;
@@ -28,7 +29,7 @@ export function Digest() {
   ];
 
   return (
-    <Card variant="flat" padding="md" role="region" aria-labelledby="home-digest-title">
+    <Card variant={HOME_CARD_VARIANT} padding="md" role="region" aria-labelledby="home-digest-title">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 id="home-digest-title" className="home-label">Everything else</h2>
         <span className="home-label">No action needed</span>

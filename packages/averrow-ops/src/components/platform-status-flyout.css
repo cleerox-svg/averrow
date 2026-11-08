@@ -61,7 +61,7 @@
 .psf-foot:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 [data-theme="light"] .psf-foot:focus-visible { outline-color: var(--text-primary); }
 
-/* Reduced motion: state change by fade only (no travel), no chevron spin, no hover fades. */
+/* Reduced motion: no entrance animation (the panel just appears), no chevron spin, no hover fades. */
 @media (prefers-reduced-motion: reduce) {
   .psf-panel { animation: none; }
   .psf-chevron, .psf-trigger, .psf-foot { transition: none; }

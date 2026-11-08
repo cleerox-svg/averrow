@@ -15,23 +15,18 @@
 
 import type { CategoryStatus } from '@averrow/shared';
 import { usePlatformStatus } from '@/hooks/usePlatformStatus';
+import { OVERALL_LABEL, STATUS_BADGE } from '@/components/platform-status-ui';
 
 interface Props {
   variant?: 'compact' | 'prominent';
 }
 
-interface PaletteEntry {
-  label: string;
-  dot: string;
-  text: string;
-}
+const LOADING = { label: 'Checking…', dot: 'var(--text-tertiary)', text: 'var(--text-tertiary)' };
 
-const PALETTE: Record<CategoryStatus | 'loading', PaletteEntry> = {
-  operational: { label: 'All systems operational', dot: 'var(--green)', text: 'var(--green-text, var(--sev-info-text))' },
-  degraded: { label: 'Degraded', dot: 'var(--sev-medium)', text: 'var(--sev-medium-text)' },
-  outage: { label: 'Outage', dot: 'var(--sev-critical)', text: 'var(--sev-critical-text)' },
-  loading: { label: 'Checking…', dot: 'var(--text-tertiary)', text: 'var(--text-tertiary)' },
-};
+function paletteFor(status: CategoryStatus | 'loading') {
+  if (status === 'loading' || !(status in STATUS_BADGE)) return LOADING;
+  return { label: OVERALL_LABEL[status], dot: STATUS_BADGE[status].dot, text: STATUS_BADGE[status].text };
+}
 
 export function PlatformStatusBadge({ variant = 'compact' }: Props) {
   const { data, isLoading } = usePlatformStatus();
@@ -39,11 +34,11 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
   // Defensive: status should always be a known PALETTE key, but fall back to
   // the neutral "loading" entry rather than crash if an unexpected value
   // ever slips through (e.g. a malformed API response upstream).
-  const palette = PALETTE[status] ?? PALETTE.loading;
+  const palette = paletteFor(status);
 
   return (
     <div
-      data-platform-status={status in PALETTE ? status : 'loading'}
+      data-platform-status={status === 'loading' || !(status in STATUS_BADGE) ? 'loading' : status}
       data-variant={variant}
       style={{ display: 'flex', alignItems: 'center', gap: variant === 'prominent' ? 9 : 8 }}
     >
@@ -52,6 +47,7 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
         style={{ width: 8, height: 8, borderRadius: '50%', background: palette.dot, flexShrink: 0 }}
       />
       <span
+        role="status"
         style={{
           fontSize: 'var(--type-label-size, 12px)',
           lineHeight: 'var(--type-label-lh, 16px)',

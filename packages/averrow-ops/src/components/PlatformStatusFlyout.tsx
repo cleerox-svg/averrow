@@ -8,21 +8,15 @@
 // "View full status →" if they want the full /status surface
 // including incidents and the 30-day bars.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import type { CategoryRollup, CategoryStatus } from '@averrow/shared';
+import type { CategoryRollup } from '@averrow/shared';
 import { CATEGORY_LABELS } from '@averrow/shared';
 import { Badge } from '@/design-system/components';
-import type { BadgeStatus } from '@/design-system/components';
 import { usePlatformStatus } from '@/hooks/usePlatformStatus';
 import { PlatformStatusBadge } from '@/components/PlatformStatusBadge';
+import { STATUS_BADGE } from '@/components/platform-status-ui';
 import './platform-status-flyout.css';
-
-const STATUS_BADGE: Record<CategoryStatus, { status: BadgeStatus; label: string }> = {
-  operational: { status: 'healthy', label: 'Operational' },
-  degraded: { status: 'degraded', label: 'Degraded' },
-  outage: { status: 'failed', label: 'Outage' },
-};
 
 interface CategoryRowProps { rollup: CategoryRollup }
 
@@ -37,7 +31,7 @@ function CategoryRow({ rollup }: CategoryRowProps) {
         </div>
       </div>
       <div className="psf-row-pct">{rollup.uptime_30d_pct.toFixed(1)}%</div>
-      <Badge status={b.status} label={b.label} size="md" font="sans" />
+      <Badge {...b.tone} label={b.label} size="md" font="sans" />
     </div>
   );
 }
@@ -45,6 +39,8 @@ function CategoryRow({ rollup }: CategoryRowProps) {
 export function PlatformStatusFlyout() {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
   const { data, isLoading } = usePlatformStatus();
 
   // Close on outside click — operator workflow expects clicking
@@ -56,7 +52,10 @@ export function PlatformStatusFlyout() {
       if (!wrapperRef.current.contains(e.target as Node)) setOpen(false);
     };
     const onEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener('mousedown', onDocClick);
     document.addEventListener('keydown', onEscape);
@@ -67,20 +66,31 @@ export function PlatformStatusFlyout() {
   }, [open]);
 
   return (
-    <div ref={wrapperRef} className="psf">
+    <div
+      ref={wrapperRef}
+      className="psf"
+      onBlur={(e) => {
+        // Close when focus leaves the trigger + panel (a blur to nothing, e.g. a click on
+        // the page, is handled by the outside-mousedown listener).
+        const next = e.relatedTarget as Node | null;
+        if (open && next && !e.currentTarget.contains(next)) setOpen(false);
+      }}
+    >
       <button
+        ref={triggerRef}
         type="button"
         className="psf-trigger"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-haspopup="true"
+        aria-haspopup="dialog"
+        aria-controls={open ? panelId : undefined}
       >
         <PlatformStatusBadge variant="prominent" />
         <ChevronDown size={14} className="psf-chevron" data-open={open} aria-hidden />
       </button>
 
       {open && (
-        <div role="dialog" aria-label="Platform availability" className="psf-panel">
+        <div id={panelId} role="dialog" aria-label="Platform availability" className="psf-panel">
           <div className="psf-head">
             <span className="psf-head-label">Availability · last 30 days</span>
             <span className="psf-head-note">

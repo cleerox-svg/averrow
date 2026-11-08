@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { screen, within, fireEvent } from '@testing-library/react';
+import { Card } from '@averrow/shared/ui';
+import { PlatformStatusBadge } from '@/components/PlatformStatusBadge';
 import { renderWithProviders } from '@/test/utils';
 import { stubMatchMedia } from '@/test/shared-ui/helpers';
 import { createHomeApi } from '@/test/homeApi';
@@ -145,6 +147,37 @@ describe('PlatformStatusFlyout', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('trigger is aria-haspopup=dialog and controls the panel; Escape returns focus to it', () => {
+    renderWithProviders(<PlatformStatusFlyout />);
+    const trigger = screen.getByRole('button');
+    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog');
+    expect(trigger).not.toHaveAttribute('aria-controls');
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole('dialog');
+    expect(trigger.getAttribute('aria-controls')).toBe(dialog.id);
+    expect(dialog.id).not.toBe('');
+    (within(dialog).getByRole('link') as HTMLElement).focus();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('closes when focus leaves the trigger and panel, stays open when it moves within', () => {
+    renderWithProviders(
+      <div>
+        <PlatformStatusFlyout />
+        <button type="button">outside</button>
+      </div>,
+    );
+    const trigger = screen.getByRole('button', { name: /operational/i });
+    fireEvent.click(trigger);
+    const link = within(screen.getByRole('dialog')).getByRole('link');
+    fireEvent.blur(trigger, { relatedTarget: link });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    fireEvent.blur(link, { relatedTarget: screen.getByRole('button', { name: 'outside' }) });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('has a visible focus style on the trigger (--focus-ring; --text-primary in light)', () => {
     const src = css('components/platform-status-flyout.css');
     expect(src).toMatch(/\.psf-trigger:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--focus-ring\)/);
@@ -155,6 +188,70 @@ describe('PlatformStatusFlyout', () => {
     const src = css('components/platform-status-flyout.css');
     expect(src).toMatch(/@keyframes psf-in/);
     expect(src).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[^@]*\.psf-panel\s*\{\s*animation:\s*none/);
+  });
+});
+
+describe('Overview review fixes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.pushState({}, '', '/');
+    stubMatchMedia(true);
+    status.mockReturnValue({ data: { ...STATUS, overall: 'degraded' }, isLoading: false, refetch: vi.fn() });
+  });
+
+  it('severity and eyebrow badges are 12px sans, sentence case (not 9px mono caps)', async () => {
+    const { container } = mount();
+    const region = await screen.findByRole('region', { name: 'Needs you now' });
+    const sev = await within(region).findAllByText(/^(Critical|High|Medium|Low)$/);
+    for (const el of sev) {
+      expect(el.className).toMatch(/font-sans/);
+      expect(el.className).not.toMatch(/uppercase|font-mono/);
+      expect(el.style.fontSize).toBe('12px');
+    }
+    const observer = container.querySelector('[data-briefing-source] header')!.querySelector('span.font-sans') as HTMLElement;
+    expect(observer).toHaveTextContent('Observer');
+    expect(observer.style.fontSize).toBe('12px');
+  });
+
+  it('the flat Card reads --card-flat-bg (default unchanged) and the Overview points it at --bg-card', () => {
+    const { container } = renderWithProviders(<Card variant="flat" />);
+    expect((container.firstChild as HTMLElement).style.background).toContain('var(--card-flat-bg, var(--bg-card-deep))');
+    const m = css('features/home/home.css').match(/:root\[data-accent\] \.home-v4\s*\{([^}]*)\}/);
+    expect(m![1]).toMatch(/--card-flat-bg:\s*var\(--bg-card\)/);
+  });
+
+  it('44px touch rules are keyed to coarse pointers', () => {
+    expect(css('features/home/home.css')).toMatch(/@media \(pointer: coarse\)\s*\{[^}]*\.queue-act button[^}]*min-height: 44px/);
+    expect(css('features/home/home.css')).toMatch(/@media \(pointer: coarse\)\s*\{\s*\.digest-chip\s*\{\s*min-height: 44px/);
+    const b = css('features/briefing/briefing.css');
+    expect(b).toMatch(/pointer: coarse\)\s*\{\s*\.briefing-chip\s*\{\s*min-height: 44px/);
+    expect(b).toMatch(/pointer: coarse\)\s*\{[^@]*briefing-link[^@]*44px/);
+  });
+
+  it('"Degraded" is one colour (--sev-medium) in the status label, the pulse cell and the flyout pill', async () => {
+    const { container } = mount();
+    await screen.findByRole('heading', { name: 'Platform pulse' });
+    const pulse = container.querySelector('[data-pulse-cell="agents"]') as HTMLElement;
+    const cellPill = within(pulse).getByText('Degraded');
+    expect(cellPill.style.color).toBe('var(--sev-medium-text)');
+    expect(cellPill.style.background).toBe('var(--sev-medium-bg)');
+    expect(screen.getAllByText('Degraded').length).toBeGreaterThan(0);
+
+    const { unmount } = renderWithProviders(<PlatformStatusBadge />);
+    expect(screen.getAllByText('Degraded').some((e) => e.style.color === 'var(--sev-medium-text)' && e.getAttribute('role') === 'status')).toBe(true);
+    unmount();
+
+    renderWithProviders(<PlatformStatusFlyout />);
+    fireEvent.click(screen.getAllByRole('button', { expanded: false }).pop()!);
+    const dialog = screen.getByRole('dialog');
+    const flyPill = within(dialog).getAllByText('Degraded').find((e) => e.style.background === 'var(--sev-medium-bg)')!;
+    expect(flyPill.style.color).toBe('var(--sev-medium-text)');
+  });
+
+  it('the platform status label is a polite status region', () => {
+    renderWithProviders(<PlatformStatusBadge variant="prominent" />);
+    expect(screen.getByRole('status')).toHaveTextContent('Degraded');
   });
 });
 
