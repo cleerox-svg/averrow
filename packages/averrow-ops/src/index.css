@@ -841,9 +841,12 @@
    Card variant="active"/"critical" keep their status glows. --card-flat-bg is
    deliberately not reset (flat-variant callers expect the sunken inset panel).
    Kept here, not in shell-v4.css, because gen-appearance.mjs only accepts the
-   shell's two known token selectors. */
+   shell's two known token selectors.
+   --card-shadow is a transparent zero shadow, NOT `none`: consumers compose it
+   in a list (`var(--card-shadow), 0 0 20px …, inset …`), and `none` inside a
+   list makes the whole box-shadow invalid, dropping status glows and rims. */
 :root[data-accent] .shell-v4 {
   --card-radius: var(--radius-lg);
-  --card-shadow: none;
+  --card-shadow: 0 0 #0000;
   --card-highlight: transparent;
 }

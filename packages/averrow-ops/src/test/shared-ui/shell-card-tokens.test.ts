@@ -17,7 +17,15 @@ describe('shell card tokens under the facelift', () => {
 
   it('resets radius, shadow and highlight for every theme', () => {
     expect(reset).toMatch(/--card-radius:\s*var\(--radius-lg\)/);
-    expect(reset).toMatch(/--card-shadow:\s*none/);
+    // A list-safe empty shadow: `none` inside `var(--card-shadow), <glow>` would
+    // invalidate the whole box-shadow and drop active/critical glows and rims.
+    expect(reset).toMatch(/--card-shadow:\s*0 0 #0000;/);
+  });
+
+  it('never sets --card-shadow to `none` anywhere (it is composed in shadow lists)', () => {
+    for (const f of ['index.css', 'features/home/home.css', 'components/layout/shell-v4.css']) {
+      expect(read(f), f).not.toMatch(/--card-shadow:\s*none/);
+    }
     expect(reset).toMatch(/--card-highlight:\s*transparent/);
     expect(reset).not.toContain('--card-flat-bg');
     expect(index).not.toContain(':root[data-accent][data-theme="light"] .shell-v4 {');
