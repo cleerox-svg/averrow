@@ -1,14 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 32 32">
-  <!-- Maskable variant: full-bleed background, no rounded corners.
-       The launcher (Android adaptive icons) applies its own mask;
-       the chevron sits within the inner ~80% safe zone. -->
-  <rect width="32" height="32" fill="#080E18"/>
-  <defs>
-    <linearGradient id="deep-arrow" x1="16" y1="6" x2="16" y2="26" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#6B1010"/>
-      <stop offset="100%" stop-color="#C83C3C"/>
-    </linearGradient>
-  </defs>
-  <path d="M16 6.5L25 25.5H18L16 21L14 25.5H7Z" fill="url(#deep-arrow)"/>
-  <path d="M14.7 22H17.3L16 18.5Z" fill="#080E18"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512" role="img" aria-label="Averrow"><rect width="32" height="32" fill="#121B31"/><path transform="translate(3.41 3.61) scale(0.79)" d="M19.76 4L26.5 27.5L18.9 25L17.39 23.5L19.74 23.5L17.84 16L13.54 23.5L15.89 23.5L13.9 25L5.5 27.5Z" fill="#C83C3C"/></svg>
