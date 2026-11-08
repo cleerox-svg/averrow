@@ -237,7 +237,7 @@ test("/resources/sample-operation-report: illustrative label, 14 indicators, no 
   const res = await page.goto("/resources/sample-operation-report");
   expect(res?.status()).toBe(200);
   await expect(page.locator("h1")).toContainText("OP-2291");
-  await expect(page.locator(".rep-illustrative")).toContainText("Illustrative example · names, domains and infrastructure changed");
+  await expect(page.locator(".rep-illustrative")).toContainText("Fictional example · operation mapping is on the Enterprise plan");
   await expect(page.locator('table[aria-label], [aria-label="Linked indicators table"] tbody tr')).toHaveCount(14);
 
   const main = await page.locator("main").innerText();
@@ -250,6 +250,12 @@ test("/resources/sample-operation-report: illustrative label, 14 indicators, no 
   const asns = main.match(/AS\d+/g) ?? [];
   for (const a of asns) expect(Number(a.slice(2))).toBeGreaterThanOrEqual(64500);
   expect(main).not.toMatch(/\b(sentinel|nexus|cartographer|analyst agent)\b/i);
+  // L50: wording the product cannot back (register: DISCLOSURE_REGISTER.md L50).
+  expect(main).not.toMatch(/third-party store/i);
+  expect(main).not.toMatch(/kind of report/i);
+  expect(main).not.toMatch(/\bcloned?\b/i);
+  expect(main).not.toMatch(/\bfake\b/i);
+  expect(main).not.toMatch(/\bicons?\b/i);
 });
 
 test("/resources/methodology: a section per published number", async ({ page }) => {

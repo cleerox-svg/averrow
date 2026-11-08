@@ -11,7 +11,14 @@ import Layout from "../../layouts/Layout.astro";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Status = "Removed" | "Pending" | "Queued";
+type Status = "Taken down" | "Submitted" | "To approve";
+
+// CSS class suffix per status (the labels contain spaces).
+const pillClass: Record<Status, string> = {
+  "Taken down": "removed",
+  Submitted: "pending",
+  "To approve": "queued",
+};
 
 interface Indicator {
   domain: string;
@@ -23,61 +30,68 @@ interface Indicator {
 }
 
 const indicators: Indicator[] = [
-  { domain: "acme-payroll-login.example", day: 0, asn: "AS64500", ip: "192.0.2.14", cert: true, status: "Removed" },
-  { domain: "acme-payrol1.example", day: 1, asn: "AS64500", ip: "192.0.2.14", cert: true, status: "Removed" },
-  { domain: "acmepayroll-portal.example", day: 1, asn: "AS64500", ip: "192.0.2.21", cert: true, status: "Removed" },
-  { domain: "login-acme-hr.example", day: 1, asn: "AS64500", ip: "192.0.2.21", cert: true, status: "Removed" },
-  { domain: "acme-hr-support.example", day: 1, asn: "AS64500", ip: "192.0.2.33", cert: true, status: "Removed" },
-  { domain: "my-acmepay.example", day: 1, asn: "AS64500", ip: "192.0.2.33", cert: true, status: "Removed" },
-  { domain: "acme-benefits-portal.example", day: 2, asn: "AS64500", ip: "192.0.2.47", cert: true, status: "Removed" },
-  { domain: "acme-timesheets.example", day: 2, asn: "AS64500", ip: "192.0.2.47", cert: true, status: "Removed" },
-  { domain: "secure-acme-pay.example", day: 2, asn: "AS64500", ip: "192.0.2.52", cert: true, status: "Pending" },
-  { domain: "acme-payroll-update.example", day: 3, asn: "AS64501", ip: "198.51.100.8", cert: false, status: "Pending" },
-  { domain: "acmepay-verify.example", day: 3, asn: "AS64501", ip: "198.51.100.8", cert: false, status: "Pending" },
-  { domain: "acme-employee-id.example", day: 4, asn: "AS64501", ip: "198.51.100.19", cert: false, status: "Pending" },
-  { domain: "acme-payslips.example", day: 6, asn: "AS64501", ip: "198.51.100.19", cert: false, status: "Queued" },
-  { domain: "acme-direct-deposit.example", day: 8, asn: "AS64501", ip: "203.0.113.40", cert: false, status: "Queued" },
+  { domain: "acme-payroll-login.example", day: 0, asn: "AS64500", ip: "192.0.2.14", cert: true, status: "Taken down" },
+  { domain: "acme-payrol1.example", day: 1, asn: "AS64500", ip: "192.0.2.14", cert: true, status: "Taken down" },
+  { domain: "acmepayroll-portal.example", day: 1, asn: "AS64500", ip: "192.0.2.21", cert: true, status: "Taken down" },
+  { domain: "login-acme-hr.example", day: 1, asn: "AS64500", ip: "192.0.2.21", cert: true, status: "Taken down" },
+  { domain: "acme-hr-support.example", day: 1, asn: "AS64500", ip: "192.0.2.33", cert: true, status: "Taken down" },
+  { domain: "my-acmepay.example", day: 1, asn: "AS64500", ip: "192.0.2.33", cert: true, status: "Taken down" },
+  { domain: "acme-benefits-portal.example", day: 2, asn: "AS64500", ip: "192.0.2.47", cert: true, status: "Taken down" },
+  { domain: "acme-timesheets.example", day: 2, asn: "AS64500", ip: "192.0.2.47", cert: true, status: "Taken down" },
+  { domain: "secure-acme-pay.example", day: 2, asn: "AS64500", ip: "192.0.2.52", cert: true, status: "Submitted" },
+  { domain: "acme-payroll-update.example", day: 3, asn: "AS64501", ip: "198.51.100.8", cert: false, status: "Submitted" },
+  { domain: "acmepay-verify.example", day: 3, asn: "AS64501", ip: "198.51.100.8", cert: false, status: "Submitted" },
+  { domain: "acme-employee-id.example", day: 4, asn: "AS64501", ip: "198.51.100.19", cert: false, status: "Submitted" },
+  { domain: "acme-payslips.example", day: 6, asn: "AS64501", ip: "198.51.100.19", cert: false, status: "To approve" },
+  { domain: "acme-direct-deposit.example", day: 8, asn: "AS64501", ip: "203.0.113.40", cert: false, status: "To approve" },
 ];
 
 const counts = {
-  Removed: indicators.filter((i) => i.status === "Removed").length,
-  Pending: indicators.filter((i) => i.status === "Pending").length,
-  Queued: indicators.filter((i) => i.status === "Queued").length,
+  down: indicators.filter((i) => i.status === "Taken down").length,
+  submitted: indicators.filter((i) => i.status === "Submitted").length,
+  toApprove: indicators.filter((i) => i.status === "To approve").length,
+};
+
+// Hosting networks are shown by operator name only; the indicator table uses the
+// same names so no network identifiers appear on the page.
+const networkName: Record<string, string> = {
+  AS64500: "Network A",
+  AS64501: "Network B",
 };
 
 const stats = [
   { v: "9 days", l: "First seen to report" },
   { v: "3", l: "Surfaces (domains, social, app)" },
-  { v: `${indicators.length} → ${counts.Pending + counts.Queued}`, l: "Domains live" },
-  { v: "19", l: "Linked indicators" },
+  { v: `${indicators.length} → ${counts.submitted + counts.toApprove}`, l: "Domains live" },
+  { v: "2 + 1", l: "Hosting networks + shared certificate" },
 ];
 
 const timeline = [
-  { day: "Day 0", title: "First lookalike seen", body: "A newly registered domain imitating Acme's payroll sign-in page is flagged for brand impersonation." },
-  { day: "Day 1–2", title: "Cluster grouped", body: "Eight more lookalikes appear on the same hosting network and present the same TLS certificate. They are grouped into one operation, OP-2291, by the infrastructure they share." },
-  { day: "Day 3–4", title: "Operation widens", body: "A second hosting network comes online with three more domains. A fake HR-support social profile and a cloned “Acme Pay” app also turn up and are reviewed alongside the operation." },
-  { day: "Day 4", title: "Takedowns requested", body: "Evidence packages go to the registrars and hosting providers for the domains found so far; the social profile and the app are drafted with evidence, ready to file with each platform. Later domains are queued as they appear." },
-  { day: "Day 5–8", title: "First removals", body: "Eight domains are removed, starting with the original hosting network." },
-  { day: "Day 9", title: "Report generated", body: "Four domain takedowns are pending a registrar response and two are queued. The social and app cases remain open." },
+  { day: "Day 0", title: "First phishing domain seen", body: "A phishing domain imitating Acme's payroll sign-in page turns up in phishing intelligence and is matched to Acme." },
+  { day: "Day 1–2", title: "Cluster grouped", body: "Eight more phishing domains appear on the same hosting network and present the same TLS certificate. They are grouped into one operation, OP-2291, by the infrastructure they share." },
+  { day: "Day 3–4", title: "Operation widens", body: "A second hosting network comes online with three more domains. An HR-support impersonation account and a copycat “Acme Pay” app also turn up and are reviewed alongside the operation; they are not part of the domain grouping." },
+  { day: "Day 4", title: "Takedowns requested", body: "Evidence packages go to the registrars and hosting providers for the domains found so far; the impersonation account and the copycat app are drafted with evidence, ready to file with each platform. Later domains are added for approval as they appear." },
+  { day: "Day 5–8", title: "First takedowns", body: "Eight domains are taken down, starting with the original hosting network." },
+  { day: "Day 9", title: "Report assembled", body: "Four domain takedowns are submitted and awaiting a registrar response, and two are to approve. The impersonation account and copycat app cases remain open." },
 ];
 
 const hosting = [
-  { asn: "AS64500", name: "Example Hosting Network A", range: "192.0.2.0/24", domains: indicators.filter((i) => i.asn === "AS64500").length, note: "Original infrastructure; most domains removed." },
-  { asn: "AS64501", name: "Example Hosting Network B", range: "198.51.100.0/24, 203.0.113.0/24", domains: indicators.filter((i) => i.asn === "AS64501").length, note: "Second wave; later registrations." },
+  { name: "Example Hosting Network A", domains: indicators.filter((i) => i.asn === "AS64500").length, note: "Original infrastructure; most domains taken down." },
+  { name: "Example Hosting Network B", domains: indicators.filter((i) => i.asn === "AS64501").length, note: "Second wave; later domains." },
 ];
 
 const takedowns = [
-  { surface: "Lookalike domains", target: "Registrars and hosting providers", status: `${counts.Removed} removed · ${counts.Pending} pending · ${counts.Queued} queued`, tone: "mixed" },
-  { surface: "Social profile", target: "@acme_hr_support (example handle)", status: "Drafted with evidence · ready to file", tone: "Pending" },
-  { surface: "Cloned app", target: "“Acme Pay” on the Apple App Store", status: "Drafted with evidence · ready to file", tone: "Queued" },
+  { surface: "Phishing domains", target: "Registrars and hosting providers", status: `${counts.down} taken down · ${counts.submitted} submitted · ${counts.toApprove} to approve`, tone: "mixed" },
+  { surface: "Impersonation account", target: "@acme_hr_support (example handle)", status: "To approve · drafted with evidence", tone: "queued" },
+  { surface: "Copycat app", target: "“Acme Pay” on the Apple App Store", status: "To approve · drafted with evidence", tone: "queued" },
 ];
 
 const actions = [
-  { title: "Block the 14 domains and both address ranges", body: "Add the indicators below to your mail, web and DNS filters now; don't wait for the takedowns to complete." },
+  { title: "Block the 14 domains and their addresses", body: "Add the indicators below to your mail, web and DNS filters now; don't wait for the takedowns to complete." },
   { title: "Warn payroll and HR staff", body: "The lures impersonate payroll sign-in, payslips and direct-deposit changes. A short reminder to use bookmarked links only is enough." },
   { title: "Move Acme's DMARC policy past “none”", body: "Acme's own domain publishes DMARC at p=none, so spoofed mail from it is delivered. Step up to quarantine, then reject, once reports look clean." },
-  { title: "Report the cloned app to the store and your mobile team", body: "Tell customers and staff that the only official Acme Pay app is the one listed on your site." },
-  { title: "Keep watching for re-registration", body: "Operations like this tend to return on new names. Monitoring stays on Acme's name and the infrastructure above." },
+  { title: "Report the copycat app to the store and tell your mobile team", body: "Tell customers and staff that the only official Acme Pay app is the one listed on your site." },
+  { title: "Keep watching for re-registration", body: "Operations like this tend to return on new names. Monitoring stays on Acme's name, and new phishing domains on the same hosting or certificate join this operation." },
 ];
 
 const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
@@ -85,19 +99,20 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
 
 <Layout
   title="Sample Operation Report — Averrow"
-  description="An illustrative operation report: one phishing operation traced across 14 lookalike domains, shared hosting and certificate, with a related fake social profile and cloned app, a timeline and takedown status."
+  description="A fictional example of an Enterprise operation report: one operation traced across 14 phishing domains through shared hosting and a shared certificate, with a related impersonation account and copycat app, a timeline and takedown status."
 >
   <section class="rep-hero">
     <div class="container">
       <p class="rep-illustrative" role="note">
-        <strong>Illustrative example</strong> &middot; names, domains and infrastructure changed
+        <strong>Fictional example</strong> &middot; operation mapping is on the Enterprise plan
       </p>
       <div class="rep-eyebrow">Sample operation report</div>
       <h1>OP-2291: Acme payroll sign-in impersonation</h1>
       <p class="rep-lede">
-        One operation, traced from a single lookalike domain to the hosting, certificate, social
-        profile and app behind it, with the takedown status for each. This is the kind of
-        report Averrow produces. Every name here is made up: the brand is a fictional &ldquo;Acme&rdquo;,
+        One operation, traced from a single phishing domain to the hosting and certificate behind it,
+        with related social and app findings and the takedown status for each. It illustrates what our
+        team can assemble for Enterprise customers; there is no self-serve operation report yet.
+        Every name here is made up: the brand is a fictional &ldquo;Acme&rdquo;,
         domains use the reserved <code>.example</code> name, and addresses come from documentation ranges.
       </p>
       <div class="rep-actions">
@@ -118,15 +133,15 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
       <h2>Summary</h2>
       <p>
         Acme, a fictional payroll customer, was targeted by a credential-phishing operation built around
-        a fake payroll sign-in. Fourteen lookalike domains were registered over eight days. They share two
+        a spoofed payroll sign-in page. Fourteen phishing domains appeared over eight days. They share two
         hosting networks and, for the first nine, one TLS certificate, which is what tied them into a single
-        operation rather than fourteen separate alerts. A fake HR-support social profile and a cloned
-        &ldquo;Acme Pay&rdquo; app on a third-party store were found at the same time and are reviewed
+        operation rather than fourteen separate alerts. An HR-support impersonation account and a copycat
+        &ldquo;Acme Pay&rdquo; app on the Apple App Store were found at the same time and are reviewed
         alongside it; they are not part of the domain grouping.
       </p>
       <p>
-        At the time of this report, {counts.Removed} of {indicators.length} domains have been removed, {counts.Pending}
-        are pending a registrar response and {counts.Queued} are queued. {counts.Pending + counts.Queued} domains
+        At the time of this report, {counts.down} of {indicators.length} domains have been taken down, {counts.submitted}
+        are submitted and awaiting a registrar response and {counts.toApprove} are to approve. {counts.submitted + counts.toApprove} domains
         are still live.
       </p>
 
@@ -141,21 +156,21 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
       </ol>
 
       <h2>Linked indicators</h2>
-      <p class="rep-note">14 lookalike domains. &ldquo;Day&rdquo; counts from first sighting. All names are fictional.</p>
+      <p class="rep-note">14 phishing domains. &ldquo;Day&rdquo; counts from first sighting. All names are fictional.</p>
       <div class="rep-tablewrap" tabindex="0" role="region" aria-label="Linked indicators table">
         <table class="rep-table">
           <thead>
-            <tr><th scope="col">Domain</th><th scope="col">Seen</th><th scope="col">Network</th><th scope="col">Address</th><th scope="col">Shared cert</th><th scope="col">Takedown</th></tr>
+            <tr><th scope="col">Domain</th><th scope="col">Seen</th><th scope="col">Hosting</th><th scope="col">Address</th><th scope="col">Shared cert</th><th scope="col">Takedown</th></tr>
           </thead>
           <tbody>
             {indicators.map((i) => (
               <tr>
                 <th scope="row"><code>{i.domain}</code></th>
                 <td>Day {i.day}</td>
-                <td>{i.asn}</td>
+                <td>{networkName[i.asn]}</td>
                 <td><code>{i.ip}</code></td>
                 <td>{i.cert ? "Yes" : "No"}</td>
-                <td><span class={`rep-pill rep-${i.status.toLowerCase()}`}>{i.status}</span></td>
+                <td><span class={`rep-pill rep-${pillClass[i.status]}`}>{i.status}</span></td>
               </tr>
             ))}
           </tbody>
@@ -166,14 +181,12 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
       <div class="rep-tablewrap" tabindex="0" role="region" aria-label="Hosting summary table">
         <table class="rep-table">
           <thead>
-            <tr><th scope="col">Network</th><th scope="col">Operator (fictional)</th><th scope="col">Address ranges</th><th scope="col">Domains</th><th scope="col">Note</th></tr>
+            <tr><th scope="col">Operator (fictional)</th><th scope="col">Domains</th><th scope="col">Note</th></tr>
           </thead>
           <tbody>
             {hosting.map((h) => (
               <tr>
-                <th scope="row">{h.asn}</th>
-                <td>{h.name}</td>
-                <td><code>{h.range}</code></td>
+                <th scope="row">{h.name}</th>
                 <td>{h.domains}</td>
                 <td>{h.note}</td>
               </tr>
@@ -184,7 +197,7 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
 
       <h2>Shared TLS certificate</h2>
       <p>
-        Nine domains on AS64500 present the same certificate, serial <code>{certSerial}</code>, issued by
+        Nine domains on Example Hosting Network A present the same certificate, serial <code>{certSerial}</code>, issued by
         &ldquo;Example Certificate Authority&rdquo;. A shared serial across unrelated-looking domains is strong
         evidence of one operator, and it is what lets the operation be grouped before every domain is found.
       </p>
@@ -192,12 +205,12 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
       <h2>Other surfaces</h2>
       <div class="rep-two">
         <div class="rep-card">
-          <b>Social profile</b>
-          <p><code>@acme_hr_support</code> (example handle). Uses Acme's name and logo, posts &ldquo;payroll update&rdquo; links to the lookalike domains, and was created in the same week as the first domains.</p>
+          <b>Impersonation account</b>
+          <p><code>@acme_hr_support</code> (example handle). The handle closely matches Acme's name. It is reviewed alongside the operation and is not linked to its domains.</p>
         </div>
         <div class="rep-card">
-          <b>Cloned app</b>
-          <p>&ldquo;Acme Pay&rdquo; on the Apple App Store. Copies the real app's name, icon and description. The publisher is unrelated to Acme, and the listing links to the operation's sign-in domains.</p>
+          <b>Copycat app</b>
+          <p>&ldquo;Acme Pay&rdquo; on the Apple App Store. Uses Acme's name; the publisher is unrelated to Acme.</p>
         </div>
       </div>
 
@@ -212,16 +225,16 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
               <tr>
                 <th scope="row">{t.surface}</th>
                 <td>{t.target}</td>
-                <td>{t.tone === "mixed" ? t.status : <span class={`rep-pill rep-${t.tone.toLowerCase()}`}>{t.status}</span>}</td>
+                <td>{t.tone === "mixed" ? t.status : <span class={`rep-pill rep-${t.tone}`}>{t.status}</span>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <div class="rep-bar" role="img" aria-label={`Domain takedowns: ${counts.Removed} of ${indicators.length} removed, ${counts.Pending} pending, ${counts.Queued} queued`}>
-        <i class="rep-removed" style={`width:${(counts.Removed / indicators.length) * 100}%`}></i>
-        <i class="rep-pending" style={`width:${(counts.Pending / indicators.length) * 100}%`}></i>
-        <i class="rep-queued" style={`width:${(counts.Queued / indicators.length) * 100}%`}></i>
+      <div class="rep-bar" role="img" aria-label={`Domain takedowns: ${counts.down} of ${indicators.length} taken down, ${counts.submitted} submitted, ${counts.toApprove} to approve`}>
+        <i class="rep-removed" style={`width:${(counts.down / indicators.length) * 100}%`}></i>
+        <i class="rep-pending" style={`width:${(counts.submitted / indicators.length) * 100}%`}></i>
+        <i class="rep-queued" style={`width:${(counts.toApprove / indicators.length) * 100}%`}></i>
       </div>
 
       <h2>Recommended actions</h2>
@@ -232,7 +245,7 @@ const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
       </ol>
 
       <p class="rep-foot">
-        Illustrative example &middot; names, domains and infrastructure changed. See
+        Fictional example &middot; operation mapping is on the Enterprise plan. See
         <a href={`${base}/resources/methodology`}>how we count</a> the numbers on our homepage.
       </p>
     </div>
