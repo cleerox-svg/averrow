@@ -238,7 +238,7 @@ export async function renderStatusPage(env: Env): Promise<string> {
 .status-banner-headline { font-family: var(--font-display); font-size: 22px; font-weight: 700; }
 .status-banner-sub { margin-top: 0.4rem; font-size: 13px; color: var(--text-secondary); font-family: var(--font-mono); }
 
-.status-row { background: var(--bg-card, rgba(22,30,48,0.65)); border: 1px solid var(--border-base, rgba(255,255,255,0.08)); border-radius: 12px; padding: 1.1rem 1.25rem; margin-bottom: 0.9rem; backdrop-filter: blur(8px); }
+.status-row { background: var(--bg-card, var(--bg-secondary)); border: 1px solid var(--border-base, rgba(255,255,255,0.08)); border-radius: 12px; padding: 1.1rem 1.25rem; margin-bottom: 0.9rem; backdrop-filter: blur(8px); }
 .status-row-head { display:flex; align-items:center; justify-content:space-between; margin-bottom: 0.85rem; }
 .status-row-title { font-family: var(--font-display); font-size: 17px; font-weight: 600; color: var(--text-primary); }
 .status-row-pill { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 10px; border-radius: 100px; }
@@ -250,21 +250,21 @@ export async function renderStatusPage(env: Env): Promise<string> {
 .status-row-foot { display:flex; justify-content:space-between; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.05em; }
 .status-row-uptime { color: var(--text-secondary); font-weight: 600; }
 
-.status-tooltip { position: fixed; pointer-events: none; padding: 6px 10px; background: rgba(20,26,38,0.97); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-primary); white-space: nowrap; z-index: 1000; opacity: 0; transition: opacity 0.1s ease; }
+.status-tooltip { position: fixed; pointer-events: none; padding: 6px 10px; background: rgba(21,22,25,0.97); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-primary); white-space: nowrap; z-index: 1000; opacity: 0; transition: opacity 0.1s ease; }
 .status-tooltip.visible { opacity: 1; }
 
 .status-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); text-align: center; margin-top: 1.5rem; letter-spacing: 0.05em; }
-.status-meta a { color: var(--accent, var(--amber, #E5A832)); text-decoration: none; border-bottom: 1px dashed currentColor; }
+.status-meta a { color: var(--primary-text, #96acff); text-decoration: none; border-bottom: 1px dashed currentColor; }
 
 /* ── Incidents section ─────────────────────────────────────────── */
 .incidents-section-title { font-family: var(--font-display); font-size: 16px; font-weight: 700; color: var(--text-primary); margin: 2rem 0 0.75rem; letter-spacing: -0.01em; }
 .incidents-archive-link { margin-top: 12px; text-align: right; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; }
-.incidents-archive-link a { color: var(--accent, var(--amber, #E5A832)); text-decoration: none; border-bottom: 1px dashed currentColor; }
+.incidents-archive-link a { color: var(--primary-text, #96acff); text-decoration: none; border-bottom: 1px dashed currentColor; }
 .incidents-list { display: flex; flex-direction: column; gap: 8px; }
-.incident-card { background: var(--bg-card, rgba(22,30,48,0.65)); border: 1px solid var(--border-base, rgba(255,255,255,0.08)); border-radius: 10px; padding: 14px 16px; backdrop-filter: blur(8px); }
+.incident-card { background: var(--bg-card, var(--bg-secondary)); border: 1px solid var(--border-base, rgba(255,255,255,0.08)); border-radius: 10px; padding: 14px 16px; backdrop-filter: blur(8px); }
 .incident-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
 .incident-card-title-link { text-decoration: none; color: inherit; flex: 1; min-width: 0; }
-.incident-card-title-link:hover .incident-card-title { color: var(--accent, var(--amber, #E5A832)); }
+.incident-card-title-link:hover .incident-card-title { color: var(--primary-text, #96acff); }
 .incident-card-title { font-family: var(--font-display); font-size: 14px; font-weight: 600; color: var(--text-primary); transition: color 0.15s ease; }
 .incident-card-pill { font-family: var(--font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 8px; border-radius: 100px; flex-shrink: 0; }
 .incident-card-details { font-size: 13px; color: var(--text-secondary); margin: 4px 0 8px; line-height: 1.5; }

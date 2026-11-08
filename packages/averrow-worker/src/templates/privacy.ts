@@ -14,7 +14,7 @@ export function renderPrivacyPage(): string {
 .legal-content h2 { font-family: var(--font-display); font-size: 1.25rem; font-weight: 700; margin: 2rem 0 0.75rem; }
 .legal-content p, .legal-content li { color: var(--text-secondary); line-height: 1.8; margin-bottom: 1rem; font-size: 0.92rem; }
 .legal-content ul { padding-left: 1.5rem; }
-.legal-content a { color: var(--accent); }
+.legal-content a { color: var(--primary-text); }
 </style>
 
 <div class="legal-content">

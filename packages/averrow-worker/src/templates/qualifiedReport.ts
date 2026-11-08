@@ -13,6 +13,7 @@
 // at all — not even as "none on record", which would itself be a claim
 // about Averrow's threat data.
 
+import { r3MarkSvg, FONT_SANS_STACK } from "./brand";
 import type { ReportPayload as ReportPayloadCurrent } from "../handlers/qualifiedReport";
 
 // Stored payloads from before the 2026-10-05 rework still carry
@@ -121,12 +122,13 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
   <title>Brand Risk Plan — ${escapeHtml(brandName)}</title>
   <style>
     :root {
-      --bg: #060A14;
-      --panel: rgba(22,30,48,0.85);
-      --text: rgba(255,255,255,0.92);
-      --text-secondary: rgba(255,255,255,0.60);
-      --text-tertiary: rgba(255,255,255,0.40);
-      --amber: #E5A832;
+      --bg: #0a0b0e;
+      --panel: #151619;
+      --text: #f6f7f7;
+      --text-secondary: #c2c2c4;
+      --text-tertiary: #a1a1a3;
+      --primary-text: #96acff; /* indigo, AA on graphite */
+      --amber: #E5A832; /* status only */
       --red: #C83C3C;
       --blue: #0A8AB5;
       --green: #3CB878;
@@ -134,7 +136,7 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
     }
     * { box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-family: ${FONT_SANS_STACK};
       background: var(--bg);
       color: var(--text);
       margin: 0;
@@ -145,7 +147,7 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
     .header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 32px; }
     .header h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.3px; }
     .header .meta { color: var(--text-secondary); font-size: 13px; }
-    .header .averrow { color: var(--amber); font-weight: 600; letter-spacing: 2px; font-size: 12px; text-transform: uppercase; margin-bottom: 16px; }
+    .header .averrow { display: flex; align-items: center; gap: 10px; color: var(--primary-text); font-weight: 600; letter-spacing: 2px; font-size: 12px; text-transform: uppercase; margin-bottom: 16px; }
     .grade-card {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -162,7 +164,7 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
       margin: 0 0 16px;
       padding-bottom: 8px;
       border-bottom: 1px solid var(--border);
-      color: var(--amber);
+      color: var(--primary-text);
       letter-spacing: 0.3px;
     }
     .panel {
@@ -179,7 +181,7 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
     .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin: 16px 0; }
     .stat { background: var(--panel); padding: 16px; border-radius: 6px; border: 1px solid var(--border); }
     .stat .label { color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .stat .value { font-size: 24px; font-weight: 700; color: var(--amber); margin-top: 4px; }
+    .stat .value { font-size: 24px; font-weight: 700; color: var(--text); /* data, not a primary action */ margin-top: 4px; }
     .stat .value.green { color: var(--green); }
     .stat .value.red { color: var(--red); }
     .narrative { font-size: 15px; line-height: 1.7; color: var(--text); }
@@ -192,7 +194,8 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
       .panel, .grade-card, .stat { background: #f7f7f7; border-color: #ddd; }
       th { color: #555; }
       .header { border-color: #ccc; }
-      section h2 { color: #b07c00; }
+      section h2, .header .averrow { color: #2a44d3; }
+      .stat .value { color: #111; }
     }
     @media (max-width: 720px) {
       .container { padding: 32px 16px; }
@@ -204,7 +207,7 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
 <body>
   <div class="container">
     <div class="header">
-      <div class="averrow">Averrow · Brand Risk Plan</div>
+      <div class="averrow">${r3MarkSvg({ size: 28, decorative: true })}<span>Averrow · Brand Risk Plan</span></div>
       <h1>${escapeHtml(brandName)}</h1>
       <div class="meta"><code>${escapeHtml(p.brand.domain)}</code> · Generated ${escapeHtml(generated)}</div>
     </div>

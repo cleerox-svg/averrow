@@ -1,7 +1,12 @@
 /**
  * Averrow — Shared Components
  * Reusable nav, footer, head, and page wrapper for the corporate site.
+ *
+ * Facelift Phase 4: R3 logo, indigo primary on graphite, system font
+ * stack (no Google Fonts). Amber is a status colour only. See ./brand.ts.
  */
+
+import { r3MarkSvg, r3WordmarkSvg, R3_FAVICON_DATA_URI, FONT_SANS_STACK, FONT_MONO_STACK } from "./brand";
 
 /* ──────────────────────────────────────────────────────────
    renderNav — sticky glassmorphic navigation bar
@@ -11,19 +16,9 @@ export function renderNav(): string {
 <nav class="nav">
   <div class="nav-inner">
     <a href="/" class="nav-brand">
-      <svg width="28" height="28" viewBox="0 0 32 32" style="flex-shrink:0" class="averrow-mark">
-        <defs>
-          <linearGradient id="deep-arrow-nav" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#6B1010"/>
-            <stop offset="100%" stop-color="#C83C3C"/>
-          </linearGradient>
-        </defs>
-        <rect width="32" height="32" rx="6" fill="#080E18"/>
-        <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#deep-arrow-nav)"/>
-        <path d="M14.5 22H17.5L16 18Z" fill="#080E18"/>
-      </svg>
+      ${r3MarkSvg({ size: 28, tile: false, decorative: true, className: "averrow-mark" })}
       <div>
-        <span class="nav-brand-text">AVERROW</span>
+        <span class="nav-brand-text">${r3WordmarkSvg(17)}</span>
         <span class="nav-brand-sub">THREAT INTELLIGENCE</span>
       </div>
     </a>
@@ -107,36 +102,15 @@ export function renderFooter(): string {
     <div class="footer-grid">
       <div class="footer-brand-block">
         <a href="/" class="nav-brand" style="margin-bottom:0.5rem">
-          <svg width="24" height="24" viewBox="0 0 32 32" style="flex-shrink:0" class="averrow-mark">
-            <defs>
-              <linearGradient id="deep-arrow-foot" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stop-color="#6B1010"/>
-                <stop offset="100%" stop-color="#C83C3C"/>
-              </linearGradient>
-            </defs>
-            <rect width="32" height="32" rx="6" fill="#080E18"/>
-            <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#deep-arrow-foot)"/>
-            <path d="M14.5 22H17.5L16 18Z" fill="#080E18"/>
-          </svg>
+          ${r3MarkSvg({ size: 24, tile: false, decorative: true, className: "averrow-mark" })}
           <div>
-            <span class="nav-brand-text" style="font-size:18px">AVERROW</span>
+            <span class="nav-brand-text">${r3WordmarkSvg(15)}</span>
           </div>
         </a>
         <p>AI-powered brand protection by LRX Enterprises Inc. Continuous monitoring against impersonation, phishing, and social media abuse.</p>
         <p style="margin-top:1rem;font-size:0.82rem;color:var(--text-tertiary)">
-          <a href="mailto:hello@averrow.com" style="color:var(--text-tertiary);transition:color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-tertiary)'">hello@averrow.com</a>
+          <a href="mailto:hello@averrow.com" style="color:var(--text-tertiary);transition:color 0.2s;" onmouseover="this.style.color='var(--primary-text)'" onmouseout="this.style.color='var(--text-tertiary)'">hello@averrow.com</a>
         </p>
-        <svg width="36" height="36" viewBox="0 0 32 32" class="footer-orbital-mark" aria-hidden="true">
-          <defs>
-            <linearGradient id="deep-arrow-foot-mark" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="#6B1010"/>
-              <stop offset="100%" stop-color="#C83C3C"/>
-            </linearGradient>
-          </defs>
-          <rect width="32" height="32" rx="6" fill="#080E18"/>
-          <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#deep-arrow-foot-mark)"/>
-          <path d="M14.5 22H17.5L16 18Z" fill="#080E18"/>
-        </svg>
       </div>
       <div class="footer-col">
         <div class="footer-col-title">Product</div>
@@ -188,11 +162,10 @@ export function renderHead(title: string, description: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title}</title>
 <meta name="description" content="${description}">
-<link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/icon-192.svg">
+<link rel="icon" href="${R3_FAVICON_DATA_URI}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/v2/apple-touch-icon.png">
 <link rel="alternate" type="application/rss+xml" title="Averrow Blog" href="/blog/feed.xml">
 <link rel="alternate" type="application/rss+xml" title="Averrow Changelog" href="/changelog/feed.xml">
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <noscript>
   <style>
     /* JS off: force reveal patterns visible so crawlers and no-JS users
@@ -216,22 +189,25 @@ export function renderHead(title: string, description: string): string {
    Aligned with platform tokens (CLAUDE.md §5). Marketing keeps its own
    variable names so existing call sites stay valid; only values shift. */
 :root {
-  --font-display: 'Plus Jakarta Sans', sans-serif;
-  --font-body: 'Plus Jakarta Sans', sans-serif;
-  --font-mono: 'IBM Plex Mono', monospace;
+  --font-display: ${FONT_SANS_STACK};
+  --font-body: ${FONT_SANS_STACK};
+  --font-mono: ${FONT_MONO_STACK};
 
-  /* Accent — Signal Red (matches platform --red) */
-  --accent: #C83C3C;
-  --accent-hover: #A82E2E;
-  --accent-light: #E87070;
-  --accent-bg: rgba(200, 60, 60, 0.08);
-  --accent-bg-strong: rgba(200, 60, 60, 0.15);
+  /* Primary — indigo (facelift; platform --primary). --accent is the FILL
+     (buttons, strips); --primary-text is the AA text colour on the page.
+     The R3 mark stays red (--red). */
+  --accent: #4c5cf8;
+  --accent-hover: #4f60ff;
+  --accent-light: #96acff;
+  --primary-text: #96acff;
+  --accent-bg: rgba(76, 92, 248, 0.10);
+  --accent-bg-strong: rgba(76, 92, 248, 0.18);
 
   /* Platform palette parity */
   --red: #C83C3C;
   --red-dim: #8B1A1A;
   --red-bg: rgba(200, 60, 60, 0.08);
-  --amber: #E5A832;        /* was #E8923C — aligned with platform gold */
+  --amber: #E5A832;        /* STATUS ONLY (warning / medium) — never a CTA or nav colour */
   --amber-dim: #B8821F;
   --green: #3CB878;        /* was #28A050 — aligned with platform */
   --green-dim: #1A6B3C;
@@ -252,62 +228,64 @@ export function renderHead(title: string, description: string): string {
 }
 
 [data-theme="light"] {
-  --bg-primary: #F8F7F5;
-  --bg-secondary: #FFFFFF;
-  --bg-tertiary: #FAFAF8;
-  --bg-code: #F0EDE8;
-  --bg-elevated: #FFFFFF;
-  --text-primary: #1A1F2E;
-  --text-secondary: #5A6170;
-  --text-tertiary: #8A8F9C;
-  --text-inverse: #F0EDE8;
-  --border: #E2DDD5;
-  --border-strong: rgba(226,221,213,0.6);
+  --bg-primary: #f0f2f8;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f6f8fb;
+  --bg-code: #f6f8fb;
+  --bg-elevated: #ffffff;
+  --text-primary: #0f1216;
+  --text-secondary: #383b40;
+  --text-tertiary: #4c4e54;
+  --text-inverse: #eceef4;
+  --border: rgba(18, 22, 29, 0.14);
+  --border-strong: rgba(18, 22, 29, 0.24);
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
   --shadow-md: 0 4px 24px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.8);
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.08);
-  --shadow-glow: 0 0 40px rgba(181,48,48,0.12);
-  --gradient-hero: linear-gradient(135deg, #F8F7F5 0%, #FAFAF8 50%, #F8F7F5 100%);
-  --illustration-fill: #1A1F2E;
-  --illustration-stroke: #B53030;
-  --accent: #B53030;
-  --accent-hover: #9A2828;
-  --accent-bg: rgba(181,48,48,0.06);
-  --accent-bg-strong: rgba(181,48,48,0.12);
-  --accent-section: #C88B1E;
-  --nav-bg: rgba(248,247,245,0.8);
+  --shadow-glow: 0 0 40px rgba(50,80,240,0.12);
+  --gradient-hero: linear-gradient(135deg, #f0f2f8 0%, #f6f8fb 50%, #f0f2f8 100%);
+  --illustration-fill: #0f1216;
+  --illustration-stroke: #C83C3C;
+  --accent: #3250f0;
+  --accent-hover: #2941d9;
+  --accent-light: #2a44d3;
+  --primary-text: #2a44d3;
+  --accent-bg: rgba(50,80,240,0.06);
+  --accent-bg-strong: rgba(50,80,240,0.12);
+  --accent-section: #2a44d3;
+  --nav-bg: rgba(240,242,248,0.85);
 
   /* Glass card tokens */
-  --glass-card-bg: rgba(255,255,255,0.6);
-  --glass-card-border: rgba(226,221,213,0.5);
+  --glass-card-bg: rgba(255,255,255,0.7);
+  --glass-card-border: rgba(18,22,29,0.12);
   --glass-card-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
   --glass-card-hover-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
 }
 
 [data-theme="dark"] {
-  --bg-primary: #060A14;     /* matches platform --bg-page */
-  --bg-secondary: #0E1A2B;
-  --bg-tertiary: #142236;
-  --bg-code: #0C1420;
-  --bg-elevated: #1A2E48;
-  --text-primary: rgba(255,255,255,0.92);  /* matches platform --text-primary */
-  --text-secondary: rgba(255,255,255,0.60);
-  --text-tertiary: rgba(255,255,255,0.40);
-  --text-inverse: #1A1F2E;
-  --border: rgba(120, 160, 200, 0.08);
-  --border-strong: rgba(120, 160, 200, 0.15);
+  --bg-primary: #0a0b0e;     /* graphite — matches platform --bg-page */
+  --bg-secondary: #151619;
+  --bg-tertiary: #0f1013;
+  --bg-code: #0f1013;
+  --bg-elevated: #1f2024;
+  --text-primary: #f6f7f7;  /* matches platform --text-primary */
+  --text-secondary: #c2c2c4;
+  --text-tertiary: #a1a1a3;
+  --text-inverse: #151619;
+  --border: rgba(245, 245, 246, 0.09);
+  --border-strong: rgba(245, 245, 246, 0.16);
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
   --shadow-md: 0 4px 16px rgba(0,0,0,0.3);
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.4);
-  --shadow-glow: 0 0 60px rgba(229,168,50,0.18);
-  --gradient-hero: linear-gradient(135deg, #060A14 0%, #0E1A2B 50%, #060A14 100%);
-  --illustration-fill: #F0EDE8;
+  --shadow-glow: 0 0 60px rgba(76,92,248,0.16);
+  --gradient-hero: linear-gradient(135deg, #0a0b0e 0%, #151619 50%, #0a0b0e 100%);
+  --illustration-fill: #f6f7f7;
   --illustration-stroke: #C83C3C;
-  --nav-bg: rgba(6,10,20,0.85);
+  --nav-bg: rgba(10,11,14,0.85);
 
   /* Glass card tokens (parity with light mode) */
-  --glass-card-bg: rgba(22,30,48,0.85);
-  --glass-card-border: rgba(120,160,200,0.10);
+  --glass-card-bg: rgba(21,22,25,0.85);
+  --glass-card-border: rgba(245,245,246,0.09);
   --glass-card-shadow: 0 4px 24px rgba(0,0,0,0.30);
   --glass-card-hover-shadow: 0 8px 32px rgba(0,0,0,0.45);
 }
@@ -365,7 +343,7 @@ img { max-width: 100%; }
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent 0%, transparent 10%, #C83C3C 50%, transparent 90%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, transparent 10%, var(--accent) 50%, transparent 90%, transparent 100%);
   opacity: 0.55;
   pointer-events: none;
 }
@@ -374,8 +352,8 @@ img { max-width: 100%; }
   background: var(--nav-bg);
 }
 [data-theme="light"] .nav-scrolled {
-  background: rgba(248,247,245,0.85);
-  border-bottom-color: rgba(226,221,213,0.5);
+  background: rgba(240,242,248,0.9);
+  border-bottom-color: rgba(18,22,29,0.14);
 }
 
 .nav-inner {
@@ -398,11 +376,10 @@ img { max-width: 100%; }
 .nav-brand:hover svg { opacity: 0.85; }
 
 .nav-brand-text {
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 18px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  /* R3 wordmark SVG (fill: currentColor) */
+  display: block;
+  line-height: 0;
+  color: var(--text-primary);
 }
 
 .nav-brand-sub {
@@ -424,8 +401,8 @@ img { max-width: 100%; }
 }
 
 /* Horizontal port of the back-end sidebar nav pattern.
-   Active: amber gradient pill + amber bottom border (analog of the
-   sidebar's left border) + amber icon glow. */
+   Active: primary (indigo) gradient pill + bottom border (analog of the
+   sidebar's left border) + primary icon glow. */
 .nav-links .nav-link {
   display: inline-flex;
   align-items: center;
@@ -457,24 +434,24 @@ img { max-width: 100%; }
 .nav-links .nav-link-label { line-height: 1; }
 .nav-links .nav-link:hover {
   color: var(--text-primary);
-  background: rgba(229,168,50,0.06);
+  background: rgba(76,92,248,0.06);
   text-decoration: none;
 }
-.nav-links .nav-link:hover .nav-link-icon { color: var(--amber); }
+.nav-links .nav-link:hover .nav-link-icon { color: var(--primary-text); }
 .nav-links .nav-link.is-active {
-  color: var(--amber);
-  background: linear-gradient(135deg, rgba(229,168,50,0.12), rgba(229,168,50,0.06));
-  border-color: rgba(229,168,50,0.22);
+  color: var(--primary-text);
+  background: linear-gradient(135deg, rgba(76,92,248,0.12), rgba(76,92,248,0.06));
+  border-color: rgba(76,92,248,0.22);
   box-shadow:
-    inset 0 1px 0 rgba(229,168,50,0.20),
-    0 0 12px rgba(229,168,50,0.08);
+    inset 0 1px 0 rgba(76,92,248,0.20),
+    0 0 12px rgba(76,92,248,0.08);
   font-weight: 600;
 }
 .nav-links .nav-link.is-active .nav-link-icon {
-  color: var(--amber);
-  filter: drop-shadow(0 0 4px rgba(229,168,50,0.60));
+  color: var(--primary-text);
+  filter: drop-shadow(0 0 4px rgba(76,92,248,0.60));
 }
-/* Amber underline on the active item — horizontal echo of the
+/* Primary underline on the active item — horizontal echo of the
    sidebar's left-edge accent strip. */
 .nav-links .nav-link.is-active::after {
   content: '';
@@ -483,9 +460,9 @@ img { max-width: 100%; }
   right: 12px;
   bottom: -3px;
   height: 2px;
-  background: var(--amber);
+  background: var(--primary-text);
   border-radius: 1px;
-  box-shadow: 0 0 8px rgba(229,168,50,0.45);
+  box-shadow: 0 0 8px rgba(76,92,248,0.45);
 }
 
 .nav-right {
@@ -508,8 +485,8 @@ img { max-width: 100%; }
   color: var(--text-secondary);
 }
 .theme-toggle:hover {
-  border-color: var(--amber);
-  color: var(--amber);
+  border-color: var(--primary-text);
+  color: var(--primary-text);
 }
 .theme-icon-wrap {
   display: inline-flex;
@@ -560,7 +537,7 @@ img { max-width: 100%; }
 
 .btn-primary:hover {
   background: var(--accent-hover);
-  box-shadow: 0 0 20px rgba(200,60,60,0.3);
+  box-shadow: 0 0 20px rgba(76,92,248,0.3);
   transform: scale(1.02);
 }
 
@@ -572,13 +549,13 @@ img { max-width: 100%; }
 
 .btn-outline:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--primary-text);
   background: var(--accent-bg);
 }
 
 .btn-ghost {
   background: transparent;
-  color: var(--accent);
+  color: var(--primary-text);
   padding: 0.5rem 0.75rem;
 }
 
@@ -598,7 +575,7 @@ section {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
-  color: var(--accent-section, var(--accent));
+  color: var(--accent-section, var(--primary-text));
   letter-spacing: 0.2em;
   text-transform: uppercase;
   margin-bottom: 0.5rem;
@@ -672,7 +649,7 @@ section {
 
 .platform-card:hover::before { opacity: 1; }
 .platform-card:nth-child(1)::before { background: var(--accent); }
-.platform-card:nth-child(2)::before { background: var(--amber); }
+.platform-card:nth-child(2)::before { background: var(--primary-text); }
 .platform-card:nth-child(3)::before { background: var(--green); }
 
 .pc-icon {
@@ -686,8 +663,8 @@ section {
   font-size: 1.4rem;
 }
 
-.pc-icon-teal { background: var(--accent-bg); color: var(--accent); }
-.pc-icon-coral { background: rgba(232, 146, 60, 0.08); color: var(--amber); }
+.pc-icon-teal { background: var(--accent-bg); color: var(--primary-text); }
+.pc-icon-coral { background: var(--accent-bg); color: var(--primary-text); }
 .pc-icon-green { background: var(--green-bg); color: var(--green); }
 
 .platform-card h3 {
@@ -737,12 +714,8 @@ section {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent 0%, transparent 10%, #C83C3C 50%, transparent 90%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, transparent 10%, var(--accent) 50%, transparent 90%, transparent 100%);
   opacity: 0.55;
-}
-.footer-orbital-mark {
-  opacity: 0.35;
-  margin-top: 1.25rem;
 }
 
 .footer-grid {
@@ -780,7 +753,7 @@ section {
   transition: color 0.2s;
 }
 
-.footer-col a:hover { color: var(--accent); }
+.footer-col a:hover { color: var(--primary-text); }
 
 .footer-bottom {
   display: flex;
@@ -825,21 +798,21 @@ section {
   background: var(--glass-card-bg, rgba(255,255,255,0.6));
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-color: var(--glass-card-border, rgba(226,221,213,0.5));
+  border-color: var(--glass-card-border, rgba(18,22,29,0.12));
   box-shadow: var(--glass-card-shadow);
 }
 [data-theme="light"] .platform-card:hover,
 [data-theme="light"] .value-prop-item:hover,
 [data-theme="light"] .card:hover {
   box-shadow: var(--glass-card-hover-shadow);
-  border-color: rgba(226,221,213,0.7);
+  border-color: rgba(18,22,29,0.2);
 }
 
 [data-theme="light"] .price-card {
   background: rgba(255,255,255,0.7);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(226,221,213,0.5);
+  border: 1px solid rgba(18,22,29,0.12);
   border-radius: 16px;
   box-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
 }
@@ -847,11 +820,11 @@ section {
   box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
 }
 [data-theme="light"] .price-card.popular {
-  border: 2px solid rgba(200,139,30,0.3);
-  box-shadow: 0 4px 24px rgba(200,139,30,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  border: 2px solid rgba(50,80,240,0.3);
+  box-shadow: 0 4px 24px rgba(50,80,240,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
 }
 [data-theme="light"] .price-card.popular::before {
-  background: #C88B1E;
+  background: var(--accent);
 }
 
 [data-theme="light"] .compare-table {
@@ -919,7 +892,6 @@ section {
   .footer-brand-block { grid-column: 1 / -1; text-align: center; margin-bottom: 1rem; }
   .footer-brand-block a { justify-content: center; }
   .footer-brand-block p { text-align: center; max-width: 100%; }
-  .footer-orbital-mark { margin: 0.5rem auto 0; }
   .footer-col { text-align: center; }
   .footer-col ul { align-items: center; }
   .footer-bottom { text-align: center; justify-content: center; padding-top: 1.5rem; gap: 0.5rem; }
@@ -939,7 +911,7 @@ section {
   color: var(--text-secondary);
   transition: all 0.2s;
 }
-.nav-hamburger:hover { border-color: var(--accent); color: var(--accent); }
+.nav-hamburger:hover { border-color: var(--accent); color: var(--primary-text); }
 
 .mobile-menu {
   display: none;
@@ -982,7 +954,7 @@ section {
   transition: all 0.15s ease;
 }
 .mobile-link:hover {
-  background: rgba(229,168,50,0.06);
+  background: rgba(76,92,248,0.06);
   color: var(--text-primary);
   text-decoration: none;
 }
@@ -996,18 +968,18 @@ section {
   flex-shrink: 0;
 }
 .mobile-link-icon svg { width: 16px; height: 16px; }
-.mobile-link:hover .mobile-link-icon { color: var(--amber); }
+.mobile-link:hover .mobile-link-icon { color: var(--primary-text); }
 .mobile-link.is-active {
-  color: var(--amber);
-  background: linear-gradient(135deg, rgba(229,168,50,0.12), rgba(229,168,50,0.06));
-  border-color: rgba(229,168,50,0.22);
-  border-left: 2px solid var(--amber);
+  color: var(--primary-text);
+  background: linear-gradient(135deg, rgba(76,92,248,0.12), rgba(76,92,248,0.06));
+  border-color: rgba(76,92,248,0.22);
+  border-left: 2px solid var(--primary-text);
   padding-left: 12px;
   font-weight: 600;
 }
 .mobile-link.is-active .mobile-link-icon {
-  color: var(--amber);
-  filter: drop-shadow(0 0 4px rgba(229,168,50,0.60));
+  color: var(--primary-text);
+  filter: drop-shadow(0 0 4px rgba(76,92,248,0.60));
 }
 .mobile-menu-divider {
   height: 1px;
@@ -1109,7 +1081,7 @@ section {
   padding: 28px 32px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
-  background: var(--glass-card-bg, rgba(22,30,48,0.55));
+  background: var(--glass-card-bg, rgba(21,22,25,0.55));
   backdrop-filter: blur(12px) saturate(160%);
   -webkit-backdrop-filter: blur(12px) saturate(160%);
   text-align: left;
@@ -1122,7 +1094,7 @@ section {
   font-family: var(--font-display);
   font-size: 64px;
   line-height: 1;
-  color: var(--amber);
+  color: var(--primary-text);
   opacity: 0.18;
   pointer-events: none;
   user-select: none;
@@ -1148,7 +1120,7 @@ section {
 .testimonial-attribution-divider {
   width: 24px;
   height: 1px;
-  background: var(--amber);
+  background: var(--primary-text);
   opacity: 0.6;
 }
 .testimonial-role {
@@ -1172,15 +1144,11 @@ section {
 }
 
 
-/* ──────────────────────────────────────────────────────────
-   wrapPage — full HTML document wrapper
-   ────────────────────────────────────────────────────────── */
-export function wrapPage(title: string, description: string, content: string): string {
-  return `<!DOCTYPE html>
-<html lang="en" data-theme="dark">
-<head>
-${renderHead(title, description)}
-<script>
+/**
+ * Pre-paint theme script, shared by every Worker-rendered page (wrapPage
+ * and the 404). Put it in <head> after `<html data-theme="dark">`.
+ */
+export const THEME_PREPAINT_SCRIPT = `<script>
   // Pre-paint theme load — avoids a flash from the dark default to a
   // saved-light preference. Three modes match the back-end sidebar:
   //   auto  -> follow OS prefers-color-scheme
@@ -1200,7 +1168,17 @@ ${renderHead(title, description)}
       document.documentElement.setAttribute('data-theme', resolved);
     } catch (e) {}
   })();
-</script>
+</script>`;
+
+/* ──────────────────────────────────────────────────────────
+   wrapPage — full HTML document wrapper
+   ────────────────────────────────────────────────────────── */
+export function wrapPage(title: string, description: string, content: string): string {
+  return `<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+${renderHead(title, description)}
+${THEME_PREPAINT_SCRIPT}
 </head>
 <body>
 

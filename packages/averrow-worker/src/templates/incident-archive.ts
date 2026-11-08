@@ -137,7 +137,7 @@ export async function renderIncidentArchivePage(env: Env): Promise<string> {
 
 .archive-list { display: flex; flex-direction: column; gap: 8px; }
 
-.archive-card { display: block; background: var(--bg-card, rgba(22,30,48,0.55)); border: 1px solid var(--border-base, rgba(255,255,255,0.06)); border-radius: 10px; padding: 14px 16px; text-decoration: none; color: inherit; transition: border-color 0.15s ease, transform 0.15s ease; }
+.archive-card { display: block; background: var(--bg-card, var(--bg-secondary)); border: 1px solid var(--border-base, rgba(255,255,255,0.06)); border-radius: 10px; padding: 14px 16px; text-decoration: none; color: inherit; transition: border-color 0.15s ease, transform 0.15s ease; }
 .archive-card:hover { border-color: rgba(229,168,50,0.30); transform: translateY(-1px); }
 .archive-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
 .archive-card-title { font-family: var(--font-display); font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1; min-width: 0; }
@@ -145,7 +145,7 @@ export async function renderIncidentArchivePage(env: Env): Promise<string> {
 .archive-card-details { font-size: 13px; color: var(--text-secondary); margin: 4px 0 8px; line-height: 1.5; }
 .archive-card-foot { display: flex; gap: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); letter-spacing: 0.04em; flex-wrap: wrap; }
 
-.archive-empty { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); padding: 2rem; text-align: center; background: var(--bg-card, rgba(22,30,48,0.4)); border: 1px solid var(--border-base, rgba(255,255,255,0.06)); border-radius: 10px; }
+.archive-empty { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); padding: 2rem; text-align: center; background: var(--bg-card, var(--bg-secondary)); border: 1px solid var(--border-base, rgba(255,255,255,0.06)); border-radius: 10px; }
 
 [data-theme="light"] .archive-card,
 [data-theme="light"] .archive-empty { background: rgba(255,255,255,0.6); border-color: rgba(26,31,46,0.08); }

@@ -7,6 +7,7 @@
 // configured, the call returns ok:false with the upstream error.
 
 import { logger } from "./logger";
+import { EMAIL_LOGO_URL } from "../templates/brand";
 
 const FROM_ADDRESS = "Averrow Sales <sales@averrow.com>";
 
@@ -76,17 +77,18 @@ function buildOutreachHtml(p: LeadOutreachEmailParams): string {
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#f7f7f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
   <div style="max-width:560px;margin:0 auto;padding:32px 24px;background:#fff;color:#222;line-height:1.6;">
-    <div style="color:#E5A832;font-weight:600;letter-spacing:2px;font-size:11px;text-transform:uppercase;margin-bottom:16px;">Averrow · Brand Risk Plan</div>
+    <img src="${EMAIL_LOGO_URL}" width="28" height="28" alt="Averrow" style="display:block;width:28px;height:28px;border:0;outline:none;margin:0 0 12px;">
+    <div style="color:#2a44d3;font-weight:600;letter-spacing:2px;font-size:11px;text-transform:uppercase;margin-bottom:16px;">Averrow · Brand Risk Plan</div>
     <h2 style="font-size:20px;margin:0 0 16px;color:#111;">${greeting}</h2>
     <p>We ran a brand-exposure assessment on <strong>${escapeHtml(p.brandDomain)}</strong> using our threat-intelligence platform. The full plan is attached at the link below — three findings worth flagging up front:</p>
-    <div style="background:#fff8e6;border-left:3px solid #E5A832;padding:12px 16px;margin:16px 0;">
+    <div style="background:#eef1fe;border-left:3px solid #3250f0;padding:12px 16px;margin:16px 0;">
       <div style="font-weight:600;color:#111;margin-bottom:6px;">Risk grade: ${escapeHtml(p.riskGrade)}</div>
       <ul style="margin:0;padding-left:20px;color:#444;">${findings}</ul>
     </div>
     <p>The full Brand Risk Plan covers active threats targeting ${escapeHtml(p.brandName)}, infrastructure used to stage attacks, recommended remediation steps, and projected ROI for moving onto the platform:</p>
     <div style="text-align:center;margin:24px 0;">
       <a href="${escapeHtml(p.qualifiedReportUrl)}"
-         style="display:inline-block;background:#E5A832;color:#111;text-decoration:none;font-weight:600;padding:12px 28px;border-radius:4px;">
+         style="display:inline-block;background-color:#3250f0;background:#3250f0;color:#FFFFFF;text-decoration:none;font-weight:600;padding:12px 28px;border-radius:4px;">
         View the Brand Risk Plan →
       </a>
     </div>

@@ -117,7 +117,7 @@ function buildSalesHtml(p: NewLeadNotifyParams, adminLink: string, deliveryText:
 <html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:#f7f7f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
   <div style="max-width:560px;margin:0 auto;padding:24px;background:#fff;color:#222;line-height:1.6;">
-    <div style="color:#E5A832;font-weight:600;letter-spacing:2px;font-size:11px;text-transform:uppercase;margin-bottom:12px;">New scan lead · Averrow</div>
+    <div style="color:#2a44d3;font-weight:600;letter-spacing:2px;font-size:11px;text-transform:uppercase;margin-bottom:12px;">New scan lead · Averrow</div>
     <h2 style="font-size:18px;margin:0 0 16px;color:#111;">A visitor asked for their scan report</h2>
     <table style="width:100%;border-collapse:collapse;font-size:14px;">
       <tr><td style="padding:6px 0;color:#666;width:30%;">Email</td><td style="padding:6px 0;"><strong>${escapeHtml(p.email)}</strong></td></tr>
@@ -127,7 +127,7 @@ function buildSalesHtml(p: NewLeadNotifyParams, adminLink: string, deliveryText:
       <tr><td style="padding:6px 0;color:#666;">Delivery</td><td style="padding:6px 0;">${escapeHtml(deliveryText)}</td></tr>
     </table>
     <div style="text-align:center;margin:24px 0 0;">
-      <a href="${escapeHtml(adminLink)}" style="display:inline-block;background:#E5A832;color:#111;text-decoration:none;font-weight:600;padding:10px 24px;border-radius:4px;">Open in admin</a>
+      <a href="${escapeHtml(adminLink)}" style="display:inline-block;background-color:#3250f0;background:#3250f0;color:#FFFFFF;text-decoration:none;font-weight:600;padding:10px 24px;border-radius:4px;">Open in admin</a>
     </div>
     <hr style="border:none;border-top:1px solid #eee;margin:24px 0 12px;">
     <div style="color:#888;font-size:11px;text-align:center;">Lead id: <code>${escapeHtml(p.leadId)}</code></div>

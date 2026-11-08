@@ -3,9 +3,9 @@
  *
  * Resolves an `AbuseBranding` object the responder threads through every
  * ack / determination email. With no org row (or `enabled=0`, or an
- * invalid override) the loader returns `DEFAULT_ABUSE_BRANDING`, which
- * reproduces today's Averrow-branded output byte-for-byte — so the
- * responder's behaviour is unchanged for every org that hasn't opted in.
+ * invalid override) the loader returns `DEFAULT_ABUSE_BRANDING`, the
+ * Averrow-branded output (R3 mark, indigo on graphite since the facelift
+ * Phase 4) — so every org that hasn't opted in gets the Averrow look.
  *
  * Deliverability boundary: the envelope From local-part is FIXED to
  * Averrow's authenticated domain (`abuse-noreply@averrow.com`). An org
@@ -15,6 +15,7 @@
  */
 
 import type { Env } from "../types";
+import { EMAIL_LOGO_URL } from "../templates/brand";
 
 /** Authenticated envelope sender — never customer-controlled. */
 export const ABUSE_NOREPLY_ADDRESS = "abuse-noreply@averrow.com";
@@ -50,9 +51,10 @@ export const DEFAULT_ABUSE_BRANDING: AbuseBranding = {
   fromName: "Averrow Abuse Triage",
   productName: "Averrow",
   tagline: "Abuse Triage",
-  accent: "#E5A832",
-  headerBg: "#0F1828",
-  logoUrl: "https://averrow.com/logo-email-mark.png",
+  // Facelift Phase 4: indigo primary on a graphite header, R3 mark.
+  accent: "#4c5cf8",
+  headerBg: "#151619",
+  logoUrl: EMAIL_LOGO_URL,
   logoAlt: "Averrow",
   subjectPrefix: "Averrow",
   websiteUrl: "https://averrow.com",

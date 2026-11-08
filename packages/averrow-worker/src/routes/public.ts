@@ -36,6 +36,7 @@ import { handlePublicStats as handlePublicStatsV2 } from "../handlers/stats";
 import { rateLimitCustom } from "../middleware/rateLimit";
 import type { RateLimitConfig } from "../middleware/rateLimit";
 import { handlePublicEmailSecurity } from "../handlers/emailSecurity";
+import { EMAIL_LOGO_PATH, handleEmailLogo } from "../handlers/emailAssets";
 
 // Public marketing HTML routes eligible for edge analytics logging.
 const MARKETING_PATHS = new Set([
@@ -193,6 +194,12 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // Cache headers shorter than the marketing pages — operators want
   // fresh data here, and the worker-side 60s KV cache absorbs the
   // load. CDN may revalidate after 30s.
+  // Hosted email logo with a one-year immutable cache (Gmail image proxy;
+  // see handlers/emailAssets.ts). No static asset exists at this path, so
+  // the request reaches the Worker; the PNG itself ships at /v2/email/.
+  router.get(EMAIL_LOGO_PATH, (request: Request, env: Env) => handleEmailLogo(request, env));
+  router.head(EMAIL_LOGO_PATH, (request: Request, env: Env) => handleEmailLogo(request, env));
+
   router.get("/status", async (_request: Request, env: Env) => {
     const html = await renderStatusPage(env);
     return new Response(html, {

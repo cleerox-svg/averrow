@@ -1,7 +1,12 @@
 /**
  * Invite acceptance landing page — shows invite details and "Sign in with Google" button.
  * Rendered server-side at /invite?token=... for users who land here from the email.
+ *
+ * Facelift Phase 4: R3 tile mark, indigo CTA (white text, 5.0:1), graphite
+ * card, system font stack. See ./brand.ts.
  */
+
+import { r3MarkSvg, R3_FAVICON_DATA_URI, FONT_SANS_STACK, FONT_MONO_STACK } from "./brand";
 
 interface InvitePageData {
   email: string;
@@ -21,13 +26,14 @@ export function renderInviteAcceptPage(data: InvitePageData): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="${R3_FAVICON_DATA_URI}" type="image/svg+xml">
   <title>Accept Invitation — Averrow</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: #080C14;
-      color: #E8ECF1;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0b0e;
+      color: #f6f7f7;
+      font-family: ${FONT_SANS_STACK};
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -35,7 +41,7 @@ export function renderInviteAcceptPage(data: InvitePageData): string {
       padding: 24px;
     }
     .card {
-      background: #111827;
+      background: #151619;
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 16px;
       max-width: 440px;
@@ -45,10 +51,10 @@ export function renderInviteAcceptPage(data: InvitePageData): string {
     }
     .logo { margin-bottom: 16px; }
     .brand {
-      font-family: monospace;
+      font-family: ${FONT_MONO_STACK};
       font-size: 11px;
       letter-spacing: 3px;
-      color: #8896AB;
+      color: #a1a1a3;
       text-transform: uppercase;
       margin-bottom: 32px;
     }
@@ -58,46 +64,46 @@ export function renderInviteAcceptPage(data: InvitePageData): string {
       line-height: 1.3;
       margin-bottom: 8px;
     }
-    .org-name { color: #E5A832; }
+    .org-name { color: #96acff; }
     .details {
       font-size: 14px;
-      color: #8896AB;
+      color: #a1a1a3;
       line-height: 1.6;
       margin: 16px 0;
     }
-    .details strong { color: #E8ECF1; }
+    .details strong { color: #f6f7f7; }
     .cta {
       display: inline-block;
       padding: 14px 40px;
-      background: #E5A832;
-      color: #080C14;
+      background: #4c5cf8;
+      color: #ffffff;
       font-size: 14px;
       font-weight: 700;
       text-decoration: none;
       border-radius: 8px;
       letter-spacing: 0.5px;
-      font-family: monospace;
+      font-family: ${FONT_MONO_STACK};
       margin: 24px 0;
       transition: background 0.2s;
     }
-    .cta:hover { background: #d49a2a; }
+    .cta:hover { background: #4f60ff; }
     .expiry {
       padding: 12px 16px;
       background: rgba(255,255,255,0.03);
       border: 1px solid rgba(255,255,255,0.06);
       border-radius: 8px;
       font-size: 12px;
-      color: #8896AB;
+      color: #a1a1a3;
       margin-top: 16px;
     }
     .footer {
       margin-top: 24px;
       padding-top: 20px;
       border-top: 1px solid rgba(255,255,255,0.06);
-      font-family: monospace;
+      font-family: ${FONT_MONO_STACK};
       font-size: 10px;
       letter-spacing: 2px;
-      color: #8896AB;
+      color: #a1a1a3;
       text-transform: uppercase;
     }
   </style>
@@ -105,15 +111,7 @@ export function renderInviteAcceptPage(data: InvitePageData): string {
 <body>
   <div class="card">
     <div class="logo">
-      <svg width="36" height="36" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="arrow" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#6B1010"/>
-            <stop offset="100%" style="stop-color:#C83C3C"/>
-          </linearGradient>
-        </defs>
-        <polygon points="18,2 34,30 18,22 2,30" fill="url(#arrow)"/>
-      </svg>
+      ${r3MarkSvg({ size: 40 })}
     </div>
     <div class="brand">Averrow</div>
 
@@ -145,13 +143,14 @@ export function renderInviteErrorPage(message: string): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="${R3_FAVICON_DATA_URI}" type="image/svg+xml">
   <title>Invitation Error — Averrow</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: #080C14;
-      color: #E8ECF1;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0b0e;
+      color: #f6f7f7;
+      font-family: ${FONT_SANS_STACK};
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -159,7 +158,7 @@ export function renderInviteErrorPage(message: string): string {
       padding: 24px;
     }
     .card {
-      background: #111827;
+      background: #151619;
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 16px;
       max-width: 440px;
@@ -169,22 +168,22 @@ export function renderInviteErrorPage(message: string): string {
     }
     .logo { margin-bottom: 16px; }
     .brand {
-      font-family: monospace;
+      font-family: ${FONT_MONO_STACK};
       font-size: 11px;
       letter-spacing: 3px;
-      color: #8896AB;
+      color: #a1a1a3;
       text-transform: uppercase;
       margin-bottom: 32px;
     }
     h1 {
       font-size: 20px;
       font-weight: 700;
-      color: #C83C3C;
+      color: #f87171;
       margin-bottom: 12px;
     }
     .message {
       font-size: 14px;
-      color: #8896AB;
+      color: #a1a1a3;
       line-height: 1.6;
       margin-bottom: 24px;
     }
@@ -192,11 +191,11 @@ export function renderInviteErrorPage(message: string): string {
       display: inline-block;
       padding: 12px 32px;
       border: 1px solid rgba(255,255,255,0.15);
-      color: #E8ECF1;
+      color: #f6f7f7;
       font-size: 13px;
       text-decoration: none;
       border-radius: 8px;
-      font-family: monospace;
+      font-family: ${FONT_MONO_STACK};
       transition: border-color 0.2s;
     }
     .link:hover { border-color: rgba(255,255,255,0.3); }
@@ -205,15 +204,7 @@ export function renderInviteErrorPage(message: string): string {
 <body>
   <div class="card">
     <div class="logo">
-      <svg width="36" height="36" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="arrow" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#6B1010"/>
-            <stop offset="100%" style="stop-color:#C83C3C"/>
-          </linearGradient>
-        </defs>
-        <polygon points="18,2 34,30 18,22 2,30" fill="url(#arrow)"/>
-      </svg>
+      ${r3MarkSvg({ size: 40 })}
     </div>
     <div class="brand">Averrow</div>
 
