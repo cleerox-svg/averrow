@@ -20,3 +20,15 @@
 
 /logo-email.png
   Cache-Control: public, max-age=31536000, immutable
+
+# Facelift Phase 5 (owner-approved 2026-11-08): long cache + immutable on
+# self-hosted marketing fonts and the R3 email logo, so browsers and Gmail's
+# image proxy stop revalidating them on every view. Their filenames are NOT
+# content-hashed: any change to a file under these paths MUST ship under a new
+# filename (e.g. averrow-geist-sans-var-v2.woff2), or clients keep the old one
+# for up to a year.
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/v2/email/*
+  Cache-Control: public, max-age=31536000, immutable
