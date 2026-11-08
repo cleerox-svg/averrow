@@ -125,7 +125,7 @@ Revert path: `FACELIFT = false` in `packages/shared/src/theme/appearanceDefaults
 
 ## 12. Rollout status (2026-11-08, v4.9.0)
 
-Phases 3–5 are live. Each PR below is merged and deployed (`deploy-radar.yml`).
+Phases 3–5 and Phase 6 screen 1 are live. Each PR below is merged and deployed (`deploy-radar.yml`).
 
 | PR | Phase | Shipped |
 |---|---|---|
@@ -139,5 +139,7 @@ Phases 3–5 are live. Each PR below is merged and deployed (`deploy-radar.yml`)
 | #1899 | 5 | H4A operation hero (G5): canvas, auto-play steps, "Operation mapped" claim |
 | #1900 | 5 | Motion: M1 tokens, native cross-document view transitions with a Firefox fallback, lazy GSAP core scroll sequences (no ScrollTrigger, no count-ups, §4). Verified in Chromium, Firefox and WebKit |
 | v4.9.0 | 5 | Release: copy "Fake profiles" becomes "Impersonation accounts", version bump, staff and public changelog entries, this section and the marketing README |
+| #1908 | 5 | L50: the sample operation report copy now says only what the product does |
+| #1909 | 6 | Phase 6 screen 1, the app shell (`ShellV4`): sentence-case sans nav and palette group labels, darkening hover, flat canvas under an accent, Offline live region, `role="group"` nav groups, theme button in the sidebar footer (`AVERROW_UI_STANDARD.md` "SIDEBAR STANDARD") |
 
-**Next: Phase 6, per-screen redesign.** One PR per screen, in this order: Shell, Overview, Alerts / Threats, Tenant dashboard, Login (facelift parity with FarmTrack stays suspended), Observatory controls. Each goes through the full CLAUDE.md §1A pipeline and ships without a preview, as the flip did.
+**Phase 6, per-screen redesign:** screen 1 (Shell) is done (#1909). **Next: screen 2, Overview.** One PR per screen, in this order: ~~Shell~~, Overview, Alerts / Threats, Tenant dashboard, Login (facelift parity with FarmTrack stays suspended), Observatory controls. Each goes through the full CLAUDE.md §1A pipeline and ships without a preview, as the flip did.

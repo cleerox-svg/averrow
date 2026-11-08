@@ -4,6 +4,61 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.9.1] — 2026-11-08
+
+Patch release: sign-in hardening, a lighter load on D1, an overload-safe
+diagnostics endpoint, and the ops shell facelift. Rolls up #1904, #1905, #1907,
+#1908 and #1909. Tag `v4.9.1` is created by `tag-release.yml` on merge.
+
+### Platform diagnostics overload-safe (#1904)
+- `GET /api/internal/platform-diagnostics` (endpoint_version 17) ran ~40
+  concurrent reads and could trip D1's 10 s overload window by itself. Main-DB
+  reads now run one at a time.
+- A section whose read fails falls back to empty/zero/null and adds a top-level
+  `<section>_error` key instead of a 500. Check for `*_error` keys before
+  trusting a zero.
+- Full-table sections are KV-cached with a single-flight refill:
+  `enrichment_pipeline` 30 min (so `enriched_last_hour` can lag ~30 min),
+  `platform_totals` and `alerts.by_tier` 1 h, `cartographer_exhausted_by_feed`
+  5 min.
+- Migration 0319 adds `idx_agent_runs_started` and `idx_feed_pulls_started`,
+  so the windowed `agent_runs` / `feed_pull_history` reads use a sargable
+  `started_at` range (plus the exact `datetime()` filter, which works for both stored
+  timestamp formats).
+
+### Sign-in (#1905)
+- Auth failures now redirect to the login page with a clear message instead of
+  a 404.
+- Magic links are scanner-safe: opening the link shows a confirmation page with
+  a masked email, and the token is consumed only on the explicit confirm, so an
+  email security scanner that prefetches the link no longer burns it.
+- Staff invite acceptance and tenant Google login no longer land on a dead
+  page.
+- `return_to` is validated strictly.
+
+### D1 load reduction (#1907)
+- Migration 0320: partial index `idx_agent_runs_open` (open runs only) for
+  the Navigator agent-runs reaper, which scanned all ~133K `agent_runs` rows
+  every 5 min.
+- Migration 0321: `idx_agent_runs_completed` for pipeline status (plus a
+  5-min `cachedValue`).
+- Dashboard brand tiles, the brand list total and the admin brand list total
+  read the `count.brands.*` counters instead of counting ~133K brands per
+  request; the brand composition total is the sum of its tier groups.
+
+### Sample operation report (#1908)
+- Copy revision to the sample operation report (L50).
+
+### Ops app shell facelift (#1909)
+- Sentence-case labels across the shell.
+- Hover and active states use tokens.
+- The LIVE pulse is replaced by an Offline status indicator.
+- Flat canvas background.
+- Command palette and nav gain accessibility groups.
+- Theme button updated.
+
+---
+
 ## [v4.9.0] — 2026-11-08
 
 Facelift Phase 4 + 5 close-out: the new identity reaches the Worker-served

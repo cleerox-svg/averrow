@@ -519,7 +519,7 @@ export function useTheme() {
 ```
 
 ### Theme toggle location
-Top bar (ShellV4's `ThemeCycleButton`, `components/layout/ThemeCycleButton.tsx`) → right side, before notifications bell.
+Sidebar footer (ShellV4's `ThemeCycleButton` in `.v4-foot`, `components/layout/ThemeCycleButton.tsx`), above the version line.
 Sun/moon icon. Persists in localStorage.
 Applies `data-theme` to `<html>`. All CSS vars update instantly.
 
@@ -849,7 +849,7 @@ These files are frozen throughout all sessions:
 ## SUCCESS CRITERIA
 
 After all sessions complete:
-- [ ] Dark/light toggle in the top bar (ShellV4) works instantly platform-wide
+- [ ] Dark/light toggle in the sidebar footer (ShellV4) works instantly platform-wide
 - [ ] All 71 files use CSS vars, not hardcoded hex values
 - [ ] One Card component. One Button. One Badge. One StatCard. One Avatar.
 - [ ] All pages use DataRow for clickable rows (hover treatment consistent)
