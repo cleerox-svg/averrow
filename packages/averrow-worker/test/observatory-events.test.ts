@@ -757,6 +757,9 @@ describe.skipIf(!hasSqlite())("takedown + role gating", () => {
 
 describe.skipIf(!hasSqlite())("actor", () => {
   let body: EventsEnvelope;
+  // Computed once: calling ts(20) again inside an `it` can land on the next
+  // second and miss the stored value by 1 s.
+  let firstLinkAt = "";
   beforeAll(async () => {
     const db = openMigratedDb();
     actor(db, "ta_4903", "TA4903");
@@ -766,7 +769,8 @@ describe.skipIf(!hasSqlite())("actor", () => {
     cluster(db, { id: "cluster_cert_ret", name: "Retired link", actor: "ta_4903", retired: "shared_infra" });
     cluster(db, { id: "cluster_cert_moved", name: "Moved link", actor: "ta_other" });
     // First link in the window (inherited, several members).
-    attribution(db, "a1", "cluster_cert_a", "ta_4903", "nexus", ts(20));
+    firstLinkAt = ts(20);
+    attribution(db, "a1", "cluster_cert_a", "ta_4903", "nexus", firstLinkAt);
     attribution(db, "a2", "cluster_cert_a", "ta_4903", "nexus", ts(15));
     // Linked long ago; new members today are NOT a new link.
     attribution(db, "a3", "cluster_cert_old", "ta_4903", "manual", ts(3000));
@@ -791,7 +795,7 @@ describe.skipIf(!hasSqlite())("actor", () => {
       title: "Operation Invoice kit linked to TA4903",
       entity: { type: "actor", id: "ta_4903", name: "TA4903" },
       place: { country_code: "US" },
-      occurred_at: toIsoUtc(ts(20)), // the FIRST link, not the newest member row
+      occurred_at: toIsoUtc(firstLinkAt), // the FIRST link, not the newest member row
       target: { lens: "actors", select: "actor:ta_4903" },
     });
   });
