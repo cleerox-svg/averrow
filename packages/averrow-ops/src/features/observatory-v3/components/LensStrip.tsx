@@ -95,7 +95,7 @@ export function LensStrip({ lens, onChange, touch = false, className }: LensStri
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
         border: '1px solid var(--border-base)',
-        boxShadow: 'var(--card-shadow)',
+        boxShadow: 'var(--card-shadow-elevated)',
         height: touch ? 48 : 40,
       }}
     >

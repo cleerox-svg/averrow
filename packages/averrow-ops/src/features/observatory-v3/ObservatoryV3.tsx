@@ -1080,7 +1080,7 @@ export function ObservatoryV3() {
               aria-label="Find on map"
               aria-expanded={mobileSearchOpen}
               className="ds-focusable shrink-0 inline-flex items-center justify-center rounded-xl w-12 h-12"
-              style={{ background: 'var(--bg-card)', backdropFilter: 'blur(20px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)', color: mobileSearchOpen ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
+              style={{ background: 'var(--bg-card)', backdropFilter: 'blur(20px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)', color: mobileSearchOpen ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
             >
               <SearchIcon size={15} />
             </button>
@@ -1348,7 +1348,7 @@ export function ObservatoryV3() {
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
             color: 'var(--primary-text)',
-            boxShadow: 'var(--card-shadow)',
+            boxShadow: 'var(--card-shadow-elevated)',
             cursor: 'pointer',
             zIndex: Z_PANEL,
           }}

@@ -162,7 +162,7 @@ export function LegendChip(props: LegendChipProps) {
           backdropFilter: 'blur(20px)',
           WebkitBackdropFilter: 'blur(20px)',
           border: '1px solid var(--border-base)',
-          boxShadow: 'var(--card-shadow)',
+          boxShadow: 'var(--card-shadow-elevated)',
           color: 'var(--text-secondary)',
           cursor: 'pointer',
         }}

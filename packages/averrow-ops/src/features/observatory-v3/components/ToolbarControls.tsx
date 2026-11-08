@@ -17,7 +17,7 @@ const GLASS = {
   backdropFilter: 'blur(20px)',
   WebkitBackdropFilter: 'blur(20px)',
   border: '1px solid var(--border-base)',
-  boxShadow: 'var(--card-shadow)',
+  boxShadow: 'var(--card-shadow-elevated)',
 } as const;
 
 /** 24H · 7D · 30D · 90D. A radio group: arrow keys move AND select (the choice is cheap and reversible). */

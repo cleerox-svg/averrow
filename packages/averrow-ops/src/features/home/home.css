@@ -6,19 +6,15 @@
    Overview-only look. console.css and the Card/StatTile kit are shared with other
    screens, so the changes are scoped here rather than edited in place. */
 
-/* Flat surfaces. Cards and tiles read --card-radius / --card-shadow /
-   --card-highlight, so re-pointing them on the wrapper drops the shell's 18px
-   radius and drop shadow for this screen only (the shell block in shell-v4.css
-   is reset for all screens by a separate change). The flat Card variant is chosen in
+/* Flat surfaces. The radius / shadow / highlight reset lives on the shell for
+   every screen (index.css, `:root[data-accent] .shell-v4`); only the flat card
+   surface is Overview-specific. The flat Card variant is chosen in
    TS only under the facelift (features/home/homeCard.ts), and these tokens only
    apply under [data-accent], so FACELIFT=false keeps the legacy glass cards. The
    flat variant uses --bg-card here (not the sunken --bg-card-deep default) so the
    cards share a surface with the platform status trigger. */
 :root[data-accent] .home-v4 {
   --card-flat-bg: var(--bg-card);
-  --card-radius: var(--radius-lg);
-  --card-shadow: none;
-  --card-highlight: transparent;
 }
 
 /* Shared label style: sentence-case sans at the --type-label-* scale. */

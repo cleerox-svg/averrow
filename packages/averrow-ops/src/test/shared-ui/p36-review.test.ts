@@ -138,11 +138,9 @@ describe('shell', () => {
     expect(body).toContain('content: none');
     expect(body).not.toContain('radial-gradient');
   });
-  it('light cards in the shell use a soft ink shadow under an accent', () => {
+  it('the shell resets card shadow in every theme under an accent (no light-only override)', () => {
     const css = read('averrow-ops/src/index.css');
-    const i = css.indexOf(':root[data-accent][data-theme="light"] .shell-v4 {');
-    expect(i).toBeGreaterThan(-1);
-    const body = css.slice(i, css.indexOf('}', i));
-    expect(body).toMatch(/--card-shadow:\s*0 8px 28px rgba\(15, 20, 35, 0\.10\)/);
+    expect(css).not.toContain(':root[data-accent][data-theme="light"] .shell-v4 {');
+    expect(css).toContain(':root[data-accent] .shell-v4 {');
   });
 });
