@@ -26,6 +26,30 @@ import { scopeCacheSegment } from './scope-cache-key';
 /** KV TTL for the per-slice threat aggregate (raised 300 → 1800, D1 read spend 2026-10). */
 export const THREAT_AGGREGATE_TTL_S = 1800;
 
+/**
+ * KV TTL for the unfiltered, unscoped slice (the default Threats page). Every
+ * query in that slice is a full scan of `threats`, so a miss costs ~20M rows;
+ * its numbers are platform-wide and move slowly. 2026-11-08 D1 overload.
+ */
+export const THREAT_AGGREGATE_UNFILTERED_TTL_S = 10800;
+
+/**
+ * Run D1 queries one after another instead of in one `Promise.all`. A
+ * cache miss here used to send ~13 full-table GROUP BYs to D1 at once, which
+ * on the unfiltered slice queued enough work to trip `D1 DB is overloaded`
+ * (prod, 2026-11-08) for every other request. D1 executes a database's
+ * queries serially anyway, so the miss is not meaningfully slower; other
+ * requests can interleave between the scans instead of queuing behind all
+ * of them.
+ */
+export async function runSequential<T extends Array<() => Promise<unknown>>>(
+  tasks: [...T],
+): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
+  const out: unknown[] = [];
+  for (const task of tasks) out.push(await task());
+  return out as { [K in keyof T]: Awaited<ReturnType<T[K]>> };
+}
+
 export interface ThreatAggregateFilters {
   severity?:  string;
   type?:      string;
@@ -167,7 +191,8 @@ export async function threatAggregate(
   // 30 min (was 5): ~20 GROUP BY/JOIN queries over threats per miss, and
   // the narrative numbers move slowly. Not Navigator-warmed, so there is
   // no warm cadence to keep under the TTL.
-  return cachedValue<ThreatAggregate>(env, cacheKey, THREAT_AGGREGATE_TTL_S, async () => {
+  const ttl = where || filters.actor_id ? THREAT_AGGREGATE_TTL_S : THREAT_AGGREGATE_UNFILTERED_TTL_S;
+  return cachedValue<ThreatAggregate>(env, cacheKey, ttl, async () => {
     // Headline counts in one query
     const headline = await env.DB.prepare(`
       SELECT
@@ -210,21 +235,21 @@ export async function threatAggregate(
     const remediation_rate = total > 0 ? addressed / total : 0;
 
     const [bySev, byType, byStatus, geo, brands, providers, actors, campaigns,
-           mbCampaigns, mbActors, mbProviders, surgeTypes, surgeCampaigns] = await Promise.all([
-      env.DB.prepare(`SELECT t.severity AS severity, COUNT(*) AS count ${fromClause}
+           mbCampaigns, mbActors, mbProviders, surgeTypes, surgeCampaigns] = await runSequential([
+      () => env.DB.prepare(`SELECT t.severity AS severity, COUNT(*) AS count ${fromClause}
                       GROUP BY t.severity ORDER BY count DESC`)
         .bind(...queryParams).all<{ severity: string; count: number }>(),
-      env.DB.prepare(`SELECT t.threat_type AS type, COUNT(*) AS count ${fromClause}
+      () => env.DB.prepare(`SELECT t.threat_type AS type, COUNT(*) AS count ${fromClause}
                       GROUP BY t.threat_type ORDER BY count DESC LIMIT 8`)
         .bind(...queryParams).all<{ type: string; count: number }>(),
-      env.DB.prepare(`SELECT t.status AS status, COUNT(*) AS count ${fromClause}
+      () => env.DB.prepare(`SELECT t.status AS status, COUNT(*) AS count ${fromClause}
                       GROUP BY t.status ORDER BY count DESC`)
         .bind(...queryParams).all<{ status: string; count: number }>(),
-      env.DB.prepare(`SELECT t.country_code AS country, COUNT(*) AS count
+      () => env.DB.prepare(`SELECT t.country_code AS country, COUNT(*) AS count
                       ${fromClause} ${sliceWhere ? 'AND' : 'WHERE'} t.country_code IS NOT NULL AND t.country_code != 'XX'
                       GROUP BY t.country_code ORDER BY count DESC LIMIT 10`)
         .bind(...queryParams).all<{ country: string; count: number }>(),
-      env.DB.prepare(`SELECT t.target_brand_id AS brand_id, b.name AS brand_name,
+      () => env.DB.prepare(`SELECT t.target_brand_id AS brand_id, b.name AS brand_name,
                              b.canonical_domain, b.logo_url, COUNT(*) AS count
                       ${fromWith('JOIN brands b ON b.id = t.target_brand_id')}
                       GROUP BY t.target_brand_id, b.name, b.canonical_domain, b.logo_url
@@ -233,7 +258,7 @@ export async function threatAggregate(
           brand_id: string; brand_name: string; canonical_domain: string;
           logo_url: string | null; count: number;
         }>(),
-      env.DB.prepare(`SELECT t.hosting_provider_id AS provider_id, hp.name AS name, hp.asn AS asn,
+      () => env.DB.prepare(`SELECT t.hosting_provider_id AS provider_id, hp.name AS name, hp.asn AS asn,
                              COUNT(*) AS count
                       ${fromWith('JOIN hosting_providers hp ON hp.id = t.hosting_provider_id')}
                       GROUP BY t.hosting_provider_id, hp.name, hp.asn
@@ -241,7 +266,7 @@ export async function threatAggregate(
         .bind(...queryParams).all<{
           provider_id: string; name: string; asn: string | null; count: number;
         }>(),
-      env.DB.prepare(`SELECT tai.threat_actor_id AS actor_id, ta.name AS actor_name,
+      () => env.DB.prepare(`SELECT tai.threat_actor_id AS actor_id, ta.name AS actor_name,
                              COUNT(DISTINCT t.id) AS count
                       FROM threats t
                       JOIN threat_actor_infrastructure tai ON tai.asn = t.asn
@@ -252,7 +277,7 @@ export async function threatAggregate(
         .bind(...params).all<{
           actor_id: string; actor_name: string; count: number;
         }>().catch(() => ({ results: [] as Array<{ actor_id: string; actor_name: string; count: number }> })),
-      env.DB.prepare(`SELECT t.campaign_id AS campaign_id, c.name AS name, c.status AS status,
+      () => env.DB.prepare(`SELECT t.campaign_id AS campaign_id, c.name AS name, c.status AS status,
                              COUNT(*) AS threat_count, COUNT(DISTINCT t.target_brand_id) AS brand_count
                       ${fromWith('JOIN campaigns c ON c.id = t.campaign_id')}
                       GROUP BY t.campaign_id, c.name, c.status
@@ -266,7 +291,7 @@ export async function threatAggregate(
         }> })),
 
       // ── Multi-brand patterns (brand_count >= 2 in the slice) ──
-      env.DB.prepare(`SELECT t.campaign_id AS id, c.name AS name, c.status AS status,
+      () => env.DB.prepare(`SELECT t.campaign_id AS id, c.name AS name, c.status AS status,
                              COUNT(*) AS threat_count, COUNT(DISTINCT t.target_brand_id) AS brand_count
                       ${fromWith('JOIN campaigns c ON c.id = t.campaign_id')}
                       GROUP BY t.campaign_id, c.name, c.status
@@ -279,7 +304,7 @@ export async function threatAggregate(
           id: string; name: string; status: string;
           threat_count: number; brand_count: number;
         }> })),
-      env.DB.prepare(`SELECT tai.threat_actor_id AS id, ta.name AS name,
+      () => env.DB.prepare(`SELECT tai.threat_actor_id AS id, ta.name AS name,
                              COUNT(DISTINCT t.id) AS threat_count,
                              COUNT(DISTINCT t.target_brand_id) AS brand_count
                       FROM threats t
@@ -294,7 +319,7 @@ export async function threatAggregate(
         }>().catch(() => ({ results: [] as Array<{
           id: string; name: string; threat_count: number; brand_count: number;
         }> })),
-      env.DB.prepare(`SELECT t.hosting_provider_id AS id, hp.name AS name, hp.asn AS asn,
+      () => env.DB.prepare(`SELECT t.hosting_provider_id AS id, hp.name AS name, hp.asn AS asn,
                              COUNT(*) AS threat_count,
                              COUNT(DISTINCT t.target_brand_id) AS brand_count
                       ${fromWith('JOIN hosting_providers hp ON hp.id = t.hosting_provider_id')}
@@ -308,7 +333,7 @@ export async function threatAggregate(
 
       // ── Surging week-over-week: types (ignores slice's `since` for the
       //   comparison window — surge is always last 7d vs prior 7d). ──
-      env.DB.prepare(`
+      () => env.DB.prepare(`
         SELECT
           t.threat_type AS label,
           SUM(CASE WHEN t.created_at >= datetime('now','-7 days')  THEN 1 ELSE 0 END) AS current_7d,
@@ -321,7 +346,7 @@ export async function threatAggregate(
         ORDER BY (current_7d - previous_7d) DESC
         LIMIT 5
       `).all<{ label: string; current_7d: number; previous_7d: number }>(),
-      env.DB.prepare(`
+      () => env.DB.prepare(`
         SELECT
           t.campaign_id AS id, c.name AS label,
           SUM(CASE WHEN t.created_at >= datetime('now','-7 days')  THEN 1 ELSE 0 END) AS current_7d,

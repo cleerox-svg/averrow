@@ -42,7 +42,7 @@ import {
   settledThreshold,
   SNAPSHOT_SETTLED_RATIO,
 } from "../src/lib/brand-aggregates";
-import { threatAggregate, THREAT_AGGREGATE_TTL_S } from "../src/lib/threat-aggregates";
+import { threatAggregate, runSequential, THREAT_AGGREGATE_TTL_S, THREAT_AGGREGATE_UNFILTERED_TTL_S } from "../src/lib/threat-aggregates";
 import { THREATS_TOTAL_TTL_S } from "../src/lib/cached-count";
 import {
   runBrandMatchBackfill,
@@ -181,9 +181,27 @@ describe.skipIf(!hasSqlite())("#2 threatAggregate ASN joins use idx_threats_asn"
     expect(agg.attributed).toBeGreaterThan(0);
   });
 
-  it("caches the aggregate for 30 min (was 5)", () => {
+  it("caches a filtered slice for 30 min (was 5) and the unfiltered slice for 3h", () => {
     expect(THREAT_AGGREGATE_TTL_S).toBe(1800);
-    expect(src("lib/threat-aggregates.ts")).toMatch(/cachedValue<ThreatAggregate>\(env, cacheKey, THREAT_AGGREGATE_TTL_S,/);
+    expect(THREAT_AGGREGATE_UNFILTERED_TTL_S).toBe(10800);
+    const s = src("lib/threat-aggregates.ts");
+    expect(s).toMatch(/const ttl = where \|\| filters\.actor_id \? THREAT_AGGREGATE_TTL_S : THREAT_AGGREGATE_UNFILTERED_TTL_S;/);
+    expect(s).toMatch(/cachedValue<ThreatAggregate>\(env, cacheKey, ttl,/);
+  });
+
+  it("runs the slice queries sequentially, not as one Promise.all burst (2026-11-08 D1 overload)", async () => {
+    const s = src("lib/threat-aggregates.ts");
+    expect(s).not.toMatch(/await Promise\.all\(\[\s*env\.DB/);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const task = (v: number) => async () => {
+      inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight--;
+      return v;
+    };
+    expect(await runSequential([task(1), task(2), task(3)])).toEqual([1, 2, 3]);
+    expect(maxInFlight).toBe(1);
   });
 });
 
