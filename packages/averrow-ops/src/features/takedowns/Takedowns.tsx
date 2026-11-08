@@ -116,7 +116,7 @@ interface StatusConf {
 const TYPE_CONFIG: Record<string, TypeConf> = {
   URL:    { icon: '🔗', color: 'var(--blue)',       label: 'URL'    },
   SOCIAL: { icon: '👤', color: 'var(--sev-high)',   label: 'Social' },
-  DOMAIN: { icon: '🌐', color: 'var(--amber)',      label: 'Domain' },
+  DOMAIN: { icon: '🌐', color: 'var(--cyan-text)',  label: 'Domain' },
   EMAIL:  { icon: '📧', color: 'var(--sev-medium)', label: 'Email'  },
 };
 

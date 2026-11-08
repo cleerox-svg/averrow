@@ -172,7 +172,7 @@ function AttributePickerRow({ cluster, onDone }: {
               autoFocus
             />
             {isFetching && <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Searching…</span>}
-            {attribute.isPending && <span className="font-mono text-[10px]" style={{ color: 'var(--amber-text)' }}>Attributing…</span>}
+            {attribute.isPending && <span className="font-mono text-[10px]" style={{ color: 'var(--primary-text)' }}>Attributing…</span>}
             {attribute.isError && (
               <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
                 {(attribute.error as Error).message}

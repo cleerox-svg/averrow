@@ -1022,7 +1022,7 @@ export function ObservatoryV3() {
             zIndex: Z_CHROME,
             background: 'var(--bg-card-deep)',
             border: '1px solid var(--border-base)',
-            color: 'var(--amber-text)',
+            color: 'var(--primary-text)',
           }}
         >
           {isUpdating ? `Updating to ${periodLabel}…` : 'Loading…'}

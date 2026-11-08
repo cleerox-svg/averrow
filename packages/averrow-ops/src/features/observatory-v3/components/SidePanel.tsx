@@ -72,7 +72,7 @@ function WidgetHeader({ label, count, updating }: { label: string; count?: numbe
       </span>
       <span className="flex items-center gap-2">
         {updating && (
-          <span role="status" className="text-[10px] font-mono uppercase tracking-wider" style={{ color: 'var(--amber-text)' }}>
+          <span role="status" className="text-[10px] font-mono uppercase tracking-wider" style={{ color: 'var(--primary-text)' }}>
             Updating&hellip;
           </span>
         )}

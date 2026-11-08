@@ -200,7 +200,7 @@ function PipelineCardV3({ pipeline: p, agentStatus, isSelected, onSelect }: Pipe
           {p.sparkline && p.sparkline.length >= 2 && (
             <Sparkline
               data={p.sparkline.map(s => s.count)}
-              color={p.trend_direction === 'up' ? 'var(--sev-high)' : 'var(--amber)'}
+              color={p.trend_direction === 'up' ? 'var(--sev-high)' : 'var(--primary)'}
               width={80}
               height={24}
               animate={false}

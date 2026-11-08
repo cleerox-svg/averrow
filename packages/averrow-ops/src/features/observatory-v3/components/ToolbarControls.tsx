@@ -100,7 +100,7 @@ export function RefreshButton({ onClick, busy, touch = false, className }: { onC
       title="Refresh"
       aria-busy={busy}
       className={cn('ds-focusable inline-flex items-center justify-center rounded-xl transition-colors motion-reduce:transition-none shrink-0', className)}
-      style={{ ...GLASS, width: touch ? 48 : 40, height: touch ? 48 : 40, color: busy ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
+      style={{ ...GLASS, width: touch ? 48 : 40, height: touch ? 48 : 40, color: busy ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
     >
       <RefreshCw size={14} className={busy ? 'animate-spin motion-reduce:animate-none' : ''} />
     </button>

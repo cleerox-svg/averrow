@@ -356,7 +356,7 @@ function EmailSecuritySection() {
             )}
             {scanAction.state === 'confirming' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ ...mono, fontSize: 11, color: 'var(--amber-text)' }}>Scan all pending?</span>
+                <span style={{ ...mono, fontSize: 11, color: 'var(--primary-text)' }}>Scan all pending?</span>
                 <Button variant="ghost" size="sm" onClick={scanAction.execute}>
                   <Check size={12} /> Confirm
                 </Button>
@@ -366,7 +366,7 @@ function EmailSecuritySection() {
               </div>
             )}
             {scanAction.state === 'loading' && (
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--amber-text)' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--primary-text)' }}>
                 <Loader2 size={12} className="animate-spin" /> Scanning...
               </span>
             )}
@@ -520,7 +520,7 @@ function OperationCard({ op }: { op: OperationConfig }) {
         </div>
       )}
       {action.state === 'loading' && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--amber-text)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--primary-text)' }}>
           <Loader2 size={12} className="animate-spin" /> Running…
         </div>
       )}

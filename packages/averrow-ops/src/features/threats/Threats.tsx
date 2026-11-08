@@ -294,7 +294,7 @@ function SliceSummaryStrip({ agg, hasFilters }: {
       className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-mono px-3 py-2 rounded-md"
       style={{
         border: '1px solid var(--border-base)',
-        background: hasFilters ? 'var(--sev-medium-bg, rgba(229,168,50,0.04))' : 'var(--bg-input)',
+        background: hasFilters ? 'var(--primary-tint)' : 'var(--bg-input)',
       }}
     >
       <span style={{ color: 'var(--text-tertiary)' }}>{hasFilters ? 'In slice:' : 'Across catalog:'}</span>
@@ -489,7 +489,7 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
       label: 'Correlated',
       value: `${correlatedPct}%`,
       sub: agg ? `${(agg.correlated ?? 0).toLocaleString()} linked · ${multiBrandCount} multi-brand patterns` : '',
-      accent: '#E5A832',
+      accent: 'var(--primary)',
     },
     {
       icon: Users,
@@ -511,7 +511,7 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
             <div style={{
               position: 'absolute', right: -20, bottom: -20,
               width: 110, height: 110, borderRadius: '50%',
-              background: `radial-gradient(circle, ${t.accent}30, transparent 70%)`,
+              background: `radial-gradient(circle, color-mix(in srgb, ${t.accent} 19%, transparent), transparent 70%)`,
               pointerEvents: 'none',
             }} />
             <div style={{ position: 'relative' }}>
@@ -523,7 +523,7 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
               </div>
               <div style={{
                 fontSize: 30, fontWeight: 800, lineHeight: 1.05,
-                color: accentText(t.accent), textShadow: `0 0 12px ${t.accent}55`,
+                color: accentText(t.accent), textShadow: `0 0 12px color-mix(in srgb, ${t.accent} 33%, transparent)`,
               }}>
                 {agg ? t.value : (failed ? '—' : '…')}
               </div>
@@ -569,7 +569,7 @@ function MultiBrandPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | null
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
       <MultiBrandCard
         title="Campaigns"
-        accent="#E5A832"
+        accent="var(--primary)"
         rows={campaigns.map(c => ({
           id: c.id, name: c.name,
           tag: c.status,
@@ -725,7 +725,7 @@ function LeaderboardsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | nu
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       <Leaderboard
         title="Top brands"
-        accent="#E5A832"
+        accent="var(--primary)"
         rows={agg.top_brands.slice(0, 5).map(b => ({
           id: b.brand_id, label: b.brand_name, sub: b.canonical_domain,
           count: b.count, logoUrl: b.logo_url,
@@ -787,7 +787,7 @@ function Leaderboard({ title, accent, rows }: {
               <div style={{
                 position: 'absolute', left: 0, top: 0, bottom: 0,
                 width: `${barW}%`,
-                background: `linear-gradient(90deg, ${accent}1a, transparent)`,
+                background: `linear-gradient(90deg, color-mix(in srgb, ${accent} 10%, transparent), transparent)`,
               }} />
               <div className="relative flex items-center justify-between gap-2">
                 <div className="min-w-0 flex-1">

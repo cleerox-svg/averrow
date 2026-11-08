@@ -21,7 +21,7 @@ export function SignOutRow({ onSignOut, label = 'Sign out', className }: SignOut
           'flex min-h-[56px] w-full items-center justify-center rounded-[inherit] px-4 text-[16px] font-semibold',
           'text-[var(--sev-critical-text)] transition-colors duration-[120ms] motion-reduce:transition-none',
           'hover:bg-[var(--sev-critical-bg)] active:bg-[var(--sev-critical-bg)]',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring,var(--amber))]',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]',
         )}
       >
         {label}

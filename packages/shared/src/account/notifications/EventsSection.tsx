@@ -52,7 +52,7 @@ export function EventsSection({
               <Button
                 variant="ghost"
                 size="sm"
-                className="ds-hbtn font-semibold text-[var(--amber-text,var(--amber))]"
+                className="ds-hbtn font-semibold text-[var(--primary-text)]"
                 disabled={autosave.saving(groupKey) || !online}
                 onClick={() => {
                   const next = !allOn;

@@ -130,7 +130,7 @@ export function LegendChip(props: LegendChipProps) {
   }
   if (sections.length === 0) return null;
 
-  const dot = summary.tone === 'error' ? 'var(--sev-critical)' : summary.tone === 'loading' ? 'var(--amber)' : summary.tone === 'empty' ? 'var(--text-muted)' : 'var(--sev-info)';
+  const dot = summary.tone === 'error' ? 'var(--sev-critical)' : summary.tone === 'loading' ? 'var(--primary)' : summary.tone === 'empty' ? 'var(--text-muted)' : 'var(--sev-info)';
   return (
     <div className={cn('relative', className)} style={style}>
       <div

@@ -352,7 +352,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
             {actor.recent_attributions.map((att) => {
               const sourceColor =
                 att.source === 'otx'    ? 'var(--blue)' :
-                att.source === 'nexus'  ? 'var(--amber)' :
+                att.source === 'nexus'  ? 'var(--tag-nexus)' :
                 att.source === 'news'   ? 'var(--green)' :
                 'var(--text-tertiary)';
               const ago = relativeTime(att.observed_at);

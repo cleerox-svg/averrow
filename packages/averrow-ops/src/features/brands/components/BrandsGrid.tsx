@@ -83,7 +83,7 @@ const THREAT_TYPE_STYLES: Record<string, string> = {
   malware: 'text-amber-400 border-amber-400/30',
   c2: 'text-red-400 border-red-400/30',
   credential: 'text-orange-400 border-orange-400/30',
-  social: 'text-[var(--amber-text)] border-afterburner-border',
+  social: 'text-[var(--violet-text)] border-violet-400/30',
 };
 
 const PAGE_SIZE = 50;
