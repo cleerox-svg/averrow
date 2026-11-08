@@ -1,9 +1,15 @@
 // Public view of a free scan (POST /api/brand-scan/public and
 // GET /api/brand-scan/public/:id). This is the ONLY shape an anonymous
-// caller ever sees for a scan: public DNS facts (email authentication,
-// registered lookalike counts). Nothing from Averrow's threat data —
-// feed_mentions and the threat-informed trust_score stay on the
-// brand_scans row for staff.
+// caller ever sees for a scan: the email-authentication GRADE and how many
+// lookalike domains are registered — a score and a one-line summary.
+// Nothing from Averrow's threat data — feed_mentions and the threat-informed
+// trust_score stay on the brand_scans row for staff.
+//
+// Disclosure (owner decision 2026-11-08): the per-check breakdown
+// (SPF/DKIM/DMARC/MX/BIMI) and the size of the lookalike sample are kept
+// out of the anonymous response — they describe how we grade, not just
+// the result. They stay in the stored view for the emailed report and
+// staff; see docs/kb/free-scan.md.
 //
 // The view is computed once at scan time and stored as JSON in
 // brand_scans.public_view, so the results link renders the same answer
@@ -27,12 +33,14 @@ export interface PublicEmailView {
   bimi: { present: boolean };
 }
 
+/** The anonymous response: the grade and a registered-lookalike count only. */
 export interface PublicScanData {
   id: string;
   domain: string;
   checked_at: string;
-  email: PublicEmailView;
-  lookalikes: { checked: number; registered: number };
+  email: { grade: EmailGrade };
+  /** null when no lookalike name got a definite DNS answer. */
+  lookalikes: { registered: number | null };
 }
 
 /** What brand_scans.public_view stores (id/domain live in their own columns). */
@@ -118,8 +126,18 @@ export function parseStoredPublicView(raw: string | null): StoredPublicView | nu
   }
 }
 
+/**
+ * Reduce the stored view to the anonymous response. Built field by field so
+ * the per-check flags and the sample size can never reach the public API.
+ */
 export function toPublicScanData(id: string, domain: string, view: StoredPublicView): PublicScanData {
-  return { id, domain, checked_at: view.checked_at, email: view.email, lookalikes: view.lookalikes };
+  return {
+    id,
+    domain,
+    checked_at: view.checked_at,
+    email: { grade: view.email.grade },
+    lookalikes: { registered: view.lookalikes.checked > 0 ? view.lookalikes.registered : null },
+  };
 }
 
 /** qualified_reports.generated_by for reports auto-delivered from the lead form. */

@@ -392,9 +392,9 @@ export async function handleBrandScanHistory(request: Request, env: Env): Promis
 
 // ─── Public Free Scan (/scan) ───────────────────────────────────
 //
-// Anonymous. Returns ONLY public-DNS facts (lib/free-scan-view.ts): the
-// email-security grade + SPF/DKIM/DMARC/MX/BIMI flags, and how many of a
-// sample of lookalike domains are registered. It never reads Averrow
+// Anonymous. Returns ONLY the email-security grade and how many lookalike
+// domains are registered (lib/free-scan-view.ts). The per-check flags and
+// the sample size are stored for the emailed report, never returned. It never reads Averrow
 // threat data: no threats query (the old crossReferenceFeedData was an
 // unindexable leading-wildcard LIKE over threats on every anonymous scan),
 // so brand_scans.feed_mentions and trust_score stay NULL on public rows.

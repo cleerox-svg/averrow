@@ -84,40 +84,24 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
         <p class="scan-meta"><span id="scanMeta"></span><span>no sign-up</span><span>results stay private to this link</span></p>
 
         <div class="scan-grid">
-          <article class="scan-card scan-card-grade" aria-labelledby="cardEmailTitle">
-            <h2 class="scan-k" id="cardEmailTitle">Email authentication</h2>
+          <article class="scan-card scan-card-grade" aria-labelledby="cardScoreTitle">
+            <h2 class="scan-k" id="cardScoreTitle">Email spoofing protection</h2>
             <div class="scan-grade-row">
               <span class="scan-grade" id="gradeLetter" data-tone="" aria-hidden="true"></span>
+              <span class="scan-level" id="gradeLevel" data-tone=""></span>
               <span class="sr-only" id="gradeSr"></span>
             </div>
-            <ul class="scan-pills">
-              <li data-check="spf">SPF <b></b></li>
-              <li data-check="dkim">DKIM <b></b></li>
-              <li data-check="dmarc">DMARC <b></b></li>
-              <li data-check="mx">MX <b></b></li>
-              <li data-check="bimi">BIMI <b></b></li>
-            </ul>
-            <p id="emailSentence"></p>
+            <p class="scan-summary" id="emailSentence"></p>
+            <p class="scan-summary" id="lookSentence"></p>
             <a class="scan-link" href={`${base}/platform/email-security`}>How to fix this &rarr;</a>
           </article>
 
-          <article class="scan-card" aria-labelledby="cardLookTitle">
-            <h2 class="scan-k" id="cardLookTitle">Lookalike domains</h2>
-            <div class="scan-num"><span id="lookRegistered">0</span> <small>registered</small></div>
-            <div class="scan-bar" aria-hidden="true"><i id="lookBar"></i></div>
-            <p id="lookSentence"></p>
-          </article>
-
           <article class="scan-card" aria-labelledby="cardNextTitle">
-            <h2 class="scan-k" id="cardNextTitle">What Averrow would watch</h2>
-            <ul class="scan-watch">
-              <li>New lookalike registrations, as they appear</li>
-              <li>Certificates issued to brand-like names</li>
-              <li>Fake profiles and cloned apps</li>
-            </ul>
+            <h2 class="scan-k" id="cardNextTitle">Get the full report</h2>
+            <p>What's behind your score, the lookalike domains we found, and what to fix first.</p>
 
             <form class="scan-gate" id="leadForm" novalidate>
-              <label for="leadEmail">Work email for the full report</label>
+              <label for="leadEmail">Work email</label>
               <div class="scan-row">
                 <input
                   class="scan-field"
@@ -237,7 +221,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   .scan-meta { color: var(--text-secondary); margin: 0 0 24px; display: flex; flex-wrap: wrap; gap: 4px 0; }
   .scan-meta span { white-space: nowrap; }
   .scan-meta span + span::before { content: "\00b7"; margin: 0 8px; }
-  .scan-grid { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr; gap: 16px; align-items: start; }
+  .scan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; max-width: 960px; }
   .scan-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border-strong);
@@ -267,30 +251,17 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   .scan-grade[data-tone="ok"] { color: var(--green-text); }
   .scan-grade[data-tone="mid"] { color: var(--amber-text); }
   .scan-grade[data-tone="bad"] { color: var(--sev-critical-text); }
-
-  .scan-pills { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
-  .scan-pills li {
-    font-size: 0.8rem;
-    padding: 3px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--border-strong);
-    color: var(--text-secondary);
-  }
-  .scan-pills b { font-weight: 700; }
-  .scan-pills li[data-tone="ok"] { color: var(--green-text); border-color: color-mix(in srgb, var(--green-text) 40%, transparent); }
-  .scan-pills li[data-tone="mid"] { color: var(--amber-text); border-color: color-mix(in srgb, var(--amber-text) 40%, transparent); }
-  .scan-pills li[data-tone="bad"] { color: var(--sev-critical-text); border-color: color-mix(in srgb, var(--sev-critical-text) 40%, transparent); }
+  .scan-grade-row { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .scan-level { font-weight: 700; font-size: 1.05rem; color: var(--text-primary); }
+  .scan-level[data-tone="ok"] { color: var(--green-text); }
+  .scan-level[data-tone="mid"] { color: var(--amber-text); }
+  .scan-level[data-tone="bad"] { color: var(--sev-critical-text); }
+  .scan-card .scan-summary { font-size: 1rem; color: var(--text-primary); }
 
   .scan-link { color: var(--accent); font-weight: 600; text-decoration: none; font-size: 0.92rem; display: inline-flex; align-items: center; min-height: 24px; padding-block: 4px; }
   .scan-link:hover { text-decoration: underline; }
   .scan-link:focus-visible, .scan-again:focus-visible, .scan-consent a:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
-  .scan-num { font-family: var(--font-display); font-size: 2.4rem; font-weight: 600; line-height: 1; color: var(--text-primary); }
-  .scan-num small { font-size: 0.9rem; font-weight: 600; color: var(--text-secondary); }
-  .scan-bar { height: 6px; border-radius: 999px; background: var(--border-strong); overflow: hidden; }
-  .scan-bar i { display: block; height: 100%; width: 0; background: var(--primary); }
-
-  .scan-watch { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 0.92rem; color: var(--text-secondary); }
   .scan-gate { display: grid; gap: 8px; border-top: 1px solid var(--border-strong); padding-top: 14px; }
   .scan-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 0.82rem; color: var(--text-secondary); }
   .scan-consent input { width: 18px; height: 18px; margin: 1px 0 0; flex: none; accent-color: var(--primary); }
@@ -310,7 +281,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   .scan-foot-links { display: flex; gap: 18px; align-items: center; }
   .scan-again { background: none; border: 0; padding: 4px 0; min-height: 24px; display: inline-flex; align-items: center; font: inherit; font-size: 0.92rem; font-weight: 600; color: var(--text-secondary); cursor: pointer; text-decoration: underline; }
 
-  @media (max-width: 1100px) {
+  @media (max-width: 800px) {
     .scan-grid { grid-template-columns: 1fr; }
   }
   @media (max-width: 640px) {
@@ -331,15 +302,10 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     id: string;
     domain: string;
     checked_at?: string;
-    email: {
-      grade: Grade;
-      spf: { status: "pass" | "soft" | "neutral" | "missing" };
-      dkim: { found: boolean };
-      dmarc: { policy: "reject" | "quarantine" | "none" | "missing" };
-      mx: { present: boolean };
-      bimi: { present: boolean };
-    };
-    lookalikes: { checked: number; registered: number };
+    // Score + summary only. The per-check breakdown is in the emailed
+    // report, not the public API (lib/free-scan-view.ts).
+    email: { grade: Grade };
+    lookalikes: { registered: number | null };
   }
   interface ApiEnvelope<T> { success: boolean; data?: T; error?: string }
   interface TurnstileApi {
@@ -501,24 +467,18 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   /* ---- Rendering ------------------------------------------------------ */
   function gradeTone(g: Grade): Tone { return g === "A+" || g === "A" ? "ok" : g === "B" || g === "C" ? "mid" : "bad"; }
 
-  function pill(check: string, tone: Tone, word: string) {
-    const li = resultsPane.querySelector<HTMLElement>(`[data-check="${check}"]`);
-    if (!li) return;
-    li.dataset.tone = tone;
-    const b = li.querySelector("b");
-    if (b) b.textContent = word;
+  const LEVEL: Record<Tone, string> = { ok: "Strong", mid: "Partial", bad: "Weak" };
+
+  function emailSentence(d: ScanData, tone: Tone): string {
+    if (tone === "ok") return `Receivers can reject email forged to look like it comes from ${d.domain}.`;
+    if (tone === "mid") return `Some email forged to look like it comes from ${d.domain} could still be delivered.`;
+    return `Anyone can send email that looks like it comes from ${d.domain}.`;
   }
 
-  function emailSentence(d: ScanData): string {
-    const e = d.email;
-    const dm = e.dmarc.policy;
-    if (dm === "missing") return `Anyone can send email that looks like it comes from ${d.domain}, because there's no DMARC record.`;
-    if (dm === "none") return `Anyone can send email that looks like it comes from ${d.domain}, because DMARC isn't enforcing.`;
-    if (e.spf.status === "missing") return `${d.domain} has no SPF record, so receivers can't tell which servers may send its email.`;
-    if (!e.mx.present) return `${d.domain} has no mail servers (MX) published, so it can't receive email.`;
-    if (e.spf.status === "soft" || e.spf.status === "neutral") return `DMARC is enforcing, but the SPF policy is loose, so some forged mail may still be accepted.`;
-    if (!e.dkim.found) return `DMARC is enforcing, but we didn't find DKIM signing on the common selectors we checked.`;
-    return `SPF, DKIM and DMARC are in place, so receivers can reject forged email from ${d.domain}.`;
+  function lookSentence(n: number | null): string {
+    if (n === null) return "We couldn't check lookalike domains this time.";
+    if (n === 0) return "We didn't find any registered lookalikes of your domain.";
+    return `${n} lookalike ${n === 1 ? "domain is" : "domains are"} already registered. Some may be yours; the full report lists them.`;
   }
 
   function render(d: ScanData) {
@@ -532,27 +492,17 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     el("scanMeta").textContent = whenText;
 
     const g = d.email.grade;
+    const tone = gradeTone(g);
     const gl = el("gradeLetter");
     gl.textContent = g;
-    gl.dataset.tone = gradeTone(g);
-    el("gradeSr").textContent = `Email authentication grade: ${g}`;
-
-    const spf = d.email.spf.status;
-    pill("spf", spf === "pass" ? "ok" : spf === "missing" ? "bad" : "mid", spf === "pass" ? "pass" : spf === "soft" ? "soft fail" : spf);
-    pill("dkim", d.email.dkim.found ? "ok" : "mid", d.email.dkim.found ? "found" : "not found");
-    const dm = d.email.dmarc.policy;
-    pill("dmarc", dm === "reject" || dm === "quarantine" ? "ok" : "bad", dm === "missing" ? "missing" : dm === "none" ? "none" : dm);
-    pill("mx", d.email.mx.present ? "ok" : "bad", d.email.mx.present ? "set" : "none");
-    pill("bimi", d.email.bimi.present ? "ok" : "mid", d.email.bimi.present ? "set" : "not set");
-    el("emailSentence").textContent = emailSentence(d);
-
-    const { checked, registered } = d.lookalikes;
-    el("lookRegistered").textContent = String(registered);
-    const pct = checked > 0 ? Math.min(100, Math.round((registered / checked) * 100)) : 0;
-    el("lookBar").style.width = `${pct}%`;
-    el("lookSentence").textContent = checked > 0
-      ? `${registered} of ${checked} likely lookalikes of your domain ${registered === 1 ? "is" : "are"} registered. Some may be yours; the full report lists them.`
-      : "We couldn't check lookalike names for this scan.";
+    gl.dataset.tone = tone;
+    const lv = el("gradeLevel");
+    lv.textContent = LEVEL[tone];
+    lv.dataset.tone = tone;
+    el("gradeSr").textContent = `Grade ${g}, ${LEVEL[tone].toLowerCase()} protection.`;
+    el("emailSentence").textContent = emailSentence(d, tone);
+    const registered = d.lookalikes.registered;
+    el("lookSentence").textContent = lookSentence(registered);
 
     leadForm.hidden = false;
     leadDone.hidden = true;
@@ -567,7 +517,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     show(loadingPane, false);
     show(resultsPane, true);
     markNoindex();
-    announce(`Scan complete for ${d.domain}. Email authentication grade ${g}. ${registered} of ${checked} likely lookalike domains registered.`);
+    announce(`Scan complete for ${d.domain}. Email spoofing protection grade ${g}. ${lookSentence(registered)}`);
     focusTitle();
   }
 
