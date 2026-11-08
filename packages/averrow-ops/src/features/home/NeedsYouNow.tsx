@@ -2,7 +2,7 @@
 // from useHomeQueue (role-gated) and the ordering from lib/home-queue.
 
 import { useNavigate } from 'react-router-dom';
-import { Badge, Button, Card, PageState } from '@/design-system/components';
+import { Badge, Card, KitButton, PageState } from '@/design-system/components';
 import {
   QUEUE_SOURCE_LABEL,
   type HomeQueue,
@@ -11,6 +11,7 @@ import {
   type QueueSourceId,
 } from '@/lib/home-queue';
 import { relativeTime } from '@/lib/time';
+import { HOME_CARD_VARIANT } from '@/features/home/homeCard';
 
 /** How many ranked rows Home shows; the rest are summarised as "N of M open". */
 export const QUEUE_VISIBLE = 5;
@@ -20,6 +21,14 @@ const SEV_COLOR: Record<QueueSeverity, string> = {
   high: 'var(--sev-high)',
   medium: 'var(--sev-medium)',
   low: 'var(--sev-low)',
+};
+
+/** Numeral colour: the AA-contrast text token (the ring keeps the raw severity colour). */
+const SEV_TEXT: Record<QueueSeverity, string> = {
+  critical: 'var(--sev-critical-text)',
+  high: 'var(--sev-high-text)',
+  medium: 'var(--sev-medium-text)',
+  low: 'var(--sev-low-text)',
 };
 
 const SOURCE_CHIP: Record<QueueSourceId, string> = {
@@ -44,10 +53,10 @@ function QueueRow({ item, rank }: { item: QueueItem; rank: number }) {
     >
       <span
         aria-hidden
-        className="flex h-7 w-7 items-center justify-center rounded-full font-mono text-[11px] font-bold"
+        className="queue-rank"
         style={{
-          color: SEV_COLOR[item.severity],
-          border: `1px solid ${SEV_COLOR[item.severity]}`,
+          color: SEV_TEXT[item.severity],
+          borderColor: SEV_COLOR[item.severity],
         }}
       >
         {rank}
@@ -57,27 +66,23 @@ function QueueRow({ item, rank }: { item: QueueItem; rank: number }) {
           {item.title}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <Badge severity={item.severity} size="xs" />
-          <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
-            {SOURCE_CHIP[item.source]}
-          </span>
+          <Badge severity={item.severity} size="md" font="sans" />
+          <span className="queue-source">{SOURCE_CHIP[item.source]}</span>
           {item.ts && (
-            <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
-              {relativeTime(item.ts)}
-            </span>
+            <span className="queue-time">{relativeTime(item.ts)}</span>
           )}
         </div>
         <div className="mt-1 text-xs leading-snug" style={{ color: 'var(--text-secondary)' }}>{item.detail}</div>
       </div>
       <div className="queue-act">
-        <Button
+        <KitButton
           variant={rank === 1 ? 'primary' : 'secondary'}
           size="sm"
           onClick={() => navigate(item.action.to)}
           aria-label={`${item.action.label}: ${item.title}`}
         >
           {item.action.label}
-        </Button>
+        </KitButton>
       </div>
     </li>
   );
@@ -99,9 +104,9 @@ function FailedRow({ id, onRetry }: { id: QueueSourceId; onRetry: (id: QueueSour
           This is not an all-clear. Anything waiting in {label} is not shown above.
         </div>
       </div>
-      <Button variant="secondary" size="sm" onClick={() => onRetry(id)} aria-label={`Retry ${label}`}>
+      <KitButton className="queue-fail-act" variant="secondary" size="sm" onClick={() => onRetry(id)} aria-label={`Retry ${label}`}>
         Retry
-      </Button>
+      </KitButton>
     </li>
   );
 }
@@ -111,17 +116,13 @@ export function NeedsYouNow({ queue, onRetry }: { queue: HomeQueue; onRetry: (id
   const visible = items.slice(0, QUEUE_VISIBLE);
 
   return (
-    <Card padding="lg" role="region" aria-labelledby="home-queue-title">
+    <Card variant={HOME_CARD_VARIANT} padding="lg" role="region" aria-labelledby="home-queue-title">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h2
-          id="home-queue-title"
-          className="font-mono text-[10px] font-bold uppercase tracking-[0.18em]"
-          style={{ color: 'var(--text-secondary)', margin: 0 }}
-        >
+        <h2 id="home-queue-title" className="home-label">
           Needs you now
         </h2>
         {items.length > 0 && (
-          <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+          <span className="home-label home-label--num">
             {visible.length} of {items.length} open
           </span>
         )}

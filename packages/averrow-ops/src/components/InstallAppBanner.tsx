@@ -11,8 +11,9 @@
 // wrapper — when hidden.
 
 import { useState, type ReactNode } from 'react';
-import { Card, Button, SectionLabel } from '@/design-system/components';
+import { Card, Button } from '@/design-system/components';
 import { useInstallPrompt } from '@/hooks/useInstallPrompt';
+import { HOME_CARD_VARIANT } from '@/features/home/homeCard';
 import { InstallSteps } from './InstallSteps';
 import './install-app.css';
 
@@ -47,11 +48,11 @@ export function InstallAppBanner() {
     return (
       <Gutter>
         <section aria-labelledby="install-banner-title">
-          <Card>
+          <Card variant={HOME_CARD_VARIANT}>
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex-1">
-                <SectionLabel className="mb-1">Install</SectionLabel>
-                <h3 id="install-banner-title" className="font-semibold" style={{ color: 'var(--text-primary)', fontSize: 14 }}>
+                <div className="install-label">Install</div>
+                <h3 id="install-banner-title" className="text-type-body" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
                   Install Averrow as an app
                 </h3>
                 <p className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -84,11 +85,11 @@ export function InstallAppBanner() {
     return (
       <Gutter>
         <section aria-labelledby="install-banner-title">
-          <Card>
+          <Card variant={HOME_CARD_VARIANT}>
             <div className="flex flex-col gap-3">
               <div>
-                <SectionLabel className="mb-1">Install · iOS</SectionLabel>
-                <h3 id="install-banner-title" className="font-semibold" style={{ color: 'var(--text-primary)', fontSize: 14 }}>
+                <div className="install-label">Install · iOS</div>
+                <h3 id="install-banner-title" className="text-type-body" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
                   Add Averrow to your Home Screen
                 </h3>
                 <p className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>

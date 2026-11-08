@@ -3,61 +3,30 @@
 // blackout. Reads usePlatformStatus(), which polls /api/v1/public/
 // platform-status every 60s.
 //
-// Two visual sizes:
-//   compact — for the desktop Home header (small mono pill)
-//   prominent — for the mobile Command Center status bar (larger
-//               pulsing dot + label, matches the existing layout)
+// Facelift (Phase 6 screen 2): a static, token-coloured dot and a sans
+// sentence-case label. No glow, no text-shadow, no looping ping: status is
+// carried by colour + words, and motion is reserved for state changes
+// (BRAND_BRIEF §3-4). Colours are theme-aware tokens, so light/dark track
+// without overrides.
 //
-// Color palette uses --sev-* tokens already defined in tokens.css so
-// light/dark themes track without overrides.
+// Two sizes share one look:
+//   compact   — the desktop Home header pill
+//   prominent — the Command Center / flyout trigger (larger gap)
 
 import type { CategoryStatus } from '@averrow/shared';
 import { usePlatformStatus } from '@/hooks/usePlatformStatus';
+import { OVERALL_LABEL, STATUS_BADGE } from '@/components/platform-status-ui';
 
 interface Props {
   variant?: 'compact' | 'prominent';
 }
 
-interface PaletteEntry {
-  label: string;
-  dot: string;
-  glow: string;
-  text: string;
-}
+const LOADING = { label: 'Checking…', dot: 'var(--text-tertiary)', text: 'var(--text-tertiary)' };
 
-// Palette tuned to match the existing severity badge colors in
-// tokens.css (--sev-info / --sev-medium / --sev-critical).
-const PALETTE: Record<CategoryStatus | 'loading', PaletteEntry> = {
-  operational: {
-    label: 'ALL SYSTEMS OPERATIONAL',
-    dot: '#22c55e',
-    glow: 'rgba(34,197,94,0.9)',
-    text: '#4ade80',
-  },
-  degraded: {
-    label: 'DEGRADED',
-    dot: '#fbbf24',
-    glow: 'rgba(251,191,36,0.9)',
-    // var(--sev-medium-text) — dark-mode value identical to the old
-    // hardcoded hex; light mode now gets AA contrast (S2.3 follow-up).
-    text: 'var(--sev-medium-text)',
-  },
-  outage: {
-    label: 'OUTAGE',
-    dot: '#f87171',
-    glow: 'rgba(248,113,113,0.9)',
-    // var(--sev-critical-text) — same rationale as `degraded` above.
-    // `operational` (#4ade80) and `loading` (#9ca3af) are left as-is:
-    // neither is byte-identical to any --sev-*-text token.
-    text: 'var(--sev-critical-text)',
-  },
-  loading: {
-    label: 'CHECKING…',
-    dot: '#9ca3af',
-    glow: 'rgba(156,163,175,0.6)',
-    text: '#9ca3af',
-  },
-};
+function paletteFor(status: CategoryStatus | 'loading') {
+  if (status === 'loading' || !(status in STATUS_BADGE)) return LOADING;
+  return { label: OVERALL_LABEL[status], dot: STATUS_BADGE[status].dot, text: STATUS_BADGE[status].text };
+}
 
 export function PlatformStatusBadge({ variant = 'compact' }: Props) {
   const { data, isLoading } = usePlatformStatus();
@@ -65,57 +34,31 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
   // Defensive: status should always be a known PALETTE key, but fall back to
   // the neutral "loading" entry rather than crash if an unexpected value
   // ever slips through (e.g. a malformed API response upstream).
-  const palette = PALETTE[status] ?? PALETTE.loading;
+  const palette = paletteFor(status);
 
-  // Prominent variant — used on mobile Command Center. Mirrors the
-  // existing layout in MobileCommandCenter.tsx (pulse dot + label
-  // text, both styled in monospace).
-  if (variant === 'prominent') {
-    const content = (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-        <div style={{ position: 'relative', width: 8, height: 8 }}>
-          <div
-            style={{
-              position: 'absolute', inset: 0, borderRadius: '50%',
-              background: palette.dot, opacity: 0.6,
-              animation: status === 'operational' ? 'live-ping 1.6s ease-in-out infinite' : 'live-ping 1s ease-in-out infinite',
-            }}
-          />
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: palette.dot, boxShadow: `0 0 8px ${palette.glow}` }} />
-        </div>
-        <span style={{
-          fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
-          letterSpacing: '0.14em', color: palette.text,
-          textShadow: `0 0 10px ${palette.glow.replace('0.9', '0.5')}`,
-        }}>
-          {palette.label}
-        </span>
-      </div>
-    );
-    return content;
-  }
-
-  // Compact variant — used on desktop Home. Smaller pill, no pulse
-  // ring, since it sits next to the page title and shouldn't shout.
-  const content = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+  return (
+    <div
+      data-platform-status={status === 'loading' || !(status in STATUS_BADGE) ? 'loading' : status}
+      data-variant={variant}
+      style={{ display: 'flex', alignItems: 'center', gap: variant === 'prominent' ? 9 : 8 }}
+    >
       <span
-        style={{
-          width: 8, height: 8, borderRadius: '50%',
-          background: palette.dot,
-          boxShadow: `0 0 8px ${palette.glow}`,
-        }}
+        aria-hidden
+        style={{ width: 8, height: 8, borderRadius: '50%', background: palette.dot, flexShrink: 0 }}
       />
       <span
+        role="status"
         style={{
-          fontSize: 10, fontFamily: 'var(--font-mono)',
-          color: palette.text, letterSpacing: '0.14em',
-          textTransform: 'uppercase',
+          fontSize: 'var(--type-label-size, 12px)',
+          lineHeight: 'var(--type-label-lh, 16px)',
+          fontFamily: 'var(--font-sans)',
+          fontWeight: 500,
+          letterSpacing: 'var(--type-label-tracking, 0.01em)',
+          color: palette.text,
         }}
       >
         {palette.label}
       </span>
     </div>
   );
-  return content;
 }

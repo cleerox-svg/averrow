@@ -43,14 +43,14 @@ describe('OverviewV4 — InstallAppBanner', () => {
     promptState();
     renderWithProviders(<OverviewV4 />);
     // hero proves the page rendered; banner must be absent after the effect runs
-    expect(await screen.findByText('COMMAND CENTER')).toBeInTheDocument();
+    expect(await screen.findByText('Command center')).toBeInTheDocument();
     expect(screen.queryByText(BANNER_TEXT)).not.toBeInTheDocument();
   });
 
   it('hides the banner when running standalone', async () => {
     promptState({ isStandalone: true });
     renderWithProviders(<OverviewV4 />);
-    expect(await screen.findByText('COMMAND CENTER')).toBeInTheDocument();
+    expect(await screen.findByText('Command center')).toBeInTheDocument();
     expect(screen.queryByText(BANNER_TEXT)).not.toBeInTheDocument();
   });
 });

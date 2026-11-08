@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useReducedMotion } from './useReducedMotion';
 
 /**
+ * NOT used by the kit: StatTile renders its value immediately (BRAND_BRIEF §4,
+ * "no count-up animations"). Kept for an explicit opt-in; do not wire it into a
+ * default render path.
+ *
  * Eased count to `target`. The first mount animates from 0; later target
  * changes (e.g. a 30s KPI refetch) animate from the last displayed value so
  * the number never snaps back to 0. Under reduced motion (or a non-finite /

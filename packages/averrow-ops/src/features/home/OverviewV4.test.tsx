@@ -42,7 +42,7 @@ describe('OverviewV4 layout', () => {
   it('renders the hero, tempo band, queue, briefing, platform pulse and digest, and none of the old sections', async () => {
     setup({ alerts: { new_count: 4, critical_count: 0 } });
 
-    expect(await screen.findByText('COMMAND CENTER')).toBeInTheDocument();
+    expect(await screen.findByText('Command center')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: /Ada/ })).toBeInTheDocument();
     expect(screen.queryByText('LIVE')).not.toBeInTheDocument(); // the old LIVE badge is gone (the top bar shows Offline only when offline)
     expect(await screen.findByText(/Threat tempo/)).toBeInTheDocument();
