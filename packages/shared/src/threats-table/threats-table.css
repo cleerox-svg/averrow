@@ -120,3 +120,128 @@
   color: var(--primary-text); border-color: var(--primary-border); background: var(--primary-tint);
 }
 :root[data-accent] .tt-row[data-open="true"] .tt-expand-icon { color: var(--primary-text); }
+
+/* Buttons that stand in for clickable text: reset the UA button chrome in every look. */
+button.tt-link { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+.tt-th-btn { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: inherit; }
+.tt-expand { display: inline-flex; align-items: center; justify-content: center; background: none; border: 0; padding: 0 4px; font: inherit; color: inherit; cursor: pointer; }
+
+/* Phase 6 screen 3b (facelift): sentence-case sans labels at the --type-label-* scale,
+   token surfaces and hovers, visible focus, 44px coarse targets. Everything here sits
+   under [data-accent] so FACELIFT=false keeps the legacy rules above untouched. Hover:
+   dark fills with --bg-page, light darkens by 6% of --text-primary (the Overview rule). */
+:root[data-accent] .tt-filters { background: var(--bg-card); }
+:root[data-accent] .tt-select,
+:root[data-accent] .tt-search {
+  background: var(--bg-input); color-scheme: inherit;
+  font-family: var(--font-sans); font-size: var(--type-body-size, 14px); line-height: var(--type-body-lh, 21px);
+}
+:root[data-accent] .tt-select:hover, :root[data-accent] .tt-search:hover { border-color: var(--border-strong); }
+:root[data-accent] .tt-search-icon { font-size: var(--type-label-size, 12px); }
+
+:root[data-accent] .tt-chip {
+  font-family: var(--font-sans); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500); letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none; background: transparent;
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+              border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+:root[data-accent] .tt-chip:hover { background: var(--bg-page); }
+:root[data-accent][data-theme="light"] .tt-chip:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+
+:root[data-accent] .tt-table { font-size: var(--type-label-size, 12px); }
+:root[data-accent] .tt-table thead tr { background: var(--bg-page); }
+:root[data-accent] .tt-th {
+  font-family: var(--font-sans); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500); letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none; color: var(--text-tertiary);
+}
+:root[data-accent] .tt-th[data-sortable="true"]:hover { color: var(--text-primary); }
+:root[data-accent] .tt-th-btn { cursor: pointer; }
+:root[data-accent] .tt-row {
+  border-bottom-color: var(--border-base);
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+:root[data-accent] .tt-row:hover,
+:root[data-accent] .tt-row[data-open="true"] { background: var(--bg-page); }
+:root[data-accent][data-theme="light"] .tt-row:hover,
+:root[data-accent][data-theme="light"] .tt-row[data-open="true"] { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+:root[data-accent] .tt-td { font-variant-numeric: tabular-nums; }
+:root[data-accent] .tt-expand-icon { transition: transform var(--motion-fast, 120ms) var(--ease-standard, ease); }
+
+/* Pills: sans sentence case; severity pills read the AA --sev-*-text tokens (not --amber-text). */
+:root[data-accent] .tt-pill {
+  font-family: var(--font-sans); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500); letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none; border-radius: 6px; padding: 2px 8px; font-variant-numeric: tabular-nums;
+}
+:root[data-accent] .tt-pill[data-tone="crit"] { color: var(--sev-critical-text); background: var(--sev-critical-bg); border-color: var(--sev-critical-border); }
+:root[data-accent] .tt-pill[data-tone="high"] { color: var(--sev-high-text); background: var(--sev-high-bg); border-color: var(--sev-high-border); }
+:root[data-accent] .tt-pill[data-tone="medium"] { color: var(--sev-medium-text); background: var(--sev-medium-bg); border-color: var(--sev-medium-border); opacity: 1; }
+:root[data-accent] .tt-pill[data-tone="ok"] { color: var(--green-text); background: color-mix(in srgb, var(--green) 10%, transparent); border-color: color-mix(in srgb, var(--green) 25%, transparent); }
+:root[data-accent] .tt-pill[data-tone="info"] { color: var(--blue-text); background: color-mix(in srgb, var(--blue) 10%, transparent); border-color: color-mix(in srgb, var(--blue) 22%, transparent); }
+:root[data-accent] .tt-pill[data-tone="neutral"] { color: var(--text-secondary); background: color-mix(in srgb, var(--text-primary) 5%, transparent); border-color: var(--border-base); }
+
+/* Evidence detail */
+:root[data-accent] .tt-detail-td { background: var(--bg-page); }
+:root[data-accent] .tt-detail { border-bottom-color: var(--border-base); }
+:root[data-accent] .tt-sect-label {
+  font-family: var(--font-sans); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500); letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none; color: var(--text-tertiary);
+}
+:root[data-accent] .tt-kv { font-size: var(--type-label-size, 12px); border-bottom-color: var(--border-base); }
+:root[data-accent] .tt-kv .k { font-family: var(--font-sans); }
+:root[data-accent] .tt-kv .v { font-variant-numeric: tabular-nums; }
+:root[data-accent] .tt-assess { font-size: var(--type-body-size, 14px); line-height: var(--type-body-lh, 21px); }
+
+/* Pager: 12px+ sans labels, tabular counts, token hover. */
+:root[data-accent] .tt-pager-info {
+  font-family: var(--font-sans); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
+  font-variant-numeric: tabular-nums;
+}
+:root[data-accent] .tt-btn {
+  font-family: var(--font-sans); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500); letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none; padding: 8px 14px; min-height: 32px;
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+              border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+:root[data-accent] .tt-btn:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-page); }
+:root[data-accent][data-theme="light"] .tt-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+:root[data-accent] .tt-btn[data-variant="primary"]:hover:not(:disabled) { background: var(--primary-tint); }
+
+:root[data-accent] .tt-state {
+  font-family: var(--font-sans); font-size: var(--type-body-size, 14px); line-height: var(--type-body-lh, 21px);
+  color: var(--text-tertiary);
+}
+
+/* Keyboard focus: the shared ring (light uses --text-primary, as on the Overview). */
+:root[data-accent] .tt-select:focus-visible,
+:root[data-accent] .tt-search:focus-visible,
+:root[data-accent] .tt-chip:focus-visible,
+:root[data-accent] .tt-btn:focus-visible,
+:root[data-accent] .tt-expand:focus-visible,
+:root[data-accent] .tt-th-btn:focus-visible,
+:root[data-accent] .tt-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+:root[data-accent][data-theme="light"] .tt-select:focus-visible,
+:root[data-accent][data-theme="light"] .tt-search:focus-visible,
+:root[data-accent][data-theme="light"] .tt-chip:focus-visible,
+:root[data-accent][data-theme="light"] .tt-btn:focus-visible,
+:root[data-accent][data-theme="light"] .tt-expand:focus-visible,
+:root[data-accent][data-theme="light"] .tt-th-btn:focus-visible,
+:root[data-accent][data-theme="light"] .tt-link:focus-visible { outline-color: var(--text-primary); }
+
+@media (pointer: coarse) {
+  :root[data-accent] .tt-btn { min-height: 44px; min-width: 44px; }
+  :root[data-accent] .tt-select, :root[data-accent] .tt-search { min-height: 44px; }
+  :root[data-accent] .tt-chip { min-height: 44px; }
+  :root[data-accent] .tt-expand { min-height: 44px; min-width: 44px; }
+  :root[data-accent] .tt-th-btn { min-height: 44px; }
+  :root[data-accent] button.tt-link { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-accent] .tt-row, :root[data-accent] .tt-chip, :root[data-accent] .tt-btn,
+  :root[data-accent] .tt-expand-icon { transition: none; }
+}

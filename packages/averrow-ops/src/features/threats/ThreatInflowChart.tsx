@@ -14,33 +14,38 @@ import { useState } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
+import { useTokenColors, type Rgba } from '@averrow/shared/theme';
 import { useThreatInflow } from './useThreatInflow';
 import type { InflowWindow } from './useThreatInflow';
 import { Card, PageState } from '@/design-system/components';
+import { THREATS_CARD_VARIANT } from './threatsCard';
+import './threats.css';
 
-// Threat-type → fill/stroke color. Aligned with the Threat Volume
-// chart on /trends so the palette stays consistent across the two
-// surfaces that visualize the same data shape.
-const TYPE_COLORS: Record<string, string> = {
-  phishing:               '#C83C3C', // red — the headline attack
-  malware_distribution:   '#9333ea', // purple — distinct from phishing
-  malicious_ip:           '#78A0C8', // slate blue
-  c2:                     '#ef4444', // lighter red
-  typosquatting:          '#DCAA32', // gold
-  credential_harvesting:  '#E8923C', // orange
-  spam:                   '#6b7280', // gray
-  social_engineering:     '#ec4899', // pink
-  defacement:             '#10b981', // emerald
+// Threat-type -> categorical chart token (--chart-1..6, fixed per type so a filter
+// or a re-sort never repaints a series). Types beyond the six categorical slots fold
+// into one neutral "other" token instead of generating more hues. Recharts needs
+// resolved colours, so the tokens are read at runtime (useTokenColors) and the chart
+// follows theme / accent changes.
+const TYPE_TOKENS: Record<string, string> = {
+  phishing:              '--chart-1',
+  malware_distribution:  '--chart-2',
+  malicious_ip:          '--chart-3',
+  c2:                    '--chart-4',
+  typosquatting:         '--chart-5',
+  credential_harvesting: '--chart-6',
 };
+const OTHER_TOKEN = '--text-muted';
+const CHROME_TOKENS = ['--text-tertiary', '--text-secondary', '--border-base', '--border-strong'] as const;
+const TOKEN_NAMES = [...new Set([...Object.values(TYPE_TOKENS), OTHER_TOKEN, ...CHROME_TOKENS])];
 
-const FALLBACK_COLORS = ['#4ade80', '#06b6d4', '#a78bfa', '#f472b6', '#facc15'];
+function tokenFor(type: string): string {
+  return TYPE_TOKENS[type] ?? OTHER_TOKEN;
+}
 
-function colorFor(type: string): string {
-  if (TYPE_COLORS[type]) return TYPE_COLORS[type]!;
-  // Hash for deterministic fallback — same color across page reloads.
-  let h = 0;
-  for (let i = 0; i < type.length; i++) h = (h * 31 + type.charCodeAt(i)) >>> 0;
-  return FALLBACK_COLORS[h % FALLBACK_COLORS.length]!;
+/** Resolved token -> an rgba() string Recharts can paint; before it resolves (SSR / jsdom) fall back to the CSS variable. */
+function paint(colors: Record<string, Rgba | null>, token: string): string {
+  const c = colors[token];
+  return c ? `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${+(c[3] / 255).toFixed(3)})` : `var(${token})`;
 }
 
 function prettyTypeLabel(type: string): string {
@@ -87,6 +92,9 @@ interface Props {
 
 export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {}) {
   const [window, setWindow] = useState<Window>(defaultWindow);
+  const { colors } = useTokenColors(TOKEN_NAMES);
+  const tickFill = paint(colors, '--text-tertiary');
+  const axisStroke = paint(colors, '--border-base');
   const { data, isLoading, isError, refetch } = useThreatInflow(window);
   const failed = isError && !data;
 
@@ -107,28 +115,19 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
   const headline = data?.total ?? null;
 
   return (
-    <Card style={{ padding: 18 }}>
+    <Card variant={THREATS_CARD_VARIANT} style={{ padding: 18 }}>
       {/* Header row: title, headline number, window toggle */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
         <div>
-          <div style={{
-            fontFamily: 'var(--font-mono)', fontSize: 10,
-            color: 'var(--text-tertiary)', letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-          }}>
-            Threat Inflow
-          </div>
-          <div style={{
+          <h3 className="thr-label">Threat inflow</h3>
+          <div className="thr-num" style={{
             fontFamily: 'var(--font-display)',
             fontSize: 26, fontWeight: 700,
             color: 'var(--text-primary)', lineHeight: 1.1,
           }}>
             {headline === null ? '—' : headline.toLocaleString()}
           </div>
-          <div style={{
-            fontFamily: 'var(--font-mono)', fontSize: 10,
-            color: 'var(--text-tertiary)', letterSpacing: '0.06em',
-          }}>
+          <div className="thr-label">
             new indicators · {window === '7d' ? 'last 7 days' : 'last 24h'}
           </div>
         </div>
@@ -140,14 +139,12 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
         <PageState kind="error" layout="card" compact title="Couldn't load threat inflow" onRetry={() => { void refetch(); }} />
       ) : isLoading || !data ? (
         <div
+          className="thr-label"
           style={{
             height: chartHeight,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'var(--text-tertiary)',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
           }}
         >
           {isLoading ? 'Loading inflow…' : 'No data'}
@@ -160,15 +157,15 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
           <AreaChart data={chartData} margin={{ top: 14, right: 8, bottom: 16, left: 0 }}>
             <XAxis
               dataKey="bucket"
-              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
-              axisLine={{ stroke: 'var(--border-base)' }}
+              tick={{ fill: tickFill, fontSize: 12, fontFamily: 'var(--font-mono)' }}
+              axisLine={{ stroke: axisStroke }}
               tickLine={false}
               tickFormatter={(v: string) => formatAxisTick(v, window)}
               interval="preserveStartEnd"
               minTickGap={32}
             />
             <YAxis
-              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+              tick={{ fill: tickFill, fontSize: 12, fontFamily: 'var(--font-mono)' }}
               axisLine={false}
               tickLine={false}
               width={48}
@@ -184,10 +181,10 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
             />
             <Tooltip
               content={<InflowTooltip window={window} />}
-              cursor={{ stroke: 'var(--text-tertiary)', strokeDasharray: '2 3' }}
+              cursor={{ stroke: tickFill, strokeDasharray: '2 3' }}
             />
             {data.series.map((s) => {
-              const c = colorFor(s.threat_type);
+              const c = paint(colors, tokenFor(s.threat_type));
               return (
                 <Area
                   key={s.threat_type}
@@ -218,15 +215,14 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
           {data.series.map((s) => (
             <div
               key={s.threat_type}
-              className="flex items-center gap-1.5 max-md:px-1.5 max-md:py-1 max-md:border max-md:border-white/10 max-md:rounded-md"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}
+              className="thr-legend-item max-md:px-1.5 max-md:py-1 max-md:border max-md:border-[var(--border-base)] max-md:rounded-md"
             >
               <span
                 style={{
                   width: 8,
                   height: 8,
                   borderRadius: 2,
-                  background: colorFor(s.threat_type),
+                  background: paint(colors, tokenFor(s.threat_type)),
                   flexShrink: 0,
                 }}
               />
@@ -243,7 +239,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
               >
                 {prettyTypeLabel(s.threat_type)}
               </span>
-              <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
+              <span className="thr-num" style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
                 {s.total.toLocaleString()}
               </span>
             </div>
@@ -285,20 +281,18 @@ function InflowTooltip({
   return (
     <div
       style={{
-        background: 'rgba(20,26,38,0.96)',
-        border: '1px solid var(--border-base)',
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-strong)',
         borderRadius: 8,
         padding: '8px 10px',
-        fontFamily: 'var(--font-mono)',
-        fontSize: 11,
+        fontFamily: 'var(--font-sans)',
+        fontSize: 'var(--type-label-size, 12px)',
+        fontVariantNumeric: 'tabular-nums',
         color: 'var(--text-primary)',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
         minWidth: 200,
       }}
     >
-      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4 }}>
+      <div style={{ color: 'var(--text-tertiary)', marginBottom: 4 }}>
         {formatBucketLabel(label, window)}
       </div>
       {nonZero.map((p) => (
@@ -329,49 +323,22 @@ function InflowTooltip({
 
 function WindowToggle({ value, onChange }: { value: Window; onChange: (v: Window) => void }) {
   const opts: Array<{ v: Window; label: string }> = [
-    { v: '24h', label: '24H' },
-    { v: '7d',  label: '7D'  },
+    { v: '24h', label: '24h' },
+    { v: '7d',  label: '7d'  },
   ];
   return (
-    <div
-      role="tablist"
-      aria-label="Time window"
-      style={{
-        display: 'inline-flex',
-        // alignSelf prevents the parent flex-col from stretching this
-        // pill across the full width of the card on narrow mobile.
-        alignSelf: 'flex-start',
-        background: 'var(--border-base)',
-        border: '1px solid var(--border-base)',
-        borderRadius: 8,
-        padding: 2,
-        flexShrink: 0,
-      }}
-    >
-      {opts.map((o) => {
-        const active = o.v === value;
-        return (
-          <button
-            key={o.v}
-            role="tab"
-            aria-selected={active}
-            onClick={() => onChange(o.v)}
-            style={{
-              fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
-              letterSpacing: '0.08em',
-              padding: '6px 12px',
-              border: 'none',
-              cursor: 'pointer',
-              borderRadius: 6,
-              color: active ? 'var(--btn-primary-ink, var(--bg-page))' : 'var(--text-secondary)',
-              background: active ? 'var(--primary)' : 'transparent',
-              transition: 'background 0.15s ease, color 0.15s ease',
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
+    <div role="tablist" aria-label="Time window" className="thr-seg">
+      {opts.map((o) => (
+        <button
+          key={o.v}
+          type="button"
+          role="tab"
+          aria-selected={o.v === value}
+          onClick={() => onChange(o.v)}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -1,8 +1,12 @@
 import type { Ref } from 'react';
+import { sentenceCase } from '@/lib/sentence-case';
+import './threats.css';
 
 /**
  * Sectioned narrative divider (matches /brands Intel). Pass `innerRef` to make
  * the header a programmatic focus target (tabIndex -1) for scroll-to-section.
+ * Title is a sentence-case sans h2 at the --type-h2-* scale; the subtitle is a
+ * 12px label. Styles live in threats.css (`.thr-panel-title` / `.thr-label`).
  */
 export function PanelHeader({ title, subtitle, id, innerRef }: {
   title: string;
@@ -17,13 +21,11 @@ export function PanelHeader({ title, subtitle, id, innerRef }: {
       ref={innerRef}
       tabIndex={innerRef ? -1 : undefined}
     >
-      <div className="flex items-baseline gap-3">
-        <h2 className="text-sm font-mono font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">
-          {title}
-        </h2>
-        <span className="text-[11px] text-[var(--text-muted)]">{subtitle}</span>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+        <h2 className="thr-panel-title">{sentenceCase(title)}</h2>
+        <span className="thr-label">{subtitle}</span>
       </div>
-      <div className="mt-1 h-px bg-gradient-to-r from-white/[0.10] via-white/[0.04] to-transparent" />
+      <div className="thr-panel-rule" />
     </div>
   );
 }

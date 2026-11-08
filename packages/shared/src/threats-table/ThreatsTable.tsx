@@ -6,7 +6,7 @@
 // subset it wants. Rows expand to an evidence/TTP detail panel that
 // synthesizes the "so what" from the columns we already store.
 
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import type { ThreatRow, ThreatColumnKey, ThreatsTableProps } from './types';
 import './threats-table.css';
 
@@ -36,6 +36,11 @@ function sevTone(sev: string | null): string {
 function Pill({ tone, children }: { tone: string; children: ReactNode }) {
   return <span className="tt-pill" data-tone={tone}>{children}</span>;
 }
+/** "false_positive" -> "False positive" (display only; the data value is untouched). */
+function sentence(v: string): string {
+  const t = v.replace(/_/g, ' ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
 function fmtDate(d?: string | null): string {
   if (!d) return '—';
   const dt = new Date(d);
@@ -52,8 +57,8 @@ const COLUMNS: Record<ThreatColumnKey, ColDef> = {
   type:     { header: 'Type', render: (r) => <Pill tone="neutral">{TYPE_LABELS[r.threat_type] ?? r.threat_type.replace(/_/g, ' ')}</Pill> },
   target:   { header: 'Domain / URL', render: (r) => <span className="tt-mono tt-strong tt-truncate" title={r.malicious_url ?? r.malicious_domain ?? ''} style={{ display: 'inline-block' }}>{target(r)}</span> },
   ip:       { header: 'IP', render: (r) => <span className="tt-mono">{r.ip_address ?? '—'}</span> },
-  severity: { header: 'Severity', render: (r) => <Pill tone={sevTone(r.severity)}>{(r.severity ?? '—').toLowerCase()}</Pill> },
-  status:   { header: 'Status', render: (r) => <Pill tone={(r.status ?? '') === 'active' ? 'crit' : (r.status ?? '') === 'remediated' ? 'ok' : 'neutral'}>{r.status ?? '—'}</Pill> },
+  severity: { header: 'Severity', render: (r) => <Pill tone={sevTone(r.severity)}>{sentence((r.severity ?? '—').toLowerCase())}</Pill> },
+  status:   { header: 'Status', render: (r) => <Pill tone={(r.status ?? '') === 'active' ? 'crit' : (r.status ?? '') === 'remediated' ? 'ok' : 'neutral'}>{sentence(r.status ?? '—')}</Pill> },
   source:   { header: 'Source', render: (r) => <span className="tt-mono">{(r.source_feed ?? '—').replace(/_/g, ' ')}</span> },
   country:  { header: 'Country', align: 'center', render: (r) => <span className="tt-mono">{r.country_code ?? '—'}</span> },
   asn:      { header: 'ASN', render: (r) => <span className="tt-mono">{r.asn ?? '—'}</span> },
@@ -217,8 +222,17 @@ export function ThreatsTable(props: ThreatsTableProps) {
                   const active = sk != null && state.sort === sk;
                   return (
                     <th key={key} className="tt-th" data-sortable={sk != null} data-active={active} data-align={def.align ?? 'left'}
+                      aria-sort={active ? (state.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                       onClick={sk ? () => onToggleSort(sk) : undefined}>
-                      <span className="tt-th-inner">{def.header}{sk != null && <span>{active ? (state.dir === 'asc' ? '▲' : '▼') : '↕'}</span>}</span>
+                      {sk != null ? (
+                        // The th keeps the click handler (mouse + tests); the button makes
+                        // the header keyboard-reachable, and its click bubbles to the th.
+                        <button type="button" className="tt-th-btn tt-th-inner">
+                          {def.header}<span aria-hidden="true">{active ? (state.dir === 'asc' ? '▲' : '▼') : '↕'}</span>
+                        </button>
+                      ) : (
+                        <span className="tt-th-inner">{def.header}</span>
+                      )}
                     </th>
                   );
                 })}
@@ -228,22 +242,34 @@ export function ThreatsTable(props: ThreatsTableProps) {
               {rows.map((r) => {
                 const isOpen = open === r.id;
                 return (
-                  <>
-                    <tr key={r.id} className="tt-row" data-open={isOpen} onClick={() => setOpen(isOpen ? null : r.id)}>
-                      <td className="tt-td" data-align="center"><span className="tt-expand-icon">›</span></td>
+                  <Fragment key={r.id}>
+                    <tr className="tt-row" data-open={isOpen} onClick={() => setOpen(isOpen ? null : r.id)}>
+                      <td className="tt-td" data-align="center">
+                        {/* The row is mouse-clickable; this button is the keyboard (Enter/Space)
+                            and screen-reader control. It stops propagation so a click toggles once. */}
+                        <button
+                          type="button"
+                          className="tt-expand"
+                          aria-expanded={isOpen}
+                          aria-label={`${isOpen ? 'Hide' : 'Show'} evidence for ${target(r)}`}
+                          onClick={(e) => { e.stopPropagation(); setOpen(isOpen ? null : r.id); }}
+                        >
+                          <span className="tt-expand-icon" aria-hidden="true">›</span>
+                        </button>
+                      </td>
                       {columns.map((key) => (
                         <td key={key} className="tt-td" data-align={COLUMNS[key].align ?? 'left'}>{COLUMNS[key].render(r)}</td>
                       ))}
                     </tr>
                     {isOpen && <DetailPanel row={r} colSpan={columns.length + 1} extra={renderExtraDetail?.(r)} />}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
           </table>
         </div>
-        {loading && <div className="tt-state">Loading threats…</div>}
-        {!loading && error && <div className="tt-state" style={{ color: 'var(--sev-critical-text)' }}>{error}</div>}
+        {loading && <div className="tt-state" role="status">Loading threats…</div>}
+        {!loading && error && <div className="tt-state" role="alert" style={{ color: 'var(--sev-critical-text)' }}>{error}</div>}
         {!loading && !error && rows.length === 0 && <div className="tt-state">{emptyText}</div>}
       </div>
 
@@ -251,8 +277,8 @@ export function ThreatsTable(props: ThreatsTableProps) {
         <div className="tt-pager">
           <span className="tt-pager-info">{from.toLocaleString()}–{to.toLocaleString()} of {total.toLocaleString()}</span>
           <div className="tt-pager-btns">
-            <button className="tt-btn" disabled={state.page === 0 || loading} onClick={() => onPage(state.page - 1)}>Prev</button>
-            <button className="tt-btn" data-variant="primary" disabled={to >= total || loading} onClick={() => onPage(state.page + 1)}>Next</button>
+            <button type="button" className="tt-btn" disabled={state.page === 0 || loading} onClick={() => onPage(state.page - 1)}>Prev</button>
+            <button type="button" className="tt-btn" data-variant="primary" disabled={to >= total || loading} onClick={() => onPage(state.page + 1)}>Next</button>
           </div>
         </div>
       )}

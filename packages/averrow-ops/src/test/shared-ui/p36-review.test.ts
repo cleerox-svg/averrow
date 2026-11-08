@@ -43,8 +43,18 @@ describe('threats table', () => {
       expect(body, sel).toMatch(/var\(--(primary|link)/);
     }
   });
-  it('severity pills stay amber (status colour)', () => {
-    expect(css).not.toMatch(/:root\[data-accent\] \.tt-pill/);
+  it('severity pills read the AA --sev-*-text tokens under the facelift, not amber (Phase 6 screen 3b)', () => {
+    const rule = (tone: string) => {
+      const i = css.indexOf(`:root[data-accent] .tt-pill[data-tone="${tone}"] {`);
+      expect(i, tone).toBeGreaterThan(-1);
+      return css.slice(i, css.indexOf('}', i));
+    };
+    expect(rule('high')).toMatch(/color: var\(--sev-high-text\)/);
+    expect(rule('high')).not.toMatch(/amber|229,\s*168/);
+    expect(rule('medium')).toMatch(/color: var\(--sev-medium-text\)/);
+    expect(rule('medium')).not.toMatch(/amber|229,\s*168/);
+    // The legacy (FACELIFT=false) rules keep amber for high / medium.
+    expect(css).toMatch(/\.tt-pill\[data-tone="high"\]\s+\{ color: var\(--amber-text\)/);
   });
 });
 
