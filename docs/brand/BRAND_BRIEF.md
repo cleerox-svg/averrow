@@ -122,3 +122,22 @@ The facelift is the live default for ops and tenant (PR P3-6). Owner decisions f
 | Avatar follows primary | The self-avatar uses `--primary`, so it follows the user's accent. |
 
 Revert path: `FACELIFT = false` in `packages/shared/src/theme/appearanceDefaults.ts` restores the legacy look in one line (see `AVERROW_UI_STANDARD.md` "Appearance & theme model").
+
+## 12. Rollout status (2026-11-08, v4.9.0)
+
+Phases 3–5 are live. Each PR below is merged and deployed (`deploy-radar.yml`).
+
+| PR | Phase | Shipped |
+|---|---|---|
+| #1885–#1892 | 3 | Tokens, shared kit sweep, Geist + Geist Mono, motion kit, R3 logo, account-synced Appearance, and the `FACELIFT = true` flip (v4.8.0, §11) |
+| #1893 | 3 | Icons (PWA and Android) |
+| #1894 | 3 | Amber status-only sweep, held by the ratchet test |
+| #1895 | 4 | Hero copy doc (`HERO_COPY_2026-11.md`) |
+| #1896 | 4 | Worker pages, emails, OG image, CSP, `/email/averrow-mark-r3.png` |
+| #1897 | 4 | Marketing palette, self-hosted Geist, R3 logo, and owner-approved `_headers` long-cache rules for `/fonts/*` and `/v2/email/*` |
+| #1898 | 5 | Marketing CI job: `astro check`, Playwright, perf budgets |
+| #1899 | 5 | H4A operation hero (G5): canvas, auto-play steps, "Operation mapped" claim |
+| #1900 | 5 | Motion: M1 tokens, native cross-document view transitions with a Firefox fallback, lazy GSAP core scroll sequences (no ScrollTrigger, no count-ups, §4). Verified in Chromium, Firefox and WebKit |
+| v4.9.0 | 5 | Release: copy "Fake profiles" becomes "Impersonation accounts", version bump, staff and public changelog entries, this section and the marketing README |
+
+**Next: Phase 6, per-screen redesign.** One PR per screen, in this order: Shell, Overview, Alerts / Threats, Tenant dashboard, Login (facelift parity with FarmTrack stays suspended), Observatory controls. Each goes through the full CLAUDE.md §1A pipeline and ships without a preview, as the flip did.
