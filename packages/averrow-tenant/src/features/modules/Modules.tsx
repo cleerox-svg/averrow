@@ -58,7 +58,7 @@ function Surface({ padding = 20, className, children }: { padding?: number; clas
   }
   return (
     <div
-      className={cn('rounded-xl border border-[var(--border-base)] bg-bg-card', className)}
+      className={cn('overflow-hidden rounded-xl border border-[var(--border-base)] bg-bg-card', className)}
       style={{ padding }}
     >
       {children}
@@ -97,7 +97,7 @@ export function Modules() {
   const modulesData = modulesQuery.data;
   const dashboard = dashboardQuery.data;
 
-  if (!modulesData) return null;
+  if (!modulesData) return <PageState kind="loading" />;
 
   const active = modulesData.modules.filter((m) => m.status === 'active' || m.status === 'trial');
   const locked = modulesData.modules.filter((m) => m.status === 'not_entitled' || m.status === 'suspended');
@@ -116,6 +116,15 @@ export function Modules() {
       {/* Headline stats — drives the eye to the real numbers. */}
       {dashboard && (
         <HeadlineStats dashboard={dashboard} />
+      )}
+      {dashboardQuery.error && !dashboard && (
+        <PageState
+          kind="error"
+          layout="card"
+          compact
+          title="Couldn't load your summary"
+          onRetry={() => { void dashboardQuery.refetch(); }}
+        />
       )}
       {dashboardQuery.isLoading && !dashboard && (
         <div role="status" aria-busy="true" className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -205,6 +214,7 @@ function HeadlineStats({
   );
 }
 
+// Not the kit StatTile: it only tints a dot, and these need a flat card with a severity-coloured value.
 // Counts are neutral by default; colour is reserved for severity (critical
 // impersonations, the exposure band). Amber is a status colour, never an accent.
 function Stat({
@@ -251,9 +261,9 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
             <tr>
               <th scope="col" className={cn(th, 'text-left')}>Brand</th>
               <th scope="col" className={cn(th, 'text-right')}>Active threats</th>
-              <th scope="col" className={cn(th, 'text-right')}>Social profiles</th>
-              <th scope="col" className={cn(th, 'text-right')}>Impersonations</th>
               <th scope="col" className={cn(th, 'text-right')}>Exposure</th>
+              <th scope="col" className={cn(th, 'text-right')}>Impersonations</th>
+              <th scope="col" className={cn(th, 'text-right')}>Social profiles</th>
             </tr>
           </thead>
           <tbody>
@@ -276,8 +286,8 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
                 <td className="text-right px-4 py-2.5 tabular-nums text-[var(--text-primary)]">
                   {b.active_threats.toLocaleString()}
                 </td>
-                <td className="text-right px-4 py-2.5 tabular-nums text-[var(--text-secondary)]">
-                  {b.social_profiles_count.toLocaleString()}
+                <td className="text-right px-4 py-2.5">
+                  <ExposureScore score={b.exposure_score} />
                 </td>
                 <td
                   className="text-right px-4 py-2.5 tabular-nums text-[var(--text-secondary)]"
@@ -285,8 +295,8 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
                 >
                   {b.impersonation_count.toLocaleString()}
                 </td>
-                <td className="text-right px-4 py-2.5">
-                  <ExposureScore score={b.exposure_score} />
+                <td className="text-right px-4 py-2.5 tabular-nums text-[var(--text-secondary)]">
+                  {b.social_profiles_count.toLocaleString()}
                 </td>
               </tr>
             ))}
@@ -305,22 +315,40 @@ function ExposureScore({ score }: { score: number | null }) {
 // ─── 7-day trend ───────────────────────────────────────────────
 
 const WEEKDAY = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'UTC' });
+const DAY_MS = 86_400_000;
 
-function ThreatTrend({ points }: { points: DashboardTrendPoint[] }) {
+/**
+ * Exactly the last `days` UTC calendar days ending on `now`'s UTC day, oldest
+ * first. The API returns only days that had threats, so gaps are filled with 0.
+ */
+export function fillTrendDays(points: DashboardTrendPoint[], now: Date = new Date(), days = 7): DashboardTrendPoint[] {
+  const byDay = new Map(points.map((p) => [p.date.slice(0, 10), p.count]));
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Array.from({ length: days }, (_, i) => {
+    const date = new Date(todayUtc - (days - 1 - i) * DAY_MS).toISOString().slice(0, 10);
+    return { date, count: byDay.get(date) ?? 0 };
+  });
+}
+
+/** Short weekday for a YYYY-MM-DD calendar day, always in UTC. */
+export function weekdayUtc(date: string): string {
+  return WEEKDAY.format(new Date(date));
+}
+
+function ThreatTrend({ points: sparse }: { points: DashboardTrendPoint[] }) {
+  const points = fillTrendDays(sparse);
   const max = Math.max(1, ...points.map((p) => p.count));
   const total = points.reduce((s, p) => s + p.count, 0);
   // Percentage heights collapse to 0 here because the column wrapper has no
   // definite height (items-end on the row doesn't stretch children). Size
   // bars in pixels against an explicit max instead.
   const BAR_MAX_PX = 64;
-  // `date` is a calendar day (UTC); format in UTC so the weekday never shifts.
-  const dayOf = (date: string) => WEEKDAY.format(new Date(date));
-  const summary = `Threats per day, last ${points.length} days: ${points
-    .map((p) => `${dayOf(p.date)} ${p.count.toLocaleString()}`)
+  const summary = `Threats per day, last 7 days: ${points
+    .map((p) => `${weekdayUtc(p.date)} ${p.count.toLocaleString()}`)
     .join(', ')}. ${total.toLocaleString()} total.`;
 
   return (
-    <Surface>
+    <Surface className="self-start">
       <section aria-labelledby="th-trend">
         <div className="flex items-baseline justify-between mb-4">
           <h2 id="th-trend" className={CARD_TITLE}>7-day threat trend</h2>
@@ -330,19 +358,14 @@ function ThreatTrend({ points }: { points: DashboardTrendPoint[] }) {
           {points.map((p) => {
             const h = Math.max(4, Math.round((p.count / max) * BAR_MAX_PX));
             return (
-              <div
-                key={p.date}
-                className="flex-1 min-w-0 flex flex-col items-center gap-1"
-                title={`${p.date} — ${p.count} threats`}
-              >
+              <div key={p.date} className="flex-1 min-w-0 flex flex-col items-center gap-1">
                 <div className="text-type-label text-[var(--text-secondary)] tabular-nums">{p.count}</div>
                 <div
+                  data-testid="trend-bar"
                   className="w-full rounded-sm bg-[var(--primary)] hover:bg-[var(--primary-hover)] transition-colors motion-reduce:transition-none"
                   style={{ height: `${h}px` }}
                 />
-                <div className="text-type-label text-[var(--text-tertiary)]">
-                  {dayOf(p.date)}
-                </div>
+                <div className="text-type-label text-[var(--text-tertiary)]">{weekdayUtc(p.date)}</div>
               </div>
             );
           })}
@@ -371,7 +394,7 @@ function RecentAlerts({ alerts }: { alerts: DashboardRecentAlert[] }) {
               <li key={a.id} className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <Badge severity={sev || 'unknown'} label={sev ? sentenceCase(sev) : 'Unknown'} font="sans" size="md" />
+                    <Badge severity={sev || null} label={sev ? sentenceCase(sev) : 'Unknown'} font="sans" size="md" />
                     <span className="text-type-label text-[var(--text-secondary)]">{sentenceCase(a.alert_type)}</span>
                   </div>
                   <p className="text-type-small text-[var(--text-primary)] truncate">{a.title}</p>
@@ -393,6 +416,7 @@ function RecentAlerts({ alerts }: { alerts: DashboardRecentAlert[] }) {
 
 function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; entitled: boolean }) {
   const totalUsage = m.metrics.reduce((sum, metric) => sum + (metric.value_this_month ?? 0), 0);
+  // Trial is informational (blue 'running' status), deliberately not amber/pending.
   const trial = m.status === 'trial';
 
   return (

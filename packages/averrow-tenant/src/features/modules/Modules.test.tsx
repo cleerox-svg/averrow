@@ -1,9 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { renderWithProviders } from '@/test/utils';
-import { Modules } from './Modules';
+import { Modules, fillTrendDays, weekdayUtc } from './Modules';
 import type { TenantModulesResponse } from '@/lib/modules';
 import type { DashboardResponse } from '@/lib/dashboard';
 
@@ -67,12 +68,17 @@ const dashboard: DashboardResponse = {
   ],
 };
 
-function setup(signed = false) {
+function setup(signed = false, opts: { modules?: TenantModulesResponse; dashboard?: Partial<DashboardResponse> | null } = {}) {
   auth.state = { user: { id: 'u1', organization: { id: 'org1', name: 'Acme' } }, hasOrg: true, loading: false };
-  modulesHook.result = { data: modulesData(signed), isLoading: false, error: null, refetch: vi.fn() };
-  dashboardHook.result = { data: dashboard, isLoading: false, error: null };
+  modulesHook.result = { data: opts.modules ?? modulesData(signed), isLoading: false, error: null, refetch: vi.fn() };
+  dashboardHook.result = {
+    data: opts.dashboard === null ? undefined : { ...dashboard, ...opts.dashboard },
+    isLoading: false, error: null, refetch: vi.fn(),
+  };
   return renderWithProviders(<Modules />);
 }
+
+afterEach(() => { vi.useRealTimers(); });
 
 
 describe('Modules (tenant Workspace overview)', () => {
@@ -128,13 +134,30 @@ describe('Modules (tenant Workspace overview)', () => {
     expect(screen.getByRole('link', { name: 'Manage takedown authorization' })).toBeTruthy();
   });
 
-  it('gives the trend a text alternative with UTC weekdays', () => {
-    setup();
-    const trend = screen.getByRole('img', { name: /Threats per day/ });
-    const label = trend.getAttribute('aria-label') ?? '';
+  it('fills the trend to the last 7 UTC days and gives it a text alternative', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-03T23:30:00Z'));
+    const { container } = setup();
+    expect(screen.getAllByTestId('trend-bar')).toHaveLength(7);
+    const label = screen.getByRole('img', { name: /Threats per day/ }).getAttribute('aria-label') ?? '';
+    expect(label).toContain('last 7 days');
+    expect(label).toContain('Sat 0');
+    expect(label).toContain('Sun 0');
     expect(label).toContain('Mon 3');
     expect(label).toContain('Tue 9');
     expect(label).toContain('12 total');
+    expect(container.querySelector('[title]')).toBeNull();
+  });
+
+  it('computes trend days in UTC regardless of the local zone', () => {
+    // 02:00 UTC on Nov 3 is still Nov 2 in the Americas; the window must end on the UTC day.
+    const days = fillTrendDays([{ date: '2026-11-03', count: 5 }], new Date('2026-11-03T02:00:00Z'));
+    expect(days.map((d) => d.date)).toEqual([
+      '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02', '2026-11-03',
+    ]);
+    expect(days[6]!.count).toBe(5);
+    expect(days.slice(0, 6).every((d) => d.count === 0)).toBe(true);
+    expect(weekdayUtc('2026-11-03')).toBe('Tue');
   });
 
   it('renders the brands table with a caption, column scopes and a single link per brand', () => {
@@ -142,7 +165,7 @@ describe('Modules (tenant Workspace overview)', () => {
     const table = screen.getByRole('table');
     expect(table.querySelector('caption')?.className).toContain('sr-only');
     const headers = within(table).getAllByRole('columnheader');
-    expect(headers).toHaveLength(5);
+    expect(headers.map((h) => h.textContent)).toEqual(['Brand', 'Active threats', 'Exposure', 'Impersonations', 'Social profiles']);
     for (const th of headers) expect(th.getAttribute('scope')).toBe('col');
     expect(within(table).getAllByRole('link')).toHaveLength(1);
     // Columns are never hidden on small screens; the region scrolls instead.
@@ -155,7 +178,9 @@ describe('Modules (tenant Workspace overview)', () => {
     expect(screen.getByText('Active')).toBeTruthy();
     expect(screen.getByText('Trial')).toBeTruthy();
     expect(screen.getByText('Locked')).toBeTruthy();
-    for (const svg of container.querySelectorAll('a.th-module svg')) {
+    const icons = container.querySelectorAll('a.th-module svg');
+    expect(icons.length).toBeGreaterThan(0);
+    for (const svg of icons) {
       expect(svg.getAttribute('aria-hidden')).toBe('true');
     }
   });
@@ -177,10 +202,75 @@ describe('Modules (tenant Workspace overview)', () => {
     expect(alert.textContent).toContain("Couldn't load your workspace");
     expect(alert.textContent).toContain('boom');
   });
+
+  it('retries the modules query from the error state', async () => {
+    const refetch = vi.fn();
+    auth.state = { user: { id: 'u1', organization: { id: 'org1', name: 'Acme' } }, hasOrg: true, loading: false };
+    modulesHook.result = { data: undefined, isLoading: false, error: new Error('boom'), refetch };
+    dashboardHook.result = { data: undefined, isLoading: false, error: null };
+    renderWithProviders(<Modules />);
+    await userEvent.click(screen.getByRole('button', { name: /Try again/ }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a status skeleton while only the dashboard is loading', () => {
+    setup();
+    dashboardHook.result = { data: undefined, isLoading: true, error: null };
+    document.body.innerHTML = '';
+    renderWithProviders(<Modules />);
+    const status = screen.getByRole('status');
+    expect(status.getAttribute('aria-busy')).toBe('true');
+    expect(status.textContent).toContain('Loading summary');
+  });
+
+  it('shows an inline error with retry when the dashboard fails and has no data', async () => {
+    const refetch = vi.fn();
+    setup();
+    dashboardHook.result = { data: undefined, isLoading: false, error: new Error('nope'), refetch };
+    document.body.innerHTML = '';
+    renderWithProviders(<Modules />);
+    expect(screen.getByRole('alert').textContent).toContain("Couldn't load your summary");
+    await userEvent.click(screen.getByRole('button', { name: /Try again/ }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('heading', { name: 'Active modules' })).toBeTruthy();
+  });
+
+  it('shows the empty card when no module is active, and omits "Available to add" when none are locked', () => {
+    const m = modulesData(false);
+    setup(false, { modules: { ...m, modules: [{ module_key: 'dark_web', status: 'not_entitled', metrics: [] }] } });
+    expect(screen.getByText('No modules active yet.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Available to add' })).toBeTruthy();
+
+    document.body.innerHTML = '';
+    setup(false, { modules: { ...m, modules: [{ module_key: 'domain', status: 'active', metrics: [] }] } });
+    expect(screen.queryByRole('heading', { name: 'Available to add' })).toBeNull();
+    expect(screen.queryByText('No modules active yet.')).toBeNull();
+  });
+
+  it('omits dashboard sections that have no data', () => {
+    setup(false, { dashboard: null });
+    expect(screen.queryByText('Open signals')).toBeNull();
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Active modules' })).toBeTruthy();
+
+    document.body.innerHTML = '';
+    setup(false, { dashboard: { brands: [], threat_trend: [], recent_alerts: [] } });
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByRole('heading', { name: '7-day threat trend' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Recent signals' })).toBeNull();
+    expect(screen.getByText('Open signals')).toBeTruthy();
+  });
+
+  it('shows an em dash without /100 when the exposure score is null', () => {
+    const { container } = setup(false, { dashboard: { avg_exposure_score: null } });
+    const value = screen.getAllByText('Exposure score')[0]!.parentElement!.nextElementSibling!;
+    expect(value.textContent).toBe('—');
+    expect(container.textContent).not.toContain('/100');
+  });
 });
 
 describe('Modules facelift source guards', () => {
-  const dir = __dirname.endsWith('modules') ? __dirname : resolve(__dirname);
+  const dir = __dirname;
   const tsx = readFileSync(resolve(dir, 'Modules.tsx'), 'utf8');
   const css = readFileSync(resolve(dir, 'modules.css'), 'utf8');
   const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
