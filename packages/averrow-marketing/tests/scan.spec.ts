@@ -9,15 +9,9 @@ const SCAN = {
   id: "scan_abc123",
   domain: "acme.example",
   checked_at: "2026-10-05T12:00:00Z",
-  email: {
-    grade: "C",
-    spf: { status: "pass" },
-    dkim: { found: true },
-    dmarc: { policy: "none" },
-    mx: { present: true },
-    bimi: { present: false },
-  },
-  lookalikes: { checked: 38, registered: 6 },
+  // Public shape: a score and a registered count only (lib/free-scan-view.ts).
+  email: { grade: "C", level: "partial" },
+  lookalikes: { registered: 6 },
 };
 
 function ok(data: unknown) {
@@ -60,13 +54,13 @@ test.describe("scan page: input and results", () => {
     await expect(page).toHaveURL(/\?id=scan_abc123/);
 
     await expect(page.locator("#gradeLetter")).toHaveText("C");
-    await expect(page.locator("#gradeSr")).toHaveText("Email authentication grade: C");
-    await expect(page.locator('[data-check="dmarc"]')).toContainText("none");
-    await expect(page.locator('[data-check="dkim"]')).toContainText("found");
-    await expect(page.locator('[data-check="bimi"]')).toContainText("not set");
-    await expect(page.locator("#emailSentence")).toContainText("DMARC isn't enforcing");
-    await expect(page.locator("#lookRegistered")).toHaveText("6");
-    await expect(page.locator("#lookSentence")).toContainText("6 of 38 likely lookalikes");
+    await expect(page.locator("#gradeSr")).toHaveText("Grade C, partial protection.");
+    await expect(page.locator("#gradeLevel")).toHaveText("Partial");
+    await expect(page.locator("#emailSentence")).toContainText("could still get through");
+    await expect(page.locator("#lookSentence")).toHaveText("6 lookalike domains are already registered. Some may be yours; the full report lists them.");
+    // Score + summary only: no per-check breakdown and no sample size on the page.
+    await expect(page.locator("[data-check]")).toHaveCount(0);
+    await expect(page.locator("#scanResults")).not.toContainText(/SPF|DKIM|DMARC|BIMI| of \d+/);
     await expect(page.getByRole("link", { name: /How to fix this/ })).toHaveAttribute("href", /\/platform\/email-security$/);
     await expect(page.getByText("They don't include any threat intelligence about your domain.")).toBeVisible();
     await expect(page.getByRole("link", { name: /See plans/ })).toBeVisible();
@@ -131,12 +125,27 @@ test.describe("scan page: input and results", () => {
     await expect(page.getByLabel("Domain to scan")).toBeVisible();
   });
 
-  test("grade colour tokens by band, grade letter always shown", async ({ page }) => {
-    for (const [grade, tone] of [["A+", "ok"], ["B", "mid"], ["F", "bad"]] as const) {
-      await mockScan(page, { ...SCAN, email: { ...SCAN.email, grade } });
+  test("tone follows the server's protection level, grade letter always shown", async ({ page }) => {
+    // C + weak: a grade can look middling while DMARC isn't enforcing.
+    for (const [grade, level, tone] of [["A+", "strong", "ok"], ["B", "partial", "mid"], ["C", "weak", "bad"], ["F", "weak", "bad"]] as const) {
+      await mockScan(page, { ...SCAN, email: { grade, level } });
       await scanFromInput(page);
       await expect(page.locator("#gradeLetter")).toHaveText(grade);
       await expect(page.locator("#gradeLetter")).toHaveAttribute("data-tone", tone);
+      await expect(page.locator("#gradeLevel")).toHaveAttribute("data-tone", tone);
+      await page.unroute("**/api/brand-scan/public");
+    }
+  });
+
+  test("lookalike summary: none found, one found, couldn't check", async ({ page }) => {
+    for (const [registered, text] of [
+      [0, "We didn't find any registered lookalikes of your domain."],
+      [1, "1 lookalike domain is already registered."],
+      [null, "We couldn't check lookalike domains this time."],
+    ] as const) {
+      await mockScan(page, { ...SCAN, lookalikes: { registered } });
+      await scanFromInput(page);
+      await expect(page.locator("#lookSentence")).toContainText(text);
       await page.unroute("**/api/brand-scan/public");
     }
   });
@@ -185,7 +194,7 @@ test.describe("scan page: report form", () => {
     let body: Record<string, unknown> | null = null;
     await page.route("**/api/leads", (r) => { body = r.request().postDataJSON(); return r.fulfill(ok({ delivery: "emailed" })); });
     await toResults(page);
-    await page.getByLabel("Work email for the full report").fill("jo@acme.example");
+    await page.getByLabel("Work email", { exact: true }).fill("jo@acme.example");
     await page.getByLabel(/Email me the report/).check();
     await page.getByRole("button", { name: "Send me the report" }).click();
     await expect(page.locator("#leadDone")).toHaveText("Report sent to jo@acme.example.");
@@ -196,7 +205,7 @@ test.describe("scan page: report form", () => {
   test("team follow-up delivery", async ({ page }) => {
     await page.route("**/api/leads", (r) => r.fulfill(ok({ delivery: "team_follow_up" })));
     await toResults(page);
-    await page.getByLabel("Work email for the full report").fill("jo@other.example");
+    await page.getByLabel("Work email", { exact: true }).fill("jo@other.example");
     await page.getByLabel(/Email me the report/).check();
     await page.getByRole("button", { name: "Send me the report" }).click();
     await expect(page.locator("#leadDone")).toHaveText("Our team will follow up with your report.");
@@ -206,11 +215,11 @@ test.describe("scan page: report form", () => {
     let calls = 0;
     await page.route("**/api/leads", (r) => { calls++; return r.fulfill(ok({ delivery: "emailed" })); });
     await toResults(page);
-    await page.getByLabel("Work email for the full report").fill("jo@acme.example");
+    await page.getByLabel("Work email", { exact: true }).fill("jo@acme.example");
     await page.getByRole("button", { name: "Send me the report" }).click();
     await expect(page.locator("#leadError")).toContainText("tick the box");
     await page.getByLabel(/Email me the report/).check();
-    await page.getByLabel("Work email for the full report").fill("jo@gmail.com");
+    await page.getByLabel("Work email", { exact: true }).fill("jo@gmail.com");
     await page.getByRole("button", { name: "Send me the report" }).click();
     await expect(page.locator("#leadError")).toContainText("business email");
     expect(calls).toBe(0);
@@ -220,18 +229,18 @@ test.describe("scan page: report form", () => {
   test("server error is shown and success is never claimed", async ({ page }) => {
     await page.route("**/api/leads", (r) => r.fulfill(fail(500, "Mail service down")));
     await toResults(page);
-    await page.getByLabel("Work email for the full report").fill("jo@acme.example");
+    await page.getByLabel("Work email", { exact: true }).fill("jo@acme.example");
     await page.getByLabel(/Email me the report/).check();
     await page.getByRole("button", { name: "Send me the report" }).click();
     await expect(page.locator("#leadError")).toHaveText("Mail service down");
     await expect(page.locator("#leadDone")).toBeHidden();
-    await expect(page.getByLabel("Work email for the full report")).toBeVisible();
+    await expect(page.getByLabel("Work email", { exact: true })).toBeVisible();
   });
 
   test("HTTP 200 with success:false is an error", async ({ page }) => {
     await page.route("**/api/leads", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: false, error: "Nope" }) }));
     await toResults(page);
-    await page.getByLabel("Work email for the full report").fill("jo@acme.example");
+    await page.getByLabel("Work email", { exact: true }).fill("jo@acme.example");
     await page.getByLabel(/Email me the report/).check();
     await page.getByRole("button", { name: "Send me the report" }).click();
     await expect(page.locator("#leadError")).toHaveText("Nope");
@@ -266,7 +275,7 @@ test.describe("scan page: report form", () => {
   test("lead server error returns focus to the submit button", async ({ page }) => {
     await page.route("**/api/leads", (r) => r.fulfill(fail(500, "Mail service down")));
     await toResults(page);
-    await page.getByLabel("Work email for the full report").fill("jo@acme.example");
+    await page.getByLabel("Work email", { exact: true }).fill("jo@acme.example");
     await page.getByLabel(/Email me the report/).check();
     await page.getByRole("button", { name: "Send me the report" }).click();
     await expect(page.locator("#leadError")).toHaveText("Mail service down");
@@ -307,7 +316,7 @@ test.describe("scan page: homepage hero + a11y + layout", () => {
     await page.keyboard.type("acme.example");
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
-    await page.getByLabel("Work email for the full report").focus();
+    await page.getByLabel("Work email", { exact: true }).focus();
     await page.keyboard.type("jo@acme.example");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Space");
@@ -321,7 +330,7 @@ test.describe("scan page: homepage hero + a11y + layout", () => {
     await scanFromInput(page);
     await expect(page.locator("#scanResults")).toBeVisible();
     await expect(page.locator("main h1")).toHaveCount(1);
-    await expect(page.locator("#scanResults h2")).toHaveCount(3);
+    await expect(page.locator("#scanResults h2")).toHaveCount(2);
   });
 
   test("390px: cards stack, no horizontal overflow", async ({ page }) => {

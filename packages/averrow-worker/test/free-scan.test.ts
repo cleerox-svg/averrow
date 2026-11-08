@@ -23,7 +23,7 @@ const { runSyncAgent } = await import("../src/lib/agentRunner");
 const { renderQualifiedReportHTML } = await import("../src/templates/qualifiedReport");
 const { deterministicNarrative, deterministicPlan } = await import("../src/agents/qualified-report");
 const {
-  toPublicEmailView, spfStatusFrom, dmarcPolicyFrom, emailMatchesScannedDomain, parseStoredPublicView,
+  toPublicEmailView, toPublicScanData, protectionLevel, spfStatusFrom, dmarcPolicyFrom, emailMatchesScannedDomain, parseStoredPublicView,
   toScanDomain, runEmailSecurityScanWithin, EmailScanTimeoutError,
 } = await import("../src/lib/free-scan-view");
 const { registrableDomain } = await import("../src/lib/registrable-domain");
@@ -127,12 +127,11 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 const THREAT_ROW = { id: "t1", threat_type: "phishing", severity: "high", source_feed: "phishtank", created_at: "2026-10-01" };
 
-const EMAIL_KEYS = ["bimi", "dkim", "dmarc", "grade", "mx", "spf"];
 
 // ─── 1. Contract ───────────────────────────────────────────────────────
 
 describe("POST /api/brand-scan/public contract", () => {
-  it("returns exactly the public shape, with the engine's grade and counts only", async () => {
+  it("returns exactly the public shape: the engine's grade and the registered count only", async () => {
     stubNetwork({ registered: ["acme.net", "acme.org"] });
     const s = makeEnv((sql) => (/FROM threats/.test(sql) ? [THREAT_ROW] : null));
     const res = await handlePublicBrandScan(jsonReq("/api/brand-scan/public", { domain: "www.Acme.Example" }), s.env);
@@ -149,12 +148,11 @@ describe("POST /api/brand-scan/public contract", () => {
     expect(d.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(d.domain).toBe("acme.example");
     expect(Number.isNaN(Date.parse(d.checked_at))).toBe(false);
-    expect(Object.keys(d.email).sort()).toEqual(EMAIL_KEYS);
-    expect(d.email).toEqual({
-      grade: "A+", spf: { status: "pass" }, dkim: { found: true }, dmarc: { policy: "reject" },
-      mx: { present: true }, bimi: { present: false },
-    });
-    expect(d.lookalikes).toEqual({ checked: 40, registered: 2 });
+    // Score + summary only (disclosure, 2026-11-08): no per-check breakdown
+    // and no lookalike sample size in the anonymous response.
+    expect(d.email).toEqual({ grade: "A+", level: "strong" });
+    expect(d.lookalikes).toEqual({ registered: 2 });
+    expect(JSON.stringify(d)).not.toMatch(/spf|dkim|dmarc|bimi|"mx"|checked"/i);
     // No threat signal, no selectors, no lookalike names.
     // Scan everything except the random UUID (shape-checked above) — its hex
     // can spell "feed", which made this assertion flaky.
@@ -166,7 +164,34 @@ describe("POST /api/brand-scan/public contract", () => {
     expect(insert.sql).toMatch(/'completed', NULL, \?, \?, NULL,/);
     expect(insert.binds[1]).toBe("acme.example");
     expect(JSON.parse(insert.binds[5] as string)).toEqual(["acme.net", "acme.org"]);
-    expect(parseStoredPublicView(insert.binds[6] as string)?.email.grade).toBe("A+");
+    // The stored view keeps the full breakdown for the emailed report.
+    const stored = parseStoredPublicView(insert.binds[6] as string);
+    expect(stored?.email).toEqual({
+      grade: "A+", spf: { status: "pass" }, dkim: { found: true }, dmarc: { policy: "reject" },
+      mx: { present: true }, bimi: { present: false },
+    });
+    expect(stored?.lookalikes).toEqual({ checked: 40, registered: 2 });
+  });
+
+  it("protection level follows DMARC enforcement, not the grade alone", () => {
+    const base = { grade: "C" as const, spf: { status: "pass" as const }, dkim: { found: true }, dmarc: { policy: "reject" as const }, mx: { present: true }, bimi: { present: false } };
+    // No DMARC can still total a C — but anyone can spoof it.
+    expect(protectionLevel({ ...base, dmarc: { policy: "missing" } })).toBe("weak");
+    // p=none with everything else scores a B — still nothing enforced.
+    expect(protectionLevel({ ...base, grade: "B", dmarc: { policy: "none" } })).toBe("weak");
+    expect(protectionLevel({ ...base, grade: "A" })).toBe("strong");
+    // Locked-down parked domain: reject + SPF -all, no MX/DKIM → C, but strong.
+    expect(protectionLevel({ ...base, dkim: { found: false }, mx: { present: false } })).toBe("strong");
+    expect(protectionLevel({ ...base, spf: { status: "soft" }, dkim: { found: false } })).toBe("partial");
+  });
+
+  it("reports registered: null when no lookalike name could be checked", () => {
+    const view = parseStoredPublicView(JSON.stringify({
+      v: 1, checked_at: "2026-11-08T00:00:00.000Z",
+      email: { grade: "B", spf: { status: "soft" }, dkim: { found: true }, dmarc: { policy: "quarantine" }, mx: { present: true }, bimi: { present: false } },
+      lookalikes: { checked: 0, registered: 0 },
+    }))!;
+    expect(toPublicScanData("id", "acme.example", view).lookalikes).toEqual({ registered: null });
   });
 
   it("GET /:id returns the same data shape; unknown → 404", async () => {

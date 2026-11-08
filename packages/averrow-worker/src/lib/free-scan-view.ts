@@ -1,9 +1,15 @@
 // Public view of a free scan (POST /api/brand-scan/public and
 // GET /api/brand-scan/public/:id). This is the ONLY shape an anonymous
-// caller ever sees for a scan: public DNS facts (email authentication,
-// registered lookalike counts). Nothing from Averrow's threat data —
-// feed_mentions and the threat-informed trust_score stay on the
-// brand_scans row for staff.
+// caller ever sees for a scan: the email-authentication GRADE and how many
+// lookalike domains are registered — a score and a one-line summary.
+// Nothing from Averrow's threat data — feed_mentions and the threat-informed
+// trust_score stay on the brand_scans row for staff.
+//
+// Disclosure (owner decision 2026-11-08): the per-check breakdown
+// (SPF/DKIM/DMARC/MX/BIMI) and the size of the lookalike sample are kept
+// out of the anonymous response — they describe how we grade, not just
+// the result. They stay in the stored view for the emailed report and
+// staff; see docs/kb/free-scan.md.
 //
 // The view is computed once at scan time and stored as JSON in
 // brand_scans.public_view, so the results link renders the same answer
@@ -27,12 +33,33 @@ export interface PublicEmailView {
   bimi: { present: boolean };
 }
 
+/** Plain-language spoofing protection shown next to the grade. */
+export type ProtectionLevel = "strong" | "partial" | "weak";
+
+/**
+ * The protection level, from the stored checks rather than the grade alone:
+ * the grade is a point total and does not track DMARC enforcement (a domain
+ * with no DMARC can score a C; a locked-down parked domain scores a C too).
+ * - weak: no DMARC, or `p=none` — forged mail is delivered.
+ * - strong: DMARC enforcing AND (grade A/A+, or a non-mail domain with
+ *   SPF `-all` — the recommended parked-domain lockdown).
+ * - partial: DMARC enforcing, but SPF/DKIM gaps remain.
+ */
+export function protectionLevel(e: PublicEmailView): ProtectionLevel {
+  if (e.dmarc.policy === "missing" || e.dmarc.policy === "none") return "weak";
+  if (e.grade === "A+" || e.grade === "A") return "strong";
+  if (!e.mx.present && e.spf.status === "pass") return "strong";
+  return "partial";
+}
+
+/** The anonymous response: the grade, the level and a registered-lookalike count only. */
 export interface PublicScanData {
   id: string;
   domain: string;
   checked_at: string;
-  email: PublicEmailView;
-  lookalikes: { checked: number; registered: number };
+  email: { grade: EmailGrade; level: ProtectionLevel };
+  /** null when no lookalike name got a definite DNS answer. */
+  lookalikes: { registered: number | null };
 }
 
 /** What brand_scans.public_view stores (id/domain live in their own columns). */
@@ -118,8 +145,18 @@ export function parseStoredPublicView(raw: string | null): StoredPublicView | nu
   }
 }
 
+/**
+ * Reduce the stored view to the anonymous response. Built field by field so
+ * the per-check flags and the sample size can never reach the public API.
+ */
 export function toPublicScanData(id: string, domain: string, view: StoredPublicView): PublicScanData {
-  return { id, domain, checked_at: view.checked_at, email: view.email, lookalikes: view.lookalikes };
+  return {
+    id,
+    domain,
+    checked_at: view.checked_at,
+    email: { grade: view.email.grade, level: protectionLevel(view.email) },
+    lookalikes: { registered: view.lookalikes.checked > 0 ? view.lookalikes.registered : null },
+  };
 }
 
 /** qualified_reports.generated_by for reports auto-delivered from the lead form. */

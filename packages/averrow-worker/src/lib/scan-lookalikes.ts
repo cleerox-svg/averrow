@@ -9,8 +9,9 @@
 // result per domain in KV for 24h so repeat scans of the same domain are
 // one KV read.
 //
-// Public outputs get counts only (checked / registered). The registered
-// names are stored on the brand_scans row for the prospect report.
+// The public response gets the registered count only (not the sample
+// size). The registered names are stored on the brand_scans row for the
+// prospect report.
 
 import type { Env } from "../types";
 import { normalizePublicHostname } from "./public-hostname";
