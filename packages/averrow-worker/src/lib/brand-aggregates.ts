@@ -171,7 +171,7 @@ export async function compositionAggregate(env: Env): Promise<CompositionAggrega
   return cachedValue<CompositionAggregate>(
     env, 'brand-aggregate.composition', 300,
     async () => {
-      const [tier, source, tranco, geo, total] = await Promise.all([
+      const [tier, source, tranco, geo] = await Promise.all([
         env.DB.prepare(`
           SELECT tier, COUNT(*) AS count FROM brands
           GROUP BY tier
@@ -210,15 +210,18 @@ export async function compositionAggregate(env: Env): Promise<CompositionAggrega
           ORDER BY count DESC
           LIMIT 15
         `).all<{ country: string; count: number }>(),
-        env.DB.prepare(`SELECT COUNT(*) AS n FROM brands`).first<{ n: number }>(),
       ]);
+      // total = sum of the tier groups: the tier GROUP BY has no WHERE, so its
+      // groups (NULL tier included) partition the whole table and their sum is
+      // exactly COUNT(*). Saves a second full brands scan (~133K rows) per refill.
+      const total = tier.results.reduce((acc, r) => acc + (r.count ?? 0), 0);
 
       return {
         tier_mix:       tier.results,
         source_mix:     source.results,
         tranco_buckets: tranco.results,
         hq_countries:   geo.results,
-        total:          total?.n ?? 0,
+        total,
       };
     },
   );
