@@ -46,7 +46,7 @@ export function LoginPage(props: LoginPageProps) {
     oauthLoginPath = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`,
     magicLinkRequestPath = '/api/auth/magic-link/request',
     errorCopy: errorCopyOverride,
-    onGoogleSignIn, googleErrorCopy, footerLinks, magicLinkSentCopy,
+    onGoogleSignIn, googleErrorCopy, footerLinks, magicLinkSentCopy, magicLinkSentTitle,
   } = props;
 
   const errorCopy = { ...DEFAULT_ERROR_COPY, ...(errorCopyOverride ?? {}) };
@@ -62,7 +62,7 @@ export function LoginPage(props: LoginPageProps) {
     ? errorCopy[errorParam]
     : null;
   const errorMessage = errorParam
-    ? knownCopy ?? (SAFE_ERROR_CODE.test(errorParam)
+    ? knownCopy ?? (SAFE_ERROR_CODE.test(errorParam) && !(errorParam in Object.prototype)
         ? `Sign-in error: ${errorParam}`
         : 'Sign-in failed. Try again.')
     : null;
@@ -70,7 +70,11 @@ export function LoginPage(props: LoginPageProps) {
   const [email, setEmail] = useState('');
   const [magicLink, setMagicLink] = useState<MagicLinkState>({ kind: 'idle' });
 
-  const [passkeySupported, setPasskeySupported] = useState(false);
+  // Lazy init so returning-passkey users get the right primary/secondary
+  // split on first paint (no post-paint flip of "Send link").
+  const [passkeySupported, setPasskeySupported] = useState(
+    () => typeof window !== 'undefined' && passkeyAdapter.isSupported(),
+  );
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
   const conditionalStarted = useRef(false);
@@ -107,6 +111,10 @@ export function LoginPage(props: LoginPageProps) {
   const emailRef = useRef<HTMLInputElement>(null);
   const focusAfterReveal = useRef(false);
   const focusEmailAfterReset = useRef(false);
+  // Test ids of the controls visible before "Other ways" expands, so focus can
+  // go to the first control that is NEW (primary or secondary).
+  const visibleBeforeReveal = useRef<string[]>([]);
+  const sentRef = useRef<HTMLDivElement>(null);
 
   // Brand-lock to dark (login audit F2). The login is a brand surface, so
   // it always renders in the dark brand theme regardless of the OS / stored
@@ -137,9 +145,18 @@ export function LoginPage(props: LoginPageProps) {
   useEffect(() => {
     if (!showAll || !focusAfterReveal.current) return;
     focusAfterReveal.current = false;
-    const next = menuRef.current?.querySelector<HTMLElement>('[data-variant="secondary"]') ?? emailRef.current;
-    next?.focus();
+    const before = visibleBeforeReveal.current;
+    const fresh = [...(menuRef.current?.querySelectorAll<HTMLElement>('button[data-testid]') ?? [])]
+      .find((b) => !before.includes(b.dataset.testid ?? ''));
+    (fresh ?? emailRef.current)?.focus();
   }, [showAll]);
+
+  // The focused "Send link" button unmounts when the request succeeds; move
+  // focus to the next logical action instead of dropping it to <body>.
+  const isSent = magicLink.kind === 'sent';
+  useEffect(() => {
+    if (isSent) sentRef.current?.querySelector<HTMLElement>('button')?.focus();
+  }, [isSent]);
 
   useEffect(() => {
     if (magicLink.kind !== 'idle' || !focusEmailAfterReset.current) return;
@@ -237,17 +254,21 @@ export function LoginPage(props: LoginPageProps) {
 
   // ─── Button block builders ─────────────────────────────────
 
+  // Secondary buttons take the stronger border so they read as buttons next
+  // to the input above them (local to this page; the shared Button is unchanged).
+  const secondaryCls = (variant: 'primary' | 'secondary') =>
+    variant === 'secondary' ? 'w-full border-[var(--border-strong)]' : 'w-full';
+
   const passkeyButton = (variant: 'primary' | 'secondary') => (
     <Button
       key="passkey"
       type="button"
       size="lg"
       variant={variant}
-      className="w-full"
+      className={secondaryCls(variant)}
       onClick={() => void handlePasskey()}
       disabled={passkeyBusy}
       aria-busy={passkeyBusy || undefined}
-      data-variant={variant}
       data-testid="login-passkey"
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -266,11 +287,10 @@ export function LoginPage(props: LoginPageProps) {
       type="button"
       size="lg"
       variant={variant}
-      className="w-full"
+      className={secondaryCls(variant)}
       onClick={() => void handleGoogle()}
       disabled={googleBusy || undefined}
       aria-busy={googleBusy || undefined}
-      data-variant={variant}
       data-testid="login-google"
     >
       {googleBusy ? 'Signing in…' : 'Sign in with Google'}
@@ -317,6 +337,11 @@ export function LoginPage(props: LoginPageProps) {
 
   const sendVariant = topPrimary ? 'secondary' : 'primary';
   const sending = magicLink.kind === 'sending';
+  // Short title; custom body copy goes in the Banner children (block-safe).
+  const sentTitle = isSent
+    ? (magicLinkSentTitle?.(magicLink.email)
+        ?? (magicLinkSentCopy ? 'Sign-in link requested' : 'Check your inbox.'))
+    : null;
 
   return (
     <main
@@ -331,12 +356,12 @@ export function LoginPage(props: LoginPageProps) {
           ) : (
             <div
               aria-hidden
-              className="mb-4 flex h-14 w-14 items-center justify-center rounded-[14px] bg-[var(--primary)] text-[20px] font-bold text-[var(--primary-ink)]"
+              className="mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-[var(--primary)] text-[18px] font-bold text-[var(--primary-ink)]"
             >
               {branding.brandLetters}
             </div>
           )}
-          <h1 className="m-0 text-type-display text-[var(--text-primary)]">
+          <h1 className="m-0 text-type-h1 text-[var(--text-primary)]">
             {branding.productName}
           </h1>
           <p className="m-0 mt-2 text-type-label text-[var(--text-secondary)]">
@@ -384,7 +409,12 @@ export function LoginPage(props: LoginPageProps) {
             variant="ghost"
             size="md"
             className="mt-3 w-full"
-            onClick={() => { focusAfterReveal.current = true; setShowAll(true); }}
+            onClick={() => {
+              visibleBeforeReveal.current = [...(menuRef.current?.querySelectorAll<HTMLElement>('button[data-testid]') ?? [])]
+                .map((b) => b.dataset.testid ?? '');
+              focusAfterReveal.current = true;
+              setShowAll(true);
+            }}
           >
             Other ways to sign in
           </Button>
@@ -402,29 +432,24 @@ export function LoginPage(props: LoginPageProps) {
         {/* Magic link */}
         <div className={`${buttons.length > 0 ? 'mt-6' : 'mt-8'} text-left`}>
           {magicLink.kind === 'sent' ? (
-            <div role="status" data-testid="login-magic-link-sent">
-              <Banner
-                tone="success"
-                density="compact"
-                title={magicLinkSentCopy ? magicLinkSentCopy(magicLink.email) : 'Check your inbox.'}
-                actions={(
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => { focusEmailAfterReset.current = true; setMagicLink({ kind: 'idle' }); }}
-                  >
-                    Use a different email
-                  </Button>
-                )}
-              >
-                {magicLinkSentCopy ? null : (
+            <div ref={sentRef} role="status" data-testid="login-magic-link-sent">
+              <Banner tone="success" density="compact" title={sentTitle}>
+                {magicLinkSentCopy ? magicLinkSentCopy(magicLink.email) : (
                   <>
                     We sent a sign-in link to <strong>{magicLink.email}</strong>. The link
                     expires in {magicLink.minutes} minutes and can only be used once.
                   </>
                 )}
               </Banner>
+              <Button
+                type="button"
+                variant="ghost"
+                size="md"
+                className="mt-3 w-full"
+                onClick={() => { focusEmailAfterReset.current = true; setMagicLink({ kind: 'idle' }); }}
+              >
+                Use a different email
+              </Button>
             </div>
           ) : (
             <>
@@ -453,16 +478,15 @@ export function LoginPage(props: LoginPageProps) {
                 type="button"
                 size="lg"
                 variant={sendVariant}
-                className="mt-3 w-full"
+                className={`mt-3 ${secondaryCls(sendVariant)}`}
                 onClick={() => void requestLink()}
                 disabled={sending}
                 aria-busy={sending || undefined}
-                data-variant={sendVariant}
                 data-testid="login-magic-link-submit"
               >
                 {sending ? 'Sending…' : 'Send link'}
               </Button>
-              <p className="m-0 mt-3 text-type-small text-[var(--text-help)]">
+              <p className="m-0 mt-3 text-type-small text-[var(--text-tertiary)]">
                 Works with any email — Microsoft 365, Outlook, Yahoo, custom
                 domain. No password needed.
               </p>

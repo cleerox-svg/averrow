@@ -87,6 +87,13 @@ describe('errorCopy lookup', () => {
     },
   );
 
+  it.each(['__proto__', 'constructor'])('?error=%s shows the generic copy, not the code', (code) => {
+    setup({}, `?error=${code}`);
+    const err = screen.getByTestId('login-error');
+    expect(err).toHaveTextContent('Sign-in failed. Try again.');
+    expect(err).not.toHaveTextContent(code);
+  });
+
   it('does not echo a sentence supplied in ?error=', () => {
     setup({}, `?error=${encodeURIComponent('Your account is locked, call 555-0100')}`);
     const err = screen.getByTestId('login-error');
@@ -341,6 +348,24 @@ describe('magicLinkSentCopy', () => {
     expect(box).toHaveTextContent('If a@b.co can sign in, a link is on its way.');
     expect(box).not.toHaveTextContent('Check your inbox');
     expect(box).toHaveTextContent('Use a different email');
+    expect(box).toHaveTextContent('Sign-in link requested');
+  });
+
+  it('set: a block-level <p> renders in the body without nesting warnings', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const box = await sendLink({ magicLinkSentCopy: (e) => <p>If {e} can sign in, a link is on its way.</p> });
+      expect(box.querySelector('p')).not.toBeNull();
+      expect(box.querySelector('span p')).toBeNull();
+      expect(box).toHaveTextContent('a link is on its way.');
+      expect(err).not.toHaveBeenCalled();
+    } finally { err.mockRestore(); }
+  });
+
+  it('magicLinkSentTitle overrides the title', async () => {
+    const box = await sendLink({ magicLinkSentTitle: () => 'Done', magicLinkSentCopy: () => 'body' });
+    expect(box).toHaveTextContent('Done');
+    expect(box).not.toHaveTextContent('Sign-in link requested');
   });
 });
 
@@ -377,7 +402,33 @@ describe('facelift structure', () => {
   it('error state with every method shown: still one primary', () => {
     setup({ passkeyAdapter: supported }, '?error=signin_failed');
     expect(screen.getByTestId('login-passkey')).toBeInTheDocument();
-    expect(primaries()).toHaveLength(1);
+    expect(primaries()).toEqual([screen.getByTestId('login-google')]);
+  });
+
+  it('renders the brandLetters monogram when brandMark is absent', () => {
+    setup();
+    expect(screen.getByText('AV')).toBeInTheDocument();
+  });
+
+  it('returning passkey: Send link is secondary on first render (no flip)', () => {
+    setup({ passkeyAdapter: supported, lastSignInMethod: { read: () => 'passkey', write: vi.fn() } });
+    expect(screen.getByTestId('login-magic-link-submit').className).not.toContain('ds-btn-primary');
+  });
+
+  it('focuses a newly revealed PRIMARY (passkey-unsupported returning-passkey user)', async () => {
+    setup({ lastSignInMethod: { read: () => 'passkey', write: vi.fn() } });
+    expect(screen.queryByTestId('login-google')).toBeNull();
+    await clickOther();
+    expect(screen.getByTestId('login-google')).toHaveFocus();
+    expect(primaries()).toEqual([screen.getByTestId('login-google')]);
+  });
+
+  it('moves focus to "Use a different email" when the link is sent', async () => {
+    setup();
+    await userEvent.type(screen.getByTestId('login-email'), 'a@b.co');
+    await userEvent.click(screen.getByTestId('login-magic-link-submit'));
+    const btn = await screen.findByRole('button', { name: 'Use a different email' });
+    await waitFor(() => expect(btn).toHaveFocus());
   });
 
   it('page error renders before the CTAs, role=alert, not focused for URL errors', () => {

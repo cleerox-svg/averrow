@@ -53,7 +53,7 @@ export function Login() {
     <LoginPage
       branding={{
         brandLetters:  'AV',
-        brandMark:     <AverrowMark size={56} decorative />,
+        brandMark:     <AverrowMark size={48} decorative />,
         productName:   'Averrow',
         tagline:       'AI-first threat intelligence',
         footerPillars: 'Detect · Analyze · Correlate · Respond',

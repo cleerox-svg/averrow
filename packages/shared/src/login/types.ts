@@ -72,8 +72,8 @@ export interface LoginBranding {
   brandMark?:     ReactNode;
   /** Display name shown below the tile. e.g. "Averrow". */
   productName:    string;
-  /** Tagline below product name. Mono uppercase, amber.
-   *  e.g. "AI-FIRST THREAT INTELLIGENCE". */
+  /** Tagline below product name. Short descriptor, plain sentence case in
+   *  the secondary text colour. e.g. "AI-first threat intelligence". */
   tagline:        string;
   /** Footer pillar string. e.g. "Detect · Analyze · Correlate · Respond". */
   footerPillars:  string;
@@ -112,9 +112,14 @@ export interface LoginPageProps {
   /** Slot rendered inside the card, under the footer pillars (e.g.
    *  Privacy / Delete account links required by app stores). */
   footerLinks?:           ReactNode;
-  /** Replaces the whole body of the magic-link "sent" confirmation (the
-   *  "Check your inbox… sent a sign-in link to X…" text; the "Use a
-   *  different email" control stays). Use for invite-only products that
-   *  must not confirm an address exists. */
+  /** Replaces the body of the magic-link "sent" confirmation ("We sent a
+   *  sign-in link to X…"). Rendered in the banner's block-level body, so
+   *  `<p>` is fine. The title becomes "Sign-in link requested" unless
+   *  `magicLinkSentTitle` is set; the "Use a different email" control stays.
+   *  Use for invite-only products that must not confirm an address exists. */
   magicLinkSentCopy?:     (email: string) => ReactNode;
+  /** Short title for the "sent" confirmation. Default "Check your inbox."
+   *  (or "Sign-in link requested" when `magicLinkSentCopy` is set). Inline
+   *  content only; keep it to a few words. */
+  magicLinkSentTitle?:    (email: string) => ReactNode;
 }
