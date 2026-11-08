@@ -62,8 +62,8 @@ const timeline = [
 ];
 ---
 
-<section class="tf" id="takedown-flow" aria-labelledby="tf-title" data-tf>
-  <div class="tf-head">
+<section class="tf" id="takedown-flow" aria-labelledby="tf-title" data-tf data-motion="reveal">
+  <div class="tf-head" data-motion-head>
     <div>
       <div class="tf-eyebrow">From finding to takedown</div>
       <h2 class="tf-h" id="tf-title">{title}</h2>
@@ -82,7 +82,7 @@ const timeline = [
     </div>
   </div>
 
-  <ol class="tf-flow">
+  <ol class="tf-flow" data-motion-items>
     <li class="tf-st">
       <div class="tf-sn"><span class="num-dot" aria-hidden="true">1</span>Found</div>
       <div class="tf-card">
@@ -137,7 +137,7 @@ const timeline = [
     </li>
   </ol>
 
-  <ol class="tf-mlist">
+  <ol class="tf-mlist" data-motion-items>
     {timeline.map((t, i) => (
       <li class:list={[{ hl: t.hl }]}>
         <span aria-hidden="true">{i + 1}</span>
@@ -374,3 +374,9 @@ const timeline = [
     .tf-ctas .btn { width: 100%; justify-content: center; }
   }
 </style>
+
+<script>
+  // Lazy scroll motion (GSAP chunk loads only near this section; static without JS).
+  import { initScrollMotion } from "../lib/motion/loader";
+  initScrollMotion();
+</script>

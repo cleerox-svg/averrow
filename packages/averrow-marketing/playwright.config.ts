@@ -59,18 +59,18 @@ export default defineConfig({
       // launch with it. Same phone-sized viewport + touch emulation.
       use: { ...devices["Pixel 5"] },
     },
-    // The homepage hero animation must work in every engine (owner, G5).
-    // These use Playwright's own Firefox / WebKit builds (`npx playwright
-    // install firefox webkit`), so the pre-installed Chromium override is
-    // cleared for them.
+    // The homepage hero animation and the scroll/page motion must work in
+    // every engine (owner, G5). These use Playwright's own Firefox / WebKit
+    // builds (`npx playwright install firefox webkit`), so the pre-installed
+    // Chromium override is cleared for them.
     {
       name: "firefox",
-      testMatch: /hero\.spec\.ts/,
+      testMatch: /(hero|motion)\.spec\.ts/,
       use: { ...devices["Desktop Firefox"], launchOptions: {} },
     },
     {
       name: "webkit",
-      testMatch: /hero\.spec\.ts/,
+      testMatch: /(hero|motion)\.spec\.ts/,
       use: { ...devices["Desktop Safari"], launchOptions: {} },
     },
   ],

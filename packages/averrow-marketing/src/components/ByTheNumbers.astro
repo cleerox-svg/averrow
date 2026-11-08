@@ -93,9 +93,10 @@ const checks = [
   id="by-the-numbers"
   aria-labelledby="num-title"
   data-proof
+  data-motion="numbers"
   data-snapshot={snapshot}
 >
-  <div class="num-head">
+  <div class="num-head" data-motion-head>
     <div>
       <div class="num-eyebrow">By the numbers</div>
       <h2 class="num-h" id="num-title">What the platform sees, counted plainly.</h2>
@@ -123,10 +124,10 @@ const checks = [
       </div>
     </div>
 
-    <div class="num-tiles">
+    <div class="num-tiles" data-motion-items>
       {tiles.map((t) => (
         <div class="num-tile" data-tile={t.key}>
-          <b data-stat={t.key}>{val[t.key]}</b>
+          <b data-stat={t.key} data-motion-count>{val[t.key]}</b>
           <span class="num-tl">{t.label}</span>
           {t.key === "providers" ? (
             <span class="num-td">Across <span data-stat="countries">{val.countries}</span> countries, so you see where attacks are hosted.</span>
@@ -140,7 +141,7 @@ const checks = [
 
   <div class="num-check">
     <div class="num-k">Check it yourself</div>
-    <div class="num-cards">
+    <div class="num-cards" data-motion-items>
       {checks.map((c) => (
         <a class="num-card" href={c.href} data-check>
           <b>{c.title}</b>
@@ -268,9 +269,9 @@ const checks = [
     align-content: start;
     text-decoration: none;
     color: inherit;
-    transition: border-color 0.2s, transform 0.2s;
+    transition: border-color var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard);
   }
-  .num-card:hover { border-color: var(--accent); transform: translateY(-2px); text-decoration: none; }
+  .num-card:hover { border-color: var(--accent); transform: translateY(calc(-1 * var(--motion-lift))); text-decoration: none; }
   .num-card b { font-size: 14px; color: var(--text-primary); }
   .num-card span { font-size: 12.5px; line-height: 1.45; color: var(--text-secondary); }
   .num-card em { font-style: normal; font-size: 12.5px; font-weight: 700; color: var(--accent); margin-top: 4px; }
@@ -308,6 +309,10 @@ const checks = [
     typeTotal,
     utcStamp,
   } from "../lib/proof";
+  import { initScrollMotion } from "../lib/motion/loader";
+
+  // Lazy scroll motion: reveal + count-up (GSAP chunk loads only near here).
+  initScrollMotion();
 
   const root = document.querySelector<HTMLElement>("[data-proof]");
 

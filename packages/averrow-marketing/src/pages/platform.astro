@@ -122,7 +122,7 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
     lede="Detection and correlation run on deterministic rules, so every score traces back to evidence you can see. There is no black box between a signal and the decision."
   >
     <MobileFold summary="The six stages, from detection to summary">
-      <ol class="pv-stages" role="list">
+      <ol class="pv-stages" role="list" data-motion="stagger">
         {stages.map((s, i) => (
           <li class="pv-stage">
             <span class="num-dot" aria-hidden="true">{i + 1}</span>
@@ -163,7 +163,7 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
     lede="Alerts appear in your Averrow console. On Business and Enterprise they can also go to your webhook or SIEM, set up with our team."
   >
     <MobileFold summary="Integrations and their availability">
-      <ul class="pv-int" role="list">
+      <ul class="pv-int" role="list" data-motion="stagger">
         {integrations.map((i) => (
           <li>
             <b>{i.name}</b>
@@ -177,6 +177,12 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
 
   <PageCTA />
 </ProductPage>
+
+<script>
+  // Lazy scroll motion for the stage + integration lists (see lib/motion/loader.ts).
+  import { initScrollMotion } from "../lib/motion/loader";
+  initScrollMotion();
+</script>
 
 <style>
   .pv-status { max-width: 1280px; margin: 0 auto; padding: 4px 24px 0; font: 500 13px var(--font-display); color: var(--text-secondary); }

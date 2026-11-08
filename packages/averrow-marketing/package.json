@@ -16,10 +16,11 @@
     "test:responsive": "playwright test responsive --project=chromium"
   },
   "dependencies": {
-    "astro": "^4.16.19",
     "@astrojs/mdx": "^3.1.9",
     "@astrojs/react": "^3.6.3",
     "@astrojs/rss": "^4.0.10",
+    "astro": "^4.16.19",
+    "gsap": "3.15.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
