@@ -248,13 +248,23 @@ test("off-screen: no animation frames; back on screen: it resumes", async ({ bro
   await expect
     .poll(() => p.evaluate(() => document.querySelector("#hero")!.getBoundingClientRect().bottom))
     .toBeLessThan(0);
-  await p.waitForTimeout(500);
-  let f0 = await frames(p);
-  await p.waitForTimeout(1500);
-  expect((await frames(p)) - f0, "frames while off-screen").toBe(0);
+  // __frames counts every requestAnimationFrame on the page, and the jump to
+  // the bottom starts the scroll sequences there (GSAP ticks on rAF until its
+  // tweens finish). Wait for a quiet 1 s window: a hero that kept animating
+  // off-screen would never produce one.
+  await expect
+    .poll(
+      async () => {
+        const before = await frames(p);
+        await p.waitForTimeout(1000);
+        return (await frames(p)) - before;
+      },
+      { message: "frames while off-screen", timeout: 15_000, intervals: [0] },
+    )
+    .toBe(0);
   await p.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await p.waitForTimeout(500);
-  f0 = await frames(p);
+  const f0 = await frames(p);
   await p.waitForTimeout(1000);
   expect((await frames(p)) - f0, "frames once visible again").toBeGreaterThan(5);
   await ctx.close();
