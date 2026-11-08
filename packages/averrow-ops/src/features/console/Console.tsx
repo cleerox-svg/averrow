@@ -8,7 +8,6 @@
 import { Fragment, Suspense, lazy } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { StatTile, Tabs, WorkspaceEmbedProvider } from '@averrow/shared/ui';
-import { sentenceCase } from '@/lib/sentence-case';
 import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
 import { useAuth } from '@/lib/auth';
@@ -76,7 +75,7 @@ export function Console() {
     <div className="console-v4">
       <div className="console-head">
         <div>
-          <div className="console-crumb">{sentenceCase('SOC CONSOLE')}</div>
+          <div className="console-crumb">{'SOC console'}</div>
           <h1 className="console-title">Console</h1>
         </div>
       </div>
@@ -100,7 +99,6 @@ export function Console() {
         size="md"
         aria-label="Console sections"
         className="console-tabbar"
-        linkedPanels
         tabs={TABS.filter(t => t.id !== 'incidents' || isSuperAdmin).map(t => ({ id: t.id, label: t.label }))}
         activeTab={tab}
         onChange={id => { if (isTab(id)) selectTab(id); }}
@@ -108,7 +106,9 @@ export function Console() {
 
       {active?.def && !incidentsLocked && <p className="console-def">{active.def}</p>}
 
-      <div role="tabpanel" id={`tabpanel-${tab}`} aria-labelledby={`tab-${tab}`}>
+      {/* Only the active pane renders, so the tabs carry no aria-controls; the
+          panel is named directly (aria-label) instead of via a tab id. */}
+      <div role="tabpanel" id={`tabpanel-${tab}`} aria-label={active?.label}>
       <Suspense fallback={<PageState kind="loading" />}>
         {/* The Console owns the view's single h1; embedded panes drop theirs. */}
         <WorkspaceEmbedProvider>

@@ -76,4 +76,14 @@ describe('TabbedWorkspace', () => {
     expect(h1s[0]).toHaveTextContent('Workspace');
     expect(screen.queryByText('pane sub')).not.toBeInTheDocument();
   });
+
+  it('renders a caps-authored crumb in sentence case', () => {
+    render(
+      <MemoryRouter initialEntries={['/w']}>
+        <TabbedWorkspace crumb="PLATFORM" title="Workspace" tabs={TABS} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Platform')).toHaveClass('console-crumb');
+    expect(screen.queryByText('PLATFORM')).not.toBeInTheDocument();
+  });
 });

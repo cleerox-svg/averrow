@@ -97,8 +97,10 @@ function extractScore(summary: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+const HANDLE_RE = /@[\w.]+/;
+
 function extractHandle(title: string): string {
-  const m = title.match(/@[\w.]+/);
+  const m = title.match(HANDLE_RE);
   return m ? m[0] : title;
 }
 
@@ -300,11 +302,10 @@ function BrandGroupCard({
         />
         <div className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-2">
- 
             <span className="al-group-name">
               {group.brand_name ?? 'Unknown brand'}
             </span>
-            <Badge severity="critical" size="md" font="sans"><span className="al-num">{group.alerts.length} alerts</span></Badge>
+            <span className="al-chip al-num">{group.alerts.length} alerts</span>
           </div>
           <div className="al-mono">{group.brand_domain ?? ''}</div>
         </div>
@@ -325,6 +326,7 @@ function BrandGroupCard({
             {visibleAlerts.map(alert => {
               const score = extractScore(alert.summary);
               const handle = extractHandle(alert.title);
+              const hasHandle = HANDLE_RE.test(alert.title);
               const platform = extractPlatform(alert.title);
               const isSelected = selectedAlertId === alert.id;
 
@@ -335,16 +337,12 @@ function BrandGroupCard({
                   severity={sev}
                   unread={alert.status === 'new'}
                   onClick={() => onSelectAlert(alert)}
-                  className={cn('flex items-center gap-3', isSelected && 'al-row--selected', arrived?.has(alert.id) && 'motion-arrive')}
+                  className={cn('al-row flex items-center gap-3', isSelected && 'al-row--selected', arrived?.has(alert.id) && 'motion-arrive')}
                 >
                   {/* Severity dot — uses the shared design-system
-                      primitive so the dot color + pulse semantics
-                      stay consistent across pages. R8 migration. */}
-                  <SeverityDot
-                    severity={sev}
-                    size={8}
-                    pulse={alert.severity === 'critical' || alert.severity === 'high'}
-                  />
+                      primitive so the dot colour
+                      stays consistent (no looping ping: no ambient motion) across pages. R8 migration. */}
+                  <SeverityDot severity={sev} size={8} />
 
                   {/* Handle + platform. The real <button> is the row's keyboard
                       control (standard: row click is a mouse convenience only). */}
@@ -354,12 +352,12 @@ function BrandGroupCard({
                     aria-expanded={isSelected}
                     aria-controls={`alert-detail-${alert.id}`}
                     onClick={e => { e.stopPropagation(); onSelectAlert(alert); }}
-                    className="ds-focusable flex-1 min-w-0 text-left rounded-sm"
+                    className="al-row-title ds-focusable text-left rounded-sm"
                   >
                     <span className="block">
-                      <span className="al-mono al-mono--strong">{handle}</span>
-                      <span className="al-label ml-1.5">on</span>
-                      <span className="al-chip ml-1.5">{platform}</span>
+                      <span className={hasHandle ? 'al-mono al-mono--strong' : 'al-title-prose'}>{handle}</span>
+                      {' '}
+                      <span className="al-label ml-1.5">· {platform}</span>
                     </span>
                     {alert.saas_technique_name && alert.saas_technique_phase_label && (
                       <span className="al-label mt-0.5 block">
@@ -368,86 +366,92 @@ function BrandGroupCard({
                     )}
                   </button>
 
-                  {/* Score */}
-                  {score !== null && (
-                    <span className={cn('al-score', score >= 75 && 'al-score--hi')}>
-                      {score}%
+                  {/* Badges + time. Fixed slots first (severity, status) so they
+                      align across rows; optional chips follow and only shift
+                      themselves. Wraps under the title on narrow containers. */}
+                  <div className="al-row-meta">
+                    <span className="al-slot al-slot--sev">
+                      <Badge severity={sev} size="md" font="sans">{sentenceCase(alert.severity)}</Badge>
                     </span>
-                  )}
 
-                  {/* Severity badge */}
-                  <Badge severity={sev} size="md" font="sans">{sentenceCase(alert.severity)}</Badge>
+                    {/* Status — shared Badge primitive. (New stays on the
+                        Badge "pending" tone: the kit has no primary status
+                        tone, and a kit-wide change is out of scope here.) */}
+                    <span className="al-slot al-slot--status">
+                      <Badge
+                        status={
+                          alert.status === 'new'           ? 'pending'  :
+                          alert.status === 'acknowledged'  ? 'warning'  :
+                          alert.status === 'resolved'      ? 'success'  :
+                                                             'inactive'
+                        }
+                        label={sentenceCase(alert.status === 'false_positive' ? 'dismissed' : alert.status)}
+                        size="md"
+                        font="sans"
+                      />
+                    </span>
 
-                  {/* AI verdict badge — visible when Tier 3 judge has
-                      stamped a verdict on this alert. Lets operators
-                      scan the residual queue at a glance instead of
-                      opening every row. */}
-                  {(() => {
-                    const v = parseAiAssessment(alert.ai_assessment);
-                    if (!v) return null;
-                    const s = AI_VERDICT_STYLE[v.verdict];
-                    return (
+                    {/* Score */}
+                    {score !== null && (
+                      <span className={cn('al-score', score >= 75 && 'al-score--hi')}>
+                        {score}%
+                      </span>
+                    )}
+
+                    {/* AI verdict badge — visible when Tier 3 judge has
+                        stamped a verdict on this alert. */}
+                    {(() => {
+                      const v = parseAiAssessment(alert.ai_assessment);
+                      if (!v) return null;
+                      const s = AI_VERDICT_STYLE[v.verdict];
+                      return (
+                        <span
+                          className="al-chip"
+                          data-tone={s.tone}
+                          title={`AI confidence ${v.confidence}%`}
+                        >
+                          {s.label}
+                        </span>
+                      );
+                    })()}
+
+                    {/* Owner — who has claimed this signal (W9). */}
+                    {alert.staff_assigned_to && (
                       <span
                         className="al-chip"
-                        data-tone={s.tone}
-                        title={`AI confidence ${v.confidence}%`}
+                        data-tone="primary"
+                        title={alert.staff_assigned_to === currentUserId
+                          ? 'Assigned to you'
+                          : `Assigned to ${alert.staff_assigned_to_name ?? alert.staff_assigned_to_email ?? 'analyst'}`}
                       >
-                        {s.label}
+                        {alert.staff_assigned_to === currentUserId
+                          ? 'You'
+                          : parseInitials(alert.staff_assigned_to_name, alert.staff_assigned_to_email)}
                       </span>
-                    );
-                  })()}
+                    )}
 
-                  {/* Status — shared Badge primitive. R8 migration:
-                      replaces an inline pill that had its own color
-                      mapping. */}
-                  <Badge
-                    status={
-                      alert.status === 'new'           ? 'pending'  :
-                      alert.status === 'acknowledged'  ? 'warning'  :
-                      alert.status === 'resolved'      ? 'success'  :
-                                                         'inactive'
-                    }
-                    label={sentenceCase(alert.status === 'false_positive' ? 'dismissed' : alert.status)}
-                    size="md"
-                    font="sans"
-                  />
+                    {/* SLA / aging — only flagged once an open alert is
+                        approaching (warn) or past (breach) its window. */}
+                    {(() => {
+                      const sla = slaFor(alert);
+                      if (!sla.open || sla.state === 'ok') return null;
+                      const breach = sla.state === 'breach';
+                      return (
+                        <span
+                          className="al-chip"
+                          data-tone={breach ? 'critical' : 'medium'}
+                          title={`${alert.severity} SLA ${SLA_MINUTES[severityToBadge(alert.severity)]}m`}
+                        >
+                          {breach ? `Overdue ${formatSpan(sla.overdueMs)}` : `Due ${formatSpan(sla.remainingMs)}`}
+                        </span>
+                      );
+                    })()}
 
-                  {/* Owner — who has claimed this signal (W9). */}
-                  {alert.staff_assigned_to && (
-                    <span
-                      className="al-chip"
-                      data-tone="primary"
-                      title={alert.staff_assigned_to === currentUserId
-                        ? 'Assigned to you'
-                        : `Assigned to ${alert.staff_assigned_to_name ?? alert.staff_assigned_to_email ?? 'analyst'}`}
-                    >
-                      {alert.staff_assigned_to === currentUserId
-                        ? 'You'
-                        : parseInitials(alert.staff_assigned_to_name, alert.staff_assigned_to_email)}
+                    {/* Time */}
+                    <span className="al-time">
+                      {timeAgo(alert.created_at)}
                     </span>
-                  )}
-
-                  {/* SLA / aging — only flagged once an open alert is
-                      approaching (warn) or past (breach) its window. */}
-                  {(() => {
-                    const sla = slaFor(alert);
-                    if (!sla.open || sla.state === 'ok') return null;
-                    const breach = sla.state === 'breach';
-                    return (
-                      <span
-                        className="al-chip"
-                        data-tone={breach ? 'critical' : 'medium'}
-                        title={`${alert.severity} SLA ${SLA_MINUTES[severityToBadge(alert.severity)]}m`}
-                      >
-                        {breach ? `Overdue ${formatSpan(sla.overdueMs)}` : `Due ${formatSpan(sla.remainingMs)}`}
-                      </span>
-                    );
-                  })()}
-
-                  {/* Time */}
-                  <span className="al-time">
-                    {timeAgo(alert.created_at)}
-                  </span>
+                  </div>
                 </DataRow>
               );
             })}
@@ -577,7 +581,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
 
           <Link
             to={`/brands/${alert.brand_id}`}
-            className="flex items-center gap-2 group"
+            className="al-brand-link flex items-center gap-2 group"
             title="Open brand"
           >
             <img
@@ -1227,7 +1231,7 @@ export function Alerts() {
           const active = sameView(currentView, v.filters);
           const isPreset = v.id.startsWith('preset:');
           return (
-            <span key={v.id} className="inline-flex items-center">
+            <span key={v.id} className="al-pill-wrap" data-removable={!isPreset} data-active={active}>
               <button
                 type="button"
                 aria-pressed={active}

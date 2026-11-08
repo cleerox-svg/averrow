@@ -112,7 +112,6 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
         variant="prominent"
         tone="critical"
         eyebrow="SLA breach"
-        pulse
         labelFromTitle
         headingLevel={2}
         title="Critical alerts are past their response deadline"
@@ -174,7 +173,6 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
     <Banner
       variant="inline"
       tone={critical ? 'critical' : 'high'}
-      pulse={critical}
       headingLevel="none"
       detailsTrigger="header"
       headerRef={headerRef}

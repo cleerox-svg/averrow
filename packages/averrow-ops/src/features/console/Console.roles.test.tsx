@@ -55,6 +55,8 @@ describe('Console incidents role gating', () => {
     expect(await screen.findByText('Incidents are restricted')).toBeInTheDocument();
     expect(screen.queryByText('INCIDENTS PANE')).not.toBeInTheDocument();
     expect(get.mock.calls.filter((c) => String(c[0]).startsWith('/api/admin/incidents'))).toEqual([]);
+    // No tab exists for it, so the panel must not point at one.
+    expect(screen.getByRole('tabpanel')).not.toHaveAttribute('aria-labelledby');
   });
 
   it('super_admin requests incidents and sees the tab and KPIs', async () => {

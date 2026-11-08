@@ -101,4 +101,58 @@ describe('Alerts facelift', () => {
       expect(src, f).not.toMatch(/textShadow|text-shadow/);
     }
   });
+
+  it('row: title, then meta wrapper holding badges and time; platform is plain label text', async () => {
+    const { container } = setup('analyst', '/console?tab=alerts', [alert('a1', { saas_technique_name: 'Token theft', saas_technique_phase_label: 'Access' })]);
+    const row = await screen.findByRole('button', { name: /@fake_a1/ });
+    // Handle and the platform label are separated (spacing utilities survive the label reset).
+    const label = within(row).getByText('· TikTok');
+    expect(label).toHaveClass('al-label', 'ml-1.5');
+    expect(label).not.toHaveClass('al-chip');
+    expect(row.textContent).toMatch(/@fake_a1\s+· TikTok/);
+    expect(within(row).getByText(/Token theft · Access/)).toHaveClass('mt-0.5');
+    const dataRow = row.closest('.al-row') as HTMLElement;
+    const meta = dataRow.querySelector('.al-row-meta') as HTMLElement;
+    expect(meta).not.toBeNull();
+    expect(meta.contains(row)).toBe(false);
+    expect(meta.querySelector('.al-slot--sev')).not.toBeNull();
+    expect(meta.querySelector('.al-slot--status')).not.toBeNull();
+    expect(meta.querySelector('.al-time')).not.toBeNull();
+    expect(container.querySelector('.al-row-title')).toBe(row);
+  });
+
+  it('group count badge is a neutral chip, not a severity badge', async () => {
+    const { container } = setup('analyst', '/console?tab=alerts', [alert('a1'), alert('a2')]);
+    await screen.findByText('2 alerts');
+    const head = container.querySelector('.al-group-head') as HTMLElement;
+    const count = within(head).getByText('2 alerts');
+    expect(count).toHaveClass('al-chip');
+    expect(count).not.toHaveAttribute('data-tone');
+    expect(head.querySelector('.ds-badge')).toBeNull();
+  });
+
+  it('stylesheet: narrow-container wrap, title floor, label margin scoped, selected row survives hover', () => {
+    const css = read('alerts.css');
+    // 390px layout: row wraps, title takes the full first line, meta wraps under it.
+    const narrow = css.match(/@container alerts \(max-width: 639px\) \{([\s\S]*?)\n\}/);
+    expect(narrow).not.toBeNull();
+    expect(narrow![1]).toMatch(/\.al-row \{[^}]*flex-wrap: wrap/);
+    expect(narrow![1]).toMatch(/\.al-row-title \{[^}]*flex: 1 1 calc\(100% - 20px\)/);
+    expect(narrow![1]).toMatch(/\.al-row-meta \{[^}]*flex-wrap: wrap/);
+    expect(css).toMatch(/\.al-row-title \{[^}]*min-width: 8rem/);
+    expect(css).toMatch(/container: alerts \/ inline-size/);
+    // The label's margin reset must not beat Tailwind utilities on span/div labels.
+    expect(css).not.toMatch(/(?<!p)\.al-label\s*\{[^}]*margin/);
+    expect(css).toMatch(/p\.al-label \{ margin: 0; \}/);
+    // Hover never repaints the selected row.
+    for (const m of css.match(/[^{}]*\.data-row[^{}]*:hover[^{}]*\{/g) ?? []) expect(m).toContain(':not(.al-row--selected)');
+  });
+
+  it('renders no looping ping/pulse animation on the Alerts tab', async () => {
+    const { container } = setup('analyst', '/console?tab=alerts&alert=a1', [alert('a1', { severity: 'critical' }), alert('a2', { severity: 'high' })]);
+    await screen.findByTestId('alert-detail');
+    expect(container.querySelector('[style*="live-ping"], [style*="chip-ping"], .animate-ping, .animate-pulse')).toBeNull();
+    expect(read('AlertQueueBanner.tsx')).not.toMatch(/\bpulse\b/);
+    expect(read('alerts.css')).toMatch(/\.al-brand-link \{ min-height: 44px; \}/);
+  });
 });

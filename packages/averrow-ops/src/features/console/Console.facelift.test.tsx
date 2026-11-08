@@ -68,7 +68,14 @@ describe('Console chrome', () => {
     await waitFor(() => expect(window.location.search).toBe('?tab=threats'));
     expect(await screen.findByText('THREATS PANE')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Threats' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-threats');
+    expect(screen.getByRole('tabpanel')).toHaveAccessibleName('Threats');
+  });
+
+  it('no tab points at a panel that is not rendered (no dangling aria-controls)', async () => {
+    renderWithProviders(<Console />);
+    await screen.findByRole('tablist', { name: 'Console sections' });
+    for (const tab of screen.getAllByRole('tab')) expect(tab).not.toHaveAttribute('aria-controls');
+    expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
   });
 
   it('?tab= deep links select the matching tab', async () => {
