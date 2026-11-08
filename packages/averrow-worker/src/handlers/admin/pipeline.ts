@@ -125,7 +125,7 @@ const PIPELINE_META: Record<string, PipelineMeta> = {
       'within 1–2 hours under normal load. Stuck rows usually mean the ' +
       'brand has a malformed canonical_domain or no public website.',
   },
-  surbl: {
+  surbl_pending: {
     label: 'SURBL',
     description: 'SURBL spam-URL blocklist lookup queue.',
     agent: 'surbl',

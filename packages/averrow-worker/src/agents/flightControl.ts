@@ -106,7 +106,7 @@ export const TOTAL_UNLINKED_PROBE_SQL = `
     `;
 
 // Latest agent_runs row per monitored agent (getAgentHealth). One bind: the
-// agent ids as a JSON array. CROSS JOIN keeps json_each as the outer loop,
+// agent ids as a JSON array. the cross join holds the id list as the outer loop,
 // so each agent costs one MAX() seek plus an equality seek on
 // idx_agent_runs_agent(agent_id, started_at DESC) — a few index entries per
 // agent. The old form (`FROM agent_runs ar1 WHERE started_at = (SELECT
@@ -889,7 +889,7 @@ export const flightControlAgent: AgentModule = {
     // ── Enrichment backlog warnings ──────────────────────────────
     if (backlogs.surblUnchecked > 1000) {
       await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
-        `SURBL enrichment backlog: ${backlogs.surblUnchecked} domains unchecked`,
+        `SURBL enrichment backlog: ${backlogs.surblUnchecked} threat rows unchecked`,
         { backlog: 'surbl', count: backlogs.surblUnchecked }
       );
     }
@@ -2483,7 +2483,10 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     { name: 'brand_enrich',  count: backlog.brandEnrichBacklog,   cached: brandEnrichResult.wasCached },
     { name: 'cartographer',  count: backlog.cartographer,         cached: cartResult.wasCached },
     { name: 'analyst',       count: backlog.analyst,              cached: analystResult.wasCached },
-    { name: 'surbl',         count: backlog.surblUnchecked,       cached: surblResult.wasCached },
+    // 'surbl_pending' (was 'surbl'): the count now uses the feed's own work-set
+    // WHERE (0322), a different set, so a new series keeps the stall detector
+    // from comparing old samples with new ones.
+    { name: 'surbl_pending', count: backlog.surblUnchecked,       cached: surblResult.wasCached },
     { name: 'virustotal',    count: backlog.vtUnchecked,          cached: vtResult.wasCached },
     { name: 'gsb',           count: backlog.gsbUnchecked,         cached: gsbResult.wasCached },
     { name: 'dbl',           count: backlog.dblUnchecked,         cached: dblResult.wasCached },
@@ -3044,7 +3047,7 @@ export async function scaleAgents(
 
       await logActivity(db, 'flight_control', 'info', 'scaling',
         `Queued Cartographer geo backlog run (${noGeoProbeLabel(backlogs.totalNoGeo)} threats missing geo)`,
-        { agent: 'cartographer', mode: 'geo_backlog', no_geo_count: backlogs.totalNoGeo }
+        { agent: 'cartographer', mode: 'geo_backlog', no_geo_count: noGeoProbeLabel(backlogs.totalNoGeo) }
       );
     }
   }

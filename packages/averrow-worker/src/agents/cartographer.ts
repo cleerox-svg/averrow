@@ -1379,8 +1379,8 @@ export function shouldRunProviderStats(
  * so a day-old list for the long windows costs nothing in accuracy. The
  * GROUP_CONCAT over the top-50 providers read ~607K threats rows per
  * Phase 5 run (~32 runs/day, prod 2026-11-08), nearly all of it in the
- * 30d/all windows; with these TTLs those run about once a day per stable
- * provider set. `today` keeps an hour (its window is small and seeks
+ * 30d/all windows; with these TTLs and per-provider keys each provider's
+ * list is recomputed about once a day per period. `today` keeps an hour (its window is small and seeks
  * idx_threats_provider_created) and its key carries the UTC date, so a
  * list never outlives its day.
  */
@@ -1391,19 +1391,19 @@ export const PROVIDER_COUNTRIES_TTL_S: Record<string, number> = {
   all: 86400,
 };
 
-/** KV key for a period's country lists: period (+ UTC day for `today`) + digest of the sorted provider ids. */
-export async function providerCountriesCacheKey(periodKey: string, providerIds: string[], now = new Date()): Promise<string> {
-  const ids = [...providerIds].sort().join(",");
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ids));
-  const hex = [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+/** KV key for one provider's country list in a period (+ UTC day for `today`). Per provider, so a change at the tail of the top-50 ranking only recomputes the providers that entered it. */
+export function providerCountriesCacheKey(periodKey: string, providerId: string, now = new Date()): string {
   const period = periodKey === "today" ? `today:${now.toISOString().slice(0, 10)}` : periodKey;
-  return `provider_stats.countries:${period}:${hex}`;
+  return `provider_stats.countries:${period}:${providerId}`;
 }
 
 /**
  * `{ provider_id: "CC,CC,…" }` for `providerIds` over the period's window
  * (`periodWhere` is one of aggregateProviderStats' constant period clauses,
- * never caller input). ≤ 50 ids, well under D1's 100-bind cap.
+ * never caller input). Providers with no countries are omitted, as in the
+ * query result. Each provider's list is cached on its own key;
+ * only the misses are queried, in one statement (≤ 50 ids, well under
+ * D1's 100-bind cap). KV errors fall through to the query.
  */
 export async function providerCountriesForPeriod(
   env: Env,
@@ -1411,11 +1411,24 @@ export async function providerCountriesForPeriod(
   periodWhere: string,
   providerIds: string[],
 ): Promise<Record<string, string>> {
-  if (providerIds.length === 0) return {};
-  const key = await providerCountriesCacheKey(periodKey, providerIds);
-  return cachedValue<Record<string, string>>(env, key, PROVIDER_COUNTRIES_TTL_S[periodKey] ?? 3600, async () => {
-    const placeholders = providerIds.map(() => "?").join(",");
-    const rows = await env.DB.prepare(`
+  const ids = [...new Set(providerIds)];
+  if (ids.length === 0) return {};
+  const ttl = PROVIDER_COUNTRIES_TTL_S[periodKey] ?? 3600;
+  const now = new Date();
+  const out: Record<string, string> = {};
+  const misses: string[] = [];
+
+  await Promise.all(ids.map(async (id) => {
+    try {
+      const hit = await env.CACHE.get(providerCountriesCacheKey(periodKey, id, now));
+      if (hit !== null) { if (hit !== "") out[id] = hit; return; }
+    } catch { /* fall through to the query */ }
+    misses.push(id);
+  }));
+  if (misses.length === 0) return out;
+
+  const placeholders = misses.map(() => "?").join(",");
+  const rows = await env.DB.prepare(`
       SELECT hosting_provider_id,
              GROUP_CONCAT(DISTINCT country_code) as countries
       FROM threats
@@ -1423,11 +1436,17 @@ export async function providerCountriesForPeriod(
         AND country_code IS NOT NULL
         AND ${periodWhere}
       GROUP BY hosting_provider_id
-    `).bind(...providerIds).all<{ hosting_provider_id: string; countries: string | null }>();
-    const out: Record<string, string> = {};
-    for (const r of rows.results) out[r.hosting_provider_id] = r.countries ?? "";
-    return out;
-  });
+    `).bind(...misses).all<{ hosting_provider_id: string; countries: string | null }>();
+  const found = new Map(rows.results.map((r) => [r.hosting_provider_id, r.countries ?? ""]));
+
+  await Promise.all(misses.map(async (id) => {
+    const countries = found.get(id) ?? "";
+    if (countries !== "") out[id] = countries; // same shape as the query: no row, no key
+    try {
+      await env.CACHE.put(providerCountriesCacheKey(periodKey, id, now), countries, { expirationTtl: ttl });
+    } catch { /* cache write is best-effort */ }
+  }));
+  return out;
 }
 
 async function aggregateProviderStats(env: Env): Promise<number> {
@@ -1489,7 +1508,7 @@ async function aggregateProviderStats(env: Env): Promise<number> {
     }>();
 
     // Resolve countries only for the 50 providers we actually care about,
-    // KV-cached per period + provider set (providerCountriesForPeriod).
+    // KV-cached per period + provider (providerCountriesForPeriod).
     const countryMap = new Map<string, string>();
     if (providerRows.results.length > 0) {
       const ids = providerRows.results.map(r => r.hosting_provider_id);

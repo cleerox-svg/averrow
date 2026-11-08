@@ -273,14 +273,26 @@ describe.skipIf(!hasSqlite())("Cartographer provider top_countries cache", () =>
     expect(PROVIDER_COUNTRIES_TTL_S["today"]).toBe(3600);
   });
 
-  it("keys on period, provider set and (for today) the UTC day", async () => {
+  it("keys on period, provider and (for today) the UTC day", () => {
     const d1 = new Date("2026-11-08T23:00:00Z");
     const d2 = new Date("2026-11-09T00:30:00Z");
-    expect(await providerCountriesCacheKey("all", ["a", "b"], d1)).toBe(await providerCountriesCacheKey("all", ["b", "a"], d2));
-    expect(await providerCountriesCacheKey("all", ["a", "b"])).not.toBe(await providerCountriesCacheKey("all", ["a", "c"]));
-    expect(await providerCountriesCacheKey("all", ["a"])).not.toBe(await providerCountriesCacheKey("30d", ["a"]));
-    expect(await providerCountriesCacheKey("today", ["a"], d1)).not.toBe(await providerCountriesCacheKey("today", ["a"], d2));
-    expect((await providerCountriesCacheKey("today", ["a"], d1)).length).toBeLessThan(512); // KV key limit
+    expect(providerCountriesCacheKey("all", "a", d1)).toBe(providerCountriesCacheKey("all", "a", d2));
+    expect(providerCountriesCacheKey("all", "a")).not.toBe(providerCountriesCacheKey("all", "b"));
+    expect(providerCountriesCacheKey("all", "a")).not.toBe(providerCountriesCacheKey("30d", "a"));
+    expect(providerCountriesCacheKey("today", "a", d1)).not.toBe(providerCountriesCacheKey("today", "a", d2));
+  });
+
+  it("a ranking change only queries the providers that entered the set", async () => {
+    const raw = openMigratedDb();
+    seed(raw);
+    const log: Array<{ sql: string }> = [];
+    const env = envWith(raw, log);
+    await providerCountriesForPeriod(env, "all", "1=1", ["p1", "p2"]);
+    const reads = log.length;
+    const out = await providerCountriesForPeriod(env, "all", "1=1", ["p1", "p2", "p3"]);
+    expect(sorted(out)).toEqual(legacy(raw, "1=1", ["p1", "p2", "p3"]));
+    expect(log.length).toBe(reads + 1);
+    expect(log[log.length - 1].sql).not.toMatch(/IN \(\?,/); // one-id IN list: only p3 missed
   });
 
   it("empty provider list reads nothing", async () => {
