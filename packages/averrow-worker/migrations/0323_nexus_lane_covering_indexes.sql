@@ -74,8 +74,16 @@
 -- so the lanes' own `SET cluster_id` stamps never touch either index. The
 -- one-time build reads threats once (≈ one old ASN-lane call).
 --
+-- Index writes: also rewritten when campaign_id / target_brand_id /
+-- hosting_provider_id / country_code change on a qualifying row
+-- (Strategist's campaign stamps, brand match, Cartographer's provider fill).
+-- Build: a full pass over threats plus a sort, holding D1's single writer
+-- for its duration. That is why the two lane indexes are split one per
+-- migration file (this one: ASN lane; 0324: /24 lane), so a build that
+-- hits a D1 limit fails alone and the other still lands.
+--
 -- Additive only — CREATE INDEX IF NOT EXISTS; no table or column changes.
--- Rollback: DROP INDEX both.
+-- Rollback: DROP INDEX idx_threats_asn_lane.
 
 CREATE INDEX IF NOT EXISTS idx_threats_asn_lane
   ON threats(
@@ -92,18 +100,3 @@ CREATE INDEX IF NOT EXISTS idx_threats_asn_lane
   WHERE status = 'active'
     AND asn IS NOT NULL
     AND threat_type NOT IN ('scanning', 'malicious_ip');
-
-CREATE INDEX IF NOT EXISTS idx_threats_subnet_lane
-  ON threats(
-    rtrim(ip_address, '0123456789'),
-    ip_address,
-    target_brand_id,
-    asn,
-    threat_type,
-    country_code,
-    first_seen,
-    status
-  )
-  WHERE status = 'active'
-    AND ip_address IS NOT NULL
-    AND target_brand_id IS NOT NULL;

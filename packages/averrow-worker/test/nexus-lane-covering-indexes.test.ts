@@ -49,8 +49,8 @@ import { stripIndexedBy } from "../src/lib/indexed-by-fallback";
 import { DEFAULT_HUB_FANOUT_THRESHOLD } from "../src/lib/cluster-components";
 
 const ROOT = resolve(__dirname, "..");
-const MIGRATION = "0323_nexus_lane_covering_indexes.sql";
-const migrationSql = readFileSync(resolve(ROOT, "migrations", MIGRATION), "utf8");
+const MIGRATIONS = ["0323_nexus_lane_covering_indexes.sql", "0324_nexus_subnet_lane_covering_index.sql"];
+const migrationSql = MIGRATIONS.map((m) => readFileSync(resolve(ROOT, "migrations", m), "utf8")).join("\n");
 const ws = (s: string): string => s.replace(/\s+/g, " ").trim();
 
 function plan(db: SqliteDb, sql: string): string[] {
@@ -59,7 +59,7 @@ function plan(db: SqliteDb, sql: string): string[] {
     .map((r) => r.detail);
 }
 
-/** The ONE `CREATE INDEX` statement for `name` in 0323. */
+/** The ONE `CREATE INDEX` statement for `name` in 0323/0324. */
 function indexDdl(name: string): string {
   const m = migrationSql.match(new RegExp(`CREATE INDEX IF NOT EXISTS ${name}\\b[\\s\\S]*?;`));
   expect(m, name).not.toBeNull();
@@ -201,7 +201,7 @@ describe("migration 0323 index definitions match the lane SQL", () => {
 
 describe.skipIf(!hasSqlite())("0323 query plans", () => {
   it("baseline (pre-0323 schema + SQL): the pre-fix plans", () => {
-    const db = openMigratedDb({ exclude: [MIGRATION] });
+    const db = openMigratedDb({ exclude: MIGRATIONS });
     const asn = plan(db, LEGACY_ASN_LANE_SQL);
     expect(asn[0]).toBe("SEARCH threats USING INDEX idx_threats_status_created (status=?)");
     expect(asn).toContain("USE TEMP B-TREE FOR GROUP BY");
@@ -258,7 +258,7 @@ describe.skipIf(!hasSqlite())("0323 query plans", () => {
   it("a hint the planner can't honour falls back unhinted (no such index / no query solution)", async () => {
     // Pre-0323 schema: the hinted SQL fails with "no such index" and
     // withIndexHintFallback re-runs it unhinted.
-    const raw = openMigratedDb({ exclude: [MIGRATION] });
+    const raw = openMigratedDb({ exclude: MIGRATIONS });
     seedEdges(raw);
     const r = await runAsnLane(d1FromSqlite(raw));
     expect(r.analyzed).toBeGreaterThan(0);
@@ -340,7 +340,7 @@ describe.skipIf(!hasSqlite())("0323 results are identical to the pre-0323 lanes"
   }
 
   it("the lanes leave identical clusters and stamps (pre-0323 schema vs 0323)", async () => {
-    const before = openMigratedDb({ exclude: [MIGRATION] });
+    const before = openMigratedDb({ exclude: MIGRATIONS });
     const after = openMigratedDb();
     for (const raw of [before, after]) {
       seedEdges(raw);
