@@ -52,6 +52,7 @@
   --blue:       #0a8ab5;
   --blue-dim:   #065A78;
   --slate:      #8A8F9C; /* sixth "agent row" identity colour — decorative */
+  --magenta:    #f472b6; /* category hue (blog "threat intel"); never status or accent */
 
   --sev-critical: #f87171;
   --sev-high:     #fb923c;
@@ -115,6 +116,7 @@
   --blue-text:         #75c3e7;
   --amber-text:        var(--amber); /* 9.4:1 on page */
   --slate-text:        var(--slate);
+  --magenta-text:      #f9a8d4; /* 9.5:1 on tertiary */
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
@@ -165,6 +167,7 @@
   --blue-text:         #005e7d;
   --amber-text:        #6a4d00; /* 7.0:1 on page */
   --slate-text:        #475569;
+  --magenta-text:      #9d174d; /* 7.0:1 on page, 6.4:1 on its tint */
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.8);
