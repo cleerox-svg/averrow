@@ -83,6 +83,9 @@ const NAMES: Record<number, string> = {
   11: "acme-hr-portal.example",
 };
 
+/** Phone graph: how far the cluster moves left (see build). */
+const CP_SHIFT = 50;
+
 /** Deterministic PRNG (mulberry32) so server poster and client agree. */
 function rng(seed: number) {
   let a = seed;
@@ -157,6 +160,19 @@ export function build(cp: boolean): Graph {
     { a: "p0", b: "hub", t0: 2.68, dur: 0.3, kind: "rel" },
   );
 
+  if (cp) {
+    // Phone graph: use the width. Shift the cluster left (domain labels are
+    // hidden here, so the left margin was empty) and park the two related
+    // findings top and bottom right with their labels to the left, where
+    // they fit at 390.
+    for (const n of nodes) n.tx -= CP_SHIFT;
+    const soc = nodes.find((n) => n.id === "s0") as GNode;
+    const app = nodes.find((n) => n.id === "p0") as GNode;
+    Object.assign(soc, { tx: 300, ty: 62, side: "l" });
+    Object.assign(app, { tx: 300, ty: 300, side: "l" });
+    hub[0] -= CP_SHIFT;
+  }
+
   const st: Record<string, DomainState> = {};
   for (let i = 0; i < 14; i++) {
     const oi = ORDER.indexOf(i);
@@ -182,19 +198,20 @@ export function labelPos(n: GNode, x: number, y: number): { x: number; y: number
   }
 }
 
-/** Phone layout hides domain, social and app labels (no room at 390). */
+/** The phone graph hides domain labels (no room at 390); subs are desktop only. */
 export function showsLabel(n: GNode, cp: boolean): boolean {
-  return !!n.label && !(cp && (n.kind === "dom" || n.kind === "soc" || n.kind === "app"));
+  return !!n.label && !(cp && n.kind === "dom");
 }
 
 /**
  * Hub text placement. On the phone graph the hub is 80px wide, too narrow
- * for "14 phishing domains", so that line sits between the title and the hub.
+ * for "14 phishing domains", so that line sits just above the hub and the
+ * title becomes the graph's header line (clear of the "Hosting A" label).
  */
 export function hubText(S: Graph) {
   const { cx, cy, hubR: R, cp } = S;
   return cp
-    ? { id: [cx, cy + 4], sub: [cx, cy - R - 9], title: [cx, cy - R - 23], actor: [cx, cy + R + 14] }
+    ? { id: [cx, cy + 4], sub: [cx, cy - R - 9], title: [S.vw / 2, 15], actor: [cx, cy + R + 14] }
     : { id: [cx, cy - 2], sub: [cx, cy + 14], title: [cx, cy - R - 14], actor: [cx, cy + R + 17] };
 }
 

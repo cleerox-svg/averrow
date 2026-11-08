@@ -29,6 +29,8 @@ const OUT = 0.45;
 const GAP = 0.45;
 /** Plays the story this many times, then rests on the finished operation. */
 const PLAYS = 3;
+/** Timeline speed. Tests set `window.__heroSpeed` to fast-forward the story. */
+const SPEED = Number((window as unknown as { __heroSpeed?: number }).__heroSpeed) || 1;
 
 const cl = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const rp = (u: number, a: number, b: number) => cl((u - a) / (b - a));
@@ -317,13 +319,11 @@ export function start(root: HTMLElement): void {
   };
 
   // ── rAF loop: runs only while something moves and the hero is visible ──
-  let raf = 0, running = false, visible = true, lastFrame = 0, lastTick = 0;
+  let raf = 0, running = false, visible = true, lastTick = 0;
   const active = () => mode === "auto" || tw !== null;
   const frame = (now: number) => {
     if (!running) return;
     raf = requestAnimationFrame(frame);
-    if (now - lastFrame < 30) return;
-    lastFrame = now;
     tick(now);
   };
   const go = () => {
@@ -339,7 +339,7 @@ export function start(root: HTMLElement): void {
   };
 
   const tick = (now: number) => {
-    const dt = lastTick ? Math.min((now - lastTick) / 1e3, 0.1) : 0;
+    const dt = lastTick ? Math.min((now - lastTick) / 1e3, 0.1) * SPEED : 0;
     lastTick = now;
     if (tw) {
       t += dt;
@@ -375,7 +375,12 @@ export function start(root: HTMLElement): void {
     if (!active()) stop();
   };
 
+  // The live caption stays silent during autoplay (it changes every few
+  // seconds); once the visitor takes control it announces each step.
+  const engage = () => cap.setAttribute("aria-live", "polite");
+
   const jump = (j: number) => {
+    engage();
     mode = "paused";
     step = j;
     G = 1;
@@ -385,9 +390,19 @@ export function start(root: HTMLElement): void {
     go();
   };
   const toggle = () => {
+    engage();
     if (mode === "auto") {
       mode = "paused";
       stop();
+      if (G < 1 || tau >= TOT) {
+        // Paused during the fade-out / gap between plays: settle on the
+        // finished operation instead of freezing a faded or blank frame.
+        u = 4; G = 1; step = 4; fill = 1; tau = TOT; tw = null;
+      } else if (tw) {
+        u = tw.b;
+        tw = null;
+      }
+      render();
       ui();
       return;
     }
@@ -408,6 +423,18 @@ export function start(root: HTMLElement): void {
   pp.addEventListener("click", toggle);
 
   new ResizeObserver(size).observe(g);
+  // Re-size the backing store when the device pixel ratio changes (zoom,
+  // moving the window to another screen).
+  const watchDpr = () =>
+    matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener?.(
+      "change",
+      () => {
+        size();
+        watchDpr();
+      },
+      { once: true },
+    );
+  watchDpr();
   new IntersectionObserver((e) => {
     visible = e[0].isIntersecting;
     if (visible) go();

@@ -45,11 +45,9 @@ test.describe("brand tokens, fonts and logo", () => {
     // notice. Each entry is a selector (CSS rules) or markup pattern per file.
     const STATUS_SITES: Record<string, RegExp[]> = {
       "src/components/Coverage.astro": [/\.cv-pill\.new$/],
-      "src/components/OperationStory.astro": [/\.pending$/, /track\.pending/],
       "src/components/TakedownFlow.astro": [/\.tf-bar i$/, /\.tf-pill\.amber$/],
       "src/components/product/IntegrationList.astro": [/em\.request$/],
       "src/components/product/SampleRows.astro": [/\.sr-pill\.(new|hold)$/],
-      "src/pages/index.astro": [/width:29%;background:var\(--amber\)/], // hero takedown bar: pending share
       "src/pages/legal/dpa.astro": [/\.dpa-notice-card( svg)?$/, /\.dn-eyebrow$/, /\.dpa-pill-scheduled$/],
       "src/pages/platform.astro": [/em\.request$/],
       "src/pages/resources/sample-operation-report.astro": [/\.rep-pending$/],

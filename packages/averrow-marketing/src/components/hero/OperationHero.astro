@@ -107,7 +107,7 @@ const posterCompact = poster(build(true));
     if (!matchMedia("(prefers-reduced-motion: reduce)").matches) document.getElementById("hero").classList.add("lv");
   </script>
   <div class="hero-head">
-    <p class="hero-eyebrow">Digital risk protection · threat-actor intelligence</p>
+    <p class="hero-eyebrow">Digital risk protection&nbsp;· <span class="nw">threat-actor intelligence</span></p>
     <h1 class="hero-h1" id="hero-title">Brand protection that <em>traces the operation</em>.</h1>
   </div>
 
@@ -165,7 +165,7 @@ const posterCompact = poster(build(true));
       </div>
     </div>
 
-    <div class="rail" data-hero-rail role="group" aria-label="Operation steps">
+    <div class="rail" data-hero-rail role="group" aria-label="Example operation steps">
       <div class="rt">
         <ol>
           {steps.map((s, i) => (
@@ -190,13 +190,13 @@ const posterCompact = poster(build(true));
           <svg class="i-play" width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M3 1.6v8.8L10.4 6z" /></svg>
         </button>
       </div>
-      <p class="cap" data-live-cap aria-live="polite">{steps[3].live}</p>
+      <p class="cap" data-live-cap aria-live="off">{steps[3].live}</p>
     </div>
 
     <p class="ill">{DISCLOSURE}</p>
   </figure>
 
-  <ol class="sl" aria-label="How the example operation unfolds">
+  <ol class="sl">
     {steps.map((s) => (
       <li><b>{s.long}</b><span>{s.caption}</span></li>
     ))}
@@ -223,7 +223,14 @@ const posterCompact = poster(build(true));
   if (hero && hero.classList.contains("lv")) {
     const boot = () => {
       const idle = window.requestIdleCallback ?? ((fn: () => void) => window.setTimeout(fn, 200));
-      idle(() => void import("../../scripts/hero").then((m) => m.start(hero)), { timeout: 1500 });
+      idle(
+        () =>
+          void import("../../scripts/hero")
+            .then((m) => m.start(hero))
+            // Chunk failed to load: fall back to the static list and poster.
+            .catch(() => hero.classList.remove("lv")),
+        { timeout: 1500 },
+      );
     };
     if (document.readyState === "complete") boot();
     else window.addEventListener("load", boot, { once: true });
@@ -235,9 +242,11 @@ const posterCompact = poster(build(true));
     --gap: 48px;
     max-width: 1280px;
     margin: 0 auto;
-    padding: 56px 24px 8px;
+    padding: 40px 24px 8px;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 660px);
+    /* The copy column never drops below 380px; under 1180px the hero is one
+       column (see the media query below). */
+    grid-template-columns: minmax(380px, 1fr) minmax(0, 660px);
     grid-template-areas: "head head" "copy stage" "list list";
     column-gap: var(--gap);
     align-items: start;
@@ -255,7 +264,10 @@ const posterCompact = poster(build(true));
     text-transform: uppercase;
     color: var(--accent);
     margin: 0 0 18px;
+    hyphens: none;
+    text-wrap: balance;
   }
+  .hero-eyebrow .nw { white-space: nowrap; }
   .hero-h1 {
     font-family: var(--font-display);
     /* G3 marketing hero: 84 / 0.98 / 600 / -0.045em, clamped down on phones
@@ -463,14 +475,27 @@ const posterCompact = poster(build(true));
     .cap { margin-right: 0; }
   }
 
-  @media (max-width: 959px) {
-    .hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "copy" "stage" "list"; padding: 32px 16px 8px; }
+  @media (max-width: 1179px) {
+    .hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "copy" "stage" "list"; }
     .hero-copy { padding-top: 12px; }
-    .stage { max-width: 560px; margin-top: 28px; }
+    .stage { width: 100%; max-width: 760px; margin-top: 32px; }
+  }
+  @media (max-width: 959px) {
+    .hero { padding: 32px 16px 8px; }
     .hero-lede { font-size: 16px; }
+    .sl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  }
+  /* Copy doc §2: the short lede under 600px, the long one from 600px. */
+  @media (max-width: 599px) {
     .hero-lede-short { display: block; }
     .hero-lede-long { display: none; }
-    .sl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .stage { margin-top: 24px; }
+  }
+  /* The separator dot would dangle at a line end once the row wraps. */
+  @media (max-width: 400px) {
+    .scan-meta-dot { display: none; }
+    .rt ol { gap: 6px; }
+    .sb { font-size: 12px; }
   }
   @media (max-width: 559px) {
     .sl { grid-template-columns: minmax(0, 1fr); }
