@@ -23,6 +23,7 @@ import type { Env } from '../types';
 import type { OrgScope } from '../middleware/auth';
 import { cachedValue } from './cached-value';
 import { scopeCacheSegment } from './scope-cache-key';
+import { runSequential } from './run-sequential';
 
 /** KV TTL for the per-slice threat aggregate (raised 300 → 1800, D1 read spend 2026-10). */
 export const THREAT_AGGREGATE_TTL_S = 1800;
@@ -49,22 +50,11 @@ export const THREAT_AGGREGATE_SINGLE_FLIGHT_POLL_MS = 1_000;
 /** Anything with `prepare` — `env.DB` or a read-replica `D1DatabaseSession`. */
 export type AggregateReadDb = Pick<D1Database, 'prepare'>;
 
-/**
- * Run D1 queries one after another instead of in one `Promise.all`. A
- * cache miss here used to send ~13 full-table GROUP BYs to D1 at once, which
- * on the unfiltered slice queued enough work to trip `D1 DB is overloaded`
- * (prod, 2026-11-08) for every other request. D1 executes a database's
- * queries serially anyway, so the miss is not meaningfully slower; other
- * requests can interleave between the scans instead of queuing behind all
- * of them.
- */
-export async function runSequential<T extends Array<() => Promise<unknown>>>(
-  tasks: [...T],
-): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
-  const out: unknown[] = [];
-  for (const task of tasks) out.push(await task());
-  return out as { [K in keyof T]: Awaited<ReturnType<T[K]>> };
-}
+// The aggregate's D1 queries run one after another (lib/run-sequential.ts).
+// A cache miss here used to send ~13 full-table GROUP BYs to D1 at once,
+// which on the unfiltered slice tripped `D1 DB is overloaded` (prod,
+// 2026-11-08) for every other request. Re-exported for existing importers.
+export { runSequential };
 
 export interface ThreatAggregateFilters {
   severity?:  string;

@@ -11,7 +11,8 @@ import { GEO_UNMAPPED_POPULATION_SQL, GEO_UNMAPPED_THREATS_FROM, GEO_TERMINAL_SQ
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics, fetchD1HourlyMetrics, clampHourlyWindow, hourlyWindowStart, toHourLabel, D1_TOP_QUERIES_SAMPLING_NOTE } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats, peekCountEntry } from "../lib/cached-count";
-import { cachedValue } from "../lib/cached-value";
+import { cachedValue, type SingleFlightOptions } from "../lib/cached-value";
+import { runSequential, softSection, type SectionErrors } from "../lib/run-sequential";
 import {
   countDnsCandidatesInThreats,
   DNS_DRAINABLE_CACHE_KEY,
@@ -22,6 +23,19 @@ import { notRetiredClusterSql, retiredClusterSql } from "../lib/cluster-status";
 import { SHADOW_SIGNAL_WEIGHTS, shadowScoreDelta } from "../lib/page-phishing-scorer";
 import { NRD_RETENTION_LAST_RESULT_KEY, parseNrdRetentionLastResult } from "../lib/nrd-retention";
 import type { Env } from "../types";
+
+// ─── Diagnostics caching (D1 overload 2026-11-08) ─────────────────
+/** KV key + TTL for the enrichment_pipeline whole-threats-table pass. */
+export const DIAG_ENRICHMENT_CACHE_KEY = "diag.enrichment_pipeline.v1";
+export const DIAG_ENRICHMENT_TTL_S = 600;
+/** TTL for slow-moving whole-table sections (platform_totals, alerts.by_tier). */
+export const DIAG_SLOW_SECTION_TTL_S = 900;
+/**
+ * Single-flight refill for the scan-backed diagnostics caches: one caller
+ * recomputes an expired entry while the others get the stale value, so
+ * the script + MCP + an admin tab can't each fire the same full scan.
+ */
+export const DIAG_SINGLE_FLIGHT: SingleFlightOptions = { lockTtlSeconds: 120, waitMs: 10_000 };
 
 // ─── D1 metrics via Cloudflare GraphQL Analytics API ──────────────
 // Pulls rows_read / rows_written / query counts from the past 24h. Used
@@ -919,7 +933,7 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
         by_token: topN(byGenerator, 'token'),
       },
     };
-  });
+  }, { singleFlight: DIAG_SINGLE_FLIGHT });
 }
 
 // ── Weaponization velocity distribution (Wave 3, rec 5) ─────────────
@@ -1018,7 +1032,7 @@ async function buildVelocityDiag(env: Env): Promise<VelocityDiag> {
     `).all<{ flag: string | null; has_reg: number; n: number }>();
 
     return foldVelocityDistribution(res.results);
-  });
+  }, { singleFlight: DIAG_SINGLE_FLIGHT });
 }
 
 // ── nrd_domains retention (lib/nrd-retention.ts) ────────────────────
@@ -1267,7 +1281,7 @@ export async function fetchPausedAgents(
 }
 
 /**
- * fetchPausedAgents for the diagnostics Promise.all: a failure (missing
+ * fetchPausedAgents for the diagnostics handler: a failure (missing
  * column, D1 blip) degrades to `paused: []` + `paused_error` instead of
  * rejecting the whole endpoint with a 500.
  */
@@ -1290,13 +1304,39 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
   const hoursBack = clampHoursBack(url.searchParams.get("hours"));
 
   try {
+    // Overload safety (prod 2026-11-08: 5/5 calls tripped `D1 DB is
+    // overloaded` and briefly took every other request on the main DB down
+    // with them). Three rules hold for everything below:
+    //   1. Main-DB reads are THUNKS run one after another (runSequential),
+    //      never one big Promise.all — D1 serialises a database's queries
+    //      anyway, so a fan only queues ~40 reads inside one 10s window.
+    //      Off-main work (CF GraphQL, KV, DNS_QUEUE_DB) runs alongside.
+    //   2. Full-table scans sit behind cachedValue / cachedCount with
+    //      single-flight refill; windowed reads are sargable range seeks.
+    //   3. Every read is wrapped in softSection: a failing read degrades
+    //      its section to an empty/zero fallback and reports
+    //      `<section>_error` at the top of `data`, instead of 500-ing.
+    const sectionErrors: SectionErrors = {};
+    const soft = <T>(section: string, fallback: T | ((message: string) => T), fn: () => Promise<T>) =>
+      softSection(sectionErrors, section, fallback, fn);
+    const rows = <T>(r: { results?: T[] } | null | undefined): { results: T[] } => ({ results: r?.results ?? [] });
+    const noRows = <T>(): { results: T[] } => ({ results: [] });
+
     // ─── 1. Database clock ──────────────────────────────────────────
-    const clockP = env.DB.prepare(
+    const clockT = soft<{ utc_now: string } | null>("db_clock", null, () => env.DB.prepare(
       "SELECT datetime('now') AS utc_now"
-    ).first<{ utc_now: string }>();
+    ).first<{ utc_now: string }>());
 
     // ─── 2. Enrichment pipeline ─────────────────────────────────────
-    const enrichmentP = env.DB.prepare(`
+    // One pass over the WHOLE threats table (~1.5M rows, every column it
+    // needs is outside any index) — the single heaviest read here and, run
+    // uncached on every call, the bulk of the 2026-11-08 overload. Cached
+    // 10 min with single-flight refill (stale-while-revalidate), so at most
+    // one scan per TTL however many callers hit the endpoint.
+    // enriched_last_hour can therefore lag by up to ~10 min.
+    const enrichmentT = soft("enrichment_pipeline", null, () => cachedValue(
+      env, DIAG_ENRICHMENT_CACHE_KEY, DIAG_ENRICHMENT_TTL_S,
+      () => env.DB.prepare(`
       SELECT
         COUNT(*) AS total_threats,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_threats,
@@ -1314,7 +1354,9 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       enriched_last_24h: number;
       stuck_pile: number;
       needs_dns: number;
-    }>();
+    }>(),
+      { singleFlight: DIAG_SINGLE_FLIGHT },
+    ));
 
     // ── DNS-queue parity ──
     // Counts the dns_queue side-DB row total so operators can verify the
@@ -1342,7 +1384,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // five checks documented in `docs/PLATFORM_DATA_DEPENDENCIES.md`.
     // Consumed by `scripts/dns-queue-stability-check.sh` to print a
     // single green/red verdict before greenlighting PR-4 cleanup.
-    // Three aggregates in parallel, each bounded by hoursBack.
+    // Four aggregates, run one after another, each bounded by hoursBack.
     interface DnsQueueStability {
       source_counts: { queue: number; threats: number; total: number };
       throughput: {
@@ -1368,138 +1410,138 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         total_stale_removed: number | null;
       };
     }
-    const dnsQueueStabilityP: Promise<DnsQueueStability> = (async () => {
+    // Four indexed (agent_id, created_at) seeks over navigator's outputs in
+    // the window, run one after another; a failure reports
+    // dns_queue_stability_error with the zeroed shape below.
+    const dnsQueueStabilityFallback: DnsQueueStability = {
+      source_counts: { queue: 0, threats: 0, total: 0 },
+      throughput: { avg_processed: null, avg_resolved: null, avg_dead: null, avg_duration_ms: null },
+      reconciler: {
+        runs: 0, runs_with_failures: 0, total_batch_failures: 0,
+        avg_scanned: null, avg_enqueued: null,
+        avg_cursor_lag_minutes: null, max_cursor_lag_minutes: null,
+      },
+      reaper: {
+        last_run_at: null, last_run_age_hours: null,
+        last_stale_removed: null, runs_in_window: 0, total_stale_removed: null,
+      },
+    };
+    const dnsQueueStabilityT = soft<DnsQueueStability>("dns_queue_stability", dnsQueueStabilityFallback, async () => {
       const windowExpr = `datetime('now', '-${hoursBack} hours')`;
-      try {
-        const reaperKvP = (async () => {
-          try {
-            const [lastRun, lastDelta] = await Promise.all([
-              env.CACHE.get('reconciler:dns_queue:reaper_last_run'),
-              env.CACHE.get('reconciler:dns_queue:reaper_last_delta'),
-            ]);
-            return { lastRun, lastDelta };
-          } catch {
-            return { lastRun: null, lastDelta: null };
-          }
-        })();
-        const [sourceRow, throughputRow, reconcilerRow, reaperRow, reaperKv] = await Promise.all([
-          env.DB.prepare(`
-            SELECT
-              SUM(CASE WHEN summary LIKE '%source=queue%' THEN 1 ELSE 0 END) AS queue_n,
-              SUM(CASE WHEN summary LIKE '%source=threats%' THEN 1 ELSE 0 END) AS threats_n,
-              COUNT(*) AS total_n
-            FROM agent_outputs
-            WHERE agent_id = 'navigator'
-              AND type = 'diagnostic'
-              AND summary LIKE 'dns-backfill:%'
-              AND created_at >= ${windowExpr}
-          `).first<{ queue_n: number; threats_n: number; total_n: number }>(),
-          env.DB.prepare(`
-            SELECT
-              AVG(CAST(json_extract(details, '$.processed')      AS REAL)) AS avg_processed,
-              AVG(CAST(json_extract(details, '$.resolved')       AS REAL)) AS avg_resolved,
-              AVG(CAST(json_extract(details, '$.graduated_dead') AS REAL)) AS avg_dead,
-              AVG(CAST(json_extract(details, '$.duration_ms')    AS REAL)) AS avg_duration_ms
-            FROM agent_outputs
-            WHERE agent_id = 'navigator'
-              AND type = 'diagnostic'
-              AND summary LIKE 'dns-backfill:%'
-              AND created_at >= ${windowExpr}
-          `).first<{
-            avg_processed: number | null;
-            avg_resolved: number | null;
-            avg_dead: number | null;
-            avg_duration_ms: number | null;
-          }>(),
-          env.DB.prepare(`
-            SELECT
-              COUNT(*)                                                       AS runs,
-              SUM(CASE WHEN CAST(json_extract(details, '$.batches_failed')
-                                AS INT) > 0 THEN 1 ELSE 0 END)               AS runs_with_failures,
-              SUM(CAST(json_extract(details, '$.batches_failed') AS INT))    AS total_batch_failures,
-              AVG(CAST(json_extract(details, '$.scanned')  AS REAL))         AS avg_scanned,
-              AVG(CAST(json_extract(details, '$.enqueued') AS REAL))         AS avg_enqueued,
-              AVG(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS avg_cursor_lag_minutes,
-              MAX(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS max_cursor_lag_minutes
-            FROM agent_outputs
-            WHERE agent_id = 'navigator'
-              AND type = 'diagnostic'
-              AND summary LIKE 'dns-queue-reconcile%'
-              AND created_at >= ${windowExpr}
-          `).first<{
-            runs: number;
-            runs_with_failures: number;
-            total_batch_failures: number;
-            avg_scanned: number | null;
-            avg_enqueued: number | null;
-            avg_cursor_lag_minutes: number | null;
-            max_cursor_lag_minutes: number | null;
-          }>(),
-          env.DB.prepare(`
-            SELECT
-              COUNT(*) AS runs,
-              SUM(CAST(json_extract(details, '$.stale_removed') AS INT)) AS total_stale_removed
-            FROM agent_outputs
-            WHERE agent_id = 'navigator'
-              AND type = 'diagnostic'
-              AND summary LIKE 'dns-queue-reap%'
-              AND created_at >= ${windowExpr}
-          `).first<{ runs: number; total_stale_removed: number | null }>(),
-          reaperKvP,
-        ]);
-        let reaperLastRunAgeHours: number | null = null;
-        if (reaperKv.lastRun) {
-          const ts = Date.parse(reaperKv.lastRun);
-          if (!Number.isNaN(ts)) {
-            reaperLastRunAgeHours = Math.floor((Date.now() - ts) / 3_600_000);
-          }
+      const reaperKvP = (async () => {
+        try {
+          const [lastRun, lastDelta] = await Promise.all([
+            env.CACHE.get('reconciler:dns_queue:reaper_last_run'),
+            env.CACHE.get('reconciler:dns_queue:reaper_last_delta'),
+          ]);
+          return { lastRun, lastDelta };
+        } catch {
+          return { lastRun: null, lastDelta: null };
         }
-        const reaperLastDelta = reaperKv.lastDelta != null ? parseInt(reaperKv.lastDelta, 10) : null;
-        return {
-          source_counts: {
-            queue: sourceRow?.queue_n ?? 0,
-            threats: sourceRow?.threats_n ?? 0,
-            total: sourceRow?.total_n ?? 0,
-          },
-          throughput: {
-            avg_processed: throughputRow?.avg_processed ?? null,
-            avg_resolved: throughputRow?.avg_resolved ?? null,
-            avg_dead: throughputRow?.avg_dead ?? null,
-            avg_duration_ms: throughputRow?.avg_duration_ms ?? null,
-          },
-          reconciler: {
-            runs: reconcilerRow?.runs ?? 0,
-            runs_with_failures: reconcilerRow?.runs_with_failures ?? 0,
-            total_batch_failures: reconcilerRow?.total_batch_failures ?? 0,
-            avg_scanned: reconcilerRow?.avg_scanned ?? null,
-            avg_enqueued: reconcilerRow?.avg_enqueued ?? null,
-            avg_cursor_lag_minutes: reconcilerRow?.avg_cursor_lag_minutes ?? null,
-            max_cursor_lag_minutes: reconcilerRow?.max_cursor_lag_minutes ?? null,
-          },
-          reaper: {
-            last_run_at: reaperKv.lastRun ?? null,
-            last_run_age_hours: reaperLastRunAgeHours,
-            last_stale_removed: Number.isNaN(reaperLastDelta as number) ? null : reaperLastDelta,
-            runs_in_window: reaperRow?.runs ?? 0,
-            total_stale_removed: reaperRow?.total_stale_removed ?? null,
-          },
-        };
-      } catch {
-        return {
-          source_counts: { queue: 0, threats: 0, total: 0 },
-          throughput: { avg_processed: null, avg_resolved: null, avg_dead: null, avg_duration_ms: null },
-          reconciler: {
-            runs: 0, runs_with_failures: 0, total_batch_failures: 0,
-            avg_scanned: null, avg_enqueued: null,
-            avg_cursor_lag_minutes: null, max_cursor_lag_minutes: null,
-          },
-          reaper: {
-            last_run_at: null, last_run_age_hours: null,
-            last_stale_removed: null, runs_in_window: 0, total_stale_removed: null,
-          },
-        };
+      })();
+      const [sourceRow, throughputRow, reconcilerRow, reaperRow, reaperKv] = await runSequential([
+        () => env.DB.prepare(`
+          SELECT
+            SUM(CASE WHEN summary LIKE '%source=queue%' THEN 1 ELSE 0 END) AS queue_n,
+            SUM(CASE WHEN summary LIKE '%source=threats%' THEN 1 ELSE 0 END) AS threats_n,
+            COUNT(*) AS total_n
+          FROM agent_outputs
+          WHERE agent_id = 'navigator'
+            AND type = 'diagnostic'
+            AND summary LIKE 'dns-backfill:%'
+            AND created_at >= ${windowExpr}
+        `).first<{ queue_n: number; threats_n: number; total_n: number }>(),
+        () => env.DB.prepare(`
+          SELECT
+            AVG(CAST(json_extract(details, '$.processed')      AS REAL)) AS avg_processed,
+            AVG(CAST(json_extract(details, '$.resolved')       AS REAL)) AS avg_resolved,
+            AVG(CAST(json_extract(details, '$.graduated_dead') AS REAL)) AS avg_dead,
+            AVG(CAST(json_extract(details, '$.duration_ms')    AS REAL)) AS avg_duration_ms
+          FROM agent_outputs
+          WHERE agent_id = 'navigator'
+            AND type = 'diagnostic'
+            AND summary LIKE 'dns-backfill:%'
+            AND created_at >= ${windowExpr}
+        `).first<{
+          avg_processed: number | null;
+          avg_resolved: number | null;
+          avg_dead: number | null;
+          avg_duration_ms: number | null;
+        }>(),
+        () => env.DB.prepare(`
+          SELECT
+            COUNT(*)                                                       AS runs,
+            SUM(CASE WHEN CAST(json_extract(details, '$.batches_failed')
+                              AS INT) > 0 THEN 1 ELSE 0 END)               AS runs_with_failures,
+            SUM(CAST(json_extract(details, '$.batches_failed') AS INT))    AS total_batch_failures,
+            AVG(CAST(json_extract(details, '$.scanned')  AS REAL))         AS avg_scanned,
+            AVG(CAST(json_extract(details, '$.enqueued') AS REAL))         AS avg_enqueued,
+            AVG(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS avg_cursor_lag_minutes,
+            MAX(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS max_cursor_lag_minutes
+          FROM agent_outputs
+          WHERE agent_id = 'navigator'
+            AND type = 'diagnostic'
+            AND summary LIKE 'dns-queue-reconcile%'
+            AND created_at >= ${windowExpr}
+        `).first<{
+          runs: number;
+          runs_with_failures: number;
+          total_batch_failures: number;
+          avg_scanned: number | null;
+          avg_enqueued: number | null;
+          avg_cursor_lag_minutes: number | null;
+          max_cursor_lag_minutes: number | null;
+        }>(),
+        () => env.DB.prepare(`
+          SELECT
+            COUNT(*) AS runs,
+            SUM(CAST(json_extract(details, '$.stale_removed') AS INT)) AS total_stale_removed
+          FROM agent_outputs
+          WHERE agent_id = 'navigator'
+            AND type = 'diagnostic'
+            AND summary LIKE 'dns-queue-reap%'
+            AND created_at >= ${windowExpr}
+        `).first<{ runs: number; total_stale_removed: number | null }>(),
+        () => reaperKvP,
+      ]);
+      let reaperLastRunAgeHours: number | null = null;
+      if (reaperKv.lastRun) {
+        const ts = Date.parse(reaperKv.lastRun);
+        if (!Number.isNaN(ts)) {
+          reaperLastRunAgeHours = Math.floor((Date.now() - ts) / 3_600_000);
+        }
       }
-    })();
+      const reaperLastDelta = reaperKv.lastDelta != null ? parseInt(reaperKv.lastDelta, 10) : null;
+      return {
+        source_counts: {
+          queue: sourceRow?.queue_n ?? 0,
+          threats: sourceRow?.threats_n ?? 0,
+          total: sourceRow?.total_n ?? 0,
+        },
+        throughput: {
+          avg_processed: throughputRow?.avg_processed ?? null,
+          avg_resolved: throughputRow?.avg_resolved ?? null,
+          avg_dead: throughputRow?.avg_dead ?? null,
+          avg_duration_ms: throughputRow?.avg_duration_ms ?? null,
+        },
+        reconciler: {
+          runs: reconcilerRow?.runs ?? 0,
+          runs_with_failures: reconcilerRow?.runs_with_failures ?? 0,
+          total_batch_failures: reconcilerRow?.total_batch_failures ?? 0,
+          avg_scanned: reconcilerRow?.avg_scanned ?? null,
+          avg_enqueued: reconcilerRow?.avg_enqueued ?? null,
+          avg_cursor_lag_minutes: reconcilerRow?.avg_cursor_lag_minutes ?? null,
+          max_cursor_lag_minutes: reconcilerRow?.max_cursor_lag_minutes ?? null,
+        },
+        reaper: {
+          last_run_at: reaperKv.lastRun ?? null,
+          last_run_age_hours: reaperLastRunAgeHours,
+          last_stale_removed: Number.isNaN(reaperLastDelta as number) ? null : reaperLastDelta,
+          runs_in_window: reaperRow?.runs ?? 0,
+          total_stale_removed: reaperRow?.total_stale_removed ?? null,
+        },
+      };
+    });
 
     // domain_geo_drainable — domains we can actually try right now
     // (cooldown expired, attempts < cap). Pairs with `domain_geo`
@@ -1537,7 +1579,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // running its own full-table COUNT(DISTINCT) scan on every diagnostics
     // call. It computes only when the key is absent (first deploy / the
     // daily recount was skipped); the value can be up to ~24h old.
-    const dnsCandidatesInThreatsP = cachedCount(
+    const dnsCandidatesInThreatsT = soft<{ n: number; t: number | null } | null>("dns_queue_parity", null, () => cachedCount(
       env, DNS_DRAINABLE_CACHE_KEY, DNS_DRAINABLE_TTL_S,
       () => countDnsCandidatesInThreats(env.DB),
     ).then(async (n) => {
@@ -1546,7 +1588,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       // value compared against a live queue size.
       const e = await peekCountEntry(env, DNS_DRAINABLE_CACHE_KEY, DNS_DRAINABLE_TTL_S);
       return { n, t: e?.t ?? null };
-    });
+    }));
 
     // Cartographer queue — matches actual Phase 0 query (private IPs and
     // attempts-exhausted threats excluded — see migration 0110).
@@ -1567,7 +1609,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // on idx_threats_ip_source_feed (~1.35M rows) — measured with EXPLAIN
     // QUERY PLAN in prod, 2026-10-14. Keep the WHERE implying the index
     // predicate; an unusable hint re-runs unhinted (withIndexHintFallback).
-    const cartoQueueP = cachedCount(env, 'count.threats.carto_queue', 300, async () => {
+    const cartoQueueT = soft<{ n: number } | null>("enrichment_pipeline", null, () => cachedCount(env, 'count.threats.carto_queue', 300, async () => {
       const row = await withIndexHintFallback(`
         SELECT COUNT(*) AS n FROM threats INDEXED BY idx_threats_carto_phase0
         WHERE enriched_at IS NULL
@@ -1576,10 +1618,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           ${PRIVATE_IP_SQL_FILTER}
       `, (q) => env.DB.prepare(q).first<{ n: number }>());
       return row?.n ?? 0;
-    }).then((n) => ({ n }));
+    }).then((n) => ({ n })));
 
     // Cartographer queue WITHOUT private IP filter (for comparison — shows inflation)
-    const cartoQueueRawP = cachedCount(env, 'count.threats.carto_queue_raw', 300, async () => {
+    const cartoQueueRawT = soft<{ n: number } | null>("enrichment_pipeline", null, () => cachedCount(env, 'count.threats.carto_queue_raw', 300, async () => {
       const row = await withIndexHintFallback(`
         SELECT COUNT(*) AS n FROM threats INDEXED BY idx_threats_carto_phase0
         WHERE enriched_at IS NULL
@@ -1587,7 +1629,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           AND enrichment_attempts < 5
       `, (q) => env.DB.prepare(q).first<{ n: number }>());
       return row?.n ?? 0;
-    }).then((n) => ({ n }));
+    }).then((n) => ({ n })));
 
     // Threats exhausted by cartographer — BOTH geo phases gave up with no
     // coordinates. These exit the active queue but stay in `threats`. A
@@ -1603,14 +1645,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     //
     // Cache key bumped to .v2 alongside the semantic change so a stale
     // payload can't serve the old definition for a TTL after deploy.
-    const cartoExhaustedP = cachedCount(env, 'count.threats.carto_exhausted.v2', 300, async () => {
+    const cartoExhaustedT = soft<{ n: number } | null>("enrichment_pipeline", null, () => cachedCount(env, 'count.threats.carto_exhausted.v2', 300, async () => {
       const row = await withIndexHintFallback(`
         SELECT COUNT(*) AS n FROM ${GEO_UNMAPPED_THREATS_FROM}
         WHERE ${GEO_UNMAPPED_POPULATION_SQL}
           AND ${GEO_TERMINAL_SQL}
       `, (q) => env.DB.prepare(q).first<{ n: number }>());
       return row?.n ?? 0;
-    }).then((n) => ({ n }));
+    }).then((n) => ({ n })));
 
     // Geo-enrichment coverage — mapped vs total threats per window. The
     // home tile reads `threats_mapped` from threat_cube_geo (lat/lng
@@ -1627,27 +1669,35 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       { key: '7d',  sqlOffset: "datetime('now', '-7 days')" },
       { key: '30d', sqlOffset: "datetime('now', '-30 days')" },
     ];
-    const geoCoverageP = Promise.all(
-      geoCoverageWindows.map(async (w) => {
-        const [mapped, total] = await Promise.all([
-          env.DB.prepare(
-            `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_geo WHERE hour_bucket >= strftime('%Y-%m-%d %H:00:00', ${w.sqlOffset})`
-          ).first<{ n: number }>(),
-          env.DB.prepare(
-            `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= strftime('%Y-%m-%d %H:00:00', ${w.sqlOffset})`
-          ).first<{ n: number }>(),
-        ]);
+    type GeoCoverageWindow = {
+      window: '24h' | '7d' | '30d';
+      mapped: number;
+      total: number;
+      unmapped: number;
+      coverage_pct: number | null;
+    };
+    // Six cube range reads (idx_cube_*_hour), one after another.
+    const geoCoverageT = soft<GeoCoverageWindow[]>("geo_coverage", [], async () => {
+      const out: GeoCoverageWindow[] = [];
+      for (const w of geoCoverageWindows) {
+        const mapped = await env.DB.prepare(
+          `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_geo WHERE hour_bucket >= strftime('%Y-%m-%d %H:00:00', ${w.sqlOffset})`
+        ).first<{ n: number }>();
+        const total = await env.DB.prepare(
+          `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= strftime('%Y-%m-%d %H:00:00', ${w.sqlOffset})`
+        ).first<{ n: number }>();
         const m = mapped?.n ?? 0;
         const t = total?.n ?? 0;
-        return {
+        out.push({
           window: w.key,
           mapped: m,
           total: t,
           unmapped: Math.max(0, t - m),
           coverage_pct: t > 0 ? Math.round((m / t) * 1000) / 10 : null,
-        };
-      })
-    );
+        });
+      }
+      return out;
+    });
 
     // Per-feed × per-type breakdown of the exhausted pile. Without
     // this, "cartographer_exhausted: 1,402" is opaque — operators
@@ -1658,7 +1708,12 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     //
     // Same predicate + population as the headline above, so this list
     // sums to `cartographer_exhausted` (modulo the LIMIT 15 tail).
-    const cartoExhaustedByFeedP = withIndexHintFallback(`
+    //
+    // Cached 5 min like the headline count it breaks down (it walks the
+    // same partial index), so the pair stays roughly in step.
+    const cartoExhaustedByFeedT = soft("enrichment_pipeline", noRows<{ source_feed: string; threat_type: string; n: number }>, () => cachedValue(
+      env, 'diag.carto_exhausted_by_feed.v1', 300,
+      async () => rows(await withIndexHintFallback(`
       SELECT source_feed, threat_type, COUNT(*) AS n
         FROM ${GEO_UNMAPPED_THREATS_FROM}
        WHERE ${GEO_UNMAPPED_POPULATION_SQL}
@@ -1667,7 +1722,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
        ORDER BY n DESC
        LIMIT 15
     `,
-      (q) => env.DB.prepare(q).all<{ source_feed: string; threat_type: string; n: number }>());
+      (q) => env.DB.prepare(q).all<{ source_feed: string; threat_type: string; n: number }>())),
+    ));
 
     // Alerts table growth by brand tier (NX2 tier-gate visibility).
     // The createAlert tier gate skips inserts when brands.tier='tracked'
@@ -1675,7 +1731,12 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // brands. This query proves the gate is working: under steady state
     // the 'tracked' row should be 0 (or only legacy rows from before
     // the gate landed).
-    const alertsByTierP = env.DB.prepare(`
+    //
+    // Whole-table scan of alerts with a brands point lookup per alert, for
+    // a slow-moving tier split — cached 15 min with single-flight refill.
+    const alertsByTierT = soft("alerts", noRows<{ tier: string; total: number; created_24h: number }>, () => cachedValue(
+      env, 'diag.alerts_by_tier.v1', DIAG_SLOW_SECTION_TTL_S,
+      async () => rows(await env.DB.prepare(`
       SELECT
         COALESCE(b.tier, 'unclassified') AS tier,
         COUNT(*) AS total,
@@ -1684,10 +1745,36 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       LEFT JOIN brands b ON b.id = a.brand_id
       GROUP BY COALESCE(b.tier, 'unclassified')
       ORDER BY total DESC
-    `).all<{ tier: string; total: number; created_24h: number }>();
+    `).all<{ tier: string; total: number; created_24h: number }>()),
+      { singleFlight: DIAG_SINGLE_FLIGHT },
+    ));
 
     // ─── 3. Per-feed health ─────────────────────────────────────────
-    const feedHealthP = env.DB.prepare(`
+    // Window predicates on started_at (here and agent_runs below) are
+    // written as `started_at >= datetime(<bound>) AND datetime(started_at)
+    // >= datetime(<bound>)`. The first term is a plain range the
+    // idx_*_started indexes (migration 0319) can seek; the second keeps
+    // the exact semantics. The range is a SUPERSET of the exact window
+    // for both stored formats: SQLite text ('YYYY-MM-DD HH:MM:SS')
+    // compares exactly, and ISO text ('YYYY-MM-DDTHH:MM:SS.sssZ', which
+    // feedRunner and nexus write) sorts 'T' above ' ', so ISO rows can
+    // only be over-included (from the bound's date), never dropped.
+    // `GROUP BY +col` stops the planner walking the (col, started_at)
+    // index for the grouping, which reads the whole table.
+    const feedHealthT = soft("feeds", noRows<{
+      feed_name: string;
+      display_name: string | null;
+      enabled: number | null;
+      paused_reason: string | null;
+      total_pulls: number;
+      success: number;
+      partial: number;
+      failed: number;
+      total_ingested: number;
+      total_rejected: number;
+      last_success_at: string | null;
+      last_failure_at: string | null;
+    }>, async () => rows(await env.DB.prepare(`
       SELECT
         fph.feed_name,
         fc.display_name,
@@ -1703,10 +1790,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         MAX(CASE WHEN fph.status = 'failed' THEN fph.started_at END) AS last_failure_at
       FROM feed_pull_history fph
       LEFT JOIN feed_configs fc ON fc.feed_name = fph.feed_name
-      WHERE datetime(fph.started_at) >= datetime('now', '-' || ? || ' hours')
-      GROUP BY fph.feed_name
+      WHERE fph.started_at >= datetime('now', '-' || ? || ' hours')
+        AND datetime(fph.started_at) >= datetime('now', '-' || ? || ' hours')
+      GROUP BY +fph.feed_name
       ORDER BY failed DESC, fph.feed_name ASC
-    `).bind(hoursBack).all<{
+    `).bind(hoursBack, hoursBack).all<{
       feed_name: string;
       display_name: string | null;
       enabled: number | null;
@@ -1719,10 +1807,16 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       total_rejected: number;
       last_success_at: string | null;
       last_failure_at: string | null;
-    }>();
+    }>()));
 
     // Consecutive failures + auto-pause risk from feed_status
-    const feedStatusP = env.DB.prepare(`
+    const feedStatusT = soft("feeds", noRows<{
+      feed_name: string;
+      consecutive_failures: number;
+      health_status: string;
+      last_error: string | null;
+      threshold: number;
+    }>, async () => rows(await env.DB.prepare(`
       SELECT fs.feed_name,
              fs.consecutive_failures,
              fs.health_status,
@@ -1738,21 +1832,29 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       health_status: string;
       last_error: string | null;
       threshold: number;
-    }>();
+    }>()));
 
-    // Recent feed errors (last 5 failed pulls with error messages)
-    const feedErrorsP = env.DB.prepare(`
-      SELECT feed_name, started_at, error_message
-      FROM feed_pull_history
-      WHERE status = 'failed' AND error_message IS NOT NULL
-        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')
-      ORDER BY started_at DESC
-      LIMIT 20
-    `).bind(hoursBack).all<{
+    // Recent feed errors (last 20 failed pulls with error messages).
+    // `+status` keeps the planner off idx_feed_pulls_status, which would
+    // read every failed pull ever recorded; the started_at range (see the
+    // window note above) reads only the window.
+    const feedErrorsT = soft("feeds", noRows<{
       feed_name: string;
       started_at: string;
       error_message: string;
-    }>();
+    }>, async () => rows(await env.DB.prepare(`
+      SELECT feed_name, started_at, error_message
+      FROM feed_pull_history
+      WHERE +status = 'failed' AND error_message IS NOT NULL
+        AND started_at >= datetime('now', '-' || ? || ' hours')
+        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')
+      ORDER BY started_at DESC
+      LIMIT 20
+    `).bind(hoursBack, hoursBack).all<{
+      feed_name: string;
+      started_at: string;
+      error_message: string;
+    }>()));
 
     // ─── 4. Agent mesh ──────────────────────────────────────────────
     // killed_runs = status='partial' AND completed_at IS NULL. The agentRunner
@@ -1762,7 +1864,24 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // NULL means the Worker was killed mid-run (CPU ceiling, OOM, etc.). The
     // 'stalled' query only sees status='running', so without this metric these
     // mid-execution kills are invisible.
-    const agentMeshP = env.DB.prepare(`
+    type AgentMeshQueryRow = {
+      agent_id: string;
+      total_runs: number;
+      success: number;
+      partial: number;
+      killed_runs: number;
+      failed: number;
+      running: number;
+      last_completed_at: string | null;
+      last_error: string | null;
+      total_records_processed: number;
+      avg_duration_ms: number | null;
+    };
+    // Was `WHERE datetime(started_at) >= …` + `GROUP BY agent_id`: a walk
+    // of the whole agent_runs table (~132K rows, never pruned) with a
+    // table lookup per row. Now a started_at range seek on
+    // idx_agent_runs_started (window note under §3).
+    const agentMeshT = soft("agent_mesh", noRows<AgentMeshQueryRow>, async () => rows(await env.DB.prepare(`
       SELECT
         agent_id,
         COUNT(*) AS total_runs,
@@ -1783,22 +1902,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         -- execution time.
         AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms
       FROM agent_runs
-      WHERE datetime(started_at) >= datetime('now', '-' || ? || ' hours')
-      GROUP BY agent_id
+      WHERE started_at >= datetime('now', '-' || ? || ' hours')
+        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')
+      GROUP BY +agent_id
       ORDER BY agent_id ASC
-    `).bind(hoursBack).all<{
-      agent_id: string;
-      total_runs: number;
-      success: number;
-      partial: number;
-      killed_runs: number;
-      failed: number;
-      running: number;
-      last_completed_at: string | null;
-      last_error: string | null;
-      total_records_processed: number;
-      avg_duration_ms: number | null;
-    }>();
+    `).bind(hoursBack, hoursBack).all<AgentMeshQueryRow>()));
 
     // Workflow-agent rollup from agent_activity_log. The Workflow path
     // (lib/workflow-dispatch.ts + workflows/*.ts) does NOT write to
@@ -1814,7 +1922,21 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // when nexus is firing successfully every 4h. PR-J reconciles
     // workflow agents into the same agent_mesh.per_agent shape so the
     // dashboard reflects reality.
-    const workflowAgentMeshP = env.DB.prepare(`
+    //
+    // `GROUP BY +agent_id`: grouped by the bare column, the planner walks
+    // idx_activity_agent end to end (the whole activity log); this way it
+    // seeks idx_activity_recent (created_at DESC) for the window instead.
+    type WorkflowMeshRow = {
+      agent_id: string;
+      dispatched: number;
+      completed: number;
+      dispatch_failed: number;
+      cooldown_skipped: number;
+      run_failed: number;
+      last_completed_at: string | null;
+      last_error: string | null;
+    };
+    const workflowAgentMeshT = soft("agent_mesh", noRows<WorkflowMeshRow>, async () => rows(await env.DB.prepare(`
       SELECT
         agent_id,
         SUM(CASE WHEN event_type = 'workflow_dispatched' THEN 1 ELSE 0 END) AS dispatched,
@@ -1848,20 +1970,18 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       FROM agent_activity_log a
       WHERE created_at >= datetime('now', '-' || ? || ' hours')
         AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip','workflow_failed')
-      GROUP BY agent_id
-    `).bind(hoursBack, hoursBack).all<{
-      agent_id: string;
-      dispatched: number;
-      completed: number;
-      dispatch_failed: number;
-      cooldown_skipped: number;
-      run_failed: number;
-      last_completed_at: string | null;
-      last_error: string | null;
-    }>();
+      GROUP BY +agent_id
+    `).bind(hoursBack, hoursBack).all<WorkflowMeshRow>()));
 
-    // Stalled agents — started but never completed in the last N hours
-    const stalledP = env.DB.prepare(`
+    // Stalled agents — started but never completed in the last N hours.
+    // Seeks idx_agent_runs_status (status = 'running' is a handful of
+    // rows), so the non-sargable datetime() term only filters those.
+    const stalledT = soft("agent_mesh", noRows<{
+      agent_id: string;
+      run_id: string;
+      started_at: string;
+      minutes_stalled: number;
+    }>, async () => rows(await env.DB.prepare(`
       SELECT agent_id, id AS run_id, started_at,
              ROUND((julianday('now') - julianday(started_at)) * 24 * 60, 1) AS minutes_stalled
       FROM agent_runs
@@ -1874,10 +1994,16 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       run_id: string;
       started_at: string;
       minutes_stalled: number;
-    }>();
+    }>()));
 
     // ─── 5. Backlog trends ──────────────────────────────────────────
-    const backlogP = env.DB.prepare(`
+    // backlog_history is pruned to 7 days by Flight Control — small.
+    const backlogT = soft("backlog_trends", noRows<{
+      backlog_name: string;
+      count: number;
+      recorded_at: string;
+      rn: number;
+    }>, async () => rows(await env.DB.prepare(`
       SELECT backlog_name, count, recorded_at,
              ROW_NUMBER() OVER (PARTITION BY backlog_name ORDER BY recorded_at DESC) AS rn
       FROM backlog_history
@@ -1887,10 +2013,18 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       count: number;
       recorded_at: string;
       rn: number;
-    }>();
+    }>()));
 
     // ─── 6. AI spend (last 24h) ─────────────────────────────────────
-    const aiSpendP = env.DB.prepare(`
+    // `GROUP BY +agent_id` → idx_ledger_month range seek on created_at
+    // instead of a walk of the whole ledger via idx_ledger_agent.
+    const aiSpendT = soft("ai_spend_24h", noRows<{
+      agent_id: string;
+      calls: number;
+      input_tokens: number;
+      output_tokens: number;
+      cost_usd: number;
+    }>, async () => rows(await env.DB.prepare(`
       SELECT
         agent_id,
         COUNT(*) AS calls,
@@ -1899,7 +2033,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         ROUND(SUM(cost_usd), 4) AS cost_usd
       FROM budget_ledger
       WHERE created_at >= datetime('now', '-1 day')
-      GROUP BY agent_id
+      GROUP BY +agent_id
       ORDER BY cost_usd DESC
     `).all<{
       agent_id: string;
@@ -1907,7 +2041,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       input_tokens: number;
       output_tokens: number;
       cost_usd: number;
-    }>();
+    }>()));
 
     // ─── 6b. AI health (silent-AI-failure surface) ──────────────────
     // ai_spend_24h above answers "what did AI cost". It CANNOT answer
@@ -1923,9 +2057,9 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // disambiguator: attempted = 0 means a quiet platform, attempted > 0
     // with succeeded = 0 means an outage. Same pair Flight Control's
     // platform_ai_calls_failing check alerts on.
-    const aiLedgerLastP = env.DB.prepare(`
+    const aiLedgerLastT = soft<{ last_at: string | null } | null>("ai_health", null, () => env.DB.prepare(`
       SELECT MAX(created_at) AS last_at FROM budget_ledger
-    `).first<{ last_at: string | null }>();
+    `).first<{ last_at: string | null }>());
 
     // Strictly-API counters, written into agent_outputs.details by the
     // instrumented agents. Agent-agnostic — any agent that starts
@@ -1938,7 +2072,19 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // JSON, so the SELECT-list extracts need no wrapper. Flat rather
     // than a CTE to match the Flight Control query this mirrors (see
     // the resource-drift note there).
-    const aiCallHealthP = env.DB.prepare(`
+    //
+    // `GROUP BY +agent_id`: grouped by the bare column the planner walks
+    // idx_agent_outputs_agent over the WHOLE table (json_valid per row);
+    // this way it seeks idx_agent_outputs_created_at for the window.
+    type AiCallHealthRow = {
+      agent_id: string;
+      attempted: number;
+      succeeded: number;
+      skipped: number;
+      last_run_at: string | null;
+      newest_failure: string | null;
+    };
+    const aiCallHealthT = soft("ai_health", noRows<AiCallHealthRow>, async () => rows(await env.DB.prepare(`
       SELECT agent_id,
              SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) AS attempted,
              SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) AS succeeded,
@@ -1960,22 +2106,26 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
          AND (CASE WHEN json_valid(details)
                    THEN json_extract(details, '$.aiCallsAttempted')
                    ELSE NULL END) IS NOT NULL
-       GROUP BY agent_id
+       GROUP BY +agent_id
        ORDER BY attempted DESC
-    `).bind(hoursBack).all<{
-      agent_id: string;
-      attempted: number;
-      succeeded: number;
-      skipped: number;
-      last_run_at: string | null;
-      newest_failure: string | null;
-    }>();
+    `).bind(hoursBack).all<AiCallHealthRow>()));
 
     // ─── 7. Cron health (recent Navigator + orchestrator) ───────────
     // Navigator was renamed from 'fast_tick' — both IDs are queried so the
     // window spans the transition. Historical rows keep 'fast_tick'; new
     // rows land under 'navigator'.
-    const cronHealthP = env.DB.prepare(`
+    // The started_at range turns this into four (agent_id, started_at)
+    // seeks on idx_agent_runs_agent; the datetime()-only predicate read
+    // every run those four agents ever wrote (navigator alone: one per 5 min).
+    type CronHealthRow = {
+      agent_id: string;
+      runs: number;
+      success: number;
+      not_success: number;
+      last_run_at: string | null;
+      avg_duration_ms: number | null;
+    };
+    const cronHealthT = soft("cron_health", noRows<CronHealthRow>, async () => rows(await env.DB.prepare(`
       SELECT agent_id,
              COUNT(*) AS runs,
              SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,
@@ -1987,19 +2137,16 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
              AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms
       FROM agent_runs
       WHERE agent_id IN ('navigator', 'fast_tick', 'flight_control', 'orchestrator')
+        AND started_at >= datetime('now', '-' || ? || ' hours')
         AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')
       GROUP BY agent_id
-    `).bind(hoursBack).all<{
-      agent_id: string;
-      runs: number;
-      success: number;
-      not_success: number;
-      last_run_at: string | null;
-      avg_duration_ms: number | null;
-    }>();
+    `).bind(hoursBack, hoursBack).all<CronHealthRow>()));
 
     // ─── 8. Platform totals ─────────────────────────────────────────
-    const totalsP = env.DB.prepare(`
+    // Eight whole-table counts (brands ~114K, lookalike_domains, two
+    // passes over infrastructure_clusters …) for numbers that move slowly
+    // — cached 15 min with single-flight refill.
+    const totalsT = soft("platform_totals", null, () => cachedValue(env, 'diag.platform_totals.v1', DIAG_SLOW_SECTION_TTL_S, () => env.DB.prepare(`
       SELECT
         (SELECT COUNT(*) FROM brands) AS brands,
         (SELECT COUNT(*) FROM hosting_providers) AS providers,
@@ -2018,45 +2165,75 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       lookalike_domains: number;
       feeds_enabled: number;
       feeds_disabled: number;
-    }>();
+    }>(), { singleFlight: DIAG_SINGLE_FLIGHT }));
 
-    // D1 metrics from Cloudflare GraphQL Analytics API. Awaited in
-    // parallel with the D1 queries so it doesn't extend the diagnostic.
-    // Account-wide (all databases) so the 25B-ceiling projection is
-    // computed against a matching numerator — see fetchD1Metrics.
-    const d1MetricsP = fetchD1Metrics(env);
-    const d1AttributionP = fetchD1EndpointAttribution(env);
+    // ─── Off-main-DB work (CF GraphQL / Analytics Engine / KV / side DBs)
+    // None of these read the main D1, so they start now and run alongside
+    // the sequential main-DB reads below; each degrades to its usual
+    // "no data" shape (+ `<section>_error`) if it throws.
+    const offMain = <T>(section: string, fallback: T | ((message: string) => T), fn: () => Promise<T>) =>
+      soft(section, fallback, fn)();
+    // D1 metrics from Cloudflare GraphQL Analytics API. Account-wide (all
+    // databases) so the 25B-ceiling projection is computed against a
+    // matching numerator — see fetchD1Metrics.
+    const d1MetricsP = offMain<D1Metrics>("d1_metrics_24h", (error) => ({
+      rows_read_24h: null, rows_written_24h: null, read_queries_24h: null, write_queries_24h: null,
+      monthly_rows_read_projection: null, pct_of_25b_plan_ceiling: null, setup_required: false, error,
+    }), () => fetchD1Metrics(env));
+    const d1AttributionP = offMain<Awaited<ReturnType<typeof fetchD1EndpointAttribution>>>("d1_attribution_24h", (error) => ({
+      by_endpoint: [], setup_required: false, error,
+    }), () => fetchD1EndpointAttribution(env));
     // Soft-cap state (Navigator skip tracking + thresholds) and the
     // per-query top-N from CF's d1QueriesAdaptiveGroups. Both fail
     // gracefully — diagnostics endpoint stays usable when CF GraphQL
     // is down or CF_API_TOKEN isn't configured.
-    const d1BudgetStateP = getBudgetDiagnostics(env);
-    const d1TopQueriesP = fetchD1TopQueries(env, 20, "reads");
+    const d1BudgetStateP = offMain<Awaited<ReturnType<typeof getBudgetDiagnostics>> | null>(
+      "d1_budget_state", null, () => getBudgetDiagnostics(env));
+    const d1TopQueriesP = offMain<Awaited<ReturnType<typeof fetchD1TopQueries>>>("d1_top_queries", (error) => ({ queries: [], error }),
+      () => fetchD1TopQueries(env, 20, "reads"));
     // Parallel write-spender view. Writes have their own included
     // quota on Workers Paid (50M/mo) so the operator needs a separate
     // top-N ordered by rowsWritten to attribute overage.
-    const d1TopWriteQueriesP = fetchD1TopQueries(env, 20, "writes");
+    const d1TopWriteQueriesP = offMain<Awaited<ReturnType<typeof fetchD1TopQueries>>>("d1_top_write_queries", (error) => ({ queries: [], error }),
+      () => fetchD1TopQueries(env, 20, "writes"));
     // PR-X: billing-cycle (18th-17th) reads summed across all D1 DBs
     // on the account. Replaces the rolling-24h × 30 projection in the
     // monthly meter — see lib/d1-budget.ts header for why.
-    const d1BillingCycleP = fetchBillingCycleMetrics(env);
+    const d1BillingCycleP = offMain<Awaited<ReturnType<typeof fetchBillingCycleMetrics>> | null>(
+      "d1_billing_cycle", null, () => fetchBillingCycleMetrics(env));
     // PR-AM: recent-window per-DB metrics (default 12h). Used to monitor
     // post-fix activity without waiting for cycle aggregates. The `hours`
     // query param on the endpoint controls the window — falls back to
     // 12h when missing.
-    const d1RecentP = fetchRecentWindowMetrics(env, hoursBack);
+    const d1RecentP = offMain<Awaited<ReturnType<typeof fetchRecentWindowMetrics>> | null>(
+      "d1_recent_window", null, () => fetchRecentWindowMetrics(env, hoursBack));
     // Per-hour account-wide rows read/written (unsampled, database-level)
     // + the matching per-job AE breakdown — the pair that attributes a
     // spike hour to a job. Window = `hours`, capped at 48.
     const hourlyWindow = clampHourlyWindow(hoursBack);
-    const d1HourlyP = fetchD1HourlyMetrics(env, hourlyWindow);
-    const d1HourlyAttributionP = fetchD1HourlyAttribution(env, hourlyWindow);
+    const d1HourlyP = offMain<Awaited<ReturnType<typeof fetchD1HourlyMetrics>>>("d1_hourly", (error) => ({
+      hours: [],
+      window_hours: hourlyWindow, setup_required: false, error,
+    }), () => fetchD1HourlyMetrics(env, hourlyWindow));
+    const d1HourlyAttributionP = offMain<Awaited<ReturnType<typeof fetchD1HourlyAttribution>>>("d1_attribution_hourly", (error) => ({
+      hours: [], setup_required: false, error,
+    }), () => fetchD1HourlyAttribution(env, hourlyWindow));
+    const cachedCountStatsP = offMain<Awaited<ReturnType<typeof getCachedCountStats>> | null>(
+      "cached_count", null, () => getCachedCountStats(env));
+    const nrdRetentionP = offMain<NrdRetentionDiag | null>("nrd_retention", null, () => buildNrdRetentionDiag(env));
+    // dnsQueueSizeP / domainGeoDrainableP (DNS_QUEUE_DB, above) are
+    // already running and already swallow their own errors.
 
     // ─── 9. Module entitlements (v3 Phase A) ────────────────────────
     // Per-module count of orgs in each status. With 7 modules and a
     // small number of orgs this is a tiny scan; revisit when org
     // count > 1000 (we'd materialize into a daily snapshot).
-    const moduleEntitlementsP = env.DB.prepare(`
+    const moduleEntitlementsT = soft("modules", noRows<{
+      module_key: string;
+      active_orgs: number;
+      trial_orgs: number;
+      suspended_orgs: number;
+    }>, async () => rows(await env.DB.prepare(`
       SELECT module_key,
         SUM(CASE WHEN status = 'active'    THEN 1 ELSE 0 END) AS active_orgs,
         SUM(CASE WHEN status = 'trial'     THEN 1 ELSE 0 END) AS trial_orgs,
@@ -2069,54 +2246,49 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       active_orgs: number;
       trial_orgs: number;
       suspended_orgs: number;
-    }>();
+    }>()));
 
     // Wave 3 signals — cloaking blind-spot rate (rec 4) + weaponization
     // velocity distribution (rec 5). Both cachedValue-wrapped inside their
-    // builders (KV-cached, bounded per TTL) so they don't re-scan on every
-    // diagnostics call — hit/miss feeds the same cached_count.hit_rate ring.
-    const pageAnalysisP = buildPageAnalysisDiag(env);
-    const velocityP = buildVelocityDiag(env);
-    const nrdRetentionP = buildNrdRetentionDiag(env);
-    const pausedAgentsP = fetchPausedAgentsSafe(env.DB);
+    // builders (KV-cached, single-flight, bounded per TTL) so they don't
+    // re-scan on every diagnostics call — hit/miss feeds the same
+    // cached_count.hit_rate ring. velocity's miss is a GROUP BY over all
+    // of threats, so it runs in the sequence like every other main read.
+    const pageAnalysisT = soft<PageAnalysisDiag | null>("page_analysis", null, () => buildPageAnalysisDiag(env));
+    const velocityT = soft<VelocityDiag | null>("velocity", null, () => buildVelocityDiag(env));
+    const pausedAgentsT = () => fetchPausedAgentsSafe(env.DB);
 
-    // ── Execute all in parallel ─────────────────────────────────────
+    // ── Main-DB reads, one at a time ────────────────────────────────
+    // Order: cheap live reads first, the cached full-scan sections last,
+    // so a cold-cache call front-loads the small windowed reads.
     const [
-      clock, enrichment, cartoQueue, cartoQueueRaw, cartoExhausted, cartoExhaustedByFeed, domainGeoDrainable,
-      geoCoverage,
+      clock,
       feedHealth, feedStatus, feedErrors,
-      agentMesh, workflowAgentMesh, stalled, backlog,
-      aiSpend, aiLedgerLast, aiCallHealth, cronHealth, totals, d1Metrics, d1Attribution,
-      d1BudgetState, d1TopQueries, d1TopWriteQueries, d1BillingCycle, d1Recent,
-      d1Hourly, d1HourlyAttribution,
-      cachedCountStats,
-      moduleEntitlements,
-      alertsByTier,
-      dnsQueueSize,
-      dnsCandidatesInThreats,
-      dnsQueueStability,
-      pageAnalysis,
-      velocity,
-      nrdRetention,
-      pausedAgents,
+      agentMesh, workflowAgentMesh, stalled, pausedAgents, cronHealth, backlog,
+      aiSpend, aiLedgerLast, aiCallHealth,
+      moduleEntitlements, geoCoverage, dnsQueueStability,
+      cartoQueue, cartoQueueRaw, cartoExhausted, cartoExhaustedByFeed,
+      enrichment, totals, alertsByTier, dnsCandidatesInThreats,
+      pageAnalysis, velocity,
+    ] = await runSequential([
+      clockT,
+      feedHealthT, feedStatusT, feedErrorsT,
+      agentMeshT, workflowAgentMeshT, stalledT, pausedAgentsT, cronHealthT, backlogT,
+      aiSpendT, aiLedgerLastT, aiCallHealthT,
+      moduleEntitlementsT, geoCoverageT, dnsQueueStabilityT,
+      cartoQueueT, cartoQueueRawT, cartoExhaustedT, cartoExhaustedByFeedT,
+      enrichmentT, totalsT, alertsByTierT, dnsCandidatesInThreatsT,
+      pageAnalysisT, velocityT,
+    ]);
+
+    const [
+      d1Metrics, d1Attribution, d1BudgetState, d1TopQueries, d1TopWriteQueries,
+      d1BillingCycle, d1Recent, d1Hourly, d1HourlyAttribution,
+      cachedCountStats, nrdRetention, dnsQueueSize, domainGeoDrainable,
     ] = await Promise.all([
-      clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
-      geoCoverageP,
-      feedHealthP, feedStatusP, feedErrorsP,
-      agentMeshP, workflowAgentMeshP, stalledP, backlogP,
-      aiSpendP, aiLedgerLastP, aiCallHealthP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
-      d1BudgetStateP, d1TopQueriesP, d1TopWriteQueriesP, d1BillingCycleP, d1RecentP,
-      d1HourlyP, d1HourlyAttributionP,
-      getCachedCountStats(env),
-      moduleEntitlementsP,
-      alertsByTierP,
-      dnsQueueSizeP,
-      dnsCandidatesInThreatsP,
-      dnsQueueStabilityP,
-      pageAnalysisP,
-      velocityP,
-      nrdRetentionP,
-      pausedAgentsP,
+      d1MetricsP, d1AttributionP, d1BudgetStateP, d1TopQueriesP, d1TopWriteQueriesP,
+      d1BillingCycleP, d1RecentP, d1HourlyP, d1HourlyAttributionP,
+      cachedCountStatsP, nrdRetentionP, dnsQueueSizeP, domainGeoDrainableP,
     ]);
 
     // Reconcile workflow-agent rollups into agent_mesh.per_agent shape.
@@ -2226,20 +2398,20 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       error: null,
     };
     try {
-      const [threatsIdx, outputsIdx, ledgerIdx, statusCube, explainPlan] = await Promise.all([
-        env.DB.prepare(
+      const [threatsIdx, outputsIdx, ledgerIdx, statusCube, explainPlan] = await runSequential([
+        () => env.DB.prepare(
           `SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='threats' ORDER BY name`
         ).all<IndexInfo>(),
-        env.DB.prepare(
+        () => env.DB.prepare(
           `SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='agent_outputs' ORDER BY name`
         ).all<IndexInfo>(),
-        env.DB.prepare(
+        () => env.DB.prepare(
           `SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='budget_ledger' ORDER BY name`
         ).all<IndexInfo>(),
-        env.DB.prepare(
+        () => env.DB.prepare(
           `SELECT name FROM sqlite_master WHERE type='table' AND name='threat_cube_status' LIMIT 1`
         ).first<{ name: string }>(),
-        env.DB.prepare(
+        () => env.DB.prepare(
           `EXPLAIN QUERY PLAN
            UPDATE threats SET last_seen = datetime('now')
            WHERE ip_address = ? AND source_feed = 'emerging_threats'`
@@ -2271,10 +2443,20 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
 
     // Recent platform_* notifications — operator-facing audit trail
     // of what FC + agents flagged as needing human attention.
-    const recentPlatformAlerts = await env.DB.prepare(
+    // `type LIKE 'platform_%'` alone can't seek (LIKE is case-insensitive),
+    // so it walked all of idx_notifications_dedup. `>= 'platform_' AND
+    // < 'platforma'` covers every 'platform_…' type ('a' sorts after '_')
+    // as a range on (type, group_key, created_at); the LIKE stays as the
+    // exact filter.
+    const recentPlatformAlerts = await soft("recent_platform_alerts", noRows<{
+      created_at: string; type: string; severity: string;
+      title: string; message: string; group_key: string | null;
+      occurrences: number;
+    }>, async () => rows(await env.DB.prepare(
       `SELECT MAX(created_at) AS created_at, type, severity, title, message, group_key, COUNT(*) AS occurrences
          FROM notifications
-        WHERE type LIKE 'platform_%'
+        WHERE type >= 'platform_' AND type < 'platforma'
+          AND type LIKE 'platform_%'
           AND created_at >= datetime('now', '-' || ? || ' hours')
         GROUP BY type, group_key
         ORDER BY created_at DESC
@@ -2283,7 +2465,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       created_at: string; type: string; severity: string;
       title: string; message: string; group_key: string | null;
       occurrences: number;
-    }>();
+    }>()))();
 
     // Briefing email status — exposes the threat_briefings table
     // state so operators can debug platform_briefing_silent alerts.
@@ -2445,7 +2627,12 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // (per-hour top AE `agent:` / `cron:` / `workflow:` endpoints from
           // lib/d1-meter.ts). `d1_attribution_24h` now weights by AE
           // `_sample_interval` and returns top 40 (was 20). No field removed.
-          endpoint_version: 16,
+          // 17: additive top-level `<section>_error` keys (fail-soft
+          // sections: a failed read keeps its section at an empty/zero/null
+          // fallback instead of 500-ing the endpoint). Main-DB reads run
+          // sequentially; enrichment_pipeline (10 min), platform_totals and
+          // alerts.by_tier (15 min) are KV-cached. No field removed.
+          endpoint_version: 17,
         },
 
         brand_count_drift: brandCountDrift,
@@ -2721,10 +2908,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // platform-diagnostics report. configured=false means the
         // operator hasn't provisioned the dedicated D1 yet (see
         // wrangler.toml runbook block).
-        geoip_db: await (async () => {
-          const { getGeoMmdbStatus } = await import('../lib/geoip-mmdb');
-          return getGeoMmdbStatus(env);
-        })(),
+        geoip_db: await soft<Awaited<ReturnType<typeof import('../lib/geoip-mmdb').getGeoMmdbStatus>> | null>(
+          "geoip_db", null, async () => {
+            const { getGeoMmdbStatus } = await import('../lib/geoip-mmdb');
+            return getGeoMmdbStatus(env);
+          })(),
 
         // FC tick phase timings — pulled from the most recent
         // flight_control diagnostic snapshot. Used to investigate
@@ -2813,6 +3001,12 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // budget_ledger plus EXPLAIN QUERY PLAN of the offending
         // UPDATE. Safe to leave in place — runs five small reads.
         index_health: indexHealth,
+
+        // `<section>_error` for every section whose read failed (endpoint
+        // version 17). The section itself is still present, at its empty /
+        // zero / null fallback, so one bad read no longer 500s the whole
+        // response. Absent keys = that section read cleanly.
+        ...sectionErrors,
       },
     }, 200, origin);
   } catch (err) {

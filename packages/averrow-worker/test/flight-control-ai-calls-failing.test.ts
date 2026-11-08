@@ -61,7 +61,7 @@ const DIAG_SRC = readSrc("../src/handlers/diagnostics.ts");
 // tested instead of silently dropping out of coverage.
 const LEDGER_SQL = sqlContaining(FC_SRC, ["SELECT MAX(created_at) AS last_at FROM budget_ledger"]);
 const FAILING_SQL = sqlContaining(FC_SRC, ["FROM agent_outputs", "HAVING", "$.aiCallsAttempted"]);
-const DIAG_AI_HEALTH_SQL = sqlContaining(DIAG_SRC, ["FROM agent_outputs", "$.aiCallsSkipped", "GROUP BY agent_id"]);
+const DIAG_AI_HEALTH_SQL = sqlContaining(DIAG_SRC, ["FROM agent_outputs", "$.aiCallsSkipped", "GROUP BY +agent_id"]);
 
 const TABLES = [...ANALYST_TABLES];
 

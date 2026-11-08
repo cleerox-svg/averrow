@@ -1758,6 +1758,15 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `d1_hourly` / `d1_attribution_hourly` | Spike-hour attribution (endpoint_version 16). `d1_hourly[]`: per-UTC-hour account-wide `rows_read` / `rows_written` across every D1 database (+ `per_database[]`), window = `hours` capped at 48. `d1_attribution_hourly.hours[]`: the same hours' top Analytics Engine endpoints from `lib/d1-meter.ts` — `agent:<id>` (every `executeAgent` run) + `agent:<id>:bg` (its waitUntil tail), `cron:<expr>` (scheduled invocation) + `cron:<expr>:bg` (its waitUntil tail), `workflow:<name>` (per step; not `geoip_refresh`, deliberately unmetered). Meter layers are exclusive — an agent dispatched by a cron invocation, by Flight Control or by a Workflow is counted only in its own `agent:` rows, so `cron:` / `workflow:` rows hold only non-agent work and all per-job rows are disjoint and can be summed; that hour's `d1_hourly.rows_read` minus the sum is unmetered traffic (HTTP handlers, the GeoIP import). The inline-vs-`:bg` split of one layer is by time, not by job. Metering needs the `AE` binding; it is a no-op without it. `d1_attribution_24h` (24h top 40, sample-interval-weighted) carries the same labels next to the per-handler ones. `d1_top_queries_24h` is SAMPLED per-query data — see `d1_top_queries_note`; confirm a rare query's frequency before acting on it. |
 | `_meta` | `db_clock_utc` (verify timezone), `window_hours`, `generated_at` |
 
+**Overload-safe (endpoint_version 17, 2026-11-08):** main-DB reads run one at a
+time, and a section whose read fails falls back to empty/zero/null and adds a
+top-level `<section>_error` key (e.g. `agent_mesh_error`) instead of a 500 —
+check for `*_error` keys before trusting a zero. Full-table sections are
+KV-cached with a single-flight refill: `enrichment_pipeline` 10 min (so
+`enriched_last_hour` can lag ~10 min), `platform_totals` and `alerts.by_tier`
+15 min, `cartographer_exhausted_by_feed` 5 min. Before v17 the endpoint itself
+fired ~40 concurrent reads and could trip D1's 10 s overload window on its own.
+
 This table is a curated subset for common health-check reading, not an
 exhaustive schema of the endpoint's response — several other blocks exist
 (`dns_queue_parity`, `dns_queue_stability`, `alerts.by_tier`, etc.); read
