@@ -476,7 +476,12 @@ export async function threatAggregate(
       .slice(0, 8);
 
     // Section names in the order their reads failed (`<section>_error` keys).
-    // The DB error text stays server-side — callers only get the names.
+    // Only the names are returned; the per-section error messages in
+    // `errors` are DISCARDED. There is no cheap sink for them today: the AE
+    // dataset (lib/analytics.ts) is the D1-attribution dataset whose
+    // diagnostics queries GROUP BY blob1 and SUM the doubles, so event
+    // points would surface as phantom endpoints, and console.log is banned
+    // in production paths. Reproduce a failure through the read itself.
     const degraded = Object.keys(errors).map((k) => k.replace(/_error$/, ''));
 
     return {
@@ -505,12 +510,18 @@ export async function threatAggregate(
     };
   }, {
     singleFlight,
+    // Never replace a complete entry (fresh or stale — unfiltered entries
+    // stay in KV up to 6h) with a degraded refill: return the older complete
+    // numbers and leave the entry as it is. A degraded body is written only
+    // when there is no complete entry to fall back to (cold key).
+    keepExistingWhen: (value) => (value.degraded_sections?.length ?? 0) > 0,
     // A degraded result is cached briefly so the failed reads are retried
     // soon. cachedValue backdates its stamp so it reads as expired after
     // THREAT_AGGREGATE_DEGRADED_TTL_S, and writes it with expirationTtl
     // 2× that (120s): single-flight's stale serving (which reuses any entry
     // still in KV) can therefore show a degraded body for at most ~120s,
-    // never the 6h a normal unfiltered entry lives.
+    // never the 6h a normal unfiltered entry lives. (With keepExistingWhen
+    // this only applies when no complete entry exists.)
     ttlFor: (value) => (value.degraded_sections?.length
       ? THREAT_AGGREGATE_DEGRADED_TTL_S
       : ttl),

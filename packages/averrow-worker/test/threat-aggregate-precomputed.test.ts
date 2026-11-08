@@ -257,4 +257,34 @@ describe.skipIf(!hasSqlite())("threatAggregate fail-soft sections", () => {
     const key = [...ttls.keys()].find((k) => k.startsWith("cv:threat-agg:"))!;
     expect(ttls.get(key)).toBe(THREAT_AGGREGATE_DEGRADED_TTL_S * 2);
   });
+  for (const [label, filters] of [["unfiltered (single-flight)", {}], ["filtered (plain miss)", { status: "active" }]] as const) {
+    it(`${label}: a degraded refill keeps a stale complete entry and backs off the next refill`, async () => {
+      const kv = fakeKv();
+      const env = { DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env;
+      const good = await threatAggregate(env, { ...filters });
+      expect(good.degraded_sections).toBeUndefined();
+      const key = [...kv.store.keys()].find((k) => k.startsWith("cv:threat-agg:"))!;
+      // Age the complete entry past its TTL (still in KV: entries live 2× TTL).
+      const entry = JSON.parse(kv.store.get(key)!) as { v: unknown; t: number };
+      const ttl = label.startsWith("unfiltered") ? THREAT_AGGREGATE_UNFILTERED_TTL_S : 1800;
+      const staleRaw = JSON.stringify({ ...entry, t: Date.now() - (ttl + 60) * 1000 });
+      kv.store.set(key, staleRaw);
+
+      const agg = await threatAggregate(env, { ...filters }, null, failingDb(/GROUP BY t\.severity/));
+      expect(agg).toEqual(good);                       // older complete numbers served
+      expect(agg.degraded_sections).toBeUndefined();
+      // Same complete value, re-stamped fresh for the degraded TTL (back-off),
+      // original write time kept so the entry's lifetime stays bounded.
+      const kept = JSON.parse(kv.store.get(key)!) as { v: unknown; t: number; w?: number };
+      expect(kept.v).toEqual(entry.v);
+      expect(kept.w).toBe(JSON.parse(staleRaw).t);
+      expect([...kv.store.keys()].some((k) => k.startsWith("cvlock:"))).toBe(false); // lock released
+
+      // Within the back-off window the kept entry is served without a refill,
+      // even while the DB is still failing.
+      const during = await threatAggregate(env, { ...filters }, null, failingDb(/GROUP BY t\.severity/));
+      expect(during).toEqual(good);
+      expect(JSON.parse(kv.store.get(key)!).t).toBe(kept.t);
+    });
+  }
 });

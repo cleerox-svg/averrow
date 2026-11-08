@@ -257,4 +257,92 @@ describe("cachedValue", () => {
       expect(v).toEqual({ ok: true });
     });
   });
+  describe("keepExistingWhen (never overwrite a good entry with a bad refill)", () => {
+    const SF = { lockTtlSeconds: 120, waitMs: 400, pollMs: 10 };
+    const bad = (v: { degraded?: boolean }) => v.degraded === true;
+    const put = (key: string, v: unknown, ageMs: number) => {
+      const raw = JSON.stringify({ v, t: Date.now() - ageMs });
+      kv.store.set(`cv:${key}`, raw);
+      return raw;
+    };
+
+    for (const sf of [undefined, SF]) {
+      const path = sf ? "single-flight lock holder" : "plain miss";
+      it(`${path}: degraded refill over a stale good entry returns it and writes nothing`, async () => {
+        const before = put("test.keep", { n: "good" }, 120_000);
+        const compute = vi.fn().mockResolvedValue({ n: "partial", degraded: true });
+        const v = await cachedValue(env, "test.keep", 60, compute, { keepExistingWhen: bad, singleFlight: sf });
+        expect(v).toEqual({ n: "good" });
+        expect(compute).toHaveBeenCalledOnce();
+        expect(kv.store.get("cv:test.keep")).toBe(before);
+        expect(kv.store.has("cvlock:test.keep")).toBe(false);
+      });
+
+      it(`${path}: cold key writes the degraded value`, async () => {
+        const compute = vi.fn().mockResolvedValue({ n: "partial", degraded: true });
+        const v = await cachedValue(env, "test.cold.keep", 60, compute, { keepExistingWhen: bad, singleFlight: sf });
+        expect(v).toEqual({ n: "partial", degraded: true });
+        expect(JSON.parse(kv.store.get("cv:test.cold.keep")!).v).toEqual({ n: "partial", degraded: true });
+      });
+
+      it(`${path}: an existing entry that is itself degraded is replaced`, async () => {
+        put("test.bad.old", { n: "old-partial", degraded: true }, 120_000);
+        const compute = vi.fn().mockResolvedValue({ n: "new-partial", degraded: true });
+        const v = await cachedValue(env, "test.bad.old", 60, compute, { keepExistingWhen: bad, singleFlight: sf });
+        expect(v).toEqual({ n: "new-partial", degraded: true });
+        expect(JSON.parse(kv.store.get("cv:test.bad.old")!).v).toEqual({ n: "new-partial", degraded: true });
+      });
+
+      it(`${path}: a good refill still replaces a stale good entry`, async () => {
+        put("test.good.refill", { n: "old" }, 120_000);
+        const compute = vi.fn().mockResolvedValue({ n: "new" });
+        const v = await cachedValue(env, "test.good.refill", 60, compute, { keepExistingWhen: bad, singleFlight: sf });
+        expect(v).toEqual({ n: "new" });
+        expect(JSON.parse(kv.store.get("cv:test.good.refill")!).v).toEqual({ n: "new" });
+      });
+    }
+
+    it("lock holder uses its re-read: a good entry that landed after the first read is kept", async () => {
+      // First read sees no entry; another refill lands between it and the lock.
+      const origPut = kv.put.bind(kv);
+      let landed: string | undefined;
+      kv.put = async (k: string, v: string) => {
+        await origPut(k, v);
+        if (k === "cvlock:test.landed") {
+          landed = JSON.stringify({ v: { n: "landed-good" }, t: Date.now() - 120_000 });
+          kv.store.set("cv:test.landed", landed);
+        }
+      };
+      const compute = vi.fn().mockResolvedValue({ n: "partial", degraded: true });
+      const v = await cachedValue(env, "test.landed", 60, compute, { keepExistingWhen: bad, singleFlight: SF });
+      expect(v).toEqual({ n: "landed-good" });
+      expect(kv.store.get("cv:test.landed")).toBe(landed);
+      expect(kv.store.has("cvlock:test.landed")).toBe(false);
+    });
+
+    it("with ttlFor: a kept entry is re-stamped fresh for the back-off, original write time preserved", async () => {
+      const before = put("test.backoff", { n: "good" }, 70_000); // ttl 60 → expired, 50s KV life left of 120
+      const compute = vi.fn().mockResolvedValue({ n: "partial", degraded: true });
+      // remaining = 120 - 70 = 50s < 60 → no re-stamp (would outlive the original entry)
+      await cachedValue(env, "test.backoff", 60, compute, { keepExistingWhen: bad, ttlFor: (v) => (bad(v) ? 10 : 60) });
+      expect(kv.store.get("cv:test.backoff")).toBe(before);
+
+      // Long-TTL entry with plenty of KV life: re-stamped.
+      const longRaw = JSON.stringify({ v: { n: "good" }, t: Date.now() - 400_000 });
+      kv.store.set("cv:test.long", longRaw);
+      const v = await cachedValue(env, "test.long", 300, compute, { keepExistingWhen: bad, ttlFor: (x) => (bad(x) ? 10 : 300) });
+      expect(v).toEqual({ n: "good" });
+      const kept = JSON.parse(kv.store.get("cv:test.long")!) as { v: unknown; t: number; w: number };
+      expect(kept.v).toEqual({ n: "good" });
+      expect(kept.w).toBe(JSON.parse(longRaw).t);
+      // Fresh for 10s: stamp = now - (300 - 10)s.
+      expect(Date.now() - kept.t).toBeLessThan(291_000);
+      expect(Date.now() - kept.t).toBeGreaterThanOrEqual(289_000);
+      // A second back-off keeps the ORIGINAL write time.
+      vi.spyOn(Date, "now").mockReturnValue(Date.now() + 11_000);
+      await cachedValue(env, "test.long", 300, compute, { keepExistingWhen: bad, ttlFor: (x) => (bad(x) ? 10 : 300) });
+      expect(JSON.parse(kv.store.get("cv:test.long")!).w).toBe(JSON.parse(longRaw).t);
+      vi.restoreAllMocks();
+    });
+  });
 });
