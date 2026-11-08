@@ -1,0 +1,94 @@
+/* Tenant Workspace overview (Facelift Phase 6 screen 4).
+
+   Every rule here is scoped to `:root[data-accent] .tenant-home`. FACELIFT sets
+   data-accent, so FACELIFT=false (the legacy look) never matches and keeps the
+   pre-facelift rendering. Colour comes from tokens only; type sizes come from the
+   --type-* scale in the TSX (text-type-*). This file holds what utilities cannot:
+   hover and focus states, the flat-surface reset and the touch-target floor. */
+
+/* Flat cards share the page card surface (the kit default is the sunken deep tone). */
+:root[data-accent] .tenant-home {
+  --card-flat-bg: var(--bg-card);
+}
+
+/* Links in running text and standalone links. Hover underlines (no colour change
+   that could drop below AA); keyboard focus gets the shared ring. */
+:root[data-accent] .tenant-home .th-link {
+  color: var(--primary-text);
+  text-decoration: none;
+  border-radius: 4px;
+}
+:root[data-accent] .tenant-home .th-link:hover {
+  text-decoration: underline;
+}
+:root[data-accent] .tenant-home .th-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+:root[data-accent][data-theme="light"] .tenant-home .th-link:focus-visible {
+  outline-color: var(--text-primary);
+}
+
+/* Module cards: a whole-card link. Hover darkens the surface and strengthens the
+   border; the ring is the shared focus colour (text-primary on light, where the
+   indigo ring is too faint against white). */
+:root[data-accent] .tenant-home .th-module {
+  display: block;
+  padding: 16px;
+  color: inherit;
+  text-decoration: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border-base);
+  border-radius: var(--card-radius);
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+              border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+:root[data-accent] .tenant-home .th-module:hover {
+  background: var(--bg-page);
+  border-color: var(--border-strong);
+}
+:root[data-accent][data-theme="light"] .tenant-home .th-module:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+:root[data-accent] .tenant-home .th-module:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+:root[data-accent][data-theme="light"] .tenant-home .th-module:focus-visible {
+  outline-color: var(--text-primary);
+}
+/* Locked modules read as available-to-add: quieter surface, same affordance. */
+:root[data-accent] .tenant-home .th-module--locked {
+  background: transparent;
+}
+
+/* Brand table rows: token hover that darkens. */
+:root[data-accent] .tenant-home .th-row:hover {
+  background: var(--bg-page);
+}
+:root[data-accent][data-theme="light"] .tenant-home .th-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+/* The authorization CTA is a link styled as a kit Button; keep it from underlining. */
+:root[data-accent] .tenant-home .ds-banner-actions a {
+  text-decoration: none;
+}
+
+/* Touch: every standalone link and the CTA reach 44px. */
+@media (pointer: coarse) {
+  :root[data-accent] .tenant-home .th-tap {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  :root[data-accent] .tenant-home .ds-banner-actions a {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-accent] .tenant-home .th-module {
+    transition: none;
+  }
+}
