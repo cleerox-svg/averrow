@@ -81,6 +81,50 @@ describe('Threats aggregate panels — failure is never empty or zero', () => {
   });
 });
 
+describe('Threats aggregate — degraded sections (fail-soft 200)', () => {
+  beforeEach(() => { stubMatchMedia(true); vi.clearAllMocks(); });
+
+  it('degraded multi_brand: Coordination shows the error, hero tiles still render', async () => {
+    const refetch = vi.fn();
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['multi_brand'] }, isError: false, refetch });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load multi-brand patterns")).toBeInTheDocument();
+    expect(screen.queryByText(/No multi-brand patterns/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load")).not.toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument(); // Active tile
+    expect(screen.getByText(/multi-brand unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/No surging signals/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: "Try again: Couldn't load multi-brand patterns" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('degraded headline: hero tiles show the error, not zeros, and the slice strip is hidden', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, total: 0, active: 0, degraded_sections: ['headline'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getAllByText("Couldn't load")).toHaveLength(4);
+    expect(screen.queryByText('0%')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Across catalog/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/in slice/)).not.toBeInTheDocument();
+  });
+
+  it('degraded attribution: only the Correlated tile fails', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['attribution'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getAllByText("Couldn't load")).toHaveLength(1);
+  });
+
+  it('degraded top_brands: only that leaderboard errors; all four degraded collapses to one panel error', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['top_brands'] }, isError: false, refetch: vi.fn() });
+    const { unmount } = renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load top brands")).toBeInTheDocument();
+    expect(screen.getByText('Top actors')).toBeInTheDocument();
+    unmount();
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['top_brands', 'top_providers', 'top_actors', 'top_countries'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load leaderboards")).toBeInTheDocument();
+  });
+});
+
 describe('Threats deep links seed the table filters (Observatory "Open in Threats")', () => {
   beforeEach(() => { stubMatchMedia(true); vi.clearAllMocks(); tableInitial.calls.length = 0; });
   afterEach(() => { window.history.pushState({}, '', '/'); });

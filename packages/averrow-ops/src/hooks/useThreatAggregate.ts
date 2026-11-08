@@ -48,6 +48,9 @@ export interface ThreatAggregate {
   top_providers: Array<{ provider_id: string; name: string; asn: string | null; count: number }>;
   top_actors:    Array<{ actor_id: string; actor_name: string; count: number }>;
   top_campaigns: Array<{ campaign_id: string; name: string; threat_count: number; brand_count: number; status: string }>;
+  /** Sections whose D1 read failed server-side (fail-soft 200). Their fields are
+   *  empty placeholders, NOT real zeros — render an error, never an empty state. */
+  degraded_sections?: string[];
 }
 
 function toQuery(filters: ThreatAggregateFilters): string {
