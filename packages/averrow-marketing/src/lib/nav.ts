@@ -31,7 +31,7 @@ export const NAV_LINKS: NavLink[] = [
     children: [
       { href: "/platform", label: "Platform overview", desc: "Everything Averrow watches, in one place" },
       { href: "/platform/lookalike-domains", label: "Lookalike domains", desc: "Know when someone registers your name" },
-      { href: "/platform/impersonation", label: "Impersonation", desc: "Fake profiles and executive impersonation" },
+      { href: "/platform/impersonation", label: "Impersonation", desc: "Impersonation accounts and executive impersonation" },
       { href: "/platform/threat-detection", label: "Threat detection", desc: "Domains, certificates, feeds" },
       { href: "/platform/email-security", label: "Email security", desc: "SPF, DKIM and DMARC posture" },
       { href: "/platform/takedowns", label: "Takedowns", desc: "You set the rules, we do the filing" },
@@ -45,7 +45,7 @@ export const NAV_LINKS: NavLink[] = [
     children: [
       { href: "/solutions", label: "All solutions", desc: "Start from your role" },
       { href: "/solutions/security-teams", label: "Security teams", desc: "Phishing, lookalikes and certificates, into your SIEM" },
-      { href: "/solutions/brand-and-legal", label: "Brand and legal", desc: "Fake profiles, copycat apps, executives, trademark" },
+      { href: "/solutions/brand-and-legal", label: "Brand and legal", desc: "Impersonation accounts, copycat apps, executives, trademark" },
       { href: "/solutions/fraud-and-customer-trust", label: "Fraud and customer trust", desc: "Reported phishing and phishing-site takedowns" },
       { href: "/solutions/teams-without-a-soc", label: "Teams without a SOC", desc: "Automated triage, plus our analysts on your alerts" },
       { href: "/solutions/mssp", label: "MSSPs and partners", desc: "One organisation per client, events into your SIEM" },
