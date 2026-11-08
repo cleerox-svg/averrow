@@ -331,6 +331,8 @@
      Devices & App never matches the violet primary on Profile. */
   --tile-violet:      var(--violet);
   --tile-violet-text: var(--violet-text);
+  /* IconTile's cyan tone (Appearance); Lime light repoints it (appearance.css). */
+  --tile-cyan:        var(--cyan-text);
   --tile-tint-pct: 16%;
   --focus-ring:    var(--amber);
   --scrim:         rgba(4, 7, 14, 0.62);

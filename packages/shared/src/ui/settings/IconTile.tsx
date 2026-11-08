@@ -24,7 +24,8 @@ export const ICON_TILE_TONES: Record<IconTileTone, { tint: string; glyph: string
   violet:  { tint: 'var(--tile-violet)',    glyph: 'var(--tile-violet-text)' },
   // Appearance's own tone (no other settings section uses it). --cyan-text is
   // the theme-aware AA cyan; the reserved --thrust / --orbital-teal stay unused.
-  cyan:    { tint: 'var(--cyan-text)',      glyph: 'var(--cyan-text)' },
+  // --tile-cyan = --cyan-text, except Lime light (indigo, away from emerald --green).
+  cyan:    { tint: 'var(--tile-cyan)',      glyph: 'var(--tile-cyan)' },
   red:     { tint: 'var(--red)',            glyph: 'var(--sev-critical-text)' },
   neutral: { tint: 'var(--text-secondary)', glyph: 'var(--text-secondary)' },
 };

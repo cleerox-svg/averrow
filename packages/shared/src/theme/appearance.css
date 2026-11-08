@@ -341,8 +341,8 @@
   --green-text: #74ce99;
   --green-glow: rgba(60, 184, 120, 0.2);
   --tag-nexus: #f0abfc;
-  --tile-violet: #fb7185;
-  --tile-violet-text: #fda4af;
+  --tile-violet: #f472b6;
+  --tile-violet-text: #f9a8d4;
   --primary-border: rgba(143, 67, 248, 0.38);
   --primary-tint-strong: rgba(143, 67, 248, 0.22);
   --selection-bg: rgba(143, 67, 248, 0.32);
@@ -488,8 +488,8 @@
   --green-text: #006339;
   --green-glow: rgba(60, 184, 120, 0.2);
   --tag-nexus: #be185d;
-  --tile-violet: #e11d48;
-  --tile-violet-text: #be123c;
+  --tile-violet: #db2777;
+  --tile-violet-text: #be185d;
   --primary-border: rgba(126, 42, 227, 0.38);
   --primary-tint-strong: rgba(126, 42, 227, 0.22);
   --selection-bg: rgba(126, 42, 227, 0.22);
@@ -907,6 +907,7 @@
   --green: #047857;
   --green-text: #047857;
   --green-glow: rgba(4, 120, 87, 0.2);
+  --tile-cyan: #4f46e5;
   --chart-2: #b620b6;
   --chart-3: #2a8b18;
   --chart-4: #c91d7e;

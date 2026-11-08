@@ -176,7 +176,7 @@ function IntelTab({ canReview, onViewProspects }: { canReview: boolean; onViewPr
         <PressureLeaderboard
           title="Lookalikes"
           rows={pressureAgg?.top_lookalikes}
-          accent="#E5A832"
+          accent="var(--primary)"
           subtitle="Active typosquats"
           status={pressureS}
         />
@@ -1142,7 +1142,7 @@ function PressureLeaderboard({ title, rows, accent, subtitle, status }: {
               <div style={{
                 position: 'absolute', left: 0, top: 0, bottom: 0,
                 width: `${barW}%`,
-                background: `linear-gradient(90deg, ${accent}1a, transparent)`,
+                background: `linear-gradient(90deg, color-mix(in srgb, ${accent} 10%, transparent), transparent)`,
               }} />
               <div className="relative flex items-center gap-2">
                 <BrandFavicon name={b.brand_name} domain={b.canonical_domain} logoUrl={b.logo_url} size={20} />

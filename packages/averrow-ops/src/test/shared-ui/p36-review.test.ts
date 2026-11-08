@@ -67,7 +67,7 @@ describe('settings tiles + role badge', () => {
   describe.each(['indigo', 'violet', 'mono', 'lime'] as const)('section tile tints under %s', (accent) => {
     const appearance = cssBlocks(read('shared/src/theme/appearance.css'));
     const tokens = read('shared/src/theme/tokens.css');
-    it.each(['dark', 'light'] as const)('%s: Profile and Devices tints differ from every other section tint', (mode) => {
+    it.each(['dark', 'light'] as const)('%s: every section tint differs from every other and from the alert reds', (mode) => {
       const scopes = mode === 'dark'
         ? [`:root[data-accent="${accent}"]:not([data-base="navy"]):not([data-theme="light"])`, `:root[data-accent="${accent}"]:not([data-theme="light"])`, ':root[data-accent]:not([data-theme="light"])']
         : [`:root[data-accent="${accent}"][data-theme="light"]`, ':root[data-accent][data-theme="light"]'];
@@ -88,13 +88,18 @@ describe('settings tiles + role badge', () => {
       };
       const tints = getAccountSections().map((s) => ({ id: s.id, hex: resolveColor(ICON_TILE_TONES[s.tone ?? 'neutral'].tint) }));
       for (const t of tints) expect(t.hex, t.id).toMatch(/^#[0-9a-f]{6}$/i);
-      // Profile (the accent-following tile) and Devices (the tile that met it)
-      // against every other section tile.
+      // Every pair of section tiles is visibly different ...
       for (let i = 0; i < tints.length; i++) {
         for (let j = i + 1; j < tints.length; j++) {
-          if (![tints[i]!.id, tints[j]!.id].some((id) => id === 'profile' || id === 'devices')) continue;
           const d = rgbDistance(tints[i]!.hex, tints[j]!.hex);
           expect(d, `${tints[i]!.id} vs ${tints[j]!.id}: ${tints[i]!.hex} / ${tints[j]!.hex}`).toBeGreaterThanOrEqual(60);
+        }
+      }
+      // ... and none reads as the critical / alert red.
+      for (const name of ['--sev-critical', '--red']) {
+        const red = resolveColor(`var(${name})`);
+        for (const t of tints) {
+          expect(rgbDistance(t.hex, red), `${t.id} vs ${name}: ${t.hex} / ${red}`).toBeGreaterThanOrEqual(60);
         }
       }
     });

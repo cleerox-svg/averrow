@@ -186,12 +186,13 @@ const OVERRIDES = {
     // Pink NEXUS tag: not teal (cyan-text/healthy/orbital-teal) and clearly not
     // the violet primary.
     // The violet IconTile tone (Devices & App) would match the violet primary
-    // (Profile), so it moves to rose under this accent.
+    // (Profile), so it moves to pink under this accent (not rose: that reads
+    // as critical red).
     dark: {
       '--tag-nexus': '#f0abfc', '--primary-hover': '#8338ec', '--primary-pressed': '#7020d6',
-      '--tile-violet': '#fb7185', '--tile-violet-text': '#fda4af',
+      '--tile-violet': '#f472b6', '--tile-violet-text': '#f9a8d4',
     },
-    light: { '--tag-nexus': '#be185d', '--tile-violet': '#e11d48', '--tile-violet-text': '#be123c' },
+    light: { '--tag-nexus': '#be185d', '--tile-violet': '#db2777', '--tile-violet-text': '#be185d' },
   },
   mono: {
     // Mono's primary is a neutral, so chart series 1 cannot follow it and five
@@ -212,6 +213,9 @@ const OVERRIDES = {
     light: {
       // Accent-as-text moves to the near-black olive (palette #3c6200 read as
       // the same family as the emerald healthy green).
+      // The cyan IconTile tone (Appearance) reads as the emerald --green
+      // (Security) on white: indigo here.
+      '--tile-cyan': '#4f46e5',
       '--primary-text': '#2a3a12', '--focus-ring': '#2a3a12', '--text-accent': '#2a3a12',
       '--accent': '#2a3a12', '--accent-section': '#2a3a12',
       // Chart: the olive primary (84) and emerald healthy (163) leave no room

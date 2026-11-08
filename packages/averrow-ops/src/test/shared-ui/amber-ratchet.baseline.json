@@ -2,7 +2,7 @@
   "averrow-ops": {
     "var(--amber)": 18,
     "var(--amber-text)": 26,
-    "#e5a832": 21,
+    "#e5a832": 19,
     "rgba(229, 168, 50": 34,
     "tailwind (text|bg|border|ring)-amber": 22
   },

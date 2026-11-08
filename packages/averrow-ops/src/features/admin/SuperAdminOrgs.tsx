@@ -661,11 +661,11 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
                 <Input
                   value={form[key] ?? ''}
                   onChange={(e) => set(key, e.target.value)}
-                  placeholder="#4C5CF8"
+                  placeholder="#E5A832"
                   className="w-full font-mono"
                 />
               </div>
-              <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1">Hex like #4C5CF8; blank = default.</p>
+              <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1">Hex like #E5A832; blank = default.</p>
             </div>
           ))}
         </div>
