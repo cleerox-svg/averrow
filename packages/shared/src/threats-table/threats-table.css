@@ -17,7 +17,7 @@
   background: rgba(255,255,255,0.03); color: var(--text-primary);
   border: 1px solid var(--border-base); border-radius: 8px;
   padding: 6px 10px; font-size: 12px; font-family: var(--font-mono);
-  color-scheme: dark; outline: none;
+  color-scheme: dark; outline: none; /* legacy look: border-color is the only focus cue; the 2px :focus-visible outline is added under [data-accent] below */
 }
 .tt-select:focus, .tt-search:focus { border-color: var(--focus-ring); }
 .tt-search { padding-left: 28px; width: 200px; }
@@ -137,6 +137,7 @@ button.tt-link { background: none; border: 0; padding: 0; font: inherit; cursor:
   font-family: var(--font-sans); font-size: var(--type-body-size, 14px); line-height: var(--type-body-lh, 21px);
 }
 :root[data-accent] .tt-select:hover, :root[data-accent] .tt-search:hover { border-color: var(--border-strong); }
+:root[data-accent] .tt-search::placeholder { color: var(--text-tertiary); opacity: 1; }
 :root[data-accent] .tt-search-icon { font-size: var(--type-label-size, 12px); }
 
 :root[data-accent] .tt-chip {

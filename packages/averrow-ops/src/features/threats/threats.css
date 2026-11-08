@@ -1,11 +1,11 @@
 /* Threats tab of the ops Console (Phase 6 screen 3b). Scoped under `.threats-v4`.
    Same rules as home.css: sentence-case sans labels at the --type-label-* scale,
    tabular numbers, token hover/focus, no glows. The flat Card variant is chosen in TS
-   (threatsCard.ts) only under the facelift; the surface token below only applies under
-   [data-accent], so FACELIFT=false keeps the legacy glass card. */
+   (threatsCard.ts) only under the facelift. Every rule here sits under `:root[data-accent]`
+   (the facelift appearance attribute), so FACELIFT=false keeps the legacy look. */
 :root[data-accent] .threats-v4 { --card-flat-bg: var(--bg-card); }
 
-.threats-v4 .thr-label {
+:root[data-accent] .threats-v4 .thr-label {
   margin: 0;
   font-family: var(--font-sans);
   font-size: var(--type-label-size, 12px);
@@ -15,11 +15,11 @@
   text-transform: none;
   color: var(--text-tertiary);
 }
-.threats-v4 .thr-num { font-variant-numeric: tabular-nums; }
-.threats-v4 .thr-label--secondary { color: var(--text-secondary); }
+:root[data-accent] .threats-v4 .thr-num { font-variant-numeric: tabular-nums; }
+:root[data-accent] .threats-v4 .thr-label--secondary { color: var(--text-secondary); }
 
 /* Panel titles (PanelHeader). */
-.threats-v4 .thr-panel-title {
+:root[data-accent] .threats-v4 .thr-panel-title {
   margin: 0;
   font-family: var(--font-sans);
   font-size: var(--type-h2-size, 18px);
@@ -29,88 +29,88 @@
   text-transform: none;
   color: var(--text-primary);
 }
-.threats-v4 .thr-panel-rule { margin-top: 4px; height: 1px; background: var(--border-base); }
+:root[data-accent] .threats-v4 .thr-panel-rule { margin-top: 4px; height: 1px; background: var(--border-base); }
 
 /* Slice summary strip. */
-.threats-v4 .thr-strip {
+:root[data-accent] .threats-v4 .thr-strip {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px;
   padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-base);
   background: var(--bg-input);
 }
-.threats-v4 .thr-strip[data-filtered="true"] { background: var(--primary-tint); }
+:root[data-accent] .threats-v4 .thr-strip[data-filtered="true"] { background: var(--primary-tint); }
 
 /* Hero tiles. */
-.threats-v4 .thr-hero-value {
+:root[data-accent] .threats-v4 .thr-hero-value {
   font-size: var(--type-display-size, 30px); line-height: var(--type-display-lh, 1.1);
   font-weight: var(--type-display-weight, 600); letter-spacing: var(--type-display-tracking, -0.03em);
   font-variant-numeric: tabular-nums;
 }
 
 /* Interactive list rows (buttons / links when clickable): token hover + focus. */
-.threats-v4 .thr-row {
+:root[data-accent] .threats-v4 .thr-row {
   display: block; width: 100%; box-sizing: border-box; text-align: left;
   font: inherit; color: inherit; border-radius: 6px; padding: 8px 10px;
   background: transparent; border: 1px solid transparent; position: relative; overflow: hidden;
   transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease),
               border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
 }
-.threats-v4 .thr-row[data-bordered="true"] { border-color: var(--border-base); }
-.threats-v4 .thr-row[data-tight="true"] { padding: 6px 8px; }
-.threats-v4 button.thr-row, .threats-v4 a.thr-row { cursor: pointer; text-decoration: none; }
-.threats-v4 button.thr-row:hover, .threats-v4 a.thr-row:hover { background: var(--bg-page); }
-:root[data-theme="light"] .threats-v4 button.thr-row:hover,
-:root[data-theme="light"] .threats-v4 a.thr-row:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
-.threats-v4 button.thr-row:focus-visible, .threats-v4 a.thr-row:focus-visible,
-.threats-v4 .thr-toggle:focus-visible, .threats-v4 .thr-more:focus-visible {
+:root[data-accent] .threats-v4 .thr-row[data-bordered="true"] { border-color: var(--border-base); }
+:root[data-accent] .threats-v4 .thr-row[data-tight="true"] { padding: 6px 8px; }
+:root[data-accent] .threats-v4 button.thr-row, :root[data-accent] .threats-v4 a.thr-row { cursor: pointer; text-decoration: none; }
+:root[data-accent] .threats-v4 button.thr-row:hover, :root[data-accent] .threats-v4 a.thr-row:hover { background: var(--bg-page); }
+:root[data-accent][data-theme="light"] .threats-v4 button.thr-row:hover,
+:root[data-accent][data-theme="light"] .threats-v4 a.thr-row:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+:root[data-accent] .threats-v4 button.thr-row:focus-visible, :root[data-accent] .threats-v4 a.thr-row:focus-visible,
+:root[data-accent] .threats-v4 .thr-toggle:focus-visible, :root[data-accent] .threats-v4 .thr-more:focus-visible {
   outline: 2px solid var(--focus-ring); outline-offset: 2px;
 }
-:root[data-theme="light"] .threats-v4 button.thr-row:focus-visible,
-:root[data-theme="light"] .threats-v4 a.thr-row:focus-visible,
-:root[data-theme="light"] .threats-v4 .thr-toggle:focus-visible,
-:root[data-theme="light"] .threats-v4 .thr-more:focus-visible { outline-color: var(--text-primary); }
-.threats-v4 .thr-bar { position: absolute; left: 0; top: 0; bottom: 0; pointer-events: none; }
+:root[data-accent][data-theme="light"] .threats-v4 button.thr-row:focus-visible,
+:root[data-accent][data-theme="light"] .threats-v4 a.thr-row:focus-visible,
+:root[data-accent][data-theme="light"] .threats-v4 .thr-toggle:focus-visible,
+:root[data-accent][data-theme="light"] .threats-v4 .thr-more:focus-visible { outline-color: var(--text-primary); }
+:root[data-accent] .threats-v4 .thr-bar { position: absolute; left: 0; top: 0; bottom: 0; pointer-events: none; }
 
 /* Corroboration toggle + show-all. */
-.threats-v4 .thr-toggle, .threats-v4 .thr-more {
+:root[data-accent] .threats-v4 .thr-toggle, :root[data-accent] .threats-v4 .thr-more {
   background: none; border: 0; cursor: pointer; padding: 0; text-align: left;
   font-family: var(--font-sans); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
   font-weight: var(--type-label-weight, 500); letter-spacing: var(--type-label-tracking, 0.01em);
   text-transform: none;
 }
-.threats-v4 .thr-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-secondary); }
-.threats-v4 .thr-more { margin-top: 8px; padding: 6px 0; color: var(--primary-text); }
-.threats-v4 .thr-toggle-chevron { transition: transform var(--motion-fast, 120ms) var(--ease-standard, ease); }
+:root[data-accent] .threats-v4 .thr-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-secondary); }
+:root[data-accent] .threats-v4 .thr-more { margin-top: 8px; padding: 6px 0; color: var(--primary-text); }
+:root[data-accent] .threats-v4 .thr-toggle-chevron { transition: transform var(--motion-fast, 120ms) var(--ease-standard, ease); }
 
 /* Triage row inside the table's evidence detail. */
-.threats-v4 .thr-actions { margin-top: 14px; display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
-.threats-v4 .thr-triage { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+:root[data-accent] .threats-v4 .thr-actions { margin-top: 14px; display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+:root[data-accent] .threats-v4 .thr-triage { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 /* Inflow chart window toggle + legend. */
-.threats-v4 .thr-seg {
+:root[data-accent] .threats-v4 .thr-seg {
   display: inline-flex; align-self: flex-start; flex-shrink: 0; padding: 2px; border-radius: 8px;
   background: var(--bg-page); border: 1px solid var(--border-base);
 }
-.threats-v4 .thr-seg button {
+:root[data-accent] .threats-v4 .thr-seg button {
   font-family: var(--font-sans); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
   font-weight: 600; padding: 6px 12px; border: 0; border-radius: 6px; cursor: pointer;
   color: var(--text-secondary); background: transparent;
   transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease),
               color var(--motion-fast, 120ms) var(--ease-standard, ease);
 }
-.threats-v4 .thr-seg button:hover { color: var(--text-primary); }
-.threats-v4 .thr-seg button[aria-selected="true"] { background: var(--primary); color: var(--primary-ink); }
-.threats-v4 .thr-seg button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-:root[data-theme="light"] .threats-v4 .thr-seg button:focus-visible { outline-color: var(--text-primary); }
-.threats-v4 .thr-legend-item {
+:root[data-accent] .threats-v4 .thr-seg button:hover { color: var(--text-primary); }
+:root[data-accent] .threats-v4 .thr-seg button[aria-selected="true"] { background: var(--primary); color: var(--primary-ink); }
+:root[data-accent] .threats-v4 .thr-seg button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+:root[data-accent][data-theme="light"] .threats-v4 .thr-seg button:focus-visible { outline-color: var(--text-primary); }
+:root[data-accent] .threats-v4 .thr-legend-item {
   display: flex; align-items: center; gap: 6px;
   font-family: var(--font-sans); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
 }
 
 @media (pointer: coarse) {
-  .threats-v4 button.thr-row, .threats-v4 a.thr-row { min-height: 44px; }
-  .threats-v4 .thr-toggle, .threats-v4 .thr-more { min-height: 44px; }
-  .threats-v4 .thr-seg button { min-height: 44px; min-width: 44px; }
+  :root[data-accent] .threats-v4 button.thr-row, :root[data-accent] .threats-v4 a.thr-row { min-height: 44px; }
+  :root[data-accent] .threats-v4 .thr-toggle, :root[data-accent] .threats-v4 .thr-more { min-height: 44px; }
+  :root[data-accent] .threats-v4 .thr-seg button { min-height: 44px; min-width: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .threats-v4 .thr-row, .threats-v4 .thr-seg button, .threats-v4 .thr-toggle-chevron { transition: none; }
+  :root[data-accent] .threats-v4 .thr-row, :root[data-accent] .threats-v4 .thr-seg button, :root[data-accent] .threats-v4 .thr-toggle-chevron { transition: none; }
 }

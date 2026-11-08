@@ -9,6 +9,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ThreatsTable, type ThreatRow, type ThreatsTableState } from '@averrow/shared/threats-table';
 import { PanelHeader } from './PanelHeader';
+import { buildStackSeries } from './ThreatInflowChart';
 
 const FEATURE = resolve(__dirname);
 const SHARED = resolve(__dirname, '..', '..', '..', '..', 'shared', 'src', 'threats-table');
@@ -22,7 +23,7 @@ describe('PanelHeader', () => {
     expect(h).toHaveTextContent('Top of pile ASN');
     expect(h).toHaveClass('thr-panel-title');
     const css = read(resolve(FEATURE, 'threats.css'));
-    const rule = css.slice(css.indexOf('.threats-v4 .thr-panel-title {'));
+    const rule = css.slice(css.indexOf(':root[data-accent] .threats-v4 .thr-panel-title {'));
     expect(rule.slice(0, rule.indexOf('}'))).toMatch(/--type-h2-size/);
     expect(rule.slice(0, rule.indexOf('}'))).toMatch(/text-transform: none/);
   });
@@ -112,6 +113,7 @@ describe('ThreatsTable keyboard + labels', () => {
     btn.focus();
     await userEvent.setup().keyboard('{Enter}');
     expect(onSort).toHaveBeenCalledWith('target');
+    expect(onSort).toHaveBeenCalledTimes(1);
   });
 
   it('severity and status render sentence case (display only)', () => {
@@ -152,8 +154,69 @@ describe('threats-table.css facelift rules', () => {
     expect(block(':root[data-accent] .tt-select,\n:root[data-accent] .tt-search')).not.toMatch(/rgba/);
   });
 
+  it('the search placeholder is AA (tertiary text, full opacity)', () => {
+    expect(block(':root[data-accent] .tt-search::placeholder')).toMatch(/color: var\(--text-tertiary\); opacity: 1/);
+  });
+
   it('keyboard focus shows the ring (light uses --text-primary)', () => {
     expect(css).toMatch(/\.tt-expand:focus-visible[\s\S]*outline: 2px solid var\(--focus-ring\)/);
     expect(css).toMatch(/\[data-theme="light"\] \.tt-expand:focus-visible[\s\S]*outline-color: var\(--text-primary\)/);
+  });
+});
+
+describe('threats.css is gated on the facelift', () => {
+  it('every .threats-v4 rule sits under :root[data-accent]', () => {
+    const css = read(resolve(FEATURE, 'threats.css')).replace(/\/\*[\s\S]*?\*\//g, '');
+    const lines = css.split('\n').filter((l) => l.includes('.threats-v4'));
+    expect(lines.length).toBeGreaterThan(10);
+    for (const l of lines) expect(l, l).toMatch(/:root\[data-accent\]/);
+  });
+});
+
+describe('inflow stacking', () => {
+  const counts = (n: number) => [n, n + 1];
+  const series = [
+    { threat_type: 'spam', counts: [1, 2], total: 3 },
+    { threat_type: 'typosquatting', counts: counts(5), total: 11 },
+    { threat_type: 'phishing', counts: counts(10), total: 21 },
+    { threat_type: 'credential_harvesting', counts: [4, 4], total: 8 },
+    { threat_type: 'c2', counts: counts(2), total: 5 },
+    { threat_type: 'defacement', counts: [0, 1], total: 1 },
+  ];
+
+  it('folds every unlisted type into ONE "Other" series with summed counts and totals', () => {
+    const out = buildStackSeries(series, 2);
+    const others = out.filter((s) => s.label === 'Other');
+    expect(others).toHaveLength(1);
+    expect(others[0]).toMatchObject({ counts: [5, 7], total: 12, token: '--text-muted' });
+    expect(out[out.length - 1]).toBe(others[0]);
+    // Nothing lost: legend totals sum to the input total.
+    expect(out.reduce((n, s) => n + s.total, 0)).toBe(series.reduce((n, s) => n + s.total, 0));
+    // Per-bucket sums also match.
+    for (const i of [0, 1]) {
+      expect(out.reduce((n, s) => n + s.counts[i]!, 0)).toBe(series.reduce((n, s) => n + s.counts[i]!, 0));
+    }
+  });
+
+  it('gives the five named types real hues (chart-1..5), and no Other when nothing is unlisted', () => {
+    const out = buildStackSeries(series.filter((s) => ['phishing', 'c2'].includes(s.threat_type)), 2);
+    expect(out.map((s) => s.token)).toEqual(['--chart-1', '--chart-4']);
+    expect(out.some((s) => s.label === 'Other')).toBe(false);
+  });
+
+  it('never stacks chart-4 (c2) next to chart-5 (typosquatting)', () => {
+    const all = ['phishing', 'malware_distribution', 'malicious_ip', 'c2', 'typosquatting', 'spam']
+      .map((t) => ({ threat_type: t, counts: [1, 1], total: 2 }));
+    const tokens = buildStackSeries(all, 2).map((s) => s.token);
+    const i4 = tokens.indexOf('--chart-4');
+    const i5 = tokens.indexOf('--chart-5');
+    expect(Math.abs(i4 - i5)).toBeGreaterThan(1);
+  });
+
+  it('strokes at full opacity, 1.5px, with the 0.3 fill', () => {
+    const src = read(resolve(FEATURE, 'ThreatInflowChart.tsx'));
+    expect(src).toMatch(/strokeWidth=\{1\.5\}/);
+    expect(src).toMatch(/strokeOpacity=\{1\}/);
+    expect(src).toMatch(/fillOpacity=\{0\.3\}/);
   });
 });

@@ -21,25 +21,42 @@ import { Card, PageState } from '@/design-system/components';
 import { THREATS_CARD_VARIANT } from './threatsCard';
 import './threats.css';
 
-// Threat-type -> categorical chart token (--chart-1..6, fixed per type so a filter
-// or a re-sort never repaints a series). Types beyond the six categorical slots fold
-// into one neutral "other" token instead of generating more hues. Recharts needs
-// resolved colours, so the tokens are read at runtime (useTokenColors) and the chart
-// follows theme / accent changes.
+// The five most important threat types get a real categorical hue (--chart-1..5), fixed
+// per type so a filter or re-sort never repaints a series. Every other type is summed
+// client-side into ONE neutral "Other" band (one swatch, one legend row), never a hue
+// per type. Recharts needs resolved colours, so tokens are read at runtime
+// (useTokenColors) and the chart follows theme / accent changes.
 const TYPE_TOKENS: Record<string, string> = {
-  phishing:              '--chart-1',
-  malware_distribution:  '--chart-2',
-  malicious_ip:          '--chart-3',
-  c2:                    '--chart-4',
-  typosquatting:         '--chart-5',
-  credential_harvesting: '--chart-6',
+  phishing:             '--chart-1',
+  malware_distribution: '--chart-2',
+  malicious_ip:         '--chart-3',
+  c2:                   '--chart-4',
+  typosquatting:        '--chart-5',
 };
+const OTHER_KEY = '__other';
 const OTHER_TOKEN = '--text-muted';
+// Stack order (bottom to top). c2 (green, chart-4) and typosquatting (yellow-green,
+// chart-5) are the weakest pair at 0.3 fill, so they are kept apart; "Other" is on top.
+const STACK_ORDER = ['phishing', 'c2', 'malware_distribution', 'typosquatting', 'malicious_ip'] as const;
 const CHROME_TOKENS = ['--text-tertiary', '--text-secondary', '--border-base', '--border-strong'] as const;
 const TOKEN_NAMES = [...new Set([...Object.values(TYPE_TOKENS), OTHER_TOKEN, ...CHROME_TOKENS])];
 
-function tokenFor(type: string): string {
-  return TYPE_TOKENS[type] ?? OTHER_TOKEN;
+export interface InflowSeriesIn { threat_type: string; counts: number[]; total: number }
+export interface StackSeries { key: string; label: string; token: string; counts: number[]; total: number }
+
+/** Named types in STACK_ORDER, then one summed "Other" series. Totals are preserved exactly. */
+export function buildStackSeries(series: InflowSeriesIn[], bucketCount: number): StackSeries[] {
+  const out: StackSeries[] = [];
+  for (const key of STACK_ORDER) {
+    const s = series.find((x) => x.threat_type === key);
+    if (s) out.push({ key, label: prettyTypeLabel(key), token: TYPE_TOKENS[key]!, counts: s.counts, total: s.total });
+  }
+  const rest = series.filter((x) => !(x.threat_type in TYPE_TOKENS));
+  if (rest.length > 0) {
+    const counts = Array.from({ length: bucketCount }, (_, i) => rest.reduce((n, x) => n + (x.counts[i] ?? 0), 0));
+    out.push({ key: OTHER_KEY, label: 'Other', token: OTHER_TOKEN, counts, total: rest.reduce((n, x) => n + x.total, 0) });
+  }
+  return out;
 }
 
 /** Resolved token -> an rgba() string Recharts can paint; before it resolves (SSR / jsdom) fall back to the CSS variable. */
@@ -100,13 +117,12 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
 
   // Pivot the API response into Recharts' flat-row shape:
   //   [{ bucket, phishing, malware_distribution, ...other types }, ...]
-  // The series array from the API is already sorted by total desc,
-  // and `<Area />` elements stack in the order they're rendered, so
-  // mapping over data.series preserves the dominant-on-bottom layering.
+  // `<Area />` elements stack in the order they're rendered; buildStackSeries fixes that order.
+  const stack = data ? buildStackSeries(data.series, data.buckets.length) : [];
   const chartData = data
     ? data.buckets.map((bucket, i) => {
         const row: Record<string, string | number> = { bucket };
-        for (const s of data.series) row[s.threat_type] = s.counts[i] ?? 0;
+        for (const s of stack) row[s.key] = s.counts[i] ?? 0;
         return row;
       })
     : [];
@@ -120,11 +136,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
         <div>
           <h3 className="thr-label">Threat inflow</h3>
-          <div className="thr-num" style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 26, fontWeight: 700,
-            color: 'var(--text-primary)', lineHeight: 1.1,
-          }}>
+          <div className="thr-hero-value" style={{ color: 'var(--text-primary)' }}>
             {headline === null ? '—' : headline.toLocaleString()}
           </div>
           <div className="thr-label">
@@ -183,18 +195,20 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
               content={<InflowTooltip window={window} />}
               cursor={{ stroke: tickFill, strokeDasharray: '2 3' }}
             />
-            {data.series.map((s) => {
-              const c = paint(colors, tokenFor(s.threat_type));
+            {stack.map((s) => {
+              const c = paint(colors, s.token);
               return (
                 <Area
-                  key={s.threat_type}
+                  key={s.key}
                   type="monotone"
-                  dataKey={s.threat_type}
+                  dataKey={s.key}
                   stackId="1"
                   stroke={c}
+                  strokeWidth={1.5}
+                  strokeOpacity={1}
                   fill={c}
                   fillOpacity={0.3}
-                  name={prettyTypeLabel(s.threat_type)}
+                  name={s.label}
                   isAnimationActive={false}
                 />
               );
@@ -212,9 +226,9 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
           className="grid grid-cols-2 md:grid-cols-[repeat(auto-fill,minmax(160px,1fr))]"
           style={{ marginTop: 16, gap: 6 }}
         >
-          {data.series.map((s) => (
+          {stack.map((s) => (
             <div
-              key={s.threat_type}
+              key={s.key}
               className="thr-legend-item max-md:px-1.5 max-md:py-1 max-md:border max-md:border-[var(--border-base)] max-md:rounded-md"
             >
               <span
@@ -222,7 +236,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
                   width: 8,
                   height: 8,
                   borderRadius: 2,
-                  background: paint(colors, tokenFor(s.threat_type)),
+                  background: paint(colors, s.token),
                   flexShrink: 0,
                 }}
               />
@@ -235,11 +249,11 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                 }}
-                title={prettyTypeLabel(s.threat_type)}
+                title={s.label}
               >
-                {prettyTypeLabel(s.threat_type)}
+                {s.label}
               </span>
-              <span className="thr-num" style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
+              <span className="thr-num" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
                 {s.total.toLocaleString()}
               </span>
             </div>
@@ -312,7 +326,7 @@ function InflowTooltip({
           }}>
             {p.name}
           </span>
-          <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
+          <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
             {(p.value ?? 0).toLocaleString()}
           </span>
         </div>

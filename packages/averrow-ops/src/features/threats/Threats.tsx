@@ -450,19 +450,19 @@ function MultiBrandCard({ title, accent, rows, emptyMsg }: {
         )}
         {rows.slice(0, 5).map(r => (
           <ListRow key={r.id} onClick={r.onClick} bordered>
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+            <span className="flex items-center justify-between gap-2">
+              <span className="min-w-0 flex-1" style={{ display: 'block' }}>
+                <span className="text-xs font-semibold truncate" style={{ display: 'block', color: 'var(--text-primary)' }}>
                   {r.name}
-                </div>
-                <div className="thr-label thr-num">
+                </span>
+                <span className="thr-label thr-num" style={{ display: 'block' }}>
                   {r.brand_count} brands · {r.threat_count} threats{r.tag ? ` · ${r.tag}` : ''}
-                </div>
-              </div>
+                </span>
+              </span>
               <span className="text-base font-bold flex-shrink-0 thr-num" style={{ color: accentText(accent) }}>
                 {r.brand_count}
               </span>
-            </div>
+            </span>
           </ListRow>
         ))}
       </div>
@@ -500,27 +500,27 @@ function SurgingSignalsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | 
           return (
             <ListRow key={`${s.kind}:${s.id ?? s.label}`} bordered
               onClick={campaignId ? () => navigate(`/campaigns/${campaignId}`) : undefined}>
-              <div className="thr-bar" style={{
+              <span className="thr-bar" style={{
                 width: `${barW}%`,
                 background: `color-mix(in srgb, ${accent} 10%, transparent)`,
               }} />
-              <div className="relative flex items-center justify-between gap-2">
-                <div className="min-w-0 flex-1 flex items-center gap-2">
+              <span className="relative flex items-center justify-between gap-2">
+                <span className="min-w-0 flex-1 flex items-center gap-2">
                   <TrendingUp size={12} style={{ color: accentText(accent), transform: isUp ? 'none' : 'rotate(180deg)' }} />
-                  <span className="text-xs font-mono truncate" style={{ color: 'var(--text-primary)' }}>
+                  <span className="text-xs truncate" style={{ color: 'var(--text-primary)' }}>
                     {s.label.replace(/_/g, ' ')}
                   </span>
                   <span className="thr-label">{s.kind}</span>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="text-sm font-bold thr-num" style={{ color: accentText(accent) }}>
+                </span>
+                <span className="text-right flex-shrink-0" style={{ display: 'block' }}>
+                  <span className="text-sm font-bold thr-num" style={{ display: 'block', color: accentText(accent) }}>
                     {isUp ? '+' : ''}{s.delta_pct}%
-                  </div>
-                  <div className="thr-label thr-num">
+                  </span>
+                  <span className="thr-label thr-num" style={{ display: 'block' }}>
                     {s.current_7d} vs {s.previous_7d}
-                  </div>
-                </div>
-              </div>
+                  </span>
+                </span>
+              </span>
             </ListRow>
           );
         })}
@@ -592,23 +592,23 @@ function Leaderboard({ title, accent, rows }: {
           const barW = (r.count / max) * 100;
           return (
             <ListRow key={r.id} onClick={r.onClick} tight>
-              <div className="thr-bar" style={{
+              <span className="thr-bar" style={{
                 width: `${barW}%`,
                 background: `color-mix(in srgb, ${accent} 10%, transparent)`,
               }} />
-              <div className="relative flex items-center justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              <span className="relative flex items-center justify-between gap-2">
+                <span className="min-w-0 flex-1" style={{ display: 'block' }}>
+                  <span className="text-xs font-semibold truncate" style={{ display: 'block', color: 'var(--text-primary)' }}>
                     {r.label}
-                  </div>
+                  </span>
                   {r.sub && (
-                    <div className="thr-label font-mono truncate">{r.sub}</div>
+                    <span className="thr-label font-mono truncate" style={{ display: 'block' }}>{r.sub}</span>
                   )}
-                </div>
+                </span>
                 <span className="text-xs font-bold flex-shrink-0 thr-num" style={{ color: accentText(accent) }}>
                   {r.count}
                 </span>
-              </div>
+              </span>
             </ListRow>
           );
         })}
