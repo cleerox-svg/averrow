@@ -27,15 +27,21 @@ import type { Env } from "../types";
 // ─── Diagnostics caching (D1 overload 2026-11-08) ─────────────────
 /** KV key + TTL for the enrichment_pipeline whole-threats-table pass. */
 export const DIAG_ENRICHMENT_CACHE_KEY = "diag.enrichment_pipeline.v1";
-export const DIAG_ENRICHMENT_TTL_S = 600;
+// The endpoint is called on demand (script / MCP / admin tab), often less
+// than once per TTL, so a short TTL meant most calls arrived to an empty
+// key and paid the full scan anyway. 30 min / 1h TTLs (entries live 2x
+// that for stale-serve) keep a typical health-check cadence on cache.
+export const DIAG_ENRICHMENT_TTL_S = 1800;
 /** TTL for slow-moving whole-table sections (platform_totals, alerts.by_tier). */
-export const DIAG_SLOW_SECTION_TTL_S = 900;
+export const DIAG_SLOW_SECTION_TTL_S = 3600;
 /**
  * Single-flight refill for the scan-backed diagnostics caches: one caller
  * recomputes an expired entry while the others get the stale value, so
  * the script + MCP + an admin tab can't each fire the same full scan.
+ * A cold-key waiter gives up after 2s (5 sections × 2s worst case), not
+ * 10s each — a longer wait only delayed a duplicate scan, not prevented it.
  */
-export const DIAG_SINGLE_FLIGHT: SingleFlightOptions = { lockTtlSeconds: 120, waitMs: 10_000 };
+export const DIAG_SINGLE_FLIGHT: SingleFlightOptions = { lockTtlSeconds: 120, waitMs: 2_000, pollMs: 500 };
 
 // ─── D1 metrics via Cloudflare GraphQL Analytics API ──────────────
 // Pulls rows_read / rows_written / query counts from the past 24h. Used

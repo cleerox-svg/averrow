@@ -1762,9 +1762,9 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 time, and a section whose read fails falls back to empty/zero/null and adds a
 top-level `<section>_error` key (e.g. `agent_mesh_error`) instead of a 500 —
 check for `*_error` keys before trusting a zero. Full-table sections are
-KV-cached with a single-flight refill: `enrichment_pipeline` 10 min (so
-`enriched_last_hour` can lag ~10 min), `platform_totals` and `alerts.by_tier`
-15 min, `cartographer_exhausted_by_feed` 5 min. Before v17 the endpoint itself
+KV-cached with a single-flight refill: `enrichment_pipeline` 30 min (so
+`enriched_last_hour` can lag ~30 min), `platform_totals` and `alerts.by_tier`
+1 h, `cartographer_exhausted_by_feed` 5 min. Before v17 the endpoint itself
 fired ~40 concurrent reads and could trip D1's 10 s overload window on its own.
 
 This table is a curated subset for common health-check reading, not an
