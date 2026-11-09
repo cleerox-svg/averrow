@@ -92,14 +92,22 @@ export async function handleAdminListBrands(request: Request, env: Env): Promise
 
     params.push(limit, offset);
 
-    // Counts come from the pre-computed columns (CLAUDE.md §8): same
-    // semantics as the old LEFT JOIN threats … GROUP BY b.id (threat_count =
-    // every linked threat, active_threat_count = status 'active'; both kept
-    // in step by lib/brand-count-reconciler.ts), without joining the whole
-    // threats table to every brand on each page load.
+    // Counts come from the pre-computed columns (CLAUDE.md §8) instead of
+    // joining the whole threats table to every brand on each page load. Same
+    // meaning as the old LEFT JOIN threats … GROUP BY b.id:
+    //   - threat_count = every linked threat. Bumped incrementally by the
+    //     brand-link writers and reconciled every 6h by cube_healer
+    //     (lib/brand-count-reconciler.ts).
+    //   - active_threat_count = linked threats with status 'active'.
+    //     Recomputed by syncBrandActiveThreatCounts
+    //     (lib/brand-active-counts.ts, enrichment Stage 5).
+    // The two refresh on different schedules, so between runs active can
+    // briefly exceed the total. The displayed total is floored at the active
+    // count so a row never shows more active than total threats. The sort
+    // stays on the stored column so it can walk idx_brands_threat_count.
     const rows = await env.DB.prepare(`
       SELECT b.id, b.name, b.canonical_domain, b.sector, b.source, b.first_seen,
-             COALESCE(b.threat_count, 0) AS threat_count,
+             MAX(COALESCE(b.threat_count, 0), COALESCE(b.active_threat_count, 0)) AS threat_count,
              COALESCE(b.active_threat_count, 0) AS active_threats,
              (SELECT COUNT(*) FROM monitored_brands mb WHERE mb.brand_id = b.id) AS is_monitored
       FROM brands b

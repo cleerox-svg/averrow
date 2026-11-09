@@ -73,8 +73,8 @@ describe("fetchComprehensiveBriefing D1 read shape", () => {
     const env = { CACHE: fakeKv() } as unknown as Env;
     await cachedCount(env, "count.threats.total", THREATS_TOTAL_TTL_S, async () => 1_234_567);
     const p = probeDb((q) =>
-      /last_24h/.test(q) ? { last_24h: 49, last_12h: 20, brands_monitored: 3, brands_classified: 4 }
-        : /yesterday_count/.test(q) ? { yesterday_count: 30 } : null);
+      /last_12h/.test(q) ? { last_12h: 20, brands_monitored: 3, brands_classified: 4 }
+        : /yesterday_count/.test(q) ? { today_count: 49, yesterday_count: 30 } : null);
     const b = await fetchComprehensiveBriefing({ ...env, DB: p.db } as unknown as Env);
 
     expect(b.platformOverview.totalThreats).toBe(1_234_567);
@@ -84,7 +84,11 @@ describe("fetchComprehensiveBriefing D1 read shape", () => {
     // 24h window counted once; derived fields match the old SQL values.
     const windows24 = p.sql.join("\n").match(/FROM threats WHERE first_seen >= datetime\('now', '-24 hours'\)\) as/g) ?? [];
     expect(windows24).toHaveLength(1);
-    expect(p.sql.join("\n")).not.toMatch(/as (today_count|avg_per_hour)\b/);
+    expect(p.sql.join("\n")).not.toMatch(/as (last_24h|avg_per_hour)\b/);
+    // Today and yesterday are one read.
+    const dod = p.sql.filter((s) => /as today_count/.test(s));
+    expect(dod).toHaveLength(1);
+    expect(dod[0]).toMatch(/as yesterday_count/);
     expect(b.platformOverview.last24h).toBe(49);
     expect(b.platformOverview.todayCount).toBe(49);
     expect(b.platformOverview.avgPerHour).toBe(2); // ROUND(49 / 24) = ROUND(2.04)
@@ -100,6 +104,20 @@ describe("fetchComprehensiveBriefing D1 read shape", () => {
     const fail = probeDb(() => null, (q) => /^SELECT COUNT\(\*\) AS n FROM threats$/.test(q.trim()));
     const b2 = await fetchComprehensiveBriefing({ DB: fail.db, CACHE: fakeKv() } as unknown as Env);
     expect(b2.platformOverview.totalThreats).toBe(0);
+  });
+
+  it("a failed day-over-day read zeroes today AND yesterday — never a fake 100% drop", async () => {
+    const p = probeDb(
+      (q) => (/last_12h/.test(q) ? { last_12h: 20, brands_monitored: 3, brands_classified: 4 } : null),
+      (q) => /as today_count/.test(q),
+    );
+    const b = await fetchComprehensiveBriefing({ DB: p.db, CACHE: fakeKv() } as unknown as Env);
+    expect(b.platformOverview.todayCount).toBe(0);
+    expect(b.platformOverview.yesterdayCount).toBe(0);
+    expect(b.platformOverview.last24h).toBe(0);
+    expect(b.platformOverview.avgPerHour).toBe(0);
+    // The overview read still landed.
+    expect(b.platformOverview.last12h).toBe(20);
   });
 
   it("a failing section degrades to its fallback and later sections still run", async () => {

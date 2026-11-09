@@ -14,7 +14,11 @@ export const THREAT_LIST_FILTERED_TOTAL_TTL_S = 300;
 /**
  * cachedCount key for a filtered /api/threats total: every filter that
  * shapes the WHERE plus the org-scope segment, and nothing else (sort,
- * dir, limit and offset don't change the count).
+ * dir, limit and offset don't change the count). Each filter value is
+ * encodeURIComponent'd so a ':' inside a value can't shift it into the next
+ * segment (brand_id='x:y' vs brand_id='x' + q='y' would otherwise collide
+ * and share a count). The scope segment stays last and unescaped — it is
+ * `global` or `org:<id>:<digest>` from scopeCacheSegment.
  */
 export function threatListTotalKey(
   f: {
@@ -23,10 +27,9 @@ export function threatListTotalKey(
   },
   scopeHash: string,
 ): string {
-  return [
-    "count.threats.list", f.severity ?? "", f.type ?? "", f.status ?? "", f.source ?? "",
-    f.country ?? "", f.brandId ?? "", f.search ?? "", scopeHash,
-  ].join(":");
+  const values = [f.severity, f.type, f.status, f.source, f.country, f.brandId, f.search]
+    .map((v) => encodeURIComponent(v ?? ""));
+  return ["count.threats.list", ...values, scopeHash].join(":");
 }
 
 // ─── List threats with filtering ────────────────────────────────

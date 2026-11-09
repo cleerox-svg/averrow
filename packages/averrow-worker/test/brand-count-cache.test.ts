@@ -137,10 +137,25 @@ describe.skipIf(!hasSqlite())("brand list totals", () => {
     expect(body.sources.length).toBeGreaterThan(0);
   });
 
+  it("admin brand list: the total is never shown below the active count", async () => {
+    const { env, raw } = makeEnv();
+    // The active counter refreshed ahead of the incremental total (they run
+    // on different schedules): 5 active vs a stale total of 2.
+    raw.prepare("UPDATE brands SET threat_count = 2, active_threat_count = 5 WHERE id = 'b1'").run();
+    raw.prepare("UPDATE brands SET threat_count = 9, active_threat_count = 4 WHERE id = 'b2'").run();
+    const body = await (await handleAdminListBrands(req("/api/admin/brands?q=a&limit=200"), env)).json() as {
+      data: Array<{ id: string; threat_count: number; active_threats: number }>;
+    };
+    const byId = new Map(body.data.map((r) => [r.id, r]));
+    expect(byId.get("b1")).toMatchObject({ threat_count: 5, active_threats: 5 });
+    expect(byId.get("b2")).toMatchObject({ threat_count: 9, active_threats: 4 });
+    for (const r of body.data) expect(r.threat_count).toBeGreaterThanOrEqual(r.active_threats);
+  });
+
   it("admin brand list: the default sort walks idx_brands_threat_count", () => {
     const { raw } = makeEnv();
     const p = (raw.prepare(
-      "EXPLAIN QUERY PLAN SELECT b.id, COALESCE(b.threat_count, 0) AS threat_count FROM brands b ORDER BY b.threat_count DESC LIMIT 100 OFFSET 0",
+      "EXPLAIN QUERY PLAN SELECT b.id, MAX(COALESCE(b.threat_count, 0), COALESCE(b.active_threat_count, 0)) AS threat_count FROM brands b ORDER BY b.threat_count DESC LIMIT 100 OFFSET 0",
     ).all() as Array<{ detail: string }>).map((r) => r.detail).join(" | ");
     expect(p).toMatch(/idx_brands_threat_count/);
     expect(p).not.toMatch(/TEMP B-TREE/);

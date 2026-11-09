@@ -324,26 +324,26 @@ export async function fetchComprehensiveBriefing(
     // A) Platform Overview
     () => safeFirst(
       db,
-      // The 24h window is counted once: avg_per_hour and the day-over-day
-      // today_count are derived from last_24h below (they were the same
-      // range count, run three times).
       `SELECT
-        (SELECT COUNT(*) FROM threats WHERE first_seen >= datetime('now', '-24 hours')) as last_24h,
         (SELECT COUNT(*) FROM threats WHERE first_seen >= datetime('now', '-12 hours')) as last_12h,
         (SELECT COUNT(*) FROM monitored_brands WHERE status = 'active') as brands_monitored,
         (SELECT COUNT(*) FROM brands WHERE sector IS NOT NULL) as brands_classified`,
       {
-        last_24h: 0,
         last_12h: 0,
         brands_monitored: 0,
         brands_classified: 0,
       },
     ),
+    // Today and yesterday come from ONE read, so a failed read zeroes both
+    // (never a fake 100% day-over-day drop). The 24h window is counted once
+    // here: last24h, avgPerHour and todayCount all derive from today_count
+    // (they were the same range count, run three times).
     () => safeFirst(
       db,
       `SELECT
+        (SELECT COUNT(*) FROM threats WHERE first_seen >= datetime('now', '-24 hours')) as today_count,
         (SELECT COUNT(*) FROM threats WHERE first_seen >= datetime('now', '-48 hours') AND first_seen < datetime('now', '-24 hours')) as yesterday_count`,
-      { yesterday_count: 0 },
+      { today_count: 0, yesterday_count: 0 },
     ),
 
     // B) Feed Production (12h)
@@ -696,7 +696,7 @@ export async function fetchComprehensiveBriefing(
   const hasDegraded =
     failedCount > 0 || unhealthyCount / totalFeeds > 0.5;
 
-  const last24h = Number(overview.last_24h) || 0;
+  const last24h = Number(dayOverDay.today_count) || 0;
 
   // Marketing & AI visibility — internally safe (per-query fallback),
   // won't throw out of here even if the table is missing.

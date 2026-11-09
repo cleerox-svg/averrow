@@ -43,6 +43,17 @@ describe("threatListTotalKey", () => {
     expect(threatListTotalKey(base, "org:o1:abc")).not.toBe(k);
     expect(THREAT_LIST_FILTERED_TOTAL_TTL_S).toBe(300);
   });
+
+  it("escapes ':' inside values so adjacent filters can't collide", () => {
+    const none = { severity: null, type: null, status: null, source: null, country: null, brandId: null, search: null };
+    const joined = threatListTotalKey({ ...none, brandId: "x:y" }, "global");
+    const split = threatListTotalKey({ ...none, brandId: "x", search: "y" }, "global");
+    expect(joined).not.toBe(split);
+    expect(joined).toBe("count.threats.list::::::x%3Ay::global");
+    expect(split).toBe("count.threats.list::::::x:y:global");
+    // The scope segment stays last and unescaped.
+    expect(threatListTotalKey(none, "org:o1:abc").endsWith(":org:o1:abc")).toBe(true);
+  });
 });
 
 describe.skipIf(!hasSqlite())("filtered /api/threats total", () => {
