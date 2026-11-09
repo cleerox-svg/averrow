@@ -22,6 +22,7 @@
 // Budget: ~15s typical (DNS 13-18s + cube <1s), well under the 30s hard ceiling.
 
 import type { Env } from '../types';
+import { logger } from '../lib/logger';
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
 import {
   checkAllMilestones,
@@ -95,8 +96,8 @@ export const NAVIGATOR_LEGACY_AGENT_ID = 'fast_tick';
 //   B  — every 15 min (Campaigns, Agents, Feeds, admin dashboard, MCP probe,
 //        Home tempo band + critical banner)
 //   C  — every 30 min (Top Targeted Brands + Threat Actors pages)
-//   D  — every 30 min at :05/:35, SEQUENTIAL (brand stats, movers, Explore →
-//        Brands catalog aggregates)
+//   D  — every 30 min at :25/:55, SEQUENTIAL under a wall-clock budget
+//        (brand stats, movers, Explore → Brands catalog aggregates)
 
 export type NavigatorWarmPhase = 'A' | 'A2' | 'B' | 'C' | 'D';
 
@@ -193,7 +194,14 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   // concurrently they are the burst that tripped D1's 10s overload window
   // (prod: posture/composition 500 cold, 200 on retry). So this phase runs
   // its targets ONE AT A TIME (NAVIGATOR_SEQUENTIAL_PHASES) on minutes no
-  // other phase uses (:05/:35). All requireStaff + unscoped (one global key).
+  // other phase uses (:25/:55 — moved off :05/:35 on 2026-11-09, see
+  // navigatorWarmPhases), under NAVIGATOR_SEQUENTIAL_BUDGET_MS with each call
+  // capped at NAVIGATOR_WARM_CALL_TIMEOUT_MS. Navigator never starts a second
+  // target while one is in flight: the first timed-out call ends the phase
+  // (the abandoned call may still finish its scan, but nothing new is
+  // started beside it). The start target rotates per tick
+  // (sequentialWarmStartIndex) so a slow head can't starve the tail. All
+  // requireStaff + unscoped (one global key).
   // TTLs (refresh-ahead): stats / movers / pressure / email-security rollup
   // 3600s → recomputed every tick (threshold 1740s); composition / posture
   // 7200s (BRAND_SLOW_AGGREGATE_TTL_S, data moves ~daily) → every 3rd tick.
@@ -209,10 +217,64 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
 export const NAVIGATOR_SEQUENTIAL_PHASES: ReadonlySet<NavigatorWarmPhase> = new Set<NavigatorWarmPhase>(['D']);
 
 /**
+ * Wall-clock budget (ms) for one sequential phase (Phase D). Checked before
+ * each target starts: once less than NAVIGATOR_WARM_MIN_REMAINING_MS of it is
+ * left, the remaining targets are skipped (logged as
+ * `navigator_warm_phase_budget_exhausted`, reason `budget`) and pick up on a
+ * later D tick. Each call is also capped at the budget's remaining time, so
+ * the phase never holds the invocation past this bound.
+ *
+ * Why (incident 2026-11-09): Phase D's catalog scans had no bound. Every
+ * :05/:35 Navigator run from 14:35 UTC either was reaped as stuck (one with
+ * "D1 DB is overloaded") or hung `partial`; the invocation died mid-phase so
+ * no KV key was written and every D tick recomputed from scratch, saturating
+ * D1 two minutes before the :07 orchestrator tick.
+ */
+export const NAVIGATOR_SEQUENTIAL_BUDGET_MS = 20_000;
+
+/**
+ * Minimum budget (ms) that must remain to START another sequential target.
+ * A catalog scan begun with only a sliver of budget left would just time out
+ * and keep scanning D1 after it was abandoned, so it isn't started.
+ */
+export const NAVIGATOR_WARM_MIN_REMAINING_MS = 5_000;
+
+/** Length (ms) of one rotation slot — Phase D fires once per 30-min slot. */
+const SEQUENTIAL_ROTATION_SLOT_MS = 30 * 60_000;
+
+/**
+ * Index of the target a sequential phase starts with on the tick scheduled at
+ * `scheduledTimeMs`. Advances by one per 30-min slot (Phase D runs once per
+ * slot, at :25 and :55), so over any `n` consecutive D ticks every target gets
+ * the head slot once and a slow target near the front can't keep the ones
+ * behind it from ever being warmed. Pure; deterministic from the tick time.
+ */
+export function sequentialWarmStartIndex(scheduledTimeMs: number, n: number): number {
+  if (n <= 0 || !Number.isFinite(scheduledTimeMs)) return 0;
+  const slot = Math.floor(scheduledTimeMs / SEQUENTIAL_ROTATION_SLOT_MS);
+  return ((slot % n) + n) % n;
+}
+
+/**
+ * Per-call timeout (ms) for a sequential-phase warm, so one slow aggregate
+ * can't hold the invocation. A timed-out handler's promise keeps running
+ * (it can't be cancelled); its late result/rejection is swallowed, and it is
+ * counted as failed. Effective timeout = min(this, budget remaining). A
+ * timeout means D1 is saturated, so it also ENDS the phase (reason
+ * `call_timeout`): starting the next target would run it concurrently with
+ * the abandoned scan — the overlap the phase is sequential to avoid.
+ */
+export const NAVIGATOR_WARM_CALL_TIMEOUT_MS = 12_000;
+
+/**
  * Which warm phases a Navigator tick at UTC `minute` runs (before the D1
  * budget soft-cap, which drops everything but A). Navigator fires every
- * 5 min; D's :05/:35 are minutes no other phase uses, so its sequential
- * scans never stack on the A/A2/B/C warms.
+ * 5 min. D runs at :25/:55 — minutes no other phase uses (A :x0, A2/B
+ * :00/:15/:30/:45, C :00/:30), so its sequential scans never stack on the
+ * A/A2/B/C warms, and well clear of the hourly :07 orchestrator tick (with
+ * its ≤20s budget the phase is done inside the :25/:55 minute, ≥11 min before
+ * :07). It was :05/:35, two minutes before :07 (2026-11-09 incident, see
+ * NAVIGATOR_SEQUENTIAL_BUDGET_MS).
  */
 export function navigatorWarmPhases(minute: number): Record<NavigatorWarmPhase, boolean> {
   return {
@@ -220,37 +282,134 @@ export function navigatorWarmPhases(minute: number): Record<NavigatorWarmPhase, 
     A2: minute % 15 === 0, // :00, :15, :30, :45
     B: minute % 15 === 0,
     C: minute % 30 === 0,  // :00, :30
-    D: minute % 30 === 5,  // :05, :35
+    D: minute % 30 === 25, // :25, :55
   };
+}
+
+/** Outcome of one runWarmTargets call. */
+export interface WarmRunResult {
+  /** Handlers that resolved with a 2xx Response (the KV key was written). */
+  ok: number;
+  /** Targets started that did not succeed: non-2xx, threw, or timed out. */
+  failed: number;
+  /** Sequential only: started targets abandoned at the per-call timeout (also in `failed`). */
+  timedOut: string[];
+  /** Sequential only: paths never started (phase budget ran out, or a call timed out). */
+  skipped: string[];
+}
+
+/** Sequential-phase options (and test seams for the budget / timeout). */
+export interface WarmRunOptions {
+  budgetMs?: number;
+  callTimeoutMs?: number;
+  minRemainingMs?: number;
+  /** Index of the target to start with; the order wraps around (see sequentialWarmStartIndex). */
+  startIndex?: number;
+  /** Label for the budget-exhausted log line. */
+  phase?: NavigatorWarmPhase;
+}
+
+const WARM_TIMED_OUT = Symbol('warm_timed_out');
+
+/**
+ * Run one warm handler, giving up after `timeoutMs`. The handler promise
+ * can't be cancelled: if it settles after the timeout its value is ignored
+ * and a late rejection is swallowed here (never an unhandled rejection).
+ */
+async function warmWithTimeout(
+  t: NavigatorWarmTarget,
+  env: Env,
+  overBudget: boolean,
+  timeoutMs: number,
+): Promise<Response | typeof WARM_TIMED_OUT> {
+  // Promise.resolve().then(): a handler that throws synchronously becomes a rejection.
+  const call = Promise.resolve().then(() => t.handler(warmRequest(t.path, overBudget), env));
+  call.catch(() => { /* late rejection after a timeout — already counted as failed */ });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof WARM_TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(WARM_TIMED_OUT), Math.max(0, timeoutMs));
+  });
+  try {
+    return await Promise.race([call, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /**
  * Warm `targets`: in parallel (allSettled — one bad target can't sink the
  * rest), or one at a time when `sequential`. Counts only real warms —
  * handlers catch their own errors and resolve with a 500 Response, so a
- * fulfilled promise alone doesn't mean the KV key was written. Exported for
- * tests.
+ * fulfilled promise alone doesn't mean the KV key was written.
+ *
+ * Sequential runs start at `startIndex` (wrapping) and are bounded: a target
+ * is started only while at least `minRemainingMs`
+ * (NAVIGATOR_WARM_MIN_REMAINING_MS) of `budgetMs`
+ * (NAVIGATOR_SEQUENTIAL_BUDGET_MS) is left; each call is capped at
+ * min(`callTimeoutMs`, budget remaining), and the first timeout ends the
+ * phase. Either stop skips the rest and logs
+ * `navigator_warm_phase_budget_exhausted` with a `reason`. At most one
+ * handler is started at a time. Exported for tests.
  */
 export async function runWarmTargets(
   targets: readonly NavigatorWarmTarget[],
   env: Env,
   overBudget: boolean,
   sequential: boolean,
-): Promise<{ ok: number; failed: number }> {
+  opts: WarmRunOptions = {},
+): Promise<WarmRunResult> {
   let ok = 0;
+  const timedOut: string[] = [];
+  const skipped: string[] = [];
   if (sequential) {
-    for (const t of targets) {
+    const budgetMs = opts.budgetMs ?? NAVIGATOR_SEQUENTIAL_BUDGET_MS;
+    const callTimeoutMs = opts.callTimeoutMs ?? NAVIGATOR_WARM_CALL_TIMEOUT_MS;
+    const minRemainingMs = opts.minRemainingMs ?? NAVIGATOR_WARM_MIN_REMAINING_MS;
+    const n = targets.length;
+    const start = n > 0 ? (((opts.startIndex ?? 0) % n) + n) % n : 0;
+    const ordered = [...targets.slice(start), ...targets.slice(0, start)];
+    const phaseStart = Date.now();
+    const stopPhase = (i: number, reason: 'budget' | 'call_timeout'): void => {
+      skipped.push(...ordered.slice(i).map((s) => s.path));
+      logger.warn('navigator_warm_phase_budget_exhausted', {
+        phase: opts.phase ?? ordered[0]?.phase,
+        reason,
+        budget_ms: budgetMs,
+        min_remaining_ms: minRemainingMs,
+        elapsed_ms: Date.now() - phaseStart,
+        start_index: start,
+        completed: i,
+        ok,
+        timed_out: timedOut,
+        skipped,
+      });
+    };
+    for (const [i, t] of ordered.entries()) {
+      const remaining = budgetMs - (Date.now() - phaseStart);
+      if (remaining < minRemainingMs || remaining <= 0) {
+        stopPhase(i, 'budget');
+        break;
+      }
+      let res: Response | typeof WARM_TIMED_OUT | null = null;
       try {
-        if ((await t.handler(warmRequest(t.path, overBudget), env)).ok) ok++;
+        res = await warmWithTimeout(t, env, overBudget, Math.min(callTimeoutMs, remaining));
       } catch {
         // Counted as failed below; the next target still runs.
       }
+      if (res === WARM_TIMED_OUT) {
+        timedOut.push(t.path);
+        // D1 is saturated and the abandoned call is still scanning: starting
+        // the next target now would overlap it. End the phase.
+        stopPhase(i + 1, 'call_timeout');
+        break;
+      }
+      if (res?.ok) ok++;
     }
   } else {
     const results = await Promise.allSettled(targets.map((t) => t.handler(warmRequest(t.path, overBudget), env)));
     ok = results.filter((r) => r.status === 'fulfilled' && r.value.ok).length;
   }
-  return { ok, failed: targets.length - ok };
+  return { ok, failed: targets.length - skipped.length - ok, timedOut, skipped };
 }
 
 /**
@@ -737,8 +896,9 @@ async function runNavigatorImpl(
   //   Phase B   — every 15 min (Dashboard + agents + operations + feeds +
   //               Home inflow 24h/7d + critical banner)
   //   Phase C   — every 30 min (Top Targeted Brands + Threat Actors)
-  //   Phase D   — every 30 min at :05/:35, SEQUENTIAL (brand stats, movers,
-  //               the four Explore → Brands catalog aggregates)
+  //   Phase D   — every 30 min at :25/:55, SEQUENTIAL (brand stats, movers,
+  //               the four Explore → Brands catalog aggregates), bounded by
+  //               NAVIGATOR_SEQUENTIAL_BUDGET_MS (20s) + a per-call timeout
   //
   // The exact targets (and the consumer each serves) are the module-level
   // NAVIGATOR_WARM_TARGETS table — 31 warms across the five phases; the
@@ -750,7 +910,8 @@ async function runNavigatorImpl(
   //   A2: 7 warms × 2,880 ticks (minute % 15) = 20,160
   //   B:  9 warms × 2,880 ticks (minute % 15) = 25,920
   //   C:  3 warms × 1,440 ticks (minute % 30) =  4,320
-  //   D:  6 warms × 1,440 ticks (minute % 30 === 5) = 8,640
+  //   D:  6 warms × 1,440 ticks (minute % 30 === 25) = 8,640 (upper bound —
+  //       the phase budget can skip the tail of a tick)
   // A warm call is not a D1 recompute. A refresh-marked Observatory warm
   // recomputes only once the key's age ≥ refreshAfterSeconds(ttl):
   //   - nodes/stats 7d (1800s TTL, Phase A every 600s): threshold 840s —
@@ -784,7 +945,10 @@ async function runNavigatorImpl(
   //   - D brand stats / movers / pressure / email-security rollup (3600s):
   //     threshold 1740s, every D warm (age ≈1800s) recomputes (2/h per key);
   //     composition / posture (7200s): threshold 5340s → every 3rd warm.
-  //     One target at a time, so at most one catalog scan is in flight.
+  //     Navigator starts one target at a time and ends the phase on the first
+  //     per-call timeout, so it never starts a scan beside another (an
+  //     abandoned scan may finish on its own). The start target rotates
+  //     each tick, so these cadences assume a target isn't budget-skipped.
   // The operations list warms are plain fill-on-miss (1800s TTL).
   // Over the D1 soft-cap, A2/B/C/D drop out entirely and Phase A runs
   // unmarked (fill-on-miss), so no warm forces a recompute.
@@ -819,16 +983,20 @@ async function runNavigatorImpl(
   if (!isOverCap() && status !== 'failed') {
     const warmStart = Date.now();
     let cacheWarmFailed = 0;
+    let cacheWarmSkipped = 0;
     // One phase's targets: in parallel, or one at a time for the
     // NAVIGATOR_SEQUENTIAL_PHASES (runWarmTargets).
     const warmPhase = async (phase: NavigatorWarmPhase): Promise<number> => {
-      const { ok, failed } = await runWarmTargets(
-        NAVIGATOR_WARM_TARGETS.filter(t => t.phase === phase),
+      const targets = NAVIGATOR_WARM_TARGETS.filter(t => t.phase === phase);
+      const { ok, failed, skipped } = await runWarmTargets(
+        targets,
         env,
         skipNonEssential,
         NAVIGATOR_SEQUENTIAL_PHASES.has(phase),
+        { phase, startIndex: sequentialWarmStartIndex(scheduledTime.getTime(), targets.length) },
       );
       cacheWarmFailed += failed;
+      cacheWarmSkipped += skipped.length;
       return ok;
     };
     try {
@@ -862,13 +1030,17 @@ async function runNavigatorImpl(
         cacheWarmed += await warmPhase('C');
       }
 
-      // Phase D: brand catalog aggregates — every 30 min at :05/:35, one
-      // target at a time (heavy catalog scans; never concurrent).
+      // Phase D: brand catalog aggregates — every 30 min at :25/:55, one
+      // target at a time (heavy catalog scans), rotating start target, under
+      // NAVIGATOR_SEQUENTIAL_BUDGET_MS with a per-call timeout; the first
+      // timeout ends the phase so no new scan starts beside an abandoned
+      // one. Like A2/B/C it is dropped entirely over the D1 read-budget
+      // soft-cap.
       if (phases.D && !isOverCap() && !skipNonEssential) {
         cacheWarmed += await warmPhase('D');
       }
 
-      console.log(`[navigator] cache-warm: ${cacheWarmed} endpoints warmed, ${cacheWarmFailed} failed in ${Date.now() - warmStart}ms (A=${phases.A} A2=${phases.A2} B=${phases.B} C=${phases.C} D=${phases.D})`);
+      console.log(`[navigator] cache-warm: ${cacheWarmed} endpoints warmed, ${cacheWarmFailed} failed, ${cacheWarmSkipped} skipped (phase budget) in ${Date.now() - warmStart}ms (A=${phases.A} A2=${phases.A2} B=${phases.B} C=${phases.C} D=${phases.D})`);
     } catch (e) {
       console.error('[navigator] cache-warm error:', e instanceof Error ? e.message : String(e));
     }

@@ -943,6 +943,64 @@ async function runJob(name: string, fn: () => Promise<void>): Promise<CronJobRes
 // ─── Job Implementations ──────────────────────────────────────
 
 /**
+ * Wall-clock cap on the inline best-effort geo pass in runThreatFeedScan.
+ * The pass is one D1 SELECT (≤500 rows via idx_threats_stuck_geo) plus up to
+ * 5 ipinfo fetches (5s AbortSignal each) and per-row UPDATEs; under D1
+ * saturation the SELECT alone can stall far longer than the whole pass is
+ * worth. Cartographer owns geo, so giving up here loses nothing.
+ */
+export const INLINE_GEO_ENRICH_TIMEOUT_MS = 10_000;
+
+/**
+ * Runs `enrichThreatsGeo` raced against INLINE_GEO_ENRICH_TIMEOUT_MS. Never
+ * throws. On timeout it logs `threat_feed_scan_geo_timeout` and returns; the
+ * underlying promise cannot be cancelled and keeps running in the background
+ * (it is deliberately NOT handed to ctx.waitUntil — optional work must not
+ * extend the invocation). A rejection that lands after the timeout is caught
+ * and logged as `threat_feed_scan_geo_late_error`, so it can never surface
+ * as an unhandled rejection.
+ */
+export async function runInlineGeoEnrichment(
+  env: Env,
+  timeoutMs: number = INLINE_GEO_ENRICH_TIMEOUT_MS,
+): Promise<void> {
+  const startedAt = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  try {
+    const { enrichThreatsGeo } = await import('../lib/geoip');
+    const work = enrichThreatsGeo(env.DB, env.CACHE).then(
+      () => 'done' as const,
+      (err: unknown) => {
+        if (!timedOut) throw err;
+        logger.warn('threat_feed_scan_geo_late_error', {
+          error: err instanceof Error ? err.message : String(err),
+          elapsed_ms: Date.now() - startedAt,
+        });
+        return 'late_error' as const;
+      },
+    );
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true; // set before any continuation, so a late rejection is logged, not rethrown
+        resolve('timeout');
+      }, timeoutMs);
+    });
+    const outcome = await Promise.race([work, timeout]);
+    if (outcome === 'timeout') {
+      logger.warn('threat_feed_scan_geo_timeout', {
+        timeout_ms: timeoutMs,
+        elapsed_ms: Date.now() - startedAt,
+      });
+    }
+  } catch (e) {
+    logger.error('threat_feed_scan_geo_error', { error: e instanceof Error ? e.message : String(e) });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
  * Called from handleScheduled() on the hourly orchestrator cron (7 * * * *).
  *
  * IMPORTANT: All time gates inside this function use hour-only checks.
@@ -966,13 +1024,13 @@ async function runJob(name: string, fn: () => Promise<void>): Promise<CronJobRes
 async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime: Date): Promise<void> {
   const hour = scheduledTime.getUTCHours();
 
-  // Geo enrichment
-  try {
-    const { enrichThreatsGeo } = await import('../lib/geoip');
-    await enrichThreatsGeo(env.DB, env.CACHE);
-  } catch (e) {
-    logger.error('threat_feed_scan_geo_error', { error: e instanceof Error ? e.message : String(e) });
-  }
+  // Geo enrichment used to run HERE, as the first await of the tick and
+  // with no timeout. On 2026-11-09 (20:07 UTC) D1 was saturated around
+  // :05-:07 and that optional step held the invocation until it died —
+  // zero feeds pulled, and no `platform_feed_silent` because runAllFeeds
+  // never ran (so never threw). Geo is owned by cartographer (`9 * * * *`)
+  // now, so the inline pass runs AFTER feed ingestion, bounded by
+  // INLINE_GEO_ENRICH_TIMEOUT_MS — see runInlineGeoEnrichment().
 
   // NOTE: domain→IP resolution moved to the dedicated Enricher job
   // (cron/enricher.ts). Coupling it to feed ingest meant a feed
@@ -1031,6 +1089,12 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
       });
     }
   }
+
+  // Best-effort geo enrichment — after ingestion so it can never starve it,
+  // and wall-clock bounded so it can't hold the rest of the tick either.
+  // Nothing below depends on it (cartographer and the 4-hourly enrichment
+  // pipeline own geo); sentinel's totalNew gate reads feedResult only.
+  await runInlineGeoEnrichment(env);
 
   // ─── API Key Health Check: log presence of enrichment API keys ───
   {
