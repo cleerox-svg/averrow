@@ -313,7 +313,7 @@ hour-only time gates, never minute gates (see the cron-audit rule in CLAUDE.md Â
 | `*/5 * * * *` | navigator | DNS geo-backfill, OLAP cube refresh (current+prev hour), KV cache pre-warming (31 page-load requests) |
 | `7 * * * *` | orchestrator | Feed ingestion, Flight Control, agent mesh dispatch (see below) |
 | `8 * * * *` | enricher | Domain geo / brand logo / sector / firmographic enrichment (own budget since PR-E) |
-| `9 * * * *` | cartographer | Guaranteed hourly maintenance run (own budget since PR-F); FC scaleAgents adds instances for backlog drain |
+| `9 * * * *` | cartographer | Guaranteed hourly maintenance run (own budget since PR-F). Cartographer's only scheduled path since 2026-11-09: FC `scaleAgents` no longer fires backlog instances inside the `:07` orchestrator invocation (it logs a `scaling_deferred` row instead); one run drains â‰¤1,500 unenriched rows |
 | `10 */6 * * *` | strategist | Campaign correlation (relocated from orchestrator, PR-Q) |
 | `11 */6 * * *` | sparrow | Takedown automation (PR-Q) |
 | `12 */6 * * *` | cube-healer | Full 30-day retroactive cube rebuild |

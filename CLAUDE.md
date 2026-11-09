@@ -490,7 +490,8 @@ Telemetry only (target_agent=NULL):
 
 Cron-driven dispatch (no event needed):
   Cartographer  every hour via dedicated `9 * * * *` cron (PR-F)
-                + FC scaleAgents for backlog drain
+                (FC scaleAgents no longer starts cartographer inside the :07 tick —
+                 2026-11-09; it logs `scaling_deferred` and leaves it to :09)
   Nexus         every 4h via NEXUS_RUN workflow (PR-B/D)
   Analyst       every hour via orchestrator inline await
   Strategist    every 6h via orchestrator
@@ -638,8 +639,10 @@ enricher:     8 * * * *     (hourly at :08 — own invocation so it doesn't shar
                              was dropping ~30-50% of ticks.)
 cartographer: 9 * * * *     (hourly at :09 — guaranteed maintenance run with own
                              worker budget. Maintains rule-based provider scoring + email
-                             security scans + provider stats. FC scaleAgents still
-                             fires ADDITIONAL instances on top for backlog drain.
+                             security scans + provider stats. Its only scheduled path:
+                             FC scaleAgents defers to it (2026-11-09) instead of
+                             starting extra instances inside the :07 tick, which were
+                             killed with the tick and starved feed ingestion.
                              Dedicated cron added in PR-F after 24% failure rate
                              observed at the orchestrator's :07-:12 window.)
 strategist:   10 */6 * * * (every 6h at :10 — relocated from orchestrator in PR-Q because
@@ -756,7 +759,7 @@ Time gates use `event.scheduledTime` hour-only — **no minute gates** (see cron
 Always (every tick):  Flight Control, Incident recovery sweep, CertStream health, agent_events consumer
                       (Enricher moved to its own `8 * * * *` cron — see schedule above)
                       (Cartographer's baseline maintenance moved to its own `9 * * * *` cron in PR-F.
-                       FC scaleAgents still fires additional cart instances for backlog drain.)
+                       FC scaleAgents defers cartographer to that cron instead of starting it here.)
                       (CT monitor, lookalike check, and trademark scan moved OFF this hourly
                        tick to dedicated crons `18 * * * *` / `22 * * * *` / `23 * * * *` in
                        S0.1 — see schedule above. Each now runs via `executeAgent` so it

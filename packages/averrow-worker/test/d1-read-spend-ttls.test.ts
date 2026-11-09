@@ -76,8 +76,9 @@ describe("fix 12 — FC no_geo backlog on the monitoring TTL", () => {
   });
   it("no instance-count scaling reads totalNoGeo (only the >5000 geo_backlog gate)", () => {
     const uses = [...src.matchAll(/backlogs\.totalNoGeo/g)].length;
-    expect(uses).toBe(3); // gate + log message + log payload
-    expect(src).toMatch(/if \(backlogs\.totalNoGeo > 5000 && cartBacklog === 0\)/);
+    expect(uses).toBe(2); // gate + log label
+    expect(src).toMatch(/const geoBacklogWanted = backlogs\.totalNoGeo > 5000 && cartBacklog === 0;/);
+    expect(src).toMatch(/const noGeoLabel = noGeoProbeLabel\(backlogs\.totalNoGeo\);/);
   });
 });
 
