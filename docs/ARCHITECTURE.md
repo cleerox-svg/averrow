@@ -362,7 +362,7 @@ historical `agent_runs` rows carry `agent_id='fast_tick'` while new runs write
 
 Heavy agents are dispatched as durable Workflows to avoid blocking the cron mesh:
 
-- `CartographerBackfillWorkflow` — Multi-step enrichment with retry and checkpointing (fired by FC `scaleAgents` for backlog drain)
+- `CartographerBackfillWorkflow` — Multi-step enrichment with retry and checkpointing (manual dispatch from `src/index.ts`; FC `scaleAgents` never used it and, since 2026-11-09, no longer starts cartographer inside the `:07` tick)
 - `CartographerMainWorkflow` — Durable wrapper for the full 7-phase Cartographer run (manual endpoint today; PR-M)
 - `NexusWorkflow` (`NEXUS_RUN`) — Clustering analysis, dispatched from the orchestrator at `hour % 4 === 0` with KV cooldown
 - `GeoipRefreshWorkflow` — Weekly MaxMind import (verify-staging → load-locations → chunk-import → atomic-swap)

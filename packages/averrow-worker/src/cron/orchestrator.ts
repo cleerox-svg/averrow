@@ -607,6 +607,10 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
   try {
     const { flightControlAgent } = await import('../agents/flightControl');
     const { executeAgent } = await import('../lib/agentRunner');
+    // NOTE: FC treats a present _executionCtx as "running inside the :07
+    // cron" and defers cartographer scaling to the 9 * * * * cron. Don't
+    // pass an ExecutionContext to FC from any other caller (e.g. a manual
+    // route) without revisiting scaleAgents, or that caller drains nothing.
     await executeAgent(env, flightControlAgent, { _executionCtx: ctx }, 'cron', 'scheduled');
   } catch (err) {
     logger.error('flight_control_error', { error: err instanceof Error ? err.message : String(err) });
