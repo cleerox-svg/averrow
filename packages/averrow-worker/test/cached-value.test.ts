@@ -12,8 +12,11 @@ class MockKV {
     return this.store.get(key) ?? null;
   }
 
-  async put(key: string, value: string): Promise<void> {
+  ttls = new Map<string, number | undefined>();
+
+  async put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void> {
     this.store.set(key, value);
+    this.ttls.set(key, opts?.expirationTtl);
   }
 
   async delete(key: string): Promise<void> {
@@ -237,6 +240,106 @@ describe("cachedValue", () => {
       expect(compute).toHaveBeenCalledTimes(1);
       await cachedValue(env, "test.zero", 60, compute, { ttlFor: () => 0 });
       expect(kv.store.has("cv:test.zero")).toBe(false);
+    });
+  });
+
+  describe("a short (degraded) result never displaces a usable full entry", () => {
+    // Mirrors threatAggregate's unfiltered key: 3h TTL, single-flight (serves
+    // stale up to the 6h KV expiry), 60s for a degraded result.
+    const TTL = 10_800;
+    const SF = { lockTtlSeconds: 120, waitMs: 400, pollMs: 10 };
+    type Agg = { total: number; degraded_sections: string[] };
+    const ttlFor = (v: Agg) => (v.degraded_sections.length ? 60 : TTL);
+    const good: Agg = { total: 100, degraded_sections: [] };
+    const degraded: Agg = { total: 0, degraded_sections: ["geo"] };
+    const seed = (key: string, v: Agg, ageS: number, short = false) =>
+      kv.store.set(`cv:${key}`, JSON.stringify({ v, t: Date.now() - ageS * 1000, ...(short ? { s: 1 } : {}) }));
+    const stored = (key: string) => JSON.parse(kv.store.get(`cv:${key}`)!) as { v: Agg; t: number; s?: number };
+
+    it("singleFlight: a 4h-old good entry survives a degraded refill and is returned", async () => {
+      seed("sc.keep", good, 4 * 3600);
+      const before = kv.store.get("cv:sc.keep");
+      const compute = vi.fn().mockResolvedValue(degraded);
+      const v = await cachedValue(env, "sc.keep", TTL, compute, { singleFlight: SF, ttlFor });
+      expect(compute).toHaveBeenCalledOnce();
+      expect(v).toEqual(good);
+      expect(kv.store.get("cv:sc.keep")).toBe(before); // untouched
+      expect(kv.store.has("cvlock:sc.keep")).toBe(false);
+    });
+
+    it("SWR background refill: a degraded result leaves the stale good entry in place", async () => {
+      seed("sc.swr", good, 600);
+      const before = kv.store.get("cv:sc.swr");
+      const pending: Promise<unknown>[] = [];
+      const compute = vi.fn().mockResolvedValue(degraded);
+      const opts = { ttlFor, staleWhileRevalidate: { freshSeconds: 300, waitUntil: (p: Promise<unknown>) => { pending.push(p); } } };
+      expect(await cachedValue(env, "sc.swr", TTL, compute, opts)).toEqual(good);
+      await Promise.all(pending);
+      expect(compute).toHaveBeenCalledOnce();
+      expect(kv.store.get("cv:sc.swr")).toBe(before);
+    });
+
+    it("no prior entry: the degraded value is written as a short entry with the short TTL", async () => {
+      const compute = vi.fn().mockResolvedValue(degraded);
+      expect(await cachedValue(env, "sc.cold", TTL, compute, { singleFlight: SF, ttlFor })).toEqual(degraded);
+      const e = stored("sc.cold");
+      expect(e.v).toEqual(degraded);
+      expect(e.s).toBe(1);
+      expect(kv.ttls.get("cv:sc.cold")).toBe(120); // max(60 * 2, 60)
+      // Pre-aged: expires for readers after ~60s, not TTL.
+      expect(Date.now() - e.t).toBeGreaterThanOrEqual((TTL - 60) * 1000 - 50);
+    });
+
+    it("a short entry is replaced by a newer short result", async () => {
+      seed("sc.short2", { total: 1, degraded_sections: ["a"] }, TTL + 5, true); // expired short
+      const compute = vi.fn().mockResolvedValue(degraded);
+      expect(await cachedValue(env, "sc.short2", TTL, compute, { singleFlight: SF, ttlFor })).toEqual(degraded);
+      expect(stored("sc.short2").v).toEqual(degraded);
+      expect(stored("sc.short2").s).toBe(1);
+    });
+
+    it("a short entry is replaced by a full result (flag cleared, full TTL)", async () => {
+      seed("sc.short3", degraded, TTL + 5, true);
+      const compute = vi.fn().mockResolvedValue(good);
+      expect(await cachedValue(env, "sc.short3", TTL, compute, { singleFlight: SF, ttlFor })).toEqual(good);
+      const e = stored("sc.short3");
+      expect(e.v).toEqual(good);
+      expect(e.s).toBeUndefined();
+      expect(kv.ttls.get("cv:sc.short3")).toBe(TTL * 2);
+    });
+
+    it("a full-TTL result always overwrites a stale full entry", async () => {
+      seed("sc.full", { total: 5, degraded_sections: [] }, 4 * 3600);
+      const compute = vi.fn().mockResolvedValue(good);
+      expect(await cachedValue(env, "sc.full", TTL, compute, { singleFlight: SF, ttlFor })).toEqual(good);
+      expect(stored("sc.full").v).toEqual(good);
+      expect(kv.ttls.get("cv:sc.full")).toBe(TTL * 2);
+    });
+
+    it("old envelopes without the flag read as full entries", async () => {
+      // Pre-flag envelope, still fresh: a plain hit.
+      seed("sc.legacy", good, 10);
+      const compute = vi.fn().mockResolvedValue(degraded);
+      expect(await cachedValue(env, "sc.legacy", TTL, compute, { singleFlight: SF, ttlFor })).toEqual(good);
+      expect(compute).not.toHaveBeenCalled();
+    });
+
+    it("plain path (no singleFlight/SWR): an EXPIRED full entry is not served — the short result is written", async () => {
+      // observatoryEvents' shape: never returns data older than ttlSeconds.
+      seed("sc.plain", good, TTL + 5);
+      const compute = vi.fn().mockResolvedValue(degraded);
+      expect(await cachedValue(env, "sc.plain", TTL, compute, { ttlFor })).toEqual(degraded);
+      expect(stored("sc.plain").v).toEqual(degraded);
+      expect(stored("sc.plain").s).toBe(1);
+    });
+
+    it("refresh (warm) on the plain path: a still-servable full entry is kept over a short result", async () => {
+      seed("sc.warm", good, TTL - 100); // past the refresh-ahead point, within TTL
+      const before = kv.store.get("cv:sc.warm");
+      const compute = vi.fn().mockResolvedValue(degraded);
+      expect(await cachedValue(env, "sc.warm", TTL, compute, { ttlFor, refresh: true })).toEqual(good);
+      expect(compute).toHaveBeenCalledOnce();
+      expect(kv.store.get("cv:sc.warm")).toBe(before);
     });
   });
 

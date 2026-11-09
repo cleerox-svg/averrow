@@ -25,6 +25,7 @@
 import type { Env } from '../types';
 import type { OrgScope } from '../middleware/auth';
 import { cachedValue } from './cached-value';
+import { logger } from './logger';
 import { scopeCacheSegment } from './scope-cache-key';
 import { runSequential, softSection, type SectionErrors } from './run-sequential';
 
@@ -454,7 +455,17 @@ export async function threatAggregate(
 
     // Section names (without the `_error` suffix softSection appends).
     const degraded_sections = Object.keys(sectionErrors).map((k) => k.replace(/_error$/, ''));
-    if (attempted.length > 0 && degraded_sections.length === attempted.length) {
+    const allFailed = attempted.length > 0 && degraded_sections.length === attempted.length;
+    if (degraded_sections.length > 0) {
+      // Log the messages (never put them in the response): a deterministic SQL
+      // bug in one section must be tellable from a D1 overload.
+      (allFailed ? logger.error : logger.warn)('threat_aggregate_sections_degraded', {
+        cache_key: cacheKey,
+        sections: degraded_sections,
+        errors: sectionErrors,
+      });
+    }
+    if (allFailed) {
       // Nothing succeeded: fail the request (handler → 500) instead of
       // caching an all-empty aggregate.
       throw new Error(`threat aggregate: every section failed (${Object.values(sectionErrors)[0] ?? 'unknown error'})`);

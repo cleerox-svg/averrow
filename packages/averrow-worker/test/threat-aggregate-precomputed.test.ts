@@ -11,7 +11,8 @@
  * unfiltered refill takes the single-flight lock.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { logger } from "../src/lib/logger";
 import {
   hasSqlite,
   openDerivedDb,
@@ -201,6 +202,51 @@ describe.skipIf(!hasSqlite())("threatAggregate fail-soft sections", () => {
     expect(agg.degraded_sections).toEqual(["headline"]);
     expect(agg.total).toBe(0);
     expect(byKey(agg.by_status, (r) => r.status, (r) => r.count)).toEqual({ active: 2 });
+  });
+
+  it("section error messages are logged (warn), never returned in the response", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const env = { DB: failingDb(d1FromSqlite(seed()), isByType), CACHE: fakeKv() } as unknown as Env;
+      const agg = await threatAggregate(env, {});
+      expect(warn).toHaveBeenCalledWith("threat_aggregate_sections_degraded", expect.objectContaining({
+        sections: ["by_type"],
+        errors: { by_type_error: expect.stringContaining("D1 DB is overloaded") },
+      }));
+      expect(JSON.stringify(agg)).not.toContain("overloaded");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("every section failing logs at error level", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const env = { DB: failingDb(d1FromSqlite(seed()), () => true), CACHE: fakeKv() } as unknown as Env;
+      await expect(threatAggregate(env, {})).rejects.toThrow(/every section failed/);
+      expect(error).toHaveBeenCalledWith("threat_aggregate_sections_degraded", expect.any(Object));
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("unfiltered: a degraded refill keeps a 4h-old good entry in KV and serves it", async () => {
+    const kv = fakeKv();
+    const good = await threatAggregate({ DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env, {});
+    expect(good.degraded_sections).toEqual([]);
+    const [key, raw] = [...kv.store.entries()].find(([k]) => k.startsWith("cv:threat-agg:"))!;
+    const aged = JSON.stringify({ ...JSON.parse(raw), t: Date.now() - 4 * 3600 * 1000 });
+    kv.store.set(key, aged);
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const env = { DB: failingDb(d1FromSqlite(seed()), isByType), CACHE: kv } as unknown as Env;
+      const agg = await threatAggregate(env, {});
+      expect(agg.degraded_sections).toEqual([]);
+      expect(agg.by_type).toEqual(good.by_type);
+      expect(kv.store.get(key)).toBe(aged);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("every section failing throws and caches nothing", async () => {

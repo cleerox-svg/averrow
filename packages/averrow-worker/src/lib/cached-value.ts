@@ -83,8 +83,14 @@ export interface SingleFlightOptions {
 interface CachedEntry<T> {
   /** Cached payload. JSON-serializable. */
   v: T;
-  /** Epoch ms when the entry was written. */
+  /** Epoch ms when the entry was written (pre-aged for a short entry). */
   t: number;
+  /**
+   * 1 = a SHORT entry: written with a `ttlFor` below the caller's
+   * `ttlSeconds` (e.g. a degraded result). Absent on full-TTL entries and on
+   * envelopes written before the flag existed (both read as full).
+   */
+  s?: 1;
 }
 
 /**
@@ -103,6 +109,13 @@ interface CachedEntry<T> {
  *                     response). The entry is stamped as if written `ttlSeconds - ttlFor`
  *                     ago, so readers (who only know `ttlSeconds`) treat it as expired
  *                     after `ttlFor`. A value <= 0 skips the write. Never lengthens.
+ *                     A short result never displaces a usable FULL entry: when a
+ *                     prior full-TTL entry is still servable to this caller (within
+ *                     `ttlSeconds`, or any stored entry under `singleFlight`, which
+ *                     serves stale), the PUT is skipped and the prior value is
+ *                     returned, so a degraded refill during an overload can't
+ *                     overwrite a good stale copy. With no such prior (cold key,
+ *                     or the prior is itself short) the short entry is written.
  * @param opts.singleFlight Optional best-effort refill lock with
  *                     stale-while-revalidate. On an expired entry: if another
  *                     caller holds the lock, the STALE value is returned at once
@@ -175,14 +188,31 @@ export async function cachedValue<T>(
     return first.entry.v;
   }
 
-  const computeAndStore = async (): Promise<T> => {
+  /**
+   * Whether `prior` may stand in for a SHORT result instead of being
+   * overwritten by it: it must be a full-TTL entry (no `s` flag) that this
+   * caller is allowed to serve — within `ttlSeconds`, or (singleFlight,
+   * which serves stale up to the KV expiry) any entry still stored.
+   */
+  const keepsOverShort = (prior: CachedEntry<T> | null): prior is CachedEntry<T> => {
+    if (!prior || prior.s === 1) return false;
+    if (opts.singleFlight) return true;
+    return (Date.now() - prior.t) / 1000 < ttlSeconds;
+  };
+
+  const computeAndStore = async (prior: CachedEntry<T> | null): Promise<T> => {
     const value = await compute();
     void recordStat(env, "miss");
 
     const effective = opts.ttlFor ? Math.min(ttlSeconds, opts.ttlFor(value)) : ttlSeconds;
+    const short = effective < ttlSeconds;
+    // A short (e.g. degraded) result must not overwrite a usable full entry.
+    if (short && keepsOverShort(prior)) return prior.v;
     if (effective <= 0) return value;
     try {
-      const entry: CachedEntry<T> = { v: value, t: Date.now() - (ttlSeconds - effective) * 1000 };
+      const entry: CachedEntry<T> = short
+        ? { v: value, t: Date.now() - (ttlSeconds - effective) * 1000, s: 1 }
+        : { v: value, t: Date.now() };
       await env.CACHE.put(cacheKey, JSON.stringify(entry), {
         expirationTtl: Math.max(effective * 2, 60),
       });
@@ -218,7 +248,7 @@ export async function cachedValue<T>(
       }
       swr.waitUntil((async () => {
         try {
-          await computeAndStore();
+          await computeAndStore(first.entry);
         } catch {
           // Background refill failed: the stale entry keeps serving until ttlSeconds.
         } finally {
@@ -239,6 +269,7 @@ export async function cachedValue<T>(
   // open: a KV error, or a cold key whose lock holder hasn't written within
   // `waitMs`, falls through to computing here.
   let ownLock = false;
+  let prior: CachedEntry<T> | null = first?.entry ?? null;
   if (opts.singleFlight) {
     const sf = opts.singleFlight;
     let held = false;
@@ -282,12 +313,13 @@ export async function cachedValue<T>(
           void recordStat(env, "hit");
           return again.entry.v;
         }
+        if (again) prior = again.entry;
       }
     }
   }
 
   try {
-    return await computeAndStore();
+    return await computeAndStore(prior);
   } finally {
     if (ownLock) {
       try {
