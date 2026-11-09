@@ -157,7 +157,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
                 <Icon size={16} />
                 <span className="min-w-0 flex-1 truncate" title={MODULE_LABELS[m.module_key]}>{MODULE_LABELS[m.module_key]}</span>
                 {m.status === 'trial' && (
-                  <Badge status="running" size="xs" font="sans" label="Trial" className="shrink-0 !py-0 leading-5" />
+                  <Badge status="running" size="xs" font="sans" label="Trial" className="shrink-0 !py-0 !leading-4" />
                 )}
               </NavLink>
             );
