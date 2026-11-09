@@ -130,7 +130,7 @@ describe('Alerts facelift', () => {
     const m = css.match(/\.alerts-v4 \.al-row-meta \{([^}]*)\}/);
     expect(m).not.toBeNull();
     const body = m![1];
-    expect(body).toMatch(/flex:\s*0 0 min\(28rem, 55%\)/);
+    expect(body).toMatch(/flex:\s*0 0 min\(34rem, 60%\)/);
     expect(css).toMatch(/\.al-row-title \{ flex: 1 1 0; min-width: 8rem; \}/);
     expect(body).toMatch(/justify-content:\s*flex-start/);
     expect(body).not.toMatch(/flex-shrink:\s*0/);
