@@ -38,6 +38,11 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
+      // Page-load perf: the default staleTime of 0 refetched every query on
+      // every mount (route change, tab switch). 5 min matches Ops' intent;
+      // hot reads (dashboard, alerts, threats) keep their own shorter
+      // per-query staleTime, and every tenant mutation invalidates its keys.
+      staleTime: 5 * 60_000,
       refetchOnWindowFocus: false,
     },
   },
