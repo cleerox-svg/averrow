@@ -64,6 +64,9 @@ export async function handleRecomputeBrandScores(request: Request, env: Env): Pr
 
 // ─── GET /api/admin/brands — Admin brand management ─────────────
 
+/** cachedValue key for the admin brand list's source breakdown. */
+export const ADMIN_BRAND_SOURCES_CACHE_KEY = "admin.brands.sources";
+
 export async function handleAdminListBrands(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
@@ -82,21 +85,33 @@ export async function handleAdminListBrands(request: Request, env: Env): Promise
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
+    // Sort on the stored column (not the COALESCE alias) so the default
+    // order walks idx_brands_threat_count and stops at LIMIT + OFFSET.
     const sortColumn = sort === "name" ? "b.name ASC" :
-      sort === "created" ? "b.first_seen DESC" :
-      sort === "threats" ? "threat_count DESC" : "threat_count DESC";
+      sort === "created" ? "b.first_seen DESC" : "b.threat_count DESC";
 
     params.push(limit, offset);
 
+    // Counts come from the pre-computed columns (CLAUDE.md §8) instead of
+    // joining the whole threats table to every brand on each page load. Same
+    // meaning as the old LEFT JOIN threats … GROUP BY b.id:
+    //   - threat_count = every linked threat. Bumped incrementally by the
+    //     brand-link writers and reconciled every 6h by cube_healer
+    //     (lib/brand-count-reconciler.ts).
+    //   - active_threat_count = linked threats with status 'active'.
+    //     Recomputed by syncBrandActiveThreatCounts
+    //     (lib/brand-active-counts.ts, enrichment Stage 5).
+    // The two refresh on different schedules, so between runs active can
+    // briefly exceed the total. The displayed total is floored at the active
+    // count so a row never shows more active than total threats. The sort
+    // stays on the stored column so it can walk idx_brands_threat_count.
     const rows = await env.DB.prepare(`
       SELECT b.id, b.name, b.canonical_domain, b.sector, b.source, b.first_seen,
-             COUNT(t.id) AS threat_count,
-             SUM(CASE WHEN t.status = 'active' THEN 1 ELSE 0 END) AS active_threats,
+             MAX(COALESCE(b.threat_count, 0), COALESCE(b.active_threat_count, 0)) AS threat_count,
+             COALESCE(b.active_threat_count, 0) AS active_threats,
              (SELECT COUNT(*) FROM monitored_brands mb WHERE mb.brand_id = b.id) AS is_monitored
       FROM brands b
-      LEFT JOIN threats t ON t.target_brand_id = b.id
       ${where}
-      GROUP BY b.id
       ORDER BY ${sortColumn}
       LIMIT ? OFFSET ?
     `).bind(...params).all();
@@ -111,16 +126,21 @@ export async function handleAdminListBrands(request: Request, env: Env): Promise
       : await env.DB.prepare(`SELECT COUNT(*) AS n FROM brands b ${where}`)
           .bind(...params.slice(0, -2)).first<{ n: number }>();
 
-    // Source breakdown
-    const sources = await env.DB.prepare(
-      "SELECT COALESCE(source, 'manual') AS source, COUNT(*) AS count FROM brands GROUP BY source"
-    ).all<{ source: string; count: number }>();
+    // Source breakdown — a whole-table GROUP BY over brands (no index on
+    // source), identical for every page/filter, so it is cached (5 min).
+    const sources = await cachedValue<Array<{ source: string; count: number }>>(
+      env, ADMIN_BRAND_SOURCES_CACHE_KEY, 300, async () => {
+        const r = await env.DB.prepare(
+          "SELECT COALESCE(source, 'manual') AS source, COUNT(*) AS count FROM brands GROUP BY source"
+        ).all<{ source: string; count: number }>();
+        return r.results;
+      });
 
     return json({
       success: true,
       data: rows.results,
       total: total?.n ?? 0,
-      sources: sources.results,
+      sources,
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);

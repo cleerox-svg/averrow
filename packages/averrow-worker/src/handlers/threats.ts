@@ -8,6 +8,30 @@ import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 import type { Env, UpdateThreatBody } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
+/** TTL of the per-slice filtered total — the list cache's 5 minutes. */
+export const THREAT_LIST_FILTERED_TOTAL_TTL_S = 300;
+
+/**
+ * cachedCount key for a filtered /api/threats total: every filter that
+ * shapes the WHERE plus the org-scope segment, and nothing else (sort,
+ * dir, limit and offset don't change the count). Each filter value is
+ * encodeURIComponent'd so a ':' inside a value can't shift it into the next
+ * segment (brand_id='x:y' vs brand_id='x' + q='y' would otherwise collide
+ * and share a count). The scope segment stays last and unescaped — it is
+ * `global` or `org:<id>:<digest>` from scopeCacheSegment.
+ */
+export function threatListTotalKey(
+  f: {
+    severity: string | null; type: string | null; status: string | null; source: string | null;
+    country: string | null; brandId: string | null; search: string | null;
+  },
+  scopeHash: string,
+): string {
+  const values = [f.severity, f.type, f.status, f.source, f.country, f.brandId, f.search]
+    .map((v) => encodeURIComponent(v ?? ""));
+  return ["count.threats.list", ...values, scopeHash].join(":");
+}
+
 // ─── List threats with filtering ────────────────────────────────
 export async function handleListThreats(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
@@ -154,11 +178,18 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
     // real row count by up to THREATS_TOTAL_TTL_S (6h). Fine for a
     // pagination total on a catalog of millions; don't reuse it where an
     // exact count matters.
+    // A filtered total depends only on the slice (filters + scope), not on
+    // sort/limit/offset, but the list cache key above carries all three, so
+    // paging or re-sorting one slice used to re-run the same COUNT(*) each
+    // time (a broad filter such as status=active walks most of the index).
+    // Share it per slice for the list cache's 5 minutes.
     const countParams = params.slice(0, -2);
     const total = where
-      ? (await session.prepare(
-          `SELECT COUNT(*) as cnt FROM threats t ${where}`
-        ).bind(...countParams).first<{ cnt: number }>())?.cnt ?? 0
+      ? await cachedCount(env, threatListTotalKey({ severity, type, status, source, country, brandId, search }, scopeHash),
+          THREAT_LIST_FILTERED_TOTAL_TTL_S, async () =>
+            (await session.prepare(
+              `SELECT COUNT(*) as cnt FROM threats t ${where}`
+            ).bind(...countParams).first<{ cnt: number }>())?.cnt ?? 0)
       : await cachedCount(env, 'count.threats.total', THREATS_TOTAL_TTL_S, async () => {
           const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM threats`).first<{ n: number }>();
           return r?.n ?? 0;
