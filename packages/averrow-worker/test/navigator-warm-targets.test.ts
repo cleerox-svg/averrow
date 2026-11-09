@@ -26,7 +26,7 @@
 //      requested with no query string). A client edit that changes a
 //      warmed param fails here and points at both places to update.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -35,6 +35,8 @@ import {
   navigatorWarmPhases,
   runWarmTargets,
   warmRequest,
+  NAVIGATOR_SEQUENTIAL_BUDGET_MS,
+  NAVIGATOR_WARM_CALL_TIMEOUT_MS,
   type NavigatorWarmTarget,
 } from "../src/cron/navigator";
 import { isCacheRefresh, refreshAfterSeconds } from "../src/lib/cache-refresh";
@@ -240,10 +242,13 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
     }
   });
 
-  it("Phase D runs every 30 min on minutes no other phase uses (:05, :35)", () => {
+  it("Phase D runs every 30 min on minutes no other phase uses, clear of the :07 orchestrator tick (:25, :55)", () => {
     const fires = Array.from({ length: 12 }, (_, i) => i * 5); // */5 cron
     const dMinutes = fires.filter((m) => navigatorWarmPhases(m).D);
-    expect(dMinutes).toEqual([5, 35]);
+    expect(dMinutes).toEqual([25, 55]);
+    // 2026-11-09 incident: D at :05/:35 saturated D1 right before :07.
+    expect(dMinutes).not.toContain(5);
+    for (const m of dMinutes) expect(Math.abs(m - 7)).toBeGreaterThanOrEqual(10);
     for (const m of dMinutes) {
       const p = navigatorWarmPhases(m);
       expect([p.A, p.A2, p.B, p.C]).toEqual([false, false, false, false]);
@@ -276,13 +281,93 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
     const targets = [target("/a", "ok"), target("/b", "throw"), target("/c", "500"), target("/d", "ok")];
     const env = {} as Env;
 
-    expect(await runWarmTargets(targets, env, false, true)).toEqual({ ok: 2, failed: 2 });
+    expect(await runWarmTargets(targets, env, false, true)).toEqual({ ok: 2, failed: 2, timedOut: [], skipped: [] });
     expect(maxInFlight).toBe(1);
     expect(order).toEqual(["start /a", "end /a", "start /b", "end /b", "start /c", "end /c", "start /d", "end /d"]);
 
     maxInFlight = 0;
-    expect(await runWarmTargets(targets, env, false, false)).toEqual({ ok: 2, failed: 2 });
+    expect(await runWarmTargets(targets, env, false, false)).toEqual({ ok: 2, failed: 2, timedOut: [], skipped: [] });
     expect(maxInFlight).toBe(4);
+  });
+
+  describe("sequential phase wall-clock budget + per-call timeout", () => {
+    const sleeper = (path: string, ms: number, started: string[], outcome: "ok" | "throw" = "ok"): NavigatorWarmTarget => ({
+      phase: "D",
+      path,
+      consumer: "test",
+      handler: async () => {
+        started.push(path);
+        await new Promise((r) => setTimeout(r, ms));
+        if (outcome === "throw") throw new Error(`late ${path}`);
+        return new Response("{}", { status: 200 });
+      },
+    });
+    const env = {} as Env;
+
+    it("budget is ~20s and a single call can't outlast it", () => {
+      expect(NAVIGATOR_SEQUENTIAL_BUDGET_MS).toBe(20_000);
+      expect(NAVIGATOR_WARM_CALL_TIMEOUT_MS).toBeGreaterThan(0);
+      expect(NAVIGATOR_WARM_CALL_TIMEOUT_MS).toBeLessThan(NAVIGATOR_SEQUENTIAL_BUDGET_MS);
+    });
+
+    it("stops the phase once the budget is spent and skips the remaining targets (logged)", async () => {
+      const started: string[] = [];
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const targets = [sleeper("/a", 40, started), sleeper("/b", 40, started), sleeper("/c", 5, started), sleeper("/d", 5, started)];
+        const r = await runWarmTargets(targets, env, false, true, { budgetMs: 60, callTimeoutMs: 1_000 });
+        // /a (40ms) runs; /b starts with 20ms left and is cut at the remaining budget.
+        expect(started).toEqual(["/a", "/b"]);
+        expect(r.ok).toBe(1);
+        expect(r.timedOut).toEqual(["/b"]);
+        expect(r.skipped).toEqual(["/c", "/d"]);
+        expect(r.failed).toBe(1); // skipped targets never ran — not failures
+        const warn = logSpy.mock.calls
+          .map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
+          .find((e) => e.event === "navigator_warm_phase_budget_exhausted");
+        expect(warn).toMatchObject({ level: "warn", phase: "D", budget_ms: 60, completed: 2, ok: 1, skipped: ["/c", "/d"], timed_out: ["/b"] });
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it("per-call timeout abandons a slow handler and moves on to the next target", async () => {
+      const started: string[] = [];
+      const targets = [sleeper("/slow", 200, started), sleeper("/fast", 5, started)];
+      const t0 = Date.now();
+      const r = await runWarmTargets(targets, env, false, true, { budgetMs: 10_000, callTimeoutMs: 30 });
+      expect(Date.now() - t0).toBeLessThan(150); // did not wait for /slow
+      expect(started).toEqual(["/slow", "/fast"]);
+      expect(r).toEqual({ ok: 1, failed: 1, timedOut: ["/slow"], skipped: [] });
+    });
+
+    it("a timed-out call that rejects later is swallowed (no unhandled rejection)", async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (e: unknown) => unhandled.push(e);
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        const started: string[] = [];
+        const r = await runWarmTargets([sleeper("/late-throw", 30, started, "throw")], env, false, true, { budgetMs: 10_000, callTimeoutMs: 5 });
+        expect(r.timedOut).toEqual(["/late-throw"]);
+        await new Promise((res) => setTimeout(res, 60)); // let the handler reject
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+    });
+
+    it("a handler that throws synchronously is counted as failed, not fatal", async () => {
+      const boom: NavigatorWarmTarget = { phase: "D", path: "/sync", consumer: "test", handler: () => { throw new Error("sync"); } };
+      const started: string[] = [];
+      const r = await runWarmTargets([boom, sleeper("/next", 1, started)], env, false, true);
+      expect(r).toEqual({ ok: 1, failed: 1, timedOut: [], skipped: [] });
+    });
+
+    it("parallel phases are unaffected by the sequential budget", async () => {
+      const started: string[] = [];
+      const r = await runWarmTargets([sleeper("/p1", 30, started), sleeper("/p2", 30, started)], env, false, false, { budgetMs: 1, callTimeoutMs: 1 });
+      expect(r).toEqual({ ok: 2, failed: 0, timedOut: [], skipped: [] });
+    });
   });
 
   it("never warms a retired target", () => {

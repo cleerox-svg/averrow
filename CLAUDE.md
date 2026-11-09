@@ -1381,7 +1381,7 @@ behind a feature flag.
   - **A2** (every 15 min): Observatory 24h/30d nodes/arcs/stats + 7d heatmap
   - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot (one super_admin warm writes both role keys), Threats inflow (`window=24h` and `window=7d`), critical banner
   - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`), Threat Actors (`status=active`) + stats
-  - **D** (every 30 min at :05/:35, SEQUENTIAL — one target at a time, `NAVIGATOR_SEQUENTIAL_PHASES`): brand stats, brand movers, `/api/brands/aggregate/{email-security,pressure,composition,posture}` (heavy catalog scans; never fired concurrently)
+  - **D** (every 30 min at :25/:55 — moved off :05/:35 on 2026-11-09 so it no longer loads D1 right before the :07 tick; 20s phase budget `NAVIGATOR_SEQUENTIAL_BUDGET_MS` + 12s per-call timeout; SEQUENTIAL — one target at a time, `NAVIGATOR_SEQUENTIAL_PHASES`): brand stats, brand movers, `/api/brands/aggregate/{email-security,pressure,composition,posture}` (heavy catalog scans; never fired concurrently)
   - A2/B/C/D are skipped when the D1 read budget is over the soft-cap
   - Short-freshness page-load caches use `cachedValue`'s `staleWhileRevalidate` option (TTL ≥ warm interval, live `freshSeconds`, background refill only by the `cvlock:` holder).
   - The brands-list and dashboard-overview warms write the `global` scope key, which every staff role reads (`getOrgScope` returns null for `isPlatformStaff`, PR-F); only `client` callers (which never reach these `requireStaff` routes) would read org-scoped keys.

@@ -173,7 +173,7 @@ Same `requireStaff` gate; handler `handlers/observatoryEvents.ts`. Feeds the Int
 | GET | `/api/brands` | Staff | List all brands |
 | GET | `/api/brands/top-targeted` | Staff | Top targeted brands (with trends) |
 | GET | `/api/brands/monitored` | Staff | Monitored brands |
-| GET | `/api/brands/stats` | Staff | Brand aggregate statistics. KV `brand_stats`, 1h TTL with refresh-ahead: Navigator's sequential 30-min Phase D warm (:05/:35) recomputes it on every tick (live data ≤ ~30 min old). |
+| GET | `/api/brands/stats` | Staff | Brand aggregate statistics. KV `brand_stats`, 1h TTL with refresh-ahead: Navigator's sequential 30-min Phase D warm (:25/:55, 20s phase budget + per-call timeout) recomputes it on every tick (live data ≤ ~30 min old). |
 | GET | `/api/brands/movers` | Staff | 7-day movers (rising / falling by active threat delta). Cached via cachedValue `staleWhileRevalidate` (`cv:brand_movers:v5`): a live request serves an entry ≤5 min old as-is, an older one (≤1h) at once while the refill-lock holder refreshes it in the background; warmed by Navigator's sequential Phase D. |
 | GET | `/api/brands/aggregate/composition` | Staff | Catalog composition aggregate (cachedValue, 2h TTL — data moves ~daily — refreshed ahead by Navigator's sequential Phase D every ~90 min; its 4 reads run one at a time) |
 | GET | `/api/brands/aggregate/email-security` | Staff | Email-security posture aggregate across the catalog (derived from the shared 1h email-posture rollup; refreshed ahead by Navigator's sequential Phase D) |
