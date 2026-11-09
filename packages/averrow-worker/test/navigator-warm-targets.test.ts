@@ -26,7 +26,7 @@
 //      requested with no query string). A client edit that changes a
 //      warmed param fails here and points at both places to update.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -37,6 +37,8 @@ import {
   warmRequest,
   NAVIGATOR_SEQUENTIAL_BUDGET_MS,
   NAVIGATOR_WARM_CALL_TIMEOUT_MS,
+  NAVIGATOR_WARM_MIN_REMAINING_MS,
+  sequentialWarmStartIndex,
   type NavigatorWarmTarget,
 } from "../src/cron/navigator";
 import { isCacheRefresh, refreshAfterSeconds } from "../src/lib/cache-refresh";
@@ -291,6 +293,16 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
   });
 
   describe("sequential phase wall-clock budget + per-call timeout", () => {
+    // Fake timers (Date.now + setTimeout) make every budget/timeout boundary
+    // exact instead of racing real sleeps against a real budget.
+    beforeEach(() => {
+      vi.useFakeTimers({ now: new Date("2026-11-09T14:25:00Z") });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
     const sleeper = (path: string, ms: number, started: string[], outcome: "ok" | "throw" = "ok"): NavigatorWarmTarget => ({
       phase: "D",
       path,
@@ -303,41 +315,79 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
       },
     });
     const env = {} as Env;
+    /** Start runWarmTargets, advance fake time until it settles, return its result. */
+    const run = async (...args: Parameters<typeof runWarmTargets>) => {
+      const p = runWarmTargets(...args);
+      await vi.advanceTimersByTimeAsync(120_000);
+      return p;
+    };
+    const budgetWarns = (spy: { mock: { calls: unknown[][] } }) =>
+      spy.mock.calls
+        .map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
+        .filter((e) => e.event === "navigator_warm_phase_budget_exhausted");
 
-    it("budget is ~20s and a single call can't outlast it", () => {
+    it("budget is ~20s, a single call can't outlast it, and the start floor leaves room for a real call", () => {
       expect(NAVIGATOR_SEQUENTIAL_BUDGET_MS).toBe(20_000);
       expect(NAVIGATOR_WARM_CALL_TIMEOUT_MS).toBeGreaterThan(0);
       expect(NAVIGATOR_WARM_CALL_TIMEOUT_MS).toBeLessThan(NAVIGATOR_SEQUENTIAL_BUDGET_MS);
+      expect(NAVIGATOR_WARM_MIN_REMAINING_MS).toBe(5_000);
+      expect(NAVIGATOR_WARM_MIN_REMAINING_MS).toBeLessThan(NAVIGATOR_SEQUENTIAL_BUDGET_MS);
     });
 
-    it("stops the phase once the budget is spent and skips the remaining targets (logged)", async () => {
+    it("stops the phase once the budget is spent and skips the remaining targets (logged, reason=budget)", async () => {
       const started: string[] = [];
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      try {
-        const targets = [sleeper("/a", 40, started), sleeper("/b", 40, started), sleeper("/c", 5, started), sleeper("/d", 5, started)];
-        const r = await runWarmTargets(targets, env, false, true, { budgetMs: 60, callTimeoutMs: 1_000 });
-        // /a (40ms) runs; /b starts with 20ms left and is cut at the remaining budget.
-        expect(started).toEqual(["/a", "/b"]);
-        expect(r.ok).toBe(1);
-        expect(r.timedOut).toEqual(["/b"]);
-        expect(r.skipped).toEqual(["/c", "/d"]);
-        expect(r.failed).toBe(1); // skipped targets never ran — not failures
-        const warn = logSpy.mock.calls
-          .map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
-          .find((e) => e.event === "navigator_warm_phase_budget_exhausted");
-        expect(warn).toMatchObject({ level: "warn", phase: "D", budget_ms: 60, completed: 2, ok: 1, skipped: ["/c", "/d"], timed_out: ["/b"] });
-      } finally {
-        logSpy.mockRestore();
-      }
+      const targets = [sleeper("/a", 8_000, started), sleeper("/b", 8_000, started), sleeper("/c", 10, started), sleeper("/d", 10, started)];
+      // Default budget 20s / floor 5s: /a ends at 8s (12s left), /b at 16s (4s left < 5s floor).
+      const r = await run(targets, env, false, true);
+      expect(started).toEqual(["/a", "/b"]);
+      expect(r).toEqual({ ok: 2, failed: 0, timedOut: [], skipped: ["/c", "/d"] });
+      const warns = budgetWarns(logSpy);
+      expect(warns).toHaveLength(1);
+      expect(warns[0]).toMatchObject({
+        level: "warn", phase: "D", reason: "budget", budget_ms: 20_000, min_remaining_ms: 5_000,
+        elapsed_ms: 16_000, completed: 2, ok: 2, skipped: ["/c", "/d"], timed_out: [],
+      });
     });
 
-    it("per-call timeout abandons a slow handler and moves on to the next target", async () => {
+    it("min-remaining floor: does not start a target with less than the floor left", async () => {
       const started: string[] = [];
-      const targets = [sleeper("/slow", 200, started), sleeper("/fast", 5, started)];
-      const t0 = Date.now();
-      const r = await runWarmTargets(targets, env, false, true, { budgetMs: 10_000, callTimeoutMs: 30 });
-      expect(Date.now() - t0).toBeLessThan(150); // did not wait for /slow
-      expect(started).toEqual(["/slow", "/fast"]);
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      // 10s budget, 5s floor: /a ends at 5.001s → 4.999s left → /b is not started.
+      const r1 = await run([sleeper("/a", 5_001, started), sleeper("/b", 10, started)], env, false, true, { budgetMs: 10_000 });
+      expect(started).toEqual(["/a"]);
+      expect(r1.skipped).toEqual(["/b"]);
+      // Exactly the floor left → it still starts.
+      started.length = 0;
+      const r2 = await run([sleeper("/a", 5_000, started), sleeper("/b", 10, started)], env, false, true, { budgetMs: 10_000 });
+      expect(started).toEqual(["/a", "/b"]);
+      expect(r2).toEqual({ ok: 2, failed: 0, timedOut: [], skipped: [] });
+    });
+
+    it("the first per-call timeout ends the phase — nothing starts beside the abandoned call (reason=call_timeout)", async () => {
+      const started: string[] = [];
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const targets = [sleeper("/fast", 100, started), sleeper("/slow", 60_000, started), sleeper("/c", 10, started), sleeper("/d", 10, started)];
+      const p = runWarmTargets(targets, env, false, true);
+      // /fast ends at 0.1s; /slow is abandoned at its 12s per-call timeout.
+      await vi.advanceTimersByTimeAsync(NAVIGATOR_WARM_CALL_TIMEOUT_MS + 100);
+      const r = await p;
+      expect(started).toEqual(["/fast", "/slow"]);
+      expect(r).toEqual({ ok: 1, failed: 1, timedOut: ["/slow"], skipped: ["/c", "/d"] });
+      expect(budgetWarns(logSpy)[0]).toMatchObject({ reason: "call_timeout", completed: 2, skipped: ["/c", "/d"], timed_out: ["/slow"] });
+      // Even after the abandoned call settles, no further target was started.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(started).toEqual(["/fast", "/slow"]);
+    });
+
+    it("a call is capped at the budget remaining, not the full per-call timeout", async () => {
+      const started: string[] = [];
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const p = runWarmTargets([sleeper("/a", 9_000, started), sleeper("/slow", 60_000, started)], env, false, true);
+      // /a ends at 9s → 11s left < 12s timeout → /slow is cut at 20s total.
+      await vi.advanceTimersByTimeAsync(20_000);
+      const r = await p;
+      expect(Date.now() - new Date("2026-11-09T14:25:00Z").getTime()).toBe(20_000);
       expect(r).toEqual({ ok: 1, failed: 1, timedOut: ["/slow"], skipped: [] });
     });
 
@@ -345,11 +395,15 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
       const unhandled: unknown[] = [];
       const onUnhandled = (e: unknown) => unhandled.push(e);
       process.on("unhandledRejection", onUnhandled);
+      vi.spyOn(console, "log").mockImplementation(() => {});
       try {
         const started: string[] = [];
-        const r = await runWarmTargets([sleeper("/late-throw", 30, started, "throw")], env, false, true, { budgetMs: 10_000, callTimeoutMs: 5 });
-        expect(r.timedOut).toEqual(["/late-throw"]);
-        await new Promise((res) => setTimeout(res, 60)); // let the handler reject
+        const p = runWarmTargets([sleeper("/late-throw", 30_000, started, "throw")], env, false, true, { callTimeoutMs: 5_000, minRemainingMs: 0 });
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect((await p).timedOut).toEqual(["/late-throw"]);
+        await vi.advanceTimersByTimeAsync(30_000); // let the handler reject
+        vi.useRealTimers();
+        await new Promise((res) => setTimeout(res, 10)); // give Node a turn to report it
         expect(unhandled).toEqual([]);
       } finally {
         process.off("unhandledRejection", onUnhandled);
@@ -359,14 +413,88 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
     it("a handler that throws synchronously is counted as failed, not fatal", async () => {
       const boom: NavigatorWarmTarget = { phase: "D", path: "/sync", consumer: "test", handler: () => { throw new Error("sync"); } };
       const started: string[] = [];
-      const r = await runWarmTargets([boom, sleeper("/next", 1, started)], env, false, true);
+      const r = await run([boom, sleeper("/next", 1, started)], env, false, true);
       expect(r).toEqual({ ok: 1, failed: 1, timedOut: [], skipped: [] });
     });
 
     it("parallel phases are unaffected by the sequential budget", async () => {
       const started: string[] = [];
-      const r = await runWarmTargets([sleeper("/p1", 30, started), sleeper("/p2", 30, started)], env, false, false, { budgetMs: 1, callTimeoutMs: 1 });
+      const r = await run([sleeper("/p1", 30, started), sleeper("/p2", 30, started)], env, false, false, { budgetMs: 1, callTimeoutMs: 1 });
       expect(r).toEqual({ ok: 2, failed: 0, timedOut: [], skipped: [] });
+    });
+  });
+
+  describe("sequential start-index rotation (tail-starvation guard)", () => {
+    const SLOT = 30 * 60_000;
+    const d = (iso: string) => new Date(iso).getTime();
+
+    it("is deterministic from the tick time and advances by one per Phase D tick (:25 → :55 → next :25)", () => {
+      const n = 6;
+      const a = sequentialWarmStartIndex(d("2026-11-09T14:25:00Z"), n);
+      const b = sequentialWarmStartIndex(d("2026-11-09T14:55:00Z"), n);
+      const c = sequentialWarmStartIndex(d("2026-11-09T15:25:00Z"), n);
+      expect(sequentialWarmStartIndex(d("2026-11-09T14:25:00Z"), n)).toBe(a);
+      expect(b).toBe((a + 1) % n);
+      expect(c).toBe((a + 2) % n);
+      // Tick jitter inside the same slot doesn't change it.
+      expect(sequentialWarmStartIndex(d("2026-11-09T14:25:00Z") + 4_321, n)).toBe(a);
+    });
+
+    it("every target reaches the head within n consecutive D ticks", () => {
+      const n = NAVIGATOR_WARM_TARGETS.filter((t) => t.phase === "D").length;
+      expect(n).toBe(6);
+      const first = d("2026-11-09T14:25:00Z");
+      const heads = new Set(Array.from({ length: n }, (_, k) => sequentialWarmStartIndex(first + k * SLOT, n)));
+      expect(heads.size).toBe(n);
+      for (let i = 0; i < n; i++) expect(heads.has(i)).toBe(true);
+    });
+
+    it("degenerate inputs return 0", () => {
+      expect(sequentialWarmStartIndex(d("2026-11-09T14:25:00Z"), 0)).toBe(0);
+      expect(sequentialWarmStartIndex(Number.NaN, 6)).toBe(0);
+    });
+
+    it("runWarmTargets starts at startIndex and wraps around", async () => {
+      const order: string[] = [];
+      const t = (path: string): NavigatorWarmTarget => ({
+        phase: "D", path, consumer: "test",
+        handler: async () => { order.push(path); return new Response("{}"); },
+      });
+      const targets = [t("/0"), t("/1"), t("/2"), t("/3")];
+      const r = await runWarmTargets(targets, {} as Env, false, true, { startIndex: 2 });
+      expect(order).toEqual(["/2", "/3", "/0", "/1"]);
+      expect(r.ok).toBe(4);
+      order.length = 0;
+      await runWarmTargets(targets, {} as Env, false, true, { startIndex: 9 }); // 9 % 4 = 1
+      expect(order).toEqual(["/1", "/2", "/3", "/0"]);
+    });
+
+    it("a skipped tail is warmed first on a later tick", async () => {
+      vi.useFakeTimers({ now: new Date("2026-11-09T14:25:00Z") });
+      try {
+        vi.spyOn(console, "log").mockImplementation(() => {});
+        const order: string[] = [];
+        const slowHead = (path: string): NavigatorWarmTarget => ({
+          phase: "D", path, consumer: "test",
+          handler: async () => { order.push(path); await new Promise((r) => setTimeout(r, 8_000)); return new Response("{}"); },
+        });
+        const targets = ["/stats", "/movers", "/email", "/pressure", "/composition", "/posture"].map(slowHead);
+        const seen = new Set<string>();
+        for (let k = 0; k < targets.length; k++) {
+          const tick = Date.now();
+          const p = runWarmTargets(targets, {} as Env, false, true, { startIndex: sequentialWarmStartIndex(tick, targets.length) });
+          await vi.advanceTimersByTimeAsync(20_000);
+          await p;
+          order.forEach((x) => seen.add(x));
+          order.length = 0;
+          vi.setSystemTime(tick + SLOT);
+        }
+        // Each tick only fits 2 of the 8s targets, but rotation still covers all 6.
+        expect(seen.size).toBe(6);
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
     });
   });
 
