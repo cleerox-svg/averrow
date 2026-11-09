@@ -30,7 +30,19 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { computeIsStalled, isOrphanedRun } from "../src/agents/flightControl";
+import {
+  computeIsStalled,
+  isOrphanedRun,
+  decideStallRecovery,
+  stallRecoveryCooldownMs,
+  parseStallRecoveryRecord,
+  isStallRecoveryCoolingDown,
+  MAX_STALL_RECOVERIES_PER_TICK,
+  SCHEDULE_OWNED_AGENTS,
+  STALL_RECOVERY_COOLDOWN_BASE_MS,
+  STALL_RECOVERY_COOLDOWN_MAX_MS,
+} from "../src/agents/flightControl";
+import { agentModules } from "../src/agents/index";
 
 const FORTY_FIVE_MIN_MS = 45 * 60 * 1000;
 const THRESHOLD_MS = 60 * 60 * 1000; // typical agent stallThresholdMinutes=60
@@ -263,5 +275,186 @@ describe("isOrphanedRun — recovery force-fail predicate", () => {
 
   it("status=null → never orphaned", () => {
     expect(isOrphanedRun({ status: null, completedAt: null })).toBe(false);
+  });
+});
+
+// ─── Recovery-storm fix (2026-11-09) ──────────────────────────────
+//
+// FC used to re-dispatch every stalled agent inline in the hourly
+// orchestrator invocation; the recoveries starved feed ingestion, died as
+// partial orphans, and were re-recovered on the next tick. These pin the
+// dispatch decision, which is separate from (and does not change)
+// computeIsStalled.
+
+const HOUR_MS = 60 * 60 * 1000;
+const NOT_OWNED = new Set<string>();
+
+describe("decideStallRecovery — schedule-owned skip", () => {
+  it.each([
+    'sentinel', 'analyst', 'attributor', 'news_watcher', 'observer',
+    'seed_strategist', 'narrator', 'enricher', 'cartographer',
+  ])("%s (re-run by its own schedule) is never re-dispatched", (agentId) => {
+    expect(decideStallRecovery({
+      agentId,
+      lastRunAgeMs: 48 * HOUR_MS,
+      thresholdMs: HOUR_MS,
+      inCooldown: false,
+      dispatchedThisTick: 0,
+    })).toBe('skip_schedule_owned');
+  });
+
+  it("schedule-owned wins over every other gate", () => {
+    expect(decideStallRecovery({
+      agentId: 'analyst',
+      lastRunAgeMs: 48 * HOUR_MS,
+      thresholdMs: HOUR_MS,
+      inCooldown: true,
+      dispatchedThisTick: 99,
+    })).toBe('skip_schedule_owned');
+  });
+
+  it("every SCHEDULE_OWNED_AGENTS entry is a registered agent (no typos / stale ids)", () => {
+    for (const id of SCHEDULE_OWNED_AGENTS) {
+      expect(agentModules[id], `unknown agent id in SCHEDULE_OWNED_AGENTS: ${id}`).toBeDefined();
+    }
+  });
+
+  it("every schedulable agent is classified (schedule-owned, or nexus with its own workflow guard)", () => {
+    // Drift guard: an agent added to the registry with a scheduled/event
+    // trigger must be consciously placed. If it really has no schedule and
+    // FC recovery is its only re-run path, add it to FC_RECOVERABLE below.
+    const FC_RECOVERABLE = new Set<string>();
+    const unclassified = Object.entries(agentModules)
+      .filter(([, mod]) => mod.trigger !== 'manual' && mod.trigger !== 'api')
+      .map(([id]) => id)
+      .filter((id) => id !== 'nexus' && !SCHEDULE_OWNED_AGENTS.has(id) && !FC_RECOVERABLE.has(id));
+    expect(unclassified).toEqual([]);
+  });
+});
+
+describe("decideStallRecovery — daily-agent orphan is not re-dispatched", () => {
+  const DAILY_THRESHOLD_MS = 1500 * 60 * 1000; // observer / seed_strategist / narrator
+
+  it("partial orphan 70 min old on a 1500-min agent → stalled, but only cleared, not re-run", () => {
+    // computeIsStalled still flags it (the notification path is unchanged)...
+    expect(computeIsStalled({
+      lastRunAgeMs: 70 * 60 * 1000,
+      thresholdMs: DAILY_THRESHOLD_MS,
+      isWorkflowAgent: false,
+      lastRunStatus: 'partial',
+      lastRunCompletedAt: null,
+    })).toBe(true);
+    // ...but recovery does not re-dispatch it (tested without the
+    // schedule-owned set so the orphan-only gate itself is exercised).
+    expect(decideStallRecovery({
+      agentId: 'observer',
+      lastRunAgeMs: 70 * 60 * 1000,
+      thresholdMs: DAILY_THRESHOLD_MS,
+      inCooldown: false,
+      dispatchedThisTick: 0,
+      scheduleOwned: NOT_OWNED,
+    })).toBe('skip_orphan_only');
+  });
+
+  it("age exactly at the threshold is still orphan-only (strict >)", () => {
+    expect(decideStallRecovery({
+      agentId: 'x', lastRunAgeMs: HOUR_MS, thresholdMs: HOUR_MS,
+      inCooldown: false, dispatchedThisTick: 0, scheduleOwned: NOT_OWNED,
+    })).toBe('skip_orphan_only');
+  });
+
+  it("NaN age (unparseable timestamp) is treated as not overdue", () => {
+    expect(decideStallRecovery({
+      agentId: 'x', lastRunAgeMs: Number.NaN, thresholdMs: HOUR_MS,
+      inCooldown: false, dispatchedThisTick: 0, scheduleOwned: NOT_OWNED,
+    })).toBe('skip_orphan_only');
+  });
+
+  it("past its own threshold (genuinely overdue) → dispatch", () => {
+    expect(decideStallRecovery({
+      agentId: 'x', lastRunAgeMs: 26 * HOUR_MS, thresholdMs: DAILY_THRESHOLD_MS,
+      inCooldown: false, dispatchedThisTick: 0, scheduleOwned: NOT_OWNED,
+    })).toBe('dispatch');
+  });
+
+  it("never-run agent (Infinity age) → dispatch", () => {
+    expect(decideStallRecovery({
+      agentId: 'x', lastRunAgeMs: Infinity, thresholdMs: HOUR_MS,
+      inCooldown: false, dispatchedThisTick: 0, scheduleOwned: NOT_OWNED,
+    })).toBe('dispatch');
+  });
+});
+
+describe("decideStallRecovery — per-tick budget cap", () => {
+  it("MAX_STALL_RECOVERIES_PER_TICK is a small fixed number (1 or 2)", () => {
+    expect([1, 2]).toContain(MAX_STALL_RECOVERIES_PER_TICK);
+  });
+
+  it("8 overdue unowned agents in one tick → exactly MAX dispatched, rest deferred", () => {
+    let dispatched = 0;
+    const decisions = Array.from({ length: 8 }, (_, i) => {
+      const d = decideStallRecovery({
+        agentId: `agent_${i}`, lastRunAgeMs: 5 * HOUR_MS, thresholdMs: HOUR_MS,
+        inCooldown: false, dispatchedThisTick: dispatched, scheduleOwned: NOT_OWNED,
+      });
+      if (d === 'dispatch') dispatched++;
+      return d;
+    });
+    expect(dispatched).toBe(MAX_STALL_RECOVERIES_PER_TICK);
+    expect(decisions.filter((d) => d === 'defer_budget')).toHaveLength(8 - MAX_STALL_RECOVERIES_PER_TICK);
+  });
+
+  it("respects an explicit maxPerTick override", () => {
+    expect(decideStallRecovery({
+      agentId: 'x', lastRunAgeMs: 5 * HOUR_MS, thresholdMs: HOUR_MS,
+      inCooldown: false, dispatchedThisTick: 1, maxPerTick: 2, scheduleOwned: NOT_OWNED,
+    })).toBe('dispatch');
+    expect(decideStallRecovery({
+      agentId: 'x', lastRunAgeMs: 5 * HOUR_MS, thresholdMs: HOUR_MS,
+      inCooldown: false, dispatchedThisTick: 2, maxPerTick: 2, scheduleOwned: NOT_OWNED,
+    })).toBe('defer_budget');
+  });
+});
+
+describe("stall recovery cooldown / backoff", () => {
+  it("in cooldown → skip_cooldown (budget left)", () => {
+    expect(decideStallRecovery({
+      agentId: 'x', lastRunAgeMs: 5 * HOUR_MS, thresholdMs: HOUR_MS,
+      inCooldown: true, dispatchedThisTick: 0, scheduleOwned: NOT_OWNED,
+    })).toBe('skip_cooldown');
+  });
+
+  it("budget is checked before cooldown (so the KV read is only paid when dispatch is possible)", () => {
+    expect(decideStallRecovery({
+      agentId: 'x', lastRunAgeMs: 5 * HOUR_MS, thresholdMs: HOUR_MS,
+      inCooldown: true, dispatchedThisTick: MAX_STALL_RECOVERIES_PER_TICK, scheduleOwned: NOT_OWNED,
+    })).toBe('defer_budget');
+  });
+
+  it("backoff doubles from the base and caps", () => {
+    expect(stallRecoveryCooldownMs(1)).toBe(STALL_RECOVERY_COOLDOWN_BASE_MS);
+    expect(stallRecoveryCooldownMs(2)).toBe(STALL_RECOVERY_COOLDOWN_BASE_MS * 2);
+    expect(stallRecoveryCooldownMs(3)).toBe(STALL_RECOVERY_COOLDOWN_BASE_MS * 4);
+    expect(stallRecoveryCooldownMs(50)).toBe(STALL_RECOVERY_COOLDOWN_MAX_MS);
+    expect(stallRecoveryCooldownMs(0)).toBe(STALL_RECOVERY_COOLDOWN_BASE_MS);
+  });
+
+  it("an hourly re-check right after a recovery is inside the cooldown", () => {
+    const now = Date.UTC(2026, 10, 9, 12, 7);
+    const rec = { attempts: 1, last_at: now - HOUR_MS };
+    expect(isStallRecoveryCoolingDown(rec, now)).toBe(true);
+    expect(isStallRecoveryCoolingDown(rec, now + 2 * HOUR_MS)).toBe(false);
+    expect(isStallRecoveryCoolingDown({ attempts: 3, last_at: now - 7 * HOUR_MS }, now)).toBe(true);
+    expect(isStallRecoveryCoolingDown(null, now)).toBe(false);
+  });
+
+  it("parseStallRecoveryRecord tolerates missing / malformed KV values", () => {
+    expect(parseStallRecoveryRecord(null)).toBeNull();
+    expect(parseStallRecoveryRecord('')).toBeNull();
+    expect(parseStallRecoveryRecord('not json')).toBeNull();
+    expect(parseStallRecoveryRecord('42')).toBeNull();
+    expect(parseStallRecoveryRecord('{"attempts":"1","last_at":5}')).toBeNull();
+    expect(parseStallRecoveryRecord('{"attempts":2,"last_at":1700000000000}'))
+      .toEqual({ attempts: 2, last_at: 1700000000000 });
   });
 });

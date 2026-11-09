@@ -754,6 +754,22 @@ sla: {
 
 Stall threshold is derived: `stallThresholdMinutes = scheduleIntervalMinutes × 1.2`. Don't fudge it — if the cadence is 6 hours, the stall threshold is 7.2 hours, period.
 
+**What a stall triggers (2026-11-09, recovery-storm fix).** A stall always
+raises `is_stalled` / `platform_agent_stalled` and FC always force-fails the
+orphaned run (`running`, or `partial` with `completed_at IS NULL`). FC
+re-dispatches the agent only when all of these hold (`decideStallRecovery`,
+`agents/flightControl.ts`): the agent is NOT in `SCHEDULE_OWNED_AGENTS`
+(its own cron or the hourly mesh re-runs it anyway); its last run is older
+than its own `stallThresholdMinutes` (an orphan-only stall is just cleared);
+fewer than `MAX_STALL_RECOVERIES_PER_TICK` (1) recoveries have been
+dispatched this tick; and it is outside its KV backoff
+(`fc:stall_recovery:<id>`, 2h doubling to a 24h cap). Every skipped or
+deferred recovery writes an `agent_activity_log` row
+(`recovery_skipped` / `recovery_deferred`). **A new scheduled/event agent
+must be added to `SCHEDULE_OWNED_AGENTS`** (or, if FC recovery is genuinely
+its only re-run path, to the test's `FC_RECOVERABLE` list) —
+`test/flight-control-stall-recovery.test.ts` fails otherwise.
+
 <a id="17-testing"></a>
 ## 17. Testing standard
 

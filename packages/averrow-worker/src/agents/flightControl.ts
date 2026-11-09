@@ -3098,6 +3098,163 @@ export async function scaleAgents(
 }
 
 // ─── Stall Recovery ──────────────────────────────────────────────
+//
+// INCIDENT 2026-11-04 → 2026-11-09 (recovery storm). recoverStalledAgents
+// used to re-dispatch EVERY stalled agent via ctx.waitUntil inside the
+// hourly orchestrator invocation — 7-8 executeAgent calls (sentinel,
+// analyst, enricher, observer, attributor, news_watcher, cartographer,
+// seed_strategist) fired at :07:4x, all sharing the tick's cpu_ms budget
+// with feed ingestion. None completed; the worker died on CPU / "D1 DB is
+// overloaded" before runAllFeeds wrote a feed_pull_history row; every
+// recovery became a partial/completed_at-NULL orphan; on the next tick
+// those orphans were > 45 min old, the partial-orphan clause re-marked
+// them stalled, and FC recovered them all again. Self-sustaining: only 1
+// of ~14 ticks ingested feeds after 2026-11-08 22:00 UTC.
+//
+// Recovery is now three gates on top of the (unchanged, cheap) orphan
+// force-fail clear + per-agent activity row:
+//   1. Schedule-owned agents are never re-dispatched — their own cron or
+//      the hourly mesh runs them anyway, and an inline :07 recovery only
+//      duplicates the work inside the tick it is starving.
+//   2. An orphan-only stall (killed run, but last-run age still within the
+//      agent's own stallThresholdMinutes) is not re-dispatched: the force-
+//      fail clear is the whole fix. This is what kept daily agents
+//      (observer / seed_strategist / narrator, threshold 1500) being re-run
+//      every hour after any killed run.
+//   3. At most MAX_STALL_RECOVERIES_PER_TICK dispatches per tick, and a
+//      per-agent KV cooldown with exponential backoff so a recovery that
+//      itself died is not retried every tick.
+// computeIsStalled is deliberately untouched — platform_agent_stalled and
+// the health report still see every stall.
+
+/** Max agents FC re-dispatches per tick. 1, not 2: every recovery runs via
+ *  ctx.waitUntil inside the hourly orchestrator invocation, sharing its
+ *  single cpu_ms = 300_000 budget with feed ingestion, the analyst inline
+ *  await and scaleAgents' background instances. Recoverable agents take
+ *  100-200 s each, so even two can consume most of that budget on their
+ *  own. One keeps the worst case bounded while still guaranteeing forward
+ *  progress (the cooldown below rotates the slot across stalled agents). */
+export const MAX_STALL_RECOVERIES_PER_TICK = 1;
+
+/** Agents whose normal schedule re-runs them without FC's help. FC's stall
+ *  recovery never re-dispatches these (they still raise is_stalled /
+ *  platform_agent_stalled). Verified against src/cron/orchestrator.ts and
+ *  wrangler.toml `crons` on 2026-11-09 — keep in sync when moving an agent
+ *  onto (or off) a schedule. */
+export const SCHEDULE_OWNED_AGENTS: ReadonlySet<string> = new Set([
+  // Hourly orchestrator mesh (`7 * * * *`, runThreatFeedScan + tail):
+  'sentinel',              // every tick with new feed items (no new items = no work)
+  'analyst',               // every tick
+  'attributor',            // hour % 4 === 1
+  'news_watcher',          // hour % 6 === 2
+  'observer',              // hour === 0
+  'seed_strategist',       // hour === 6 (runObserverBriefing)
+  'narrator',              // hour === 6 (runThreatNarratives)
+  'notification_narrator', // hour === 13
+  'auto_seeder',           // Sunday hour === 5
+  'geoip_refresh',         // Sunday hour === 2
+  // Dedicated crons (own invocation, exact event.cron match):
+  'navigator',             // */5 * * * *
+  'enricher',              // 8 * * * *
+  'cartographer',          // 9 * * * *  (+ FC scaleAgents backlog instances)
+  'strategist',            // 10 */6 * * *
+  'sparrow',               // 11 */6 * * *
+  'cube_healer',           // 12 */6 * * *
+  'app_store_monitor',     // 13 */6 * * *
+  'dark_web_monitor',      // 14 */6 * * *
+  'social_discovery',      // 15 */6 * * *
+  'social_monitor',        // 15 */6 * * *
+  'abuse_mailbox_classifier', // 17 * * * * (when rows are pending)
+  'ct_monitor',            // 18 * * * *
+  'lookalike_scanner',     // 22 * * * *
+  'trademark_monitor',     // 23 * * * *
+  'executive_monitor',     // 26 */6 * * *
+  'page_capture',          // */10 * * * *
+  // FC's own scheduling paths (dispatched elsewhere in this file):
+  'flight_control',        // 7 * * * * (FC itself — recovering it from inside FC is meaningless)
+  'curator',               // weekly hygiene dispatch with its own failure backoff
+  'watchdog',              // backlog-driven dispatch
+]);
+
+/** First cooldown after a recovery dispatch; doubles per consecutive
+ *  recovery of the same agent, capped at STALL_RECOVERY_COOLDOWN_MAX_MS. */
+export const STALL_RECOVERY_COOLDOWN_BASE_MS = 2 * 60 * 60 * 1000;
+export const STALL_RECOVERY_COOLDOWN_MAX_MS = 24 * 60 * 60 * 1000;
+const STALL_RECOVERY_KV_PREFIX = 'fc:stall_recovery:';
+
+/** Cooldown after the Nth consecutive recovery (attempt >= 1): 2h, 4h, 8h,
+ *  16h, then 24h cap. */
+export function stallRecoveryCooldownMs(attempt: number): number {
+  const n = Math.max(1, Math.floor(attempt));
+  return Math.min(STALL_RECOVERY_COOLDOWN_BASE_MS * 2 ** (n - 1), STALL_RECOVERY_COOLDOWN_MAX_MS);
+}
+
+export type StallRecoveryDecision =
+  | 'dispatch'
+  | 'skip_schedule_owned'
+  | 'skip_orphan_only'
+  | 'skip_cooldown'
+  | 'defer_budget';
+
+/** Pure re-dispatch decision for ONE stalled agent (the caller has already
+ *  applied the manual/api and nexus skips and the orphan force-fail clear).
+ *  Gate order: schedule-owned → orphan-only → per-tick budget → cooldown.
+ *  The budget gate precedes the cooldown gate so the caller only pays the
+ *  KV read for an agent that could actually be dispatched: call once with
+ *  inCooldown=false and, on 'dispatch', read the cooldown and call again. */
+export function decideStallRecovery(opts: {
+  agentId: string;
+  lastRunAgeMs: number;
+  thresholdMs: number;
+  inCooldown: boolean;
+  dispatchedThisTick: number;
+  maxPerTick?: number;
+  scheduleOwned?: ReadonlySet<string>;
+}): StallRecoveryDecision {
+  const {
+    agentId, lastRunAgeMs, thresholdMs, inCooldown, dispatchedThisTick,
+    maxPerTick = MAX_STALL_RECOVERIES_PER_TICK,
+    scheduleOwned = SCHEDULE_OWNED_AGENTS,
+  } = opts;
+  if (scheduleOwned.has(agentId)) return 'skip_schedule_owned';
+  // Stalled only via computeIsStalled's 45-min partial-orphan clause: the
+  // agent is not overdue on its own schedule, so clearing the orphan is
+  // enough. `!(a > b)` so a NaN age is treated as not overdue.
+  if (!(lastRunAgeMs > thresholdMs)) return 'skip_orphan_only';
+  if (dispatchedThisTick >= maxPerTick) return 'defer_budget';
+  if (inCooldown) return 'skip_cooldown';
+  return 'dispatch';
+}
+
+interface StallRecoveryRecord { attempts: number; last_at: number }
+
+/** Pure parse of the KV cooldown record. Malformed → null (no cooldown). */
+export function parseStallRecoveryRecord(raw: string | null): StallRecoveryRecord | null {
+  if (!raw) return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (typeof v !== 'object' || v === null) return null;
+    const rec = v as Record<string, unknown>;
+    if (typeof rec.attempts !== 'number' || typeof rec.last_at !== 'number') return null;
+    if (!Number.isFinite(rec.attempts) || !Number.isFinite(rec.last_at)) return null;
+    return { attempts: rec.attempts, last_at: rec.last_at };
+  } catch {
+    return null;
+  }
+}
+
+/** Pure: is the agent still inside the cooldown its last recovery set? */
+export function isStallRecoveryCoolingDown(record: StallRecoveryRecord | null, nowMs: number): boolean {
+  if (!record) return false;
+  return nowMs - record.last_at < stallRecoveryCooldownMs(record.attempts);
+}
+
+/** agent_runs.started_at is 'YYYY-MM-DD HH:MM:SS' (UTC, no zone); workflow
+ *  activity timestamps may already be ISO. Unparseable → NaN. */
+function parseRunTimestampMs(ts: string): number {
+  const hasZone = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(ts);
+  return new Date(hasZone ? ts : ts.replace(' ', 'T') + 'Z').getTime();
+}
 
 async function recoverStalledAgents(
   db: D1Database,
@@ -3107,22 +3264,18 @@ async function recoverStalledAgents(
 ): Promise<number> {
   const { agentModules } = await import('./index');
   const { executeAgent } = await import('../lib/agentRunner');
+  const stallThresholds = await getStallThresholdMap();
   let recoveries = 0;
 
   // Fire-and-forget recovery via ctx.waitUntil — same pattern as
-  // scaleAgents (line 1212). Recovered agents take 100-200s each
-  // (sentinel/analyst/cartographer). Awaiting them sequentially
-  // pushed FC tick to ~5min total (recover_stalled was 96.1% of
-  // FC time per the timing instrumentation). With waitUntil, FC
-  // returns in seconds while recoveries run in the background.
+  // scaleAgents. NOTE: waitUntil work still runs inside THIS invocation's
+  // CPU budget, which is why dispatches are capped per tick (see above).
   const execCtx = ctx.input?._executionCtx as ExecutionContext | undefined;
 
-  // Collect orphan-clear UPDATEs and recovery log INSERTs across
-  // all stalled agents into one batch. Pre-fix each stalled agent
-  // serialized 1 UPDATE + 1 INSERT; with N stalled agents that's
-  // 2N sequential D1 round-trips. Single batch is one round-trip.
+  // Orphan-clear UPDATEs + per-agent activity rows, flushed in one batch.
   const recoveryStmts: D1PreparedStatement[] = [];
   const toRecover: Array<{ agentId: string; mod: typeof agentModules[string] }> = [];
+  const nowMs = Date.now();
 
   for (const agent of health) {
     if (!agent.is_stalled) continue;
@@ -3148,7 +3301,7 @@ async function recoverStalledAgents(
     // in `agent_runs` before this guard landed.
     if (agent.agent_id === 'nexus') continue;
 
-    // Force-fail orphaned rows before re-dispatching. Two orphan shapes:
+    // Force-fail orphaned rows. Two orphan shapes:
     //   1. status='running'      — Worker timeout / unhandled exception left
     //      the row in 'running' forever (catch never ran).
     //   2. status='partial' + completed_at IS NULL — the run was killed
@@ -3157,9 +3310,9 @@ async function recoverStalledAgents(
     //      'partial' always has completed_at SET, so completed_at IS NULL is
     //      the killed-orphan signature.
     // Without this clear, the orphan stays the latest started_at and re-trips
-    // is_stalled every FC tick. Marked 'failed' so the recovery run becomes
-    // the latest started_at on the next tick. The completed_at IS NULL guard
-    // in the WHERE keeps the force-fail write from ever touching a completed row.
+    // is_stalled every FC tick. Runs for EVERY stalled agent, whether or not
+    // it is re-dispatched below. The completed_at IS NULL guard in the WHERE
+    // keeps the force-fail write from ever touching a completed row.
     if (isOrphanedRun({ status: agent.last_run_status, completedAt: agent.last_run_completed_at }) && agent.last_run_at) {
       recoveryStmts.push(db.prepare(`
         UPDATE agent_runs
@@ -3172,12 +3325,65 @@ async function recoverStalledAgents(
       `).bind(agent.agent_id, agent.last_run_at));
     }
 
-    recoveryStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'recovery',
-      `Recovering stalled agent: ${agent.agent_id} (last run: ${agent.last_run_at ?? 'never'})`,
-      { agent: agent.agent_id, last_run: agent.last_run_at, status: agent.last_run_status }
-    ));
+    const lastRunAgeMs = agent.last_run_at ? nowMs - parseRunTimestampMs(agent.last_run_at) : Infinity;
+    const thresholdMs = (stallThresholds.get(agent.agent_id) ?? 60) * 60 * 1000;
+    const decisionInput = {
+      agentId: agent.agent_id,
+      lastRunAgeMs,
+      thresholdMs,
+      dispatchedThisTick: toRecover.length,
+    };
+    let decision = decideStallRecovery({ ...decisionInput, inCooldown: false });
+    let record: StallRecoveryRecord | null = null;
+    if (decision === 'dispatch') {
+      // Best-effort: a KV error means "no cooldown known" — never throws.
+      try {
+        record = parseStallRecoveryRecord(await env.CACHE.get(STALL_RECOVERY_KV_PREFIX + agent.agent_id));
+      } catch { record = null; }
+      if (isStallRecoveryCoolingDown(record, nowMs)) {
+        decision = decideStallRecovery({ ...decisionInput, inCooldown: true });
+      }
+    }
 
-    toRecover.push({ agentId: agent.agent_id, mod });
+    const meta = {
+      agent: agent.agent_id,
+      last_run: agent.last_run_at,
+      status: agent.last_run_status,
+      decision,
+      last_run_age_min: Number.isFinite(lastRunAgeMs) ? Math.round(lastRunAgeMs / 60_000) : null,
+      stall_threshold_min: Math.round(thresholdMs / 60_000),
+    };
+    const lastRunLabel = agent.last_run_at ?? 'never';
+
+    if (decision === 'dispatch') {
+      const attempts = (record?.attempts ?? 0) + 1;
+      const cooldownMs = stallRecoveryCooldownMs(attempts);
+      // Record survives 2× the cooldown so a repeat stall inside that window
+      // escalates the backoff; after it, the next recovery starts at 2h again.
+      try {
+        await env.CACHE.put(
+          STALL_RECOVERY_KV_PREFIX + agent.agent_id,
+          JSON.stringify({ attempts, last_at: nowMs } satisfies StallRecoveryRecord),
+          { expirationTtl: Math.ceil((cooldownMs * 2) / 1000) },
+        );
+      } catch { /* best-effort — worst case the next tick may recover again (still capped) */ }
+      recoveryStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'recovery',
+        `Recovering stalled agent: ${agent.agent_id} (last run: ${lastRunLabel}; attempt ${attempts}, next eligible in ${Math.round(cooldownMs / 3_600_000)}h)`,
+        { ...meta, attempt: attempts, cooldown_hours: cooldownMs / 3_600_000 }
+      ));
+      toRecover.push({ agentId: agent.agent_id, mod });
+    } else {
+      const reason =
+        decision === 'skip_schedule_owned' ? 'its own schedule re-runs it' :
+        decision === 'skip_orphan_only' ? 'orphaned run cleared; not overdue on its own stall threshold' :
+        decision === 'skip_cooldown' ? 'recovered recently; in backoff' :
+        `per-tick recovery budget (${MAX_STALL_RECOVERIES_PER_TICK}) used`;
+      recoveryStmts.push(logActivityStmt(db, 'flight_control', 'info',
+        decision === 'defer_budget' ? 'recovery_deferred' : 'recovery_skipped',
+        `Stalled agent ${agent.agent_id} not re-dispatched — ${reason} (last run: ${lastRunLabel})`,
+        meta
+      ));
+    }
   }
 
   // One batched flush for all the orphan-clear + log writes.
@@ -3185,9 +3391,8 @@ async function recoverStalledAgents(
     try { await db.batch(recoveryStmts); } catch { /* per-row failures don't block recoveries */ }
   }
 
-  // Dispatch the actual recovery executions. Fire-and-forget via
-  // ctx.waitUntil so FC returns in seconds while the recoveries
-  // run in the background.
+  // Dispatch the (capped) recovery executions. Fire-and-forget via
+  // ctx.waitUntil so FC returns in seconds.
   for (const { mod } of toRecover) {
     const promise = executeAgent(env, mod, { trigger: 'flight_control_recovery' }, 'flight_control', 'event');
     if (execCtx) {
