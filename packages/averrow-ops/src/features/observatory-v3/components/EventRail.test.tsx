@@ -78,11 +78,12 @@ describe('groups and rows', () => {
   it('a row shows the title, a kind chip, a severity word, "via source" and the age', async () => {
     renderRail();
     const row = (await screen.findByText('Title c1')).closest('button')!;
-    expect(within(row).getByText('CRITICAL')).toBeInTheDocument(); // the shared EventChip, not a raw lowercase token
-    expect(row).toHaveTextContent('Critical · via Sentinel');
+    expect(within(row).getByText('Critical')).toBeInTheDocument(); // the shared EventChip, not a raw lowercase token
+    expect(row).toHaveTextContent('via Sentinel');
+    expect(row).not.toHaveTextContent('Critical · via'); // the kind chip already says it
     expect(row).toHaveTextContent('5m');
     const op = screen.getByText('Title o1').closest('button')!;
-    expect(within(op).getByText('OPERATION')).toBeInTheDocument();
+    expect(within(op).getByText('Operation')).toBeInTheDocument();
     expect(op).toHaveTextContent('High · via NEXUS');
   });
 
@@ -243,7 +244,7 @@ describe('period', () => {
     renderRail();
     await screen.findByText('Title c1');
     const radios = within(screen.getByRole('radiogroup', { name: 'Event period' })).getAllByRole('radio');
-    expect(radios.map(r => r.textContent)).toEqual(['1h', '24h', '7d']);
+    expect(radios.map(r => r.textContent)).toEqual(['1H', '24H', '7D']);
     expect(radios[0]).toHaveAttribute('aria-checked', 'true');
     await user.click(radios[1]!);
     await waitFor(() => expect(urls()).toContain('/api/observatory/events?period=24h&limit=100'));

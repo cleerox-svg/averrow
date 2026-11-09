@@ -93,6 +93,17 @@
   background: var(--card-bg);
   box-shadow: var(--card-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.90);
 }
+/* Pinned for the frozen PortfolioHealthCard (a .glass-card consumer): the
+   facelift shell reset sets --card-shadow to none, so under an accent in light
+   theme the shadow it rendered before that reset (the removed
+   `:root[data-accent][data-theme="light"] .shell-v4` value) is hardcoded here.
+   :not(:hover) keeps the hover rule below in charge. Dark .glass-card uses
+   literals only (no --card-* reads), so it needs no pin. */
+:root[data-accent][data-theme="light"] .glass-card:not(:hover) {
+  box-shadow:
+    0 8px 28px rgba(15, 20, 35, 0.10), 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.90);
+}
 [data-theme="light"] .glass-card:hover {
   background: var(--bg-elevated);
   box-shadow: 0 8px 32px rgba(15, 20, 35, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.95);
@@ -455,18 +466,15 @@
 
 /* ── INTEL FEED (Observatory headline bar + event rail) ─────────────
    Replaced the scrolling EventTicker (2026-10-15). Colours are theme tokens only;
-   motion is limited to: the live dot, the headline's slide-in, its progress bar
-   and the rail's new-row flash — all off under prefers-reduced-motion. */
-@keyframes ev-live {
-  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 55%, transparent); }
-  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--green) 0%, transparent); }
-  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 0%, transparent); }
-}
+   motion is limited to: the headline's slide-in, its progress bar and the rail's
+   new-row flash (each plays once or is paused by a reader) — all off under
+   prefers-reduced-motion. The live dot is static (no looping motion in chrome). */
 .ev-live-dot {
   width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
   background: var(--green);
-  animation: ev-live 2s infinite;
 }
+/* The feed failed or is quiet: nothing is live, so the dot greys out. */
+.ev-live-dot--idle { background: var(--text-muted); }
 @keyframes ev-hl-in {
   from { transform: translateY(70%); opacity: 0; }
   to   { transform: translateY(0);   opacity: 1; }
@@ -500,7 +508,7 @@
 }
 .ev-row-new { animation: ev-row-arrive 1.2s ease-out 1; }
 @media (prefers-reduced-motion: reduce) {
-  .ev-live-dot, .ev-hl-enter, .ev-progress, .ev-row-new { animation: none !important; }
+  .ev-hl-enter, .ev-progress, .ev-row-new { animation: none !important; }
 }
 
 
@@ -599,6 +607,15 @@
   border-left-color: color-mix(in srgb, var(--primary) 25%, transparent) !important;
 }
 
+/* DataRow states (components/ui/DataRow.tsx): unread rail + fill come from two custom properties so the stylesheet
+   hover can still replace them; a row that is not clickable itself shows the pointer only inside a link. */
+.data-row--unread {
+  border-left-color: var(--row-rail);
+  background: linear-gradient(90deg, var(--row-rail-bg) 0%, transparent 30%);
+}
+.data-row--static { cursor: default; }
+a .data-row--static, [role="link"] .data-row--static { cursor: pointer; }
+
 /* Severity-specific hover overrides */
 .data-row--critical:hover {
   background: linear-gradient(90deg, var(--sev-critical-bg) 0%, transparent 40%);
@@ -619,6 +636,33 @@
 .data-row--info:hover {
   background: linear-gradient(90deg, var(--sev-info-bg) 0%, transparent 40%);
   border-left-color: var(--sev-info-border) !important;
+}
+
+/* Facelift (any appearance): the token row hover of AVERROW_UI_STANDARD "Table row standard". No glow gradient and no
+   primary/amber left rail; the hover darkens (dark: --bg-page, light: 6% text), and severity rows keep only their
+   severity-token left border. FACELIFT=false has no [data-accent], so the legacy rules above stay as they were. */
+:root[data-accent] .data-row {
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease), border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+:root[data-accent] .data-row:hover {
+  background: var(--bg-page);
+  color: var(--text-primary);
+}
+/* the hover only clears the rail of plain rows: an unread row keeps its rail (severity rows set theirs below) */
+:root[data-accent] .data-row:not(.data-row--unread):hover {
+  border-left-color: transparent !important;
+}
+:root[data-accent][data-theme="light"] .data-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+:root[data-accent] .data-row--critical:hover, :root[data-accent] .data-row[data-severity="critical"]:hover { border-left-color: var(--sev-critical) !important; }
+:root[data-accent] .data-row--high:hover,     :root[data-accent] .data-row[data-severity="high"]:hover     { border-left-color: var(--sev-high) !important; }
+:root[data-accent] .data-row--medium:hover,   :root[data-accent] .data-row[data-severity="medium"]:hover   { border-left-color: var(--sev-medium) !important; }
+:root[data-accent] .data-row--low:hover,      :root[data-accent] .data-row[data-severity="low"]:hover      { border-left-color: var(--sev-low) !important; }
+:root[data-accent] .data-row--info:hover                                                                    { border-left-color: var(--sev-info) !important; }
+:root[data-accent] .data-row--unread:hover { border-left-color: var(--row-rail) !important; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-accent] .data-row { transition: none; }
 }
 
 /* ── GAUGE PULSE ANIMATIONS ───────────────────── */
@@ -821,13 +865,75 @@
 :root[data-accent] .obs-tooltip-target { color: var(--text-primary); }
 :root[data-accent] .obs-tooltip-target-label { color: var(--text-tertiary); }
 
-/* Facelift (P3-6 review): light-mode cards inside the v4 shell. shell-v4.css
-   sets a heavy dark-tuned --card-shadow (0 18px 50px rgba(0,0,0,.58)) on the
-   shell in every theme; under an accent in light mode use a soft ink shadow
-   instead (the light --card-shadow from tokens.css, slightly deeper, plus the
-   shell's top highlight). Kept here, not in shell-v4.css, because
-   gen-appearance.mjs only accepts the shell's two known token selectors.
-   Legacy (no accent) is unchanged. */
-:root[data-accent][data-theme="light"] .shell-v4 {
-  --card-shadow: 0 8px 28px rgba(15, 20, 35, 0.10), 0 1px 0 rgba(255, 255, 255, 0.04);
+/* Facelift: flat cards for every screen in the v4 shell, both themes. shell-v4.css
+   sets a heavy dark-tuned drop shadow, an 18px radius and a top highlight on the
+   shell (legacy look, kept when FACELIFT=false, i.e. no [data-accent]). Under an
+   accent the shell resets them to the kit defaults: --radius-lg corners, no base
+   shadow, no highlight. Separation for floating surfaces (Observatory overlays,
+   popovers, menus) comes from --card-shadow-elevated, which is not touched here;
+   Card variant="active"/"critical" keep their status glows. --card-flat-bg is
+   deliberately not reset (flat-variant callers expect the sunken inset panel).
+   Kept here, not in shell-v4.css, because gen-appearance.mjs only accepts the
+   shell's two known token selectors.
+   --card-shadow is a transparent zero shadow, NOT `none`: consumers compose it
+   in a list (`var(--card-shadow), 0 0 20px …, inset …`), and `none` inside a
+   list makes the whole box-shadow invalid, dropping status glows and rims. */
+:root[data-accent] .shell-v4 {
+  --card-radius: var(--radius-lg);
+  --card-shadow: 0 0 #0000;
+  --card-highlight: transparent;
+}
+
+/* Observatory map controls (MapLibre's zoom cluster + the Flat | Globe slot).
+   MapLibre ships a white, #333-iconed control group with a blue focus glow; here it takes the console's chrome: card
+   surface, 1px border, the elevated shadow, and icons in --text-secondary in BOTH themes (the basemap is always dark,
+   the chrome around it follows the theme). Scoped under .obs-root, the Observatory page root: nothing else in ops
+   renders MapLibre controls. `.maplibregl-ctrl-group` is doubled below to beat MapLibre's own selectors, which load
+   first and carry up to three classes. The zoom +/- icons are background-image SVGs with a baked-in fill, so they
+   become masks over a --text-secondary fill (a fill cannot be re-coloured through background-image). */
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group {
+  background: var(--bg-card);
+  border: 1px solid var(--border-base);
+  border-radius: 12px;
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group:not(:empty) {
+  box-shadow: var(--card-shadow-elevated);
+}
+.obs-root .maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--border-base);
+}
+.obs-root .maplibregl-ctrl-group button {
+  color: var(--text-secondary);
+}
+.obs-root .maplibregl-ctrl-group button:not(:disabled):hover,
+.obs-root .maplibregl-ctrl-group button:not(:disabled):active {
+  background-color: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:focus,
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:focus:focus-visible {
+  box-shadow: none;
+}
+/* Buttons round their own corners (the group cannot clip: the Heat "flat-only" reason hangs outside it). */
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:first-child { border-radius: 11px 11px 0 0; }
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:last-child { border-radius: 0 0 11px 11px; }
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:only-child { border-radius: 11px; }
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  background-color: var(--text-secondary);
+  background-image: none;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button.maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 8.5c-.75 0-1.5.75-1.5 1.5v3h-3c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h3v3c0 .75.75 1.5 1.5 1.5S16 19.75 16 19v-3h3c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13h-3v-3c0-.75-.75-1.5-1.5-1.5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 8.5c-.75 0-1.5.75-1.5 1.5v3h-3c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h3v3c0 .75.75 1.5 1.5 1.5S16 19.75 16 19v-3h3c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13h-3v-3c0-.75-.75-1.5-1.5-1.5'/%3E%3C/svg%3E");
+}
+.obs-root .maplibregl-ctrl.maplibregl-ctrl-group button.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M10 13c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h9c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M10 13c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h9c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13z'/%3E%3C/svg%3E");
 }

@@ -6,6 +6,8 @@
 // + the real BrowserRouter from renderWithProviders (see Leads.test.tsx for
 // the same pattern), so useSearchParams behaves exactly as it does at runtime.
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
@@ -95,15 +97,15 @@ describe('SearchResults — state gating', () => {
     mocks.useGlobalSearch.mockReturnValue(POPULATED_RESULTS);
     renderWithProviders(<SearchResults />);
 
-    expect(screen.getByText('BRANDS')).toBeInTheDocument();
+    expect(screen.getByText('Brands')).toBeInTheDocument();
     expect(screen.getByText('Acme Corp')).toBeInTheDocument();
-    expect(screen.getByText('THREAT ACTORS')).toBeInTheDocument();
+    expect(screen.getByText('Threat actors')).toBeInTheDocument();
     expect(screen.getByText('APT-Acme')).toBeInTheDocument();
 
     // Empty groups (providers, campaigns, apps) render no heading at all.
-    expect(screen.queryByText('PROVIDERS')).not.toBeInTheDocument();
-    expect(screen.queryByText('CAMPAIGNS')).not.toBeInTheDocument();
-    expect(screen.queryByText('APPS')).not.toBeInTheDocument();
+    expect(screen.queryByText('Providers')).not.toBeInTheDocument();
+    expect(screen.queryByText('Campaigns')).not.toBeInTheDocument();
+    expect(screen.queryByText('Apps')).not.toBeInTheDocument();
 
     expect(screen.queryByText('Start typing to search')).not.toBeInTheDocument();
     expect(screen.queryByText('Searching…')).not.toBeInTheDocument();
@@ -140,5 +142,24 @@ describe('SearchResults — row navigation via the shared routing table', () => 
     renderWithProviders(<SearchResults />);
     const viewAll = screen.getByRole('link', { name: 'View all in threat actors →' });
     expect(viewAll).toHaveAttribute('href', '/explore?tab=actors&q=ac');
+  });
+});
+
+describe('SearchResults — facelift typography', () => {
+  it('has no all-caps or sub-12px text in the source', () => {
+    const src = readFileSync(resolve(__dirname, 'SearchResults.tsx'), 'utf8');
+    expect(src).not.toMatch(/uppercase|tracking-widest/);
+    expect(src).not.toMatch(/text-\[(?:9|10|11)px\]/);
+  });
+
+  it('result labels are sans font-medium (mono only for the sublabel fact) and "view all" links take the focus ring', () => {
+    navigateTo('/search?q=ac');
+    mocks.useGlobalSearch.mockReturnValue(POPULATED_RESULTS);
+    renderWithProviders(<SearchResults />);
+    const label = screen.getByText('Acme Corp');
+    expect(label).toHaveClass('font-medium');
+    expect(label).not.toHaveClass('font-mono');
+    expect(screen.getByText('acme.com')).toHaveClass('font-mono');
+    for (const a of screen.getAllByText(/^View all in /)) expect(a).toHaveClass('ds-focusable');
   });
 });

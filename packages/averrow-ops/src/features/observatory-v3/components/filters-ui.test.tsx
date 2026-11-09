@@ -93,7 +93,7 @@ describe('TypeMultiSelect', () => {
 describe('Projection toggle: a visible label, not icon-only', () => {
   it('desktop: reads "Flat | Globe" with the G hint; the current projection is lit', () => {
     render(<ProjectionToggle projection="globe" onToggle={vi.fn()} />);
-    const btn = screen.getByRole('button', { name: 'Globe view' });
+    const btn = screen.getByRole('button', { name: 'Flat or globe view' });
     expect(btn).toHaveTextContent('Flat');
     expect(btn).toHaveTextContent('Globe');
     expect(btn).toHaveTextContent('G');

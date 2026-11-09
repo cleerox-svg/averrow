@@ -860,77 +860,98 @@ unchanged):
 
 ## SIDEBAR STANDARD
 
-The sidebar uses the same 5 depth rules. This replaces the current Phase 8a treatment.
+Shipped in Phase 6 screen 1 (#1909, 2026-11-08). The shell is
+`packages/averrow-ops/src/components/layout/ShellV4.tsx` (the only ops shell),
+styled by `shell-v4.css` in the same folder. Sidebar, top bar, command palette
+(`CommandPalette.tsx`) and theme button (`ThemeCycleButton.tsx`) are all there.
+Everything is token-driven; do not hard-code colours, sizes or timings here.
 
-```tsx
-// Sidebar container
-style={{
-  background:           'linear-gradient(180deg, rgba(10,16,30,0.96) 0%, rgba(6,10,20,0.99) 100%)',
-  backdropFilter:       'blur(24px)',
-  WebkitBackdropFilter: 'blur(24px)',
-  borderRight:          '1px solid rgba(255,255,255,0.07)',
-  boxShadow:            '4px 0 48px rgba(0,0,0,0.60), inset -1px 0 0 rgba(255,255,255,0.05)',
-}}
+**Canvas.** Under an accent (`:root[data-accent]`, the facelift default) the
+shell canvas is flat `--bg-page`: no vignette, no grid. Only the legacy look
+(`FACELIFT = false`) keeps the radial vignette and masked grid. The sidebar
+itself is `--bg-sidebar` with a `--border-base` right edge.
 
-// Section headers (INTELLIGENCE / RESPONSE / PLATFORM)
-// Label + horizontal line
-<div style={{ display:'flex', alignItems:'center', gap:8, padding:'16px 16px 6px' }}>
-  <span style={{ fontSize:9, fontFamily:'monospace', letterSpacing:'0.22em', color:'rgba(255,255,255,0.35)', textTransform:'uppercase', whiteSpace:'nowrap' }}>
-    {section}
-  </span>
-  <div style={{ flex:1, height:1, background:'linear-gradient(90deg, rgba(255,255,255,0.08), transparent)' }} />
-</div>
+**Group labels.** Sentence-case sans at the `--type-label-*` scale (12px /
+16px line, weight 500) in `--text-tertiary`. Nav group labels and palette
+section headings are authored in caps and rendered through
+`sentenceCase()` (`src/lib/sentence-case.ts`), which lower-cases words and keeps
+the acronym set (`SOC`, `AI`, `DNS`, `CT`, `IP`, `ASN`, `URL`, `NEXUS`) upper-case.
+Never uppercase or mono-space a group label. Mono is for facts (the nav
+count pill, version line).
 
-// Inactive nav item
-style={{
-  display:     'flex', alignItems: 'center', gap: 10,
-  padding:     '9px 14px', margin: '1px 8px', borderRadius: 10,
-  color:       'rgba(255,255,255,0.55)',
-  background:  'transparent',
-  border:      '1px solid transparent',
-  transition:  'all 0.15s ease',
-}}
+**Nav items (`.v4-item`).** Sans 13px / weight 500, `--text-secondary`, 16px icon.
+- Hover darkens, never lightens. Dark: text goes to `--text-primary` with a faint
+  `--bg-page` fill. Light: a 6% `--text-primary` ink fill.
+- Active: text `--text-primary`, background gradient from
+  `--nav-active-fill-v4-1` to `--nav-active-fill-v4-2`, inset ring
+  `--nav-active-border`, glow `--nav-active-glow-v4` (theme-aware tokens in
+  `tokens.css`). Active is not amber. The 3px bar uses `--primary`; under an
+  accent it has no glow, and `<NavIndicator/>` (`@averrow/shared/ui`) draws the
+  gliding bar instead (the per-item bar is hidden while `.v4-nav[data-glide]`).
+- The count pill is a neutral pill under an accent (a count is not a primary
+  action); the legacy look keeps the tinted pill.
+- Transitions use `--motion-fast` / `--ease-standard` with `120ms` / `ease`
+  fallbacks; the mobile drawer uses `--motion-slow`, the palette `--motion-base`.
+  `prefers-reduced-motion` disables them.
+- Focus: `outline: 2px solid var(--focus-ring)` (`--text-primary` in light).
+  Mobile hit targets are 44px.
 
-// Active nav item — amber treatment
-style={{
-  display:    'flex', alignItems: 'center', gap: 10,
-  padding:    '9px 14px', margin: '1px 8px', borderRadius: 10,
-  color:      '#E5A832',
-  background: 'linear-gradient(135deg, rgba(229,168,50,0.12), rgba(229,168,50,0.06))',
-  border:     '1px solid rgba(229,168,50,0.22)',
-  boxShadow:  'inset 0 1px 0 rgba(229,168,50,0.20), 0 0 12px rgba(229,168,50,0.08)',
-  // Left accent bar
-  borderLeft: '2px solid #E5A832',
-  paddingLeft: '12px', // compensate for border
-}}
-```
+**Accessibility structure.** Each nav group is `role="group"` with
+`aria-labelledby` pointing at its label's id (`v4-grp-<slug>`). Palette sections
+do the same (`.cmdk-group`, label `.cmdk-group-label`).
+
+**Offline status.** `.v4-offline` inside `.v4-top-right` (with the bell and
+avatar) is an always-mounted `role="status"` / `aria-live="polite"` region, so
+assistive tech announces the change. It is empty (and hidden by `:empty`)
+unless `navigator.onLine === false`, then shows a WifiOff icon and "Offline"
+in `--sev-medium-text`. No pulse.
+
+**Theme button.** `ThemeCycleButton` sits in the sidebar footer (`.v4-foot`,
+styled `.v4-theme-btn`), not the top bar: `--text-tertiary`, `--text-primary`
+on hover, 44px minimum target.
 
 ---
 
 ## TABLE ROW STANDARD
 
-Every clickable data row in every table:
+Every clickable data row in every table. Hover is token-driven and **never
+amber**, and never lightens the surface (Phase 6, screen 3a):
+
+- Dark: a faint `--bg-page` fill (darker than the card), text moves to
+  `--text-primary`.
+- Light: `color-mix(in srgb, var(--text-primary) 6%, transparent)` (darkens).
+- Transition: `background-color var(--motion-fast, 120ms) var(--ease-standard, ease)`.
+- Focus (keyboard control inside the row): `outline: 2px solid var(--focus-ring)`
+  (light: `--text-primary`), offset 2px. The row click is a mouse convenience;
+  a real `<button>` inside the row is the keyboard control.
+- A selected row uses `--primary-tint`.
+- Severity rows keep their severity left border at the full `--sev-*` colour on hover (it does not fade);
+  there is no amber / primary left-border slide.
 
 ```css
-/* Standard data row */
-.data-row {
-  border-left: 2px solid transparent;
-  transition: background 0.12s ease, border-color 0.12s ease;
-  cursor: pointer;
-}
-
-/* Hover state — amber left border + subtle glow */
-.data-row:hover {
-  background: linear-gradient(90deg, rgba(229,168,50,0.04) 0%, transparent 40%);
-  border-left-color: rgba(229,168,50,0.45);
-}
-
-/* Severity-colored rows — use sev color instead of amber */
-.data-row[data-severity="critical"]:hover {
-  background: linear-gradient(90deg, rgba(239,68,68,0.06) 0%, transparent 40%);
-  border-left-color: rgba(239,68,68,0.50);
+.data-row { border-left: 2px solid transparent; cursor: pointer;
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease); }
+:root[data-accent] .data-row:hover { background: var(--bg-page); }
+:root[data-accent][data-theme="light"] .data-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 ```
+
+First adopter: the Alerts tab (`features/alerts/alerts.css`, scoped under
+`.alerts-v4`). The global `.data-row` rules in ops `index.css` apply the same
+token hover under `:root[data-accent]` (no glow gradient, no primary/amber left
+rail; severity rows hold the full `--sev-*` rail); the legacy primary-glow
+rules remain only for `FACELIFT = false`.
+
+**Console chrome and Alerts (Phase 6, screen 3a).** The Console crumb is a
+sentence-case `--type-label-*` label, the title uses `--type-display-*`, there
+is no "LIVE" ping, and the section switcher is the kit `Tabs`
+(`variant="underline" size="md"`: `role="tablist"`, `aria-selected`, arrow keys).
+Tab bodies sit in a `role="tabpanel"`. The Alerts tab uses `alerts.css` roles
+(`al-label`, `al-body`, `al-chip`, `al-pill`) instead of mono/uppercase utility
+classes: mono only for domains, handles and ids; tabular figures for counts,
+times and scores; chips and pills are token-coloured; actions are `KitButton`.
+Kit `StatTile` hover ring is `--border-strong` (not the tile accent).
 
 ---
 
@@ -1069,14 +1090,14 @@ No flat backgrounds. No rgba() fills without the 5 depth rules."
 
 ## WHAT GETS REBUILT NEXT
 
-Priority order for applying this standard:
+Phase 6 per-screen redesign order (see `docs/brand/BRAND_BRIEF.md` §12):
 
-1. **Sidebar** — upgrade to sidebar standard above
-2. **Observatory mobile chrome** — mode tabs, stat bar, bottom panel
-3. **Brands Hub** — table rows, stat cards, search bar
-4. **Brand Detail** — exposure card (ExposureGauge removed in PR3, 2026-10), tab bar, stat grid
-5. **Threats / Alerts** — table rows, filter chips, detail cards
-6. **All remaining pages** — systematic pass
+1. ~~**Shell**~~ — done (#1909, 2026-11-08): sidebar, top bar, command palette, theme button
+2. **Overview** (`features/home/OverviewV4.tsx`) — next
+3. **Alerts / Threats** — table rows, filter chips, detail cards
+4. **Tenant dashboard**
+5. **Login** (FarmTrack parity stays suspended)
+6. **Observatory controls**
 
 Each screen gets its own Claude Code session.
 Each session reads this document before writing a single line.

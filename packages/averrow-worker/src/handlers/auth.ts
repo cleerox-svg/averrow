@@ -350,14 +350,10 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
     "UPDATE sessions SET refresh_token_hash = ?, previous_token_hash = ?, rotated_at = datetime('now'), expires_at = datetime('now', '+7 days') WHERE id = ?",
   ).bind(newRefreshHash, tokenHash, session.id).run();
 
-  // Look up org membership for refresh
-  const membership = await env.DB.prepare(`
-    SELECT om.org_id, om.role AS org_role
-    FROM org_members om
-    JOIN organizations o ON o.id = om.org_id
-    WHERE om.user_id = ? AND om.status = 'active'
-    LIMIT 1
-  `).bind(session.user_id).first<{ org_id: number; org_role: string }>();
+  // Look up org membership for refresh. The same row feeds the JWT's
+  // org claims (org_id / org_role only) and the `me` payload's
+  // `organization` block, so the refresh needs no second membership read.
+  const membership = await loadActiveMembership(env, session.user_id);
 
   // Resolve scope once and embed in the JWT so the request hot path
   // never has to look it up again (saves 2 D1 queries per request).
@@ -367,6 +363,7 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
   // rotation from the session's recorded auth_method, so a privileged
   // session stays enrollment-scoped until the user signs in with a passkey
   // (and a legacy session with a null auth_method is downgraded until then).
+  const tokenScope = enrollScopeFor(session.role as UserRole, session.auth_method as AuthMethod | null);
   const accessToken = await signJWT(
     {
       sub: session.user_id,
@@ -375,12 +372,29 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
       org_id: membership?.org_id?.toString() ?? undefined,
       org_role: membership?.org_role ?? undefined,
       org_scope: orgScope,
-      scope: enrollScopeFor(session.role as UserRole, session.auth_method as AuthMethod | null),
+      scope: tokenScope,
       sid: session.id,
     },
     env.JWT_SECRET,
     ACCESS_TOKEN_TTL,
   );
+
+  // Page-load perf: carry the full /api/auth/me payload so a cold SPA load
+  // can skip the serial /me round-trip after refresh. Always the COOKIE
+  // session's user (session.user_id) — nothing from the request body.
+  // `passkey_required` mirrors the scope of the token just issued, exactly
+  // what /me would report for it. Best-effort: a failure omits `me` and the
+  // client falls back to GET /api/auth/me; the refresh itself never fails.
+  let me: MePayload | null = null;
+  try {
+    me = await buildMePayload(env, session.user_id, tokenScope === PASSKEY_ENROLL_SCOPE, membership);
+  } catch {
+    me = null;
+  }
+  // The token's role/scope come from the session row read above; `me` re-reads
+  // users. If a concurrent role change landed in between, omit `me` so the
+  // client asks /me rather than render a UI role that disagrees with the token.
+  if (me && me.role !== session.role) me = null;
 
   const response = json({
     success: true,
@@ -388,8 +402,11 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
       token: accessToken,
       expires_in: ACCESS_TOKEN_TTL,
       user: { id: session.user_id, email: session.email, role: session.role },
+      ...(me ? { me } : {}),
     },
   }, 200, origin);
+  // The body carries a bearer token and the user's profile: never cacheable.
+  response.headers.set("Cache-Control", "no-store");
 
   return setRefreshCookie(response, newRefreshToken, request);
 }
@@ -415,9 +432,45 @@ export async function handleLogout(request: Request, env: Env, userId: string): 
 
 // ─── /api/auth/me ───────────────────────────────────────────────
 
-export async function handleMe(request: Request, env: Env, userId: string, enrollOnly = false): Promise<Response> {
-  const origin = request.headers.get("Origin");
+/** Active org membership row, as /me and the refresh both need it. */
+interface ActiveMembership {
+  org_id: number; org_role: string; slug: string; name: string; plan: string;
+}
 
+async function loadActiveMembership(env: Env, userId: string): Promise<ActiveMembership | null> {
+  return env.DB.prepare(`
+    SELECT om.org_id, om.role AS org_role, o.slug, o.name, o.plan
+    FROM org_members om
+    JOIN organizations o ON o.id = om.org_id
+    WHERE om.user_id = ? AND om.status = 'active'
+    LIMIT 1
+  `).bind(userId).first<ActiveMembership>();
+}
+
+/** The `data` object of GET /api/auth/me (also returned as `data.me` by
+ *  POST /api/auth/refresh). */
+export interface MePayload {
+  id: string; email: string; name: string; role: string; status: string;
+  created_at: string; last_login: string | null; last_active: string | null;
+  display_name: string | null; timezone: string | null;
+  theme_preference: string | null;
+  accent_preference: string | null; base_preference: string | null;
+  passkey_count: number;
+  passkey_required: boolean;
+  organization: { id: number; name: string; slug: string; plan: string; role: string } | null;
+}
+
+/**
+ * Build the /api/auth/me payload for `userId`. Returns null when the user
+ * row does not exist. `membership` may be passed when the caller already
+ * read the active org membership (refresh); `undefined` reads it here.
+ */
+export async function buildMePayload(
+  env: Env,
+  userId: string,
+  enrollOnly: boolean,
+  membership?: ActiveMembership | null,
+): Promise<MePayload | null> {
   // Pulls the new profile-personalization fields (display_name,
   // timezone, theme_preference) added in 0119, the appearance pair
   // (accent_preference, base_preference) added in 0317, plus a derived
@@ -440,40 +493,37 @@ export async function handleMe(request: Request, env: Env, userId: string, enrol
     passkey_count: number;
   }>();
 
-  if (!user) {
+  if (!user) return null;
+
+  const org = membership === undefined ? await loadActiveMembership(env, userId) : membership;
+
+  return {
+    ...user,
+    // Convenient: clients that don't care about the override pick
+    // up display_name first, name as the fallback. Existing callers
+    // of `name` keep working unchanged.
+    name: user.display_name ?? user.name,
+    // H-3: true when this session is restricted to passkey enrollment
+    // (privileged user signed in without a passkey). The SPA renders a
+    // mandatory enrollment gate and blocks the rest of the app.
+    passkey_required: enrollOnly,
+    organization: org ? {
+      id: org.org_id,
+      name: org.name,
+      slug: org.slug,
+      plan: org.plan,
+      role: org.org_role,
+    } : null,
+  };
+}
+
+export async function handleMe(request: Request, env: Env, userId: string, enrollOnly = false): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const me = await buildMePayload(env, userId, enrollOnly);
+  if (!me) {
     return json({ success: false, error: "User not found" }, 404, origin);
   }
-
-  // Look up org membership
-  const membership = await env.DB.prepare(`
-    SELECT om.org_id, om.role AS org_role, o.slug, o.name, o.plan
-    FROM org_members om
-    JOIN organizations o ON o.id = om.org_id
-    WHERE om.user_id = ? AND om.status = 'active'
-    LIMIT 1
-  `).bind(userId).first<{ org_id: number; org_role: string; slug: string; name: string; plan: string }>();
-
-  return json({
-    success: true,
-    data: {
-      ...user,
-      // Convenient: clients that don't care about the override pick
-      // up display_name first, name as the fallback. Existing callers
-      // of `name` keep working unchanged.
-      name: user.display_name ?? user.name,
-      // H-3: true when this session is restricted to passkey enrollment
-      // (privileged user signed in without a passkey). The SPA renders a
-      // mandatory enrollment gate and blocks the rest of the app.
-      passkey_required: enrollOnly,
-      organization: membership ? {
-        id: membership.org_id,
-        name: membership.name,
-        slug: membership.slug,
-        plan: membership.plan,
-        role: membership.org_role,
-      } : null,
-    },
-  }, 200, origin);
+  return json({ success: true, data: me }, 200, origin);
 }
 
 // ─── Internal helpers ───────────────────────────────────────────
@@ -991,7 +1041,27 @@ const GENERIC_REQUEST_RESPONSE = {
   expires_in_minutes: 30,
 };
 
-export async function handleMagicLinkRequest(request: Request, env: Env): Promise<Response> {
+/** The slice of ExecutionContext the magic-link request needs (testable). */
+export type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
+
+/**
+ * POST /api/auth/magic-link/request
+ *
+ * Anti-enumeration: the 200 body is identical for every address AND the
+ * work awaited before responding is identical too — body validation and
+ * the per-email rate limit only, neither of which depends on whether the
+ * account exists. The account lookup, token row, Resend send and every
+ * audit row run in `ctx.waitUntil` after the response is returned.
+ * (Before this, the existing-account path awaited the Resend round trip
+ * and the missing-account path did not, so response time revealed which
+ * addresses have accounts. The per-email rate limit does NOT prevent
+ * that — one probe per address is enough.)
+ */
+export async function handleMagicLinkRequest(
+  request: Request,
+  env: Env,
+  ctx: WaitUntilContext,
+): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const body = (await request.json().catch(() => ({}))) as MagicLinkRequestBody;
@@ -1000,15 +1070,19 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
       return json({ success: false, error: "A valid email is required." }, 400, origin);
     }
 
-    if (!env.RESEND_API_KEY) {
+    const resendApiKey = env.RESEND_API_KEY;
+    if (!resendApiKey) {
       // Log loudly so the operator notices the env gap; user gets the
-      // generic envelope so they don't see the misconfiguration.
+      // generic envelope so they don't see the misconfiguration. Platform-
+      // wide config, so it can't distinguish one address from another.
       console.error("[magic-link] RESEND_API_KEY not configured — request dropped");
       return json(GENERIC_REQUEST_RESPONSE, 200, origin);
     }
 
-    // Rate-limit by email regardless of whether the account exists, so
-    // brute-force address enumeration via timing isn't possible.
+    // Per-email rate limit, applied before (and independent of) any account
+    // lookup so a 429 says nothing about account existence. It bounds email
+    // volume; it is NOT the timing defence — deferring every
+    // account-dependent step (below) is.
     const retryAfter = await checkRateLimit(env, rawEmail);
     if (retryAfter !== null) {
       return json({
@@ -1017,21 +1091,51 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
       }, 429, origin);
     }
 
-    // Look up the user. If they don't exist, return the SAME generic
-    // success envelope as if they did — never leak existence.
+    // Everything account-dependent runs after the response is sent.
+    ctx.waitUntil(deliverMagicLink(env, request, {
+      email: rawEmail,
+      resendApiKey,
+      returnTo: sanitizeReturnTo(body.return_to),
+      siteOrigin: new URL(request.url).origin,
+    }));
+
+    // Always the generic envelope — same body whether or not the account
+    // exists, and whether or not the deferred send later succeeds.
+    return json(GENERIC_REQUEST_RESPONSE, 200, origin);
+  } catch (err) {
+    console.error("[magic-link] request error:", err);
+    return json(GENERIC_REQUEST_RESPONSE, 200, origin);
+  }
+}
+
+interface DeferredMagicLink {
+  email: string;
+  resendApiKey: string;
+  returnTo: string | null;
+  siteOrigin: string;
+}
+
+/**
+ * The deferred half of a magic-link request (runs in `ctx.waitUntil`):
+ * account lookup → token row → Resend send → audit. Never rejects — every
+ * failure is logged and audited, so the waitUntil promise can't surface as
+ * an unhandled rejection.
+ */
+export async function deliverMagicLink(env: Env, request: Request, job: DeferredMagicLink): Promise<void> {
+  try {
     const user = await env.DB.prepare(
       "SELECT id, status FROM users WHERE LOWER(email) = ?",
-    ).bind(rawEmail).first<{ id: string; status: string }>();
+    ).bind(job.email).first<{ id: string; status: string }>();
 
     if (!user || user.status !== "active") {
-      // Pretend we sent the email. Audit so a real human can investigate
+      // Nothing is sent. Audit so a real human can investigate
       // suspicious patterns later.
       await audit(env, {
         action: "magic_link_request_no_account",
-        details: { email: rawEmail },
+        details: { email: job.email },
         request,
       }).catch(() => {});
-      return json(GENERIC_REQUEST_RESPONSE, 200, origin);
+      return;
     }
 
     // Generate the token, hash it, persist the row, send the email.
@@ -1040,21 +1144,19 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
     // L2: CF-Connecting-IP only — X-Forwarded-For is client-spoofable.
     const ip = request.headers.get("CF-Connecting-IP") ?? null;
     const ua = request.headers.get("User-Agent") ?? null;
-    const returnTo = sanitizeReturnTo(body.return_to);
 
     await persistMagicLinkRow(env, {
-      email: rawEmail,
+      email: job.email,
       tokenHash,
       ip,
       userAgent: ua,
-      returnTo,
+      returnTo: job.returnTo,
     });
 
-    const siteOrigin = new URL(request.url).origin;
-    const signInUrl = `${siteOrigin}/api/auth/magic-link/${encodeURIComponent(token)}`;
+    const signInUrl = `${job.siteOrigin}/api/auth/magic-link/${encodeURIComponent(token)}`;
 
-    const sendResult = await sendMagicLinkEmail(env.RESEND_API_KEY, {
-      recipientEmail: rawEmail,
+    const sendResult = await sendMagicLinkEmail(job.resendApiKey, {
+      recipientEmail: job.email,
       signInUrl,
       ipAddress: ip,
       userAgent: ua,
@@ -1063,16 +1165,18 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
     await audit(env, {
       action: sendResult.ok ? "magic_link_request_sent" : "magic_link_request_send_failed",
       userId: user.id,
-      details: { email: rawEmail, error: sendResult.error },
+      details: { email: job.email, error: sendResult.error },
       request,
     }).catch(() => {});
-
-    // Always return the generic envelope — even on Resend failure, so we
-    // don't leak transient infra errors back to the caller.
-    return json(GENERIC_REQUEST_RESPONSE, 200, origin);
   } catch (err) {
-    console.error("[magic-link] request error:", err);
-    return json(GENERIC_REQUEST_RESPONSE, 200, origin);
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error("magic_link_request_deferred_error", { error });
+    await audit(env, {
+      action: "magic_link_request_error",
+      outcome: "failure",
+      details: { email: job.email, error },
+      request,
+    }).catch(() => {});
   }
 }
 
@@ -1375,10 +1479,14 @@ export async function handleMintServiceJwt(request: Request, env: Env): Promise<
 // (`<origin>/v2/#token=…` or `/tenant/#token=…`) — the SPA's AuthProvider
 // reads the hash, validates /api/auth/me, and boots.
 //
-// Kill switch (instant):
+// Kill switch (≤ about 75s):
 //   UPDATE users SET status='suspended'
 //     WHERE id IN ('claude_ui_staff','claude_ui_tenant');
-//   requireAuth rejects on the next request; re-enable with status='active'.
+//   requireAuth rejects once its status cache lapses — 60s KV trust window +
+//   15s per-isolate memo (lib/auth-user-cache.ts; a manual SQL change is not
+//   invalidated); add a
+//   force-logout of each id for an immediate cut-off. Re-enable with
+//   status='active' (non-active users are never cached, so that is instant).
 // Full removal:
 //   DELETE FROM org_members WHERE user_id='claude_ui_tenant';
 //   DELETE FROM users WHERE id IN ('claude_ui_staff','claude_ui_tenant');

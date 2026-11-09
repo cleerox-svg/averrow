@@ -17,6 +17,11 @@
 //   4. Validate via /api/auth/me. Apply onValidatedUser hook, then (first
 //      successful /me for the user id only) the account's saved theme,
 //      accent and background (hydrateAppearanceFromAccount).
+//      Shortcut: when the cookie refresh response carries `data.me` (the
+//      exact /me payload) and it passes isValidCachedUser, that object is the
+//      validated user and the /me round-trip is skipped. A missing or invalid
+//      `me` (older server, server-side build failure) falls back to /me. The
+//      hash/query-token path (OAuth, magic link, preview) always calls /me.
 //   5. Set loading=false, render.
 //
 // Token storage model (H5): the refresh token lives ONLY in the
@@ -234,6 +239,7 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     //    credentials: 'same-origin' — the SPAs are served from the
     //    same origin as the API (worker assets in prod, Vite proxy in
     //    dev), and the cookie is SameSite=Strict anyway.
+    let refreshedMe: SharedAuthUser | null = null;
     if (!httpClient.getToken() && refreshMode === 'cookie-refresh') {
       try {
         const refreshRes = await fetch(refreshPath, {
@@ -247,8 +253,11 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
           signal:      AbortSignal.timeout(10000),
         });
         if (refreshRes.ok) {
-          const data = await refreshRes.json() as { data?: { token?: string } };
-          if (data.data?.token) httpClient.setTokens(data.data.token, '');
+          const data = await refreshRes.json() as { data?: { token?: string; me?: unknown } };
+          if (data.data?.token) {
+            httpClient.setTokens(data.data.token, '');
+            if (isValidCachedUser(data.data.me)) refreshedMe = data.data.me;
+          }
         }
       } catch { /* swallow — anon access falls through */ }
     }
@@ -259,9 +268,12 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
       return;
     }
 
-    // 3. Validate via /api/auth/me.
+    // 3. Validate via /api/auth/me — unless the refresh response already
+    //    carried the validated user (saves a serial round-trip on cold load).
     try {
-      const res = await httpClient.get<SharedAuthUser>(mePath);
+      const res = refreshedMe
+        ? { success: true, data: refreshedMe }
+        : await httpClient.get<SharedAuthUser>(mePath);
       if (res.success && res.data) {
         const decision = onValidatedUser?.(res.data) ?? { kind: 'continue' };
         if (decision.kind === 'redirect') {

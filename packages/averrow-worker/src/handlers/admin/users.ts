@@ -17,7 +17,8 @@ import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import { isPlatformStaff, type AuthContext } from "../../middleware/auth";
-import { ABSOLUTE_SESSION_TTL } from "../../lib/jwt";
+import { writeForcedLogout } from "../../lib/forced-logout";
+import { invalidateAuthUserCache } from "../../lib/auth-user-cache";
 import { PLACEHOLDER_EXEMPT_SQL, USER_HAS_CUSTOMER_MEMBERSHIP_SQL, deactivateUserPlaceholdersStmt } from "../../lib/lead-conversion-placeholder";
 import { classifySaasTechnique } from "../../lib/saas-classifier";
 import { BudgetManager, type BudgetStatus } from "../../lib/budgetManager";
@@ -105,6 +106,12 @@ export async function handleAdminUpdateUser(
     .bind(targetUserId).first<{ role: string }>();
   if (!current) return json({ success: false, error: "User not found" }, 404, origin);
   const roleChanged = role !== undefined && role !== current.role;
+  // Any non-active status written here (suspend / deactivate, incl. re-sending
+  // it) revokes live tokens like a role change does: requireAuth checks the
+  // forced_logout stamp BEFORE its KV-cached status (lib/auth-user-cache.ts),
+  // so the suspension is enforced at the same KV-consistency level as a
+  // logout, not after the <=60s status-cache TTL.
+  const deactivates = status !== undefined && status !== "active";
 
   // Only super_admin may touch a privileged account. Checked against BOTH the
   // requested role and the target's CURRENT role: checking only the new role
@@ -236,8 +243,9 @@ export async function handleAdminUpdateUser(
 
   // A role change alters what every live token for this user may reach (the
   // JWT embeds role + org_scope), so revoke them: requireAuth and the refresh
-  // path reject tokens/sessions issued at or before this stamp. Same key and
-  // TTL convention as handleForceLogout (sessions.ts) / refresh-reuse.
+  // path reject tokens/sessions issued at or before this stamp. Written via
+  // writeForcedLogout (read-modify-write): it keeps any self-service revoked
+  // sids already listed and never lowers an existing, later `ts`.
   //
   // The stamp must postdate the role write (iat comparison), so it runs after
   // it. A KV failure must not turn a committed role change into a 500 the
@@ -245,13 +253,9 @@ export async function handleAdminUpdateUser(
   // with `revocation_pending: true` + a warning so the operator can re-run
   // the force-logout (POST /api/admin/users/:id/force-logout).
   let revocationPending = false;
-  if (roleChanged) {
+  if (roleChanged || deactivates) {
     try {
-      await env.CACHE.put(
-        `forced_logout:${targetUserId}`,
-        String(Math.floor(Date.now() / 1000)),
-        { expirationTtl: ABSOLUTE_SESSION_TTL },
-      );
+      await writeForcedLogout(env, targetUserId, { ts: Math.floor(Date.now() / 1000) });
     } catch (err) {
       revocationPending = true;
       await audit(env, {
@@ -259,12 +263,19 @@ export async function handleAdminUpdateUser(
         userId: adminUserId,
         resourceType: "user",
         resourceId: targetUserId,
-        details: { new_role: role, previous_role: current.role, error: err instanceof Error ? err.message : String(err) },
+        details: { new_role: role, previous_role: current.role, new_status: status, error: err instanceof Error ? err.message : String(err) },
         outcome: "failure",
         request,
       });
     }
   }
+
+  // requireAuth caches each active user's status (KV <=60s + a 15s
+  // per-isolate memo, lib/auth-user-cache.ts). This is the only in-app
+  // users.status writer: drop the KV entry and this isolate's memo on every
+  // committed change. Other isolates may serve a memo entry for <=15s; a
+  // suspension is cut off sooner by the forced_logout stamp above.
+  await invalidateAuthUserCache(env, targetUserId);
 
   await audit(env, {
     action: "user_updated",
@@ -280,7 +291,7 @@ export async function handleAdminUpdateUser(
       success: true,
       data: user,
       revocation_pending: true,
-      warning: "Role updated, but existing sessions could not be revoked. Force-logout this user to end their current sessions.",
+      warning: "User updated, but existing sessions could not be revoked. Force-logout this user to end their current sessions.",
     }, 200, origin);
   }
   return json({ success: true, data: user }, 200, origin);

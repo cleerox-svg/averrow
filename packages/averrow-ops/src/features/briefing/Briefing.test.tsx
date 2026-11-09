@@ -40,7 +40,7 @@ describe('Briefing shell — intelligence source', () => {
 
     expect(await screen.findByRole('heading', { name: 'Phishing surge' })).toBeInTheDocument();
     expect(screen.getByText(/40 new domains hit Acme overnight/)).toBeInTheDocument();
-    expect(screen.getByText('FRESH')).toBeInTheDocument();
+    expect(screen.getByText('Fresh')).toBeInTheDocument();
     expect(screen.getByText('Observer')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Daily briefing' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /View all briefings/ })).toHaveAttribute('href', '/coverage?tab=trends');
@@ -140,13 +140,13 @@ describe('sourceChips', () => {
 
 describe('briefingFreshness', () => {
   const now = Date.parse('2026-10-03T12:00:00Z');
-  it('FRESH under an hour, TODAY under a day, STALE after', () => {
-    expect(briefingFreshness('2026-10-03T11:30:00Z', now)?.label).toBe('FRESH');
-    expect(briefingFreshness('2026-10-03T03:00:00Z', now)?.label).toBe('TODAY');
-    expect(briefingFreshness('2026-10-01T12:00:00Z', now)?.label).toBe('STALE');
+  it('Fresh under an hour, Today under a day, Stale after', () => {
+    expect(briefingFreshness('2026-10-03T11:30:00Z', now)?.label).toBe('Fresh');
+    expect(briefingFreshness('2026-10-03T03:00:00Z', now)?.label).toBe('Today');
+    expect(briefingFreshness('2026-10-01T12:00:00Z', now)?.label).toBe('Stale');
   });
   it('reads D1 bare timestamps as UTC', () => {
-    expect(briefingFreshness('2026-10-03 11:30:00', now)?.label).toBe('FRESH');
+    expect(briefingFreshness('2026-10-03 11:30:00', now)?.label).toBe('Fresh');
   });
   it('is null for missing or invalid dates', () => {
     expect(briefingFreshness(null, now)).toBeNull();
@@ -200,7 +200,7 @@ describe('Briefing shell — ops source', () => {
   it('renders the ops briefing in the shared shell, tagged with its source', async () => {
     mockOpsRow(opsBriefing());
     const { container } = renderWithProviders(<Briefing source="ops" />);
-    expect(await screen.findByText('TODAY')).toBeInTheDocument();
+    expect(await screen.findByText('Today')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Platform operations briefing' })).toBeInTheDocument();
     expect(container.querySelector('[data-briefing-source="ops"]')).not.toBeNull();
     expect(screen.getByText(/scheduled/)).toBeInTheDocument();
@@ -325,7 +325,7 @@ describe('Briefing shell — ops source, Run Briefing Now role gating', () => {
     authMock.role = role;
     mockOpsRow(opsBriefing());
     renderWithProviders(<Briefing source="ops" />);
-    expect(await screen.findByText('TODAY')).toBeInTheDocument();
+    expect(await screen.findByText('Today')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /run briefing now/i })).not.toBeInTheDocument();
     expect(post).not.toHaveBeenCalled();
   });

@@ -60,6 +60,7 @@ describe('Corroboration row click -> Threats table', () => {
     const calls: Element[] = [];
     const opts: ScrollIntoViewOptions[] = [];
     Element.prototype.scrollIntoView = function (this: Element, o?: boolean | ScrollIntoViewOptions) {
+      if (this.getAttribute('role') === 'tab') return; // the kit Tabs scroll the selected tab; not the table scroll under test
       calls.push(this);
       if (typeof o === 'object') opts.push(o);
     };
@@ -93,7 +94,8 @@ describe('Corroboration row click -> Threats table', () => {
     stubMatchMedia(true);
     window.history.pushState({}, '', '/?tab=threats');
     const opts: ScrollIntoViewOptions[] = [];
-    Element.prototype.scrollIntoView = function (o?: boolean | ScrollIntoViewOptions) {
+    Element.prototype.scrollIntoView = function (this: Element, o?: boolean | ScrollIntoViewOptions) {
+      if (this.getAttribute('role') === 'tab') return;
       if (typeof o === 'object') opts.push(o);
     };
     renderWithProviders(<Console />);

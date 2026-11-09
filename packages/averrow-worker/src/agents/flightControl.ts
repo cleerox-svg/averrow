@@ -54,6 +54,11 @@ import { parseCronIntervalMs } from "../lib/feedRunner";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { cachedCount } from "../lib/cached-count";
 import {
+  noGeoProbeLabel,
+  TOTAL_NO_GEO_PROBE_SQL,
+  SURBL_BACKLOG_COUNT_SQL,
+} from "../lib/threat-rescan-predicates";
+import {
   classifyDnsQueueStall,
   readDnsDrainableForTick,
   shouldEmitDnsQueueDrift,
@@ -98,6 +103,29 @@ export const TOTAL_UNLINKED_PROBE_SQL = `
           AND status = 'active'
         LIMIT ${UNLINKED_PROBE_CAP}
       )
+    `;
+
+// Latest agent_runs row per monitored agent (getAgentHealth). One bind: the
+// agent ids as a JSON array. the cross join holds the id list as the outer loop,
+// so each agent costs one MAX() seek plus an equality seek on
+// idx_agent_runs_agent(agent_id, started_at DESC) — a few index entries per
+// agent. The old form (`FROM agent_runs ar1 WHERE started_at = (SELECT
+// MAX(...) correlated on ar1.agent_id) AND agent_id IN (...)`) evaluated the
+// subquery once per run row, reading every run of every agent (~263K rows
+// per FC tick, prod 2026-11-08). Same rows, ties at MAX included.
+export const LATEST_RUN_PER_AGENT_SQL = `
+      SELECT
+        ar.agent_id,
+        ar.status AS last_run_status,
+        ar.started_at AS last_run_at,
+        ar.completed_at AS last_completed_at,
+        ar.duration_ms
+      FROM json_each(?) AS ids
+      CROSS JOIN agent_runs ar
+        ON ar.agent_id = ids.value
+       AND ar.started_at = (
+         SELECT MAX(r.started_at) FROM agent_runs r WHERE r.agent_id = ids.value
+       )
     `;
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -146,6 +174,7 @@ export interface Backlog {
   analyst: number;
   /** Bounded: capped at UNLINKED_PROBE_CAP (= "more than UNLINKED_TIER_HIGH"). */
   totalUnlinked: number;
+  /** Bounded: capped at NO_GEO_PROBE_CAP (= "more than the 5000 gate"). */
   totalNoGeo: number;
   surblUnchecked: number;
   vtUnchecked: number;
@@ -860,7 +889,7 @@ export const flightControlAgent: AgentModule = {
     // ── Enrichment backlog warnings ──────────────────────────────
     if (backlogs.surblUnchecked > 1000) {
       await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
-        `SURBL enrichment backlog: ${backlogs.surblUnchecked} domains unchecked`,
+        `SURBL enrichment backlog: ${backlogs.surblUnchecked} threat rows unchecked`,
         { backlog: 'surbl', count: backlogs.surblUnchecked }
       );
     }
@@ -2240,23 +2269,23 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     // NOT a scaling input for any instance count — it only gates the
     // low-priority single cartographer `geo_backlog` dispatch at a coarse
     // `> 5000` threshold (see scaleAgents), and cartographer does not read
-    // that mode. A full scan over active threats every tick isn't worth
-    // it for that gate: monitoring TTL (≤3 ticks of lag at the boundary).
-    cacheCount('backlog.total_no_geo', BACKLOG_TTL_MONITORING_S, `
-      SELECT COUNT(*) as count FROM threats
-      WHERE (lat IS NULL OR lng IS NULL)
-      AND status = 'active'
-    `),
+    // that mode. Monitoring TTL (≤3 ticks of lag at the boundary).
+    // Bounded probe (NO_GEO_PROBE_CAP = gate + 1) over the partial index
+    // idx_threats_active_no_geo (migration 0322): exact up to the gate,
+    // reads ≤ CAP entries. The exact COUNT walked every active threat
+    // (~1.5M rows/call, prod 2026-11-08). Key renamed with the semantics
+    // (a value of CAP means "more than the gate").
+    cacheCount('backlog.total_no_geo.probe', BACKLOG_TTL_MONITORING_S, TOTAL_NO_GEO_PROBE_SQL),
 
     // Monitoring counters — broad _checked queries with no selective
     // index. Refreshed every ~4 ticks; stall detection still works on
     // fresh-recompute samples.
-    cacheCount('backlog.surbl', BACKLOG_TTL_MONITORING_S, `
-      SELECT COUNT(*) as count FROM threats
-      WHERE surbl_checked = 0
-        AND malicious_domain IS NOT NULL
-        AND first_seen >= datetime('now', '-7 days')
-    `),
+    // SURBL: the feed's own work-set WHERE (feeds/surbl.ts), seeking the
+    // partial index idx_threats_surbl_pending (migration 0322) instead of
+    // ~426K rows. It used to filter on first_seen and allow '' domains, so
+    // it counted a different set than the feed drains; key renamed with
+    // the predicate.
+    cacheCount('backlog.surbl.pending', BACKLOG_TTL_MONITORING_S, SURBL_BACKLOG_COUNT_SQL),
     cacheCount('backlog.vt', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE vt_checked = 0
@@ -2454,7 +2483,10 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     { name: 'brand_enrich',  count: backlog.brandEnrichBacklog,   cached: brandEnrichResult.wasCached },
     { name: 'cartographer',  count: backlog.cartographer,         cached: cartResult.wasCached },
     { name: 'analyst',       count: backlog.analyst,              cached: analystResult.wasCached },
-    { name: 'surbl',         count: backlog.surblUnchecked,       cached: surblResult.wasCached },
+    // 'surbl_pending' (was 'surbl'): the count now uses the feed's own work-set
+    // WHERE (0322), a different set, so a new series keeps the stall detector
+    // from comparing old samples with new ones.
+    { name: 'surbl_pending', count: backlog.surblUnchecked,       cached: surblResult.wasCached },
     { name: 'virustotal',    count: backlog.vtUnchecked,          cached: vtResult.wasCached },
     { name: 'gsb',           count: backlog.gsbUnchecked,         cached: gsbResult.wasCached },
     { name: 'dbl',           count: backlog.dblUnchecked,         cached: dblResult.wasCached },
@@ -2754,20 +2786,9 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
   const stallThresholds = await getStallThresholdMap();
 
   const [results, avgResults, configResults, workflowAgentStats] = await Promise.all([
-    db.prepare(`
-      SELECT
-        agent_id,
-        status as last_run_status,
-        started_at as last_run_at,
-        completed_at as last_completed_at,
-        duration_ms
-      FROM agent_runs ar1
-      WHERE started_at = (
-        SELECT MAX(started_at) FROM agent_runs ar2
-        WHERE ar2.agent_id = ar1.agent_id
-      )
-      AND agent_id IN (${placeholders})
-    `).bind(...agentIds).all<{ agent_id: string; last_run_status: string; last_run_at: string; last_completed_at: string | null; duration_ms: number | null }>(),
+    db.prepare(LATEST_RUN_PER_AGENT_SQL)
+      .bind(JSON.stringify(agentIds))
+      .all<{ agent_id: string; last_run_status: string; last_run_at: string; last_completed_at: string | null; duration_ms: number | null }>(),
 
     db.prepare(`
       SELECT agent_id, AVG(duration_ms) as avg_ms
@@ -3025,8 +3046,8 @@ export async function scaleAgents(
       actions++;
 
       await logActivity(db, 'flight_control', 'info', 'scaling',
-        `Queued Cartographer geo backlog run (${backlogs.totalNoGeo} threats missing geo)`,
-        { agent: 'cartographer', mode: 'geo_backlog', no_geo_count: backlogs.totalNoGeo }
+        `Queued Cartographer geo backlog run (${noGeoProbeLabel(backlogs.totalNoGeo)} threats missing geo)`,
+        { agent: 'cartographer', mode: 'geo_backlog', no_geo_count: noGeoProbeLabel(backlogs.totalNoGeo) }
       );
     }
   }

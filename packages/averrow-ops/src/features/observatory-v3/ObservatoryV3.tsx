@@ -23,7 +23,7 @@
  * (lib/mode-data.ts).
  */
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo, useId } from 'react';
 import {
   useObservatoryThreats, useObservatoryStats, useObservatoryArcs, useObservatoryHeatmap, useObservatoryLive,
   useRefreshObservatory,
@@ -55,7 +55,8 @@ import { DrillDrawer } from './components/DrillDrawer';
 import { LegendChip } from './components/LegendChip';
 import { LensPanel } from './components/LensPanel';
 import { PeekSheet } from './components/PeekSheet';
-import { PeriodSegment, SourceSelect, RefreshButton, FiltersPopover, FILTER_LABEL, PERIOD_LABELS, SOURCE_LABELS } from './components/ToolbarControls';
+import { BODY, COARSE_TARGET, LABEL } from './lib/chrome-classes';
+import { PeriodSegment, SourceSelect, RefreshButton, FiltersPopover, PERIOD_LABELS, SOURCE_LABELS } from './components/ToolbarControls';
 import { ReplayTimeline, usePlayheadBus } from './components/ReplayTimeline';
 import { buildBotDensityPoints, resolveScaleStops, resolveGlobalAvg, botWallTiles } from './lib/bot-density';
 import { buildBotShareModel } from './lib/lens/bot-share';
@@ -109,7 +110,7 @@ const FAST_LAYERS = noLayers();
 const Z_CHROME = 10;   // rail, stats bar, headline bar, legend chip, replay bar
 const Z_PANEL = 20;    // intel panel / drill drawer (their own z-20) and the mobile Intel FAB
 const Z_TOOLBAR = 22;  // toolbar row: ABOVE the panel / drawer, so its filters + search popovers open over them
-const Z_TOGGLE = 30;   // desktop panel toggle + load-error banner
+const Z_TOGGLE = 30;   // load-error banner (the desktop panel toggle sits at Z_PANEL + 1, under the toolbar)
 
 type SheetKey = 'drill' | 'panel';
 
@@ -181,6 +182,7 @@ export function ObservatoryV3() {
 
   // ─── Layout: the MAP's width decides, and it reacts to every resize ──
   const rootRef = useRef<HTMLDivElement>(null);
+  const mapRegionId = useId();
   const { width: mapWidth, height: rootHeight } = useElementSize(rootRef);
   const viewportHeight = useViewportHeight();
   const baseLayout = useMemo(() => computeLayout({ mapWidth, viewportWidth, viewportHeight }), [mapWidth, viewportWidth, viewportHeight]);
@@ -886,13 +888,13 @@ export function ObservatoryV3() {
         note={takedownNote}
         onPreview={lens === 'operations' ? onPanelPreview : undefined}
         aside={lens === 'operations' && (excludedTotal > 0 || state.shared) ? (
-          <div className="flex flex-col gap-1.5 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <div className={`flex flex-col gap-1.5 ${BODY}`} style={{ color: 'var(--text-tertiary)' }}>
             {excludedTotal > 0 && <span role="status">{lowEvidenceNote(excludedTotal, state.shared, L.operationsQ.data?.meta?.shared_returned)}</span>}
             <button
               type="button"
               onClick={toggleShared}
               aria-pressed={state.shared}
-              className="ds-focusable self-start rounded-md px-2 py-1 min-h-[32px]"
+              className={`ds-focusable self-start rounded-md px-2 py-1 min-h-[32px] ${BODY} ${COARSE_TARGET}`}
               style={{ background: 'none', border: '1px solid var(--border-base)', color: state.shared ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
             >
               Show low-evidence clusters
@@ -915,17 +917,17 @@ export function ObservatoryV3() {
   const filtersBody = (
     <>
       <div className="flex flex-col gap-1.5">
-        <div className={FILTER_LABEL} style={{ color: 'var(--text-tertiary)' }}>Period</div>
+        <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>Period</div>
         <PeriodSegment period={period} onChange={setPeriod} touch={phone} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <div className={FILTER_LABEL} style={{ color: 'var(--text-tertiary)' }}>Source</div>
+        <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>Source</div>
         <SourceSelect source={source} onChange={setSource} touch={phone} disabledReason={fast ? FAST_SOURCE_NOTE : undefined} />
         {/* The select's own reason is a tooltip: there is no hover on touch, so it is also written out. */}
-        {fast && <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{FAST_SOURCE_NOTE}</div>}
+        {fast && <div className={BODY} style={{ color: 'var(--text-tertiary)' }}>{FAST_SOURCE_NOTE}</div>}
       </div>
       {isBotMode && (
-        <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+        <div className={BODY} style={{ color: 'var(--text-tertiary)' }}>
           Period and source don&apos;t apply to bot share (daily Cloudflare Radar data).
         </div>
       )}
@@ -959,9 +961,10 @@ export function ObservatoryV3() {
   // Fills the shell outlet (.v4-page--fill is a flex column) — no vh math, so
   // it tracks the real topbar + safe-area + platform-alert-banner height.
   return (
-    <div ref={rootRef} className="relative flex-1 min-h-0 overflow-hidden" onKeyDown={onShortcut} data-tier={layout.tier}>
+    <div ref={rootRef} className="obs-root relative flex-1 min-h-0 overflow-hidden" onKeyDown={onShortcut} data-tier={layout.tier}>
       {/* Full-screen map — bottom inset reserves the stats bar + headline band below. */}
       <div
+        id={mapRegionId}
         className="absolute inset-0"
         style={{ bottom: layout.bottomBand }}
         aria-busy={isInitialLoading || isUpdating}
@@ -1016,7 +1019,7 @@ export function ObservatoryV3() {
       {!isBotMode && (isInitialLoading || isUpdating) && (
         <div
           role="status"
-          className="absolute left-1/2 -translate-x-1/2 px-3 py-1 rounded-full font-mono text-[10px] uppercase tracking-wider pointer-events-none"
+          className={`absolute left-1/2 -translate-x-1/2 px-3 py-1 rounded-full pointer-events-none ${LABEL}`}
           style={{
             top: layout.topInset,
             zIndex: Z_CHROME,
@@ -1034,10 +1037,10 @@ export function ObservatoryV3() {
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: Z_CHROME }}>
           <Card variant="elevated" padding="16px 24px" className="text-center pointer-events-auto" style={{ maxWidth: 280 }}>
             {botLoading ? (
-              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>Loading bot share&hellip;</div>
+              <div role="status" className={BODY} style={{ color: 'var(--text-tertiary)' }}>Loading bot share&hellip;</div>
             ) : botError ? (
               <div role="alert">
-                <div className="flex items-center justify-center gap-2 font-mono text-xs" style={{ color: 'var(--sev-critical-text)' }}>
+                <div className={`flex items-center justify-center gap-2 ${BODY}`} style={{ color: 'var(--sev-critical-text)' }}>
                   <AlertTriangle size={13} /> Bot share failed to load
                 </div>
                 <div className="mt-2">
@@ -1045,7 +1048,7 @@ export function ObservatoryV3() {
                 </div>
               </div>
             ) : (
-              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>No bot-share data yet</div>
+              <div role="status" className={BODY} style={{ color: 'var(--text-tertiary)' }}>No bot-share data yet</div>
             )}
           </Card>
         </div>
@@ -1072,7 +1075,7 @@ export function ObservatoryV3() {
               ) : null}
             </FiltersPopover>
             {/* Short viewport: the lens strip shares the row (one 48px band of chrome instead of two). */}
-            {layout.compact && <LensStrip lens={lens} onChange={setLens} touch className="flex-1" />}
+            {layout.compact && <LensStrip lens={lens} onChange={setLens} controls={mapRegionId} touch className="flex-1" />}
             <button
               type="button"
               ref={el => { if (el) searchOpenerRef.current = el; }}
@@ -1080,13 +1083,13 @@ export function ObservatoryV3() {
               aria-label="Find on map"
               aria-expanded={mobileSearchOpen}
               className="ds-focusable shrink-0 inline-flex items-center justify-center rounded-xl w-12 h-12"
-              style={{ background: 'var(--bg-card)', backdropFilter: 'blur(20px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)', color: mobileSearchOpen ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
+              style={{ background: 'var(--bg-card)', backdropFilter: 'blur(20px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)', color: mobileSearchOpen ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
             >
               <SearchIcon size={15} />
             </button>
             <RefreshButton onClick={handleRefresh} busy={isFetching} touch />
           </div>
-          {!layout.compact && <LensStrip lens={lens} onChange={setLens} touch />}
+          {!layout.compact && <LensStrip lens={lens} onChange={setLens} controls={mapRegionId} touch />}
           {mobileSearchOpen && (
             <ObservatorySearch data={searchData} onPick={handleSearchPick} onActivate={activateSearch} touch inline />
           )}
@@ -1094,8 +1097,8 @@ export function ObservatoryV3() {
       ) : (
         <>
           <div className="absolute top-2 left-3 right-3 flex items-center gap-2" style={{ zIndex: Z_TOOLBAR, height: 44 }} data-toolbar>
-            <LensStrip lens={lens} onChange={setLens} className="flex-1" />
-            {searchEl({ collapsed: layout.searchCollapsed, className: layout.searchCollapsed ? 'shrink-0' : 'w-[190px] shrink-0' })}
+            <LensStrip lens={lens} onChange={setLens} controls={mapRegionId} className="flex-1" />
+            {searchEl({ collapsed: layout.searchCollapsed, className: layout.searchCollapsed ? 'shrink-0' : 'w-[160px] shrink-0' })}
             {layout.filtersInPopover ? (
               <FiltersPopover period={period} source={source}>
                 {filtersBody}
@@ -1216,40 +1219,40 @@ export function ObservatoryV3() {
       >
         <div className="flex items-center gap-4 min-w-0">
           {fast ? (
-            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              <span style={{ color: 'var(--primary-text)' }}>{periodLabel}</span>
+            <div data-stats-bar className={BODY} style={{ color: 'var(--text-muted)' }}>
+              <span className="font-mono" style={{ color: 'var(--primary-text)' }}>{periodLabel}</span>
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{(L.velocityModel?.total ?? 0).toLocaleString()}</span> fast-weaponized
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{(L.velocityModel?.total ?? 0).toLocaleString()}</span> fast-weaponized
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{L.velocityModel?.points.length ?? 0}</span> countries
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{L.velocityModel?.points.length ?? 0}</span> countries
             </div>
           ) : isBotMode ? (
-            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <div data-stats-bar className={BODY} style={{ color: 'var(--text-muted)' }}>
               {/* Bot share fetches the 7-day Radar window (useBotTraffic(7)). */}
-              <span style={{ color: 'var(--primary-text)' }}>7D</span>
+              <span className="font-mono" style={{ color: 'var(--primary-text)' }}>7D</span>
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
               {botGlobalAvg != null && (
-                <>{' · '}global avg <span style={{ color: 'var(--text-secondary)' }}>{botGlobalAvg.toFixed(1)}%</span> bots</>
+                <>{' · '}global avg <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{botGlobalAvg.toFixed(1)}%</span> bots</>
               )}
             </div>
           ) : (
-            <div className="font-mono text-[10px]" aria-busy={statsUpdating} style={{ color: 'var(--text-muted)', opacity: statsUpdating ? 0.6 : 1 }}>
-              <span style={{ color: 'var(--primary-text)' }}>{footerPeriodLabel}</span>
+            <div data-stats-bar className={BODY} aria-busy={statsUpdating} style={{ color: 'var(--text-muted)', opacity: statsUpdating ? 0.6 : 1 }}>
+              <span className="font-mono" style={{ color: 'var(--primary-text)' }}>{footerPeriodLabel}</span>
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
               {' · '}
-              <span style={{ color: 'var(--text-secondary)' }}>{stats?.countries ?? 0}</span> countries
+              <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{stats?.countries ?? 0}</span> countries
               {mapMode === 'global' && threatLayersOn && (
                 <>
                   {' · '}
-                  <span style={{ color: 'var(--text-secondary)' }}>{arcsResolved.length}</span> arcs
+                  <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{arcsResolved.length}</span> arcs
                 </>
               )}
             </div>
           )}
         </div>
-        <div className="font-mono text-[10px] flex flex-wrap items-center justify-end gap-x-3 min-w-0 ml-auto" style={{ color: 'var(--text-muted)' }}>
+        <div className={`${BODY} flex flex-wrap items-center justify-end gap-x-3 min-w-0 ml-auto`} style={{ color: 'var(--text-muted)' }}>
           {lensFootnote({ lens, reducedMotion, motionOn, fast }) && (
             <span style={{ color: reducedMotion ? 'var(--text-muted)' : 'var(--sev-info-text)' }}>{lensFootnote({ lens, reducedMotion, motionOn, fast })}</span>
           )}
@@ -1312,7 +1315,7 @@ export function ObservatoryV3() {
           onClick={() => setPanelPref(!panelOpen)}
           aria-label={panelOpen ? 'Hide intelligence panel' : 'Show intelligence panel'}
           aria-expanded={panelOpen}
-          className="ds-focusable absolute top-1/2 transform -translate-y-1/2"
+          className={`ds-focusable absolute top-1/2 transform -translate-y-1/2 ${COARSE_TARGET}`}
           style={{
             right: panelOpen ? DOCK_WIDTH + (layout.docked ? 0 : 12) : 0,
             background: 'var(--bg-card)',
@@ -1322,7 +1325,7 @@ export function ObservatoryV3() {
             padding: '12px 6px',
             color: 'var(--text-tertiary)',
             cursor: 'pointer',
-            zIndex: Z_TOGGLE,
+            zIndex: Z_PANEL + 1, // above the panel it sits on, below the toolbar row so the filters popover opens over it
           }}
         >
           {panelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
@@ -1336,7 +1339,7 @@ export function ObservatoryV3() {
           ref={panelToggleRef}
           onClick={() => setShowMobilePanel(true)}
           aria-label="Open intelligence panel"
-          className="ds-focusable absolute flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wide"
+          className={`ds-focusable absolute flex items-center gap-1.5 font-semibold ${LABEL}`}
           style={{
             bottom: chipBottom,
             right: 12,
@@ -1348,7 +1351,7 @@ export function ObservatoryV3() {
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
             color: 'var(--primary-text)',
-            boxShadow: 'var(--card-shadow)',
+            boxShadow: 'var(--card-shadow-elevated)',
             cursor: 'pointer',
             zIndex: Z_PANEL,
           }}
@@ -1366,7 +1369,7 @@ export function ObservatoryV3() {
         <PeekSheet open={showMobilePanel && !drill} onClose={() => setShowMobilePanel(false)} label="Intelligence panel" onHeight={onPanelSheetHeight} restoreFocus={restorePanelFocus} initialSnap={sheetInitialSnap}>
           <div className="sticky top-0 z-[1]" style={{ background: 'var(--bg-elevated-solid, var(--bg-elevated))' }}>
             <div className="flex items-center justify-between px-4 pb-1">
-              <span className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>Intelligence</span>
+              <span className={LABEL} style={{ color: 'var(--text-secondary)' }}>Intelligence</span>
               <button
                 type="button"
                 onClick={() => setShowMobilePanel(false)}

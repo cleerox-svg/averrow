@@ -28,7 +28,7 @@ import type { LngLat } from '@/lib/country-centroids';
 import type { LayerToggles } from '../lib/lenses';
 import type { Measure } from '../lib/url-state';
 import { GLOBE_SCREEN_SPACE_PARAMETERS, type Projection } from '../lib/projection';
-import type { Rgba } from '../lib/map-colors';
+import { LENS_COLORS, type Rgba } from '../lib/map-colors';
 import type { OperationsModel, OpNode, OpEdge } from '../lib/lens/operations';
 import { visibleEdges, nodeInFootprint } from '../lib/lens/operations';
 import { PrimaryPathLayer, PrimaryTextLayer } from './primary-copy';
@@ -160,20 +160,20 @@ export interface LensFrame {
 
 // ─── Constants + small helpers ──────────────────────────────
 
-const CYAN: Rgba = [122, 234, 255, 255];
+const CYAN: Rgba = LENS_COLORS.cyan;
 /** Legacy selection colour (amber); the live one is `input.selectionColor` (the platform primary). */
 const AMBER: Rgba = [229, 168, 50, 255];
 const selColorOf = (input: LensLayerInput): Rgba => input.selectionColor ?? AMBER;
 /** updateTriggers key for the selection colour (the accessor closes over it). */
 const selKeyOf = (input: LensLayerInput): string => selColorOf(input).join(',');
-const VIOLET: Rgba = [167, 139, 250, 255];
-const SLATE: Rgba = [148, 163, 184, 255];
-const FUCHSIA: Rgba = [240, 171, 252, 255];
-const PINK: Rgba = [244, 114, 182, 255];
+const VIOLET: Rgba = LENS_COLORS.violet;
+const SLATE: Rgba = LENS_COLORS.slate;
+const FUCHSIA: Rgba = LENS_COLORS.fuchsia;
+const PINK: Rgba = LENS_COLORS.pink;
 const TEXT_OUTLINE: Rgba = [8, 12, 22, 235];
 const TEXT_COLOR: Rgba = [226, 232, 240, 235];
 const COUNTRY_LINE: Rgba = [148, 163, 184, 46];
-const BOT_ABOVE_LINE: Rgba = [255, 255, 255, 210];
+const BOT_ABOVE_LINE: Rgba = LENS_COLORS.white;
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
 /** Label size (px). Nothing on the map is set smaller than 10. */
 const LABEL_PX = 11;

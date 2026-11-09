@@ -139,6 +139,9 @@ vi.mock('@/hooks/useAgents', async () => {
 // effect calls it once the Cost tab (and its #budget-panel target) mounts
 // (see CommandPalette.test.tsx for the same stub pattern).
 Element.prototype.scrollIntoView = vi.fn();
+// The kit Tabs also scroll the selected tab into view; the hash-scroll assertions are about the panel, so ignore tabs.
+const panelScrolls = () => (Element.prototype.scrollIntoView as unknown as { mock: { instances: Element[] } }).mock.instances
+  .filter(el => el.getAttribute('role') !== 'tab');
 
 // Mock recharts to avoid canvas/SVG rendering issues in test
 vi.mock('recharts', () => ({
@@ -555,7 +558,7 @@ describe('AdminDashboard', () => {
       renderWithProviders(<AdminDashboard />);
 
       expect(screen.getByRole('tab', { name: 'Cost & Budget' })).toHaveAttribute('aria-selected', 'true');
-      expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+      expect(panelScrolls().length).toBeGreaterThan(0);
     });
 
     it('does not scroll when the hash is present but the cost tab is not active', () => {
@@ -563,7 +566,7 @@ describe('AdminDashboard', () => {
       renderWithProviders(<AdminDashboard />);
 
       expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
-      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+      expect(panelScrolls()).toHaveLength(0);
     });
 
     it('scrolls on a same-page click of VerdictBand\'s AI-budget deep-link (tab + hash change together)', async () => {
@@ -576,13 +579,13 @@ describe('AdminDashboard', () => {
       // both search and hash atomically in one navigation.
       window.history.pushState({}, '', '/admin?tab=pipelines');
       renderWithProviders(<AdminDashboard />);
-      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+      expect(panelScrolls()).toHaveLength(0);
 
       const user = userEvent.setup();
       await user.click(screen.getByRole('link', { name: /AI budget/i }));
 
       expect(screen.getByRole('tab', { name: 'Cost & Budget' })).toHaveAttribute('aria-selected', 'true');
-      expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+      expect(panelScrolls().length).toBeGreaterThan(0);
     });
   });
 });

@@ -32,7 +32,8 @@ export function PanelTabs({ tab, onTab, eventCount, touch = false }: PanelTabsPr
     <div
       // The shared underline tab is 12px tall above and below its label; in a panel strip that plus the content's own top padding
       // reads as a gap. A fine-pointer strip is tightened to 8px; a coarse pointer (phone, touch tablet) keeps the 44px target.
-      className={touch ? 'sticky top-0 z-[1] shrink-0' : 'sticky top-0 z-[1] shrink-0 [&_[role=tab]]:!py-2 [@media(pointer:coarse)]:[&_[role=tab]]:!min-h-[44px]'}
+      // The kit's sm underline tab is 11px (count 10px); the chrome floor is 12px, so both are lifted here.
+      className={touch ? 'sticky top-0 z-[1] shrink-0' : 'sticky top-0 z-[1] shrink-0 [&_[role=tab]]:!py-2 [&_[role=tab]]:!text-[12px] [&_[role=tab]_span]:!text-[12px] [@media(pointer:coarse)]:[&_[role=tab]]:!min-h-[44px]'}
       style={{ background: 'var(--bg-card-deep)', borderBottom: '1px solid var(--border-base)' }}>
       <Tabs
         tabs={tabs}

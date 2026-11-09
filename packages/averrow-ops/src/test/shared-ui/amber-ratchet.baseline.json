@@ -1,23 +1,23 @@
 {
   "averrow-ops": {
-    "var(--amber)": 18,
-    "var(--amber-text)": 26,
+    "var(--amber)": 17,
+    "var(--amber-text)": 24,
     "#e5a832": 19,
     "rgba(229, 168, 50": 34,
-    "tailwind (text|bg|border|ring)-amber": 22
+    "tailwind (text|bg|border|ring)-amber": 15
   },
   "averrow-tenant": {
     "var(--amber)": 1,
     "var(--amber-text)": 2,
     "#e5a832": 0,
     "rgba(229, 168, 50": 0,
-    "tailwind (text|bg|border|ring)-amber": 257
+    "tailwind (text|bg|border|ring)-amber": 244
   },
   "shared": {
-    "var(--amber)": 5,
+    "var(--amber)": 4,
     "var(--amber-text)": 10,
     "#e5a832": 2,
-    "rgba(229, 168, 50": 16,
+    "rgba(229, 168, 50": 11,
     "tailwind (text|bg|border|ring)-amber": 9
   }
 }

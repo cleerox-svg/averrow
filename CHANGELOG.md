@@ -4,6 +4,110 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.10.0] — 2026-11-09
+
+Facelift Phase 6 (per-screen redesign): the indigo-on-graphite identity now
+reaches every day-to-day screen in ops, tenant, sign-in and the Observatory.
+MINOR bump (broad user-facing visual/UX release). Rolls up #1909, #1911 to #1915
+and #1917 to #1919. Tag `v4.10.0` is created by `tag-release.yml` on merge.
+
+Common to all screens: sentence-case labels, a larger minimum text size, amber
+reserved for warning/medium status (never CTA or active state), tabular figures
+and aligned columns, token-based hover/active/focus states, a11y groups and
+labels, 44px touch targets on phones, and no count-up or looping animation.
+
+### Screens
+- **Shell (#1909, screen 1)** — shipped in v4.9.1 (sentence case, token
+  hover/active, Offline indicator replacing the LIVE pulse, flat canvas,
+  command palette and nav a11y groups, theme button). Listed here because it is
+  Phase 6 screen 1.
+- **Overview (#1911, screen 2)** — ops Overview facelift.
+- **Global flat cards (#1912)** — shell card tokens reset so every page under
+  the facelift renders flat cards, not only the migrated screens.
+- **SOC console + Alerts (#1913, screen 3a)** — Console chrome and Alerts tab.
+- **Threats + shared threats table (#1914, screen 3b)** — Threats tab and the
+  shared threats table. Threat-type names go through one spelling so the same
+  type reads identically everywhere.
+- **Tenant workspace overview (#1915, screen 4)** — the customer 7-day trend
+  now always renders seven days (zero-filled gaps).
+- **Sign-in (#1917, screen 5)** — sentence-case login copy and the R3 mark;
+  magic-link/passkey/OAuth errors render above the buttons. Includes the
+  review-fix commit and the docs note recording the login copy.
+- **Observatory controls (#1918, screen 6a)** — map controls.
+- **Observatory panels (#1919, screen 6b)** — map side panels.
+
+### Known follow-ups (not blocking)
+- Kit `Badge`: the glow applies to dotted tones, and there is no
+  `dot={false}` opt-out.
+- Kit `Badge` size `sm` in the sans face renders at 10px, below the new minimum.
+- `StatTile` label is 11.5px below 640px.
+- `Avatar` fallback initials render at about 9px.
+- The Observatory lens strip hard-clips partially visible tabs instead of
+  fading or scrolling them.
+- The tenant shell (`TopBar` / `Sidebar`) still uses mono caps; not yet
+  facelifted.
+- Suspended modules render as "Locked". Owner decision pending on the wording
+  and treatment.
+- Magic-link and passkey sign-in errors echo the server's message text. This is
+  pre-existing behaviour, only repositioned by #1917.
+
+---
+
+## [v4.9.1] — 2026-11-08
+
+Patch release: sign-in hardening, a lighter load on D1, an overload-safe
+diagnostics endpoint, and the ops shell facelift. Rolls up #1904, #1905, #1907,
+#1908 and #1909. Tag `v4.9.1` is created by `tag-release.yml` on merge.
+
+### Platform diagnostics overload-safe (#1904)
+- `GET /api/internal/platform-diagnostics` (endpoint_version 17) ran ~40
+  concurrent reads and could trip D1's 10 s overload window by itself. Main-DB
+  reads now run one at a time.
+- A section whose read fails falls back to empty/zero/null and adds a top-level
+  `<section>_error` key instead of a 500. Check for `*_error` keys before
+  trusting a zero.
+- Full-table sections are KV-cached with a single-flight refill:
+  `enrichment_pipeline` 30 min (so `enriched_last_hour` can lag ~30 min),
+  `platform_totals` and `alerts.by_tier` 1 h, `cartographer_exhausted_by_feed`
+  5 min.
+- Migration 0319 adds `idx_agent_runs_started` and `idx_feed_pulls_started`,
+  so the windowed `agent_runs` / `feed_pull_history` reads use a sargable
+  `started_at` range (plus the exact `datetime()` filter, which works for both stored
+  timestamp formats).
+
+### Sign-in (#1905)
+- Auth failures now redirect to the login page with a clear message instead of
+  a 404.
+- Magic links are scanner-safe: opening the link shows a confirmation page with
+  a masked email, and the token is consumed only on the explicit confirm, so an
+  email security scanner that prefetches the link no longer burns it.
+- Staff invite acceptance and tenant Google login no longer land on a dead
+  page.
+- `return_to` is validated strictly.
+
+### D1 load reduction (#1907)
+- Migration 0320: partial index `idx_agent_runs_open` (open runs only) for
+  the Navigator agent-runs reaper, which scanned all ~133K `agent_runs` rows
+  every 5 min.
+- Migration 0321: `idx_agent_runs_completed` for pipeline status (plus a
+  5-min `cachedValue`).
+- Dashboard brand tiles, the brand list total and the admin brand list total
+  read the `count.brands.*` counters instead of counting ~133K brands per
+  request; the brand composition total is the sum of its tier groups.
+
+### Sample operation report (#1908)
+- Copy revision to the sample operation report (L50).
+
+### Ops app shell facelift (#1909)
+- Sentence-case labels across the shell.
+- Hover and active states use tokens.
+- The LIVE pulse is replaced by an Offline status indicator.
+- Flat canvas background.
+- Command palette and nav gain accessibility groups.
+- Theme button updated.
+
+---
+
 ## [v4.9.0] — 2026-11-08
 
 Facelift Phase 4 + 5 close-out: the new identity reaches the Worker-served

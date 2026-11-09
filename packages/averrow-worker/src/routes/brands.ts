@@ -80,14 +80,14 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
   });
   // /api/brands/movers must be defined before /api/brands/:id below
   // so itty-router doesn't intercept "movers" as the :id param.
-  router.get("/api/brands/movers", async (request: Request, env: Env) => {
+  router.get("/api/brands/movers", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleBrandMovers(request, env);
+    return handleBrandMovers(request, env, execCtx);
   });
   // /api/brands/aggregate/* — same path-precedence concern as movers.
   // Each is a single GROUP BY (or small JOIN) over the catalog,
-  // wrapped in cachedValue for 5min TTL inside lib/brand-aggregates.ts.
+  // wrapped in cachedValue (1h TTL, Navigator-refreshed) inside lib/brand-aggregates.ts.
   router.get("/api/brands/aggregate/email-security", async (request: Request, env: Env) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;

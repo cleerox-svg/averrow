@@ -70,7 +70,8 @@ describe("fix 12 — FC no_geo backlog on the monitoring TTL", () => {
     expect(src).toMatch(/const BACKLOG_TTL_MONITORING_S = 14400;/);
   });
   it("total_no_geo uses BACKLOG_TTL_MONITORING_S; total_unlinked stays live", () => {
-    expect(src).toMatch(/cacheCount\('backlog\.total_no_geo', BACKLOG_TTL_MONITORING_S,/);
+    // Bounded probe since migration 0322 (key renamed with the semantics).
+    expect(src).toMatch(/cacheCount\('backlog\.total_no_geo\.probe', BACKLOG_TTL_MONITORING_S,/);
     expect(src).toMatch(/cacheCount\('backlog\.total_unlinked\.probe', BACKLOG_TTL_LIVE_S,/);
   });
   it("no instance-count scaling reads totalNoGeo (only the >5000 geo_backlog gate)", () => {

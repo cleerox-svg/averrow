@@ -45,22 +45,29 @@ export function DataRow({
   const dotColor = severity ? SEV_COLORS[severity] : 'var(--primary)';
   const bgColor  = severity ? SEV_BG[severity] : 'var(--primary-glow)';
 
-  const baseStyle: React.CSSProperties = {
-    borderLeft:  `2px solid ${unread ? dotColor : 'transparent'}`,
-    background:  unread ? `linear-gradient(90deg, ${bgColor} 0%, transparent 30%)` : 'transparent',
-    cursor:      onClick ? 'pointer' : 'default',
+  // The resting border and fill live in the `.data-row` stylesheet rules, NOT inline: an inline background/border
+  // would out-rank the stylesheet's token hover (index.css) and the hover would never show on these rows. The unread
+  // state is a class reading two custom properties, so hover can still replace the fill and keep the rail.
+  const baseStyle = {
+    cursor:      onClick ? 'pointer' : undefined,
     transition:  'var(--transition-fast)',
     position:    'relative',
+    ...(unread ? { '--row-rail': dotColor, '--row-rail-bg': bgColor } : null),
     ...style,
-  };
+  } as React.CSSProperties;
 
-  const hoverClass = severity
-    ? `data-row data-row--${severity}`
-    : 'data-row';
+  const classes = [
+    'data-row',
+    severity ? `data-row--${severity}` : '',
+    unread ? 'data-row--unread' : '',
+    // not clickable itself: default cursor, unless it sits inside a link (see index.css)
+    onClick ? '' : 'data-row--static',
+    className,
+  ].filter(Boolean).join(' ');
 
   const props = {
     onClick,
-    className: `${hoverClass} ${className}`.trim(),
+    className: classes,
     style:     baseStyle,
   };
 

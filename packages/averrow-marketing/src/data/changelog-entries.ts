@@ -19,6 +19,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.10.0",
+    publishedAt: "2026-11-09",
+    kind: "Improvement",
+    title: "The refreshed look reaches your everyday screens",
+    description:
+      "The refreshed look now reaches the screens you use every day: the navigation and overview, the alerts and threats views, the customer dashboard, the sign-in page, and the controls and panels of the global threat map. Text is clearer and calmer, with sentence case throughout and a larger minimum text size, and amber is kept for warnings only. Layouts are steadier, with columns that line up and numbers that no longer jump around, and there is no count-up or looping animation. Keyboard and screen-reader support is better, touch targets are larger on phones, and sign-in errors now appear above the sign-in buttons where you will see them. The customer 7-day trend always shows seven days, and threat-type names are spelled the same way everywhere.",
+  },
+  {
+    version: "v4.9.1",
+    publishedAt: "2026-11-08",
+    kind: "Improvement",
+    title: "More reliable sign-in and a calmer app",
+    description:
+      "Signing in is more dependable and easier to understand. If something goes wrong, you now land back on the sign-in page with a clear message instead of a dead end, and invitations and Google sign-in take you to the right place. Sign-in links in your email also keep working when an email security scanner opens them first: you confirm on a short page that shows your masked address. The app navigation has had a calmer, more consistent refresh, with clearer labels, steadier hover and active states, an honest offline indicator in place of the pulsing live badge, and better support for keyboard and screen-reader use. We also made the platform faster and more reliable under heavy load, and polished the wording in the sample operation report.",
+  },
+  {
     version: "v4.9.0",
     publishedAt: "2026-11-08",
     kind: "Improvement",

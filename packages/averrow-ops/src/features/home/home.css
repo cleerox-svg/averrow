@@ -1,21 +1,126 @@
 /* Home (ops Overview). Sections sit in a gutter that matches
    components/install-app.css (.install-gutter) so the InstallAppBanner lines up.
-   Layout is driven by the `home` container (set on the shell), not the viewport. */
+   Layout is driven by the `home` container (set on the shell), not the viewport.
+
+   Phase 6 screen 2 (facelift): everything below the `.home-v4` wrapper is the
+   Overview-only look. console.css and the Card/StatTile kit are shared with other
+   screens, so the changes are scoped here rather than edited in place. */
+
+/* Flat surfaces. The radius / shadow / highlight reset lives on the shell for
+   every screen (index.css, `:root[data-accent] .shell-v4`); only the flat card
+   surface is Overview-specific. The flat Card variant is chosen in
+   TS only under the facelift (features/home/homeCard.ts), and these tokens only
+   apply under [data-accent], so FACELIFT=false keeps the legacy glass cards. The
+   flat variant uses --bg-card here (not the sunken --bg-card-deep default) so the
+   cards share a surface with the platform status trigger. */
+:root[data-accent] .home-v4 {
+  --card-flat-bg: var(--bg-card);
+}
+
+/* Shared label style: sentence-case sans at the --type-label-* scale. */
+.home-v4 .home-label {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--type-label-size, 12px);
+  line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500);
+  letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none;
+  color: var(--text-tertiary);
+}
+.home-v4 .home-label--num { font-variant-numeric: tabular-nums; }
+
+/* Hero (console.css is shared with Console, so these are scoped). */
+.home-v4 .console-crumb {
+  font-family: var(--font-sans);
+  font-size: var(--type-label-size, 12px);
+  line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500);
+  letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none;
+  color: var(--text-tertiary);
+}
+.home-v4 .console-title {
+  margin: 4px 0 0;
+  font-size: var(--type-display-size, 30px);
+  line-height: var(--type-display-lh, 1.1);
+  font-weight: var(--type-display-weight, 600);
+  letter-spacing: var(--type-display-tracking, -0.03em);
+}
+.home-hero-sub { margin: 8px 0 0; font-size: 16px; line-height: 1.4; color: var(--text-primary); }
+.home-hero-sub strong { font-weight: 600; }
+
 .home-section { padding: 16px 24px 0; }
 .home-split { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
-.home-hero-sub { margin: 8px 0 0; font-size: 16px; line-height: 1.4; color: var(--text-primary); }
-.home-hero-sub strong { font-weight: 800; }
 
 /* Queue rows: rank | content | action. Below 480px the action drops to its own row. */
 .queue-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 0; }
+.queue-rank {
+  display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 28px; height: 28px; border-radius: 9999px; border: 1px solid;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.queue-source { font-family: var(--font-sans); font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-secondary); }
+.queue-time { font-family: var(--font-mono); font-size: 12px; line-height: 16px; color: var(--text-secondary); }
 @container home (max-width: 479px) {
   .queue-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
   .queue-act { grid-column: 2; justify-self: start; }
+  .queue-act button { min-height: 44px; }
 }
+@media (pointer: coarse) {
+  .queue-act button, .queue-fail-act { min-height: 44px; }
+}
+
+/* Threat tempo chip: sans 12px sentence case; the number is tabular. */
+.tempo-chip {
+  display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 9999px;
+  font-family: var(--font-sans); font-size: 12px; line-height: 16px; font-weight: 500;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* Platform pulse: category cells wrap instead of cramping into three columns. */
+.pulse-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.pulse-note { margin-top: 6px; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+
+/* Digest chips: sans 13px, token hover (darkens, no underline), 44px tap height on phones. */
+.digest-chip {
+  display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 9999px;
+  font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 500;
+  text-decoration: none; color: var(--text-primary);
+  background: var(--bg-card-deep); border: 1px solid var(--border-base);
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease),
+              border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+.digest-chip:hover { background: var(--bg-page); border-color: var(--border-strong); text-decoration: none; }
+[data-theme="light"] .digest-chip:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.digest-chip:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+[data-theme="light"] .digest-chip:focus-visible { outline-color: var(--text-primary); }
+.digest-chip-count { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+@container home (max-width: 479px) {
+  .digest-chip { min-height: 44px; }
+}
+@media (pointer: coarse) {
+  .digest-chip { min-height: 44px; }
+}
+
+/* Identity tile: the link fills the card so the whole tile has a hover state. */
+.identity-tile-link {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 20px; color: var(--text-primary); text-decoration: none;
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+.identity-tile-link:hover { background: var(--bg-page); }
+[data-theme="light"] .identity-tile-link:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.identity-tile-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+[data-theme="light"] .identity-tile-link:focus-visible { outline-color: var(--text-primary); }
 
 @container home (min-width: 480px) {
   .home-section { padding: 18px 32px 0; }
 }
 @container home (min-width: 900px) {
   .home-split { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .digest-chip, .identity-tile-link { transition: none; }
 }

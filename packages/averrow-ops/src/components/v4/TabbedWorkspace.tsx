@@ -10,15 +10,14 @@
 
 import { Suspense, type ComponentType } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { LucideIcon } from 'lucide-react';
-import { Button, WorkspaceEmbedContext } from '@averrow/shared/ui';
+import { Tabs, WorkspaceEmbedContext } from '@averrow/shared/ui';
+import { sentenceCase } from '@/lib/sentence-case';
 import { PageState } from '@/design-system/components';
 import '@/features/console/console.css';
 
 export interface WorkspaceTab {
   id: string;
   label: string;
-  icon: LucideIcon;
   /** One-line description shown under the tab bar for the active tab. */
   def?: string;
   Component: ComponentType;
@@ -52,30 +51,26 @@ export function TabbedWorkspace({
     <div className="console-v4">
       <div className="console-head">
         <div>
-          <div className="console-crumb">{crumb}</div>
+          <div className="console-crumb">{sentenceCase(crumb)}</div>
           <h1 className="console-title">{title}</h1>
         </div>
-        <span className="console-live"><span className="dot" />LIVE</span>
       </div>
 
-      <div className="console-tabs">
-        {tabs.map(t => {
-          const Icon = t.icon;
-          return (
-            <Button
-              key={t.id}
-              variant={tab === t.id ? 'primary' : 'secondary'}
-              size="md"
-              onClick={() => selectTab(t.id)}
-            >
-              <Icon size={15} strokeWidth={2} /> {t.label}
-            </Button>
-          );
-        })}
-      </div>
+      {/* deep-linkable tab bar: kit Tabs (tablist / aria-selected / arrow keys), same as the SOC Console */}
+      <Tabs
+        variant="underline"
+        size="md"
+        aria-label={`${title} sections`}
+        className="console-tabbar"
+        tabs={tabs.map(t => ({ id: t.id, label: t.label }))}
+        activeTab={tab}
+        onChange={selectTab}
+      />
 
       {active?.def && <p className="console-def">{active.def}</p>}
 
+      {/* Only the active pane renders, so tabs carry no aria-controls; the panel is named directly. */}
+      <div role="tabpanel" id={`tabpanel-${tab}`} aria-label={active?.label}>
       <Suspense fallback={<PageState kind="loading" />}>
         {/* Panes read `q` on mount only; keying on it re-applies a new ?q= (e.g. ⌘K
             "view all" while already on this tab). */}
@@ -84,6 +79,7 @@ export function TabbedWorkspace({
           {Active && <Active key={params.get('q') ?? ''} />}
         </WorkspaceEmbedContext.Provider>
       </Suspense>
+      </div>
     </div>
   );
 }

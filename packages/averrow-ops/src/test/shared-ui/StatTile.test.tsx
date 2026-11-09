@@ -56,10 +56,10 @@ describe('shared StatTile', () => {
     expect(screen.getByText('12,345')).toBeInTheDocument();
   });
 
-  it('does not show the final value synchronously when motion is allowed', () => {
+  it('shows the final value immediately when motion is allowed too (no count-up)', () => {
     stubMatchMedia(false);
     render(<StatTile label="Threats" value={12345} />);
-    expect(screen.queryByText('12,345')).not.toBeInTheDocument();
+    expect(screen.getByText('12,345')).toBeInTheDocument();
   });
 
   it('renders string values verbatim', () => {

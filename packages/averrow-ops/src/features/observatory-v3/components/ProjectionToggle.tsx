@@ -2,7 +2,7 @@
  * Flat | Globe: ONE toggle button, living in the map's zoom cluster (bottom-right, or top-right on phones where there
  * is no zoom control). It is a map control, not a lens control: it is there in every lens and view.
  *
- *   - a FIXED label ("Globe view") whose `aria-pressed` says whether the globe is on: a label that flips with the state
+ *   - a FIXED label ("Flat or globe view", which contains the visible "Flat" and "Globe") whose `aria-pressed` says whether the globe is on: a label that flips with the state
  *     ("Switch to flat map") AND a pressed state read as a double negative to a screen reader;
  *   - it reads the REQUESTED projection (the URL's `proj`), so the preference survives views that cannot draw it;
  *   - the density Heat view has no globe variant (deck.gl's HeatmapLayer aggregates in screen space): the button is
@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Globe2, Map as MapIcon } from 'lucide-react';
 import type { Projection } from '../lib/projection';
+import { BODY, FACT, LABEL } from '../lib/chrome-classes';
 
 export const HEAT_FLAT_ONLY = 'Heat view is flat-only';
 
@@ -33,7 +34,7 @@ export interface ProjectionToggleProps {
 
 export function toggleLabel(projection: Projection, flatOnly: boolean): string {
   void projection; // the label does not depend on it: the pressed state carries it
-  return flatOnly ? 'Globe view (unavailable: heat view is flat-only)' : 'Globe view';
+  return flatOnly ? 'Flat or globe view (unavailable: heat view is flat-only)' : 'Flat or globe view';
 }
 
 export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch = false, showLabel = !touch }: ProjectionToggleProps) {
@@ -57,11 +58,11 @@ export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch
       {flatOnly && (
         <span
           id={reasonId}
-          className="font-mono"
+          className={BODY}
           style={{
             // beside the BUTTON, whatever its width (the labelled desktop button is ~100px wide, the touch icon 44px)
             position: 'absolute', right: 'calc(100% + 8px)', top: '50%', transform: 'translateY(-50%)', whiteSpace: 'nowrap',
-            fontSize: 11, padding: '3px 8px', borderRadius: 8,
+            padding: '3px 8px', borderRadius: 8,
             background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-secondary)',
           }}
         >
@@ -84,19 +85,19 @@ export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch
           width: showLabel ? 'auto' : size, minWidth: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           gap: showLabel ? 6 : 0, padding: showLabel ? '0 8px' : undefined,
           opacity: flatOnly ? 0.45 : 1, cursor: flatOnly ? 'not-allowed' : 'pointer',
-          // pressed = the globe is on: MapLibre's control chrome with the console's primary for the on state
-          color: globe && !flatOnly ? 'var(--primary-pressed, #B8821F)' : '#333',
+          // pressed = the globe is on: the console's primary for the on state, the control group's icon colour otherwise
+          color: globe && !flatOnly ? 'var(--primary-text)' : 'var(--text-secondary)',
         }}
       >
         {globe ? <MapIcon size={touch ? 18 : 16} aria-hidden /> : <Globe2 size={touch ? 18 : 16} aria-hidden />}
         {showLabel && (
           <>
-            <span data-projection-label className="font-mono" style={{ fontSize: 11, lineHeight: 1, whiteSpace: 'nowrap' }}>
-              <span style={{ fontWeight: globe ? 400 : 700, opacity: globe ? 0.55 : 1 }}>Flat</span>
-              <span aria-hidden style={{ opacity: 0.4 }}> | </span>
-              <span style={{ fontWeight: globe ? 700 : 400, opacity: globe ? 1 : 0.55 }}>Globe</span>
+            <span data-projection-label className={LABEL} style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>
+              <span style={{ fontWeight: globe ? 400 : 700, color: globe ? 'var(--text-tertiary)' : undefined }}>Flat</span>
+              <span aria-hidden style={{ color: 'var(--border-strong)' }}> | </span>
+              <span style={{ fontWeight: globe ? 700 : 400, color: globe ? undefined : 'var(--text-tertiary)' }}>Globe</span>
             </span>
-            <kbd className="font-mono" aria-hidden style={{ fontSize: 10, lineHeight: 1, padding: '1px 4px', borderRadius: 4, border: '1px solid rgba(0,0,0,0.25)', opacity: 0.7 }}>G</kbd>
+            <kbd className={FACT} aria-hidden style={{ lineHeight: 1, padding: '1px 4px', borderRadius: 4, border: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}>G</kbd>
           </>
         )}
       </button>

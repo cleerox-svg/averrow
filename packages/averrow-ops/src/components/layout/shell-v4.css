@@ -30,18 +30,11 @@
   -webkit-mask-image: radial-gradient(circle at 50% 38%, #000, transparent 85%);
   mask-image: radial-gradient(circle at 50% 38%, #000, transparent 85%);
 }
-/* Facelift (P3-6 review): under an accent the warm red top-right wash would
-   read as a red-brown glow on graphite; it follows the accent instead, at
-   a lower strength (the other two layers are unchanged). Legacy (no accent)
-   keeps the rule above exactly. No custom properties here: gen-appearance.mjs
-   only parses token blocks. */
-:root[data-accent] .shell-v4::before {
-  background:
-    radial-gradient(1200px 700px at 80% -12%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 60%),
-    radial-gradient(1100px 800px at 0% 112%, rgba(10,138,181,0.12), transparent 55%),
-    radial-gradient(900px 600px at 60% 120%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 60%);
-}
 .shell-v4 > * { position: relative; z-index: 1; }
+/* Facelift D2: under an accent the canvas is flat --bg-page (no vignette, no grid).
+   Legacy (no accent) keeps both layers above. */
+:root[data-accent] .shell-v4::before,
+:root[data-accent] .shell-v4::after { content: none; display: none; }
 
 /* Observatory wall screen: the shell is only the page background, one full-width column. */
 .shell-v4--wall { grid-template-columns: 1fr; }
@@ -58,18 +51,25 @@
 .v4-brand .name { font-weight: 800; letter-spacing: .14em; font-size: 13px; }
 .v4-brand .sub { font-family: var(--font-mono, ui-monospace); font-size: 7px; letter-spacing: .24em; color: var(--primary-text); margin-top: 2px; }
 .v4-nav { padding: 12px 12px; overflow: auto; flex: 1; min-height: 0; }
-.v4-grp { font-family: var(--font-mono, ui-monospace); font-size: 9.5px; letter-spacing: .2em; color: var(--text-muted); padding: 14px 10px 7px; }
+.v4-grp {
+  font-family: var(--font-sans, inherit); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500); letter-spacing: var(--type-label-tracking, .01em);
+  color: var(--text-tertiary); padding: 14px 10px 7px;
+}
 .v4-item {
   display: flex; align-items: center; gap: 11px; padding: 8px 11px; border-radius: 9px;
+  font-family: var(--font-sans, inherit);
   color: var(--text-secondary); font-size: 13px; font-weight: 500; position: relative;
-  text-decoration: none; transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+  text-decoration: none;
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease), color var(--motion-fast, 120ms) var(--ease-standard, ease), box-shadow var(--motion-fast, 120ms) var(--ease-standard, ease);
 }
-.v4-item svg { width: 16px; height: 16px; opacity: .8; flex: 0 0 auto; }
-.v4-item:hover { background: rgba(255,255,255,.04); color: var(--text-primary); }
+.v4-item svg { width: 16px; height: 16px; opacity: 1; flex: 0 0 auto; }
+/* Hover darkens (never a white/lightening fill). Dark: text brightens + faint black fill. Light: 6% ink fill. */
+.v4-item:hover { background: color-mix(in srgb, var(--bg-page) 70%, transparent); color: var(--text-primary); }
+[data-theme="light"] .v4-item:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.v4-item.active:hover { background: linear-gradient(90deg, var(--nav-active-fill-v4-1), var(--nav-active-fill-v4-2)); }
 .v4-item.active {
-  /* Dark: unchanged (#fff on the near-black sidebar). Light: #fff-on-
-     light-sidebar was invisible — flipped to var(--text-primary) below. */
-  color: #fff;
+  color: var(--text-primary);
   /* --nav-active-fill-v4-1/2, --nav-active-border, --nav-active-glow-v4:
      theme-aware (tokens.css), dark defaults byte-identical to the
      literals this replaced (--nav-active-glow-v4 is 0-alpha in dark, so
@@ -79,9 +79,6 @@
   background: linear-gradient(90deg, var(--nav-active-fill-v4-1), var(--nav-active-fill-v4-2));
   box-shadow: inset 0 0 0 1px var(--nav-active-border), 0 0 14px var(--nav-active-glow-v4);
 }
-[data-theme="light"] .v4-item.active {
-  color: var(--text-primary);
-}
 .v4-item.active::before {
   content: ""; position: absolute; left: -12px; top: 6px; bottom: 6px; width: 3px;
   border-radius: 3px; background: var(--primary); box-shadow: 0 0 12px var(--primary);
@@ -89,7 +86,8 @@
 /* Accents (P3-2a review): the indicator is a flat bar, no glow. Legacy keeps the amber glow. */
 :root[data-accent] .v4-item.active::before { box-shadow: none; }
 .v4-item .count {
-  margin-left: auto; font-family: var(--font-mono, ui-monospace); font-size: 10px; font-weight: 600;
+  margin-left: auto; font-family: var(--font-mono, ui-monospace); font-size: var(--type-label-size, 12px); font-weight: 500;
+  font-variant-numeric: tabular-nums;
   /* Triage-queue count, not a critical signal. Legacy look: amber pill. Under an
      accent it is a neutral pill (rule below): a count is not a primary action. */
   background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary-text); padding: 1px 7px; border-radius: 20px;
@@ -102,7 +100,7 @@
 }
 .v4-foot { border-top: 1px solid var(--border-base); padding: 10px 10px 4px; display: flex; align-items: center; gap: 7px; }
 .v4-foot button { min-width: 44px; min-height: 44px; display: grid; place-items: center; }
-.v4-verline { padding: 2px 16px max(12px, env(safe-area-inset-bottom)); font-family: var(--font-mono, ui-monospace); font-size: 10px; color: var(--text-tertiary); }
+.v4-verline { padding: 2px 16px max(12px, env(safe-area-inset-bottom)); font-family: var(--font-mono, ui-monospace); font-size: var(--type-label-size, 12px); color: var(--text-tertiary); }
 
 /* main column */
 .v4-main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
@@ -112,24 +110,26 @@
   padding-left: max(22px, env(safe-area-inset-left));
   padding-right: max(22px, env(safe-area-inset-right));
 }
-/* LIVE keeps margin-left:auto, so bell + avatar hug the right edge after it */
+/* The bell keeps margin-left:auto, so bell + avatar hug the right edge */
 .v4-top > * { flex-shrink: 0; }
 .v4-top .v4-cmdk { flex-shrink: 1; }
+/* Right cluster: offline label + bell + avatar hug the right edge */
+.v4-top-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
 .v4-banner-wrap { padding: 16px 24px 0; } /* page gutter (.v4-page--padded) */
 .v4-banner-wrap:empty { display: none; }
 .v4-cmdk { display: flex; align-items: center; gap: 9px; background: var(--bg-card-deep, rgba(14,20,34,0.92)); border: 1px solid var(--border-base); border-radius: 10px; padding: 8px 12px; color: var(--text-tertiary); font-size: 13px; width: 300px; cursor: text; text-align: left; font-family: inherit; transition: border-color .14s ease, color .14s ease; }
-.v4-cmdk:hover { border-color: color-mix(in srgb, var(--primary) 40%, transparent); color: var(--text-secondary); }
-.v4-cmdk kbd { margin-left: auto; font-family: var(--font-mono, ui-monospace); font-size: 10px; background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border-base); color: var(--text-secondary); }
-.v4-live { display: flex; align-items: center; gap: 7px; font-family: var(--font-mono, ui-monospace); font-size: 11px; letter-spacing: .1em; color: var(--green-text); margin-left: auto; }
-.v4-live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: v4ping 1.8s ease-in-out infinite; }
+.v4-cmdk:hover { border-color: var(--border-strong); color: var(--text-secondary); }
+.v4-cmdk kbd { margin-left: auto; font-family: var(--font-mono, ui-monospace); font-size: var(--type-label-size, 12px); background: color-mix(in srgb, var(--text-primary) 8%, transparent); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border-base); color: var(--text-secondary); }
+/* Offline indicator: rendered only when navigator.onLine === false. No pulse. */
+.v4-offline { font-family: var(--font-sans, inherit); font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px); font-weight: var(--type-label-weight, 500); color: var(--sev-medium-text); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.v4-offline:empty { display: none; }
+.v4-offline svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .v4-outlet { flex: 1; overflow: auto; min-height: 0; display: flex; flex-direction: column; }
 /* Page gutter — classic-shell parity: every route is padded unless it brings
    its own gutters (--bleed) or fills the outlet (--fill, Observatory). */
 .v4-page { flex: 1 0 auto; min-width: 0; }
 .v4-page--padded { --v4-gutter-x: 24px; padding: 16px var(--v4-gutter-x); }
 .v4-page--fill { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-
-@keyframes v4ping { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
 /* Focus ring for shell chrome (keyboard only) */
 .v4-item:focus-visible, .v4-hamburger:focus-visible, .v4-drawer-close:focus-visible,
@@ -158,19 +158,19 @@
     transform: translateX(-100%);
     /* closed: invisible + out of the tab order; visibility flips after the slide-out */
     visibility: hidden;
-    transition: transform .22s ease, visibility 0s linear .22s;
+    transition: transform var(--motion-slow, 200ms) var(--ease-standard, ease), visibility 0s linear var(--motion-slow, 200ms);
     padding-top: env(safe-area-inset-top);
     padding-left: env(safe-area-inset-left);
   }
   .shell-v4.drawer-open .v4-side {
     transform: none; visibility: visible;
-    transition: transform .22s ease, visibility 0s;
+    transition: transform var(--motion-slow, 200ms) var(--ease-standard, ease), visibility 0s;
     box-shadow: 0 0 60px rgba(0,0,0,.6);
   }
   .v4-item { min-height: 44px; }
   .v4-backdrop {
     position: fixed; inset: 0; z-index: 85;
-    background: rgba(4,9,18,.62); backdrop-filter: blur(3px);
+    background: var(--scrim, rgba(4,9,18,.62)); backdrop-filter: blur(3px);
   }
   .shell-v4.drawer-open .v4-backdrop { display: block; }
 
@@ -191,6 +191,7 @@
     padding-left: max(16px, env(safe-area-inset-left));
     padding-right: max(16px, env(safe-area-inset-right));
   }
+  .v4-top-right { gap: 10px; }
   .v4-banner-wrap { padding: 8px 16px 0; }
   .v4-page--padded { --v4-gutter-x: 16px; padding: 12px var(--v4-gutter-x); }
   .v4-cmdk { width: auto; flex: 1; min-width: 0; }
@@ -202,7 +203,7 @@
   .v4-cmdk { width: 44px; min-height: 44px; flex: 0 0 auto; justify-content: center; }
   .v4-cmdk kbd { display: none; }
   .v4-top { gap: 8px; }
-  .v4-live { font-size: 10px; letter-spacing: .06em; }
+  .v4-top-right { gap: 8px; }
 }
 
 /* ---- Command palette (⌘K) ---- */
@@ -210,8 +211,8 @@
   position: fixed; inset: 0; z-index: 200;
   display: flex; align-items: flex-start; justify-content: center;
   padding: 12vh 16px 16px;
-  background: rgba(4,9,18,.62); backdrop-filter: blur(4px);
-  animation: cmdkFade .12s ease;
+  background: var(--scrim, rgba(4,9,18,.62)); backdrop-filter: blur(4px);
+  animation: cmdkFade var(--motion-fast, 120ms) var(--ease-standard, ease);
 }
 @keyframes cmdkFade { from { opacity: 0; } to { opacity: 1; } }
 .cmdk-panel {
@@ -220,7 +221,7 @@
   background: var(--bg-card-deep, rgba(14,20,34,.98));
   border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent); border-radius: 14px;
   box-shadow: 0 24px 70px rgba(0,0,0,.6), 0 0 30px color-mix(in srgb, var(--primary) 12%, transparent);
-  animation: cmdkRise .14s ease;
+  animation: cmdkRise var(--motion-base, 160ms) var(--ease-standard, ease);
 }
 @keyframes cmdkRise { from { transform: translateY(-8px); opacity: .6; } to { transform: none; opacity: 1; } }
 .cmdk-search {
@@ -234,15 +235,16 @@
 }
 .cmdk-input::placeholder { color: var(--text-tertiary); }
 .cmdk-esc {
-  font-family: var(--font-mono, ui-monospace); font-size: 10px;
-  background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 5px;
+  font-family: var(--font-mono, ui-monospace); font-size: var(--type-label-size, 12px);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent); padding: 2px 6px; border-radius: 5px;
   border: 1px solid var(--border-base); color: var(--text-secondary);
 }
 .cmdk-list { overflow-y: auto; padding: 6px; min-height: 0; }
 .cmdk-empty { padding: 22px 14px; text-align: center; color: var(--text-tertiary); font-size: 13px; }
-.cmdk-group {
-  padding: 10px 10px 4px; font-size: 10px; font-weight: 700; letter-spacing: .1em;
-  color: var(--text-tertiary); text-transform: uppercase;
+.cmdk-group-label {
+  padding: 10px 10px 4px; font-size: var(--type-label-size, 12px); line-height: var(--type-label-lh, 16px);
+  font-weight: var(--type-label-weight, 500); letter-spacing: var(--type-label-tracking, .01em);
+  color: var(--text-tertiary);
 }
 .cmdk-item {
   display: flex; align-items: center; gap: 11px; width: 100%;
@@ -260,7 +262,7 @@
 /* data-search rows: label + sublabel stacked, both truncating independently */
 .cmdk-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .cmdk-item-text .cmdk-item-label { display: block; }
-.cmdk-item-sublabel { font-size: 11px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdk-item-sublabel { font-size: var(--type-label-size, 12px); color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdk-item.active .cmdk-item-sublabel { color: var(--text-secondary); }
 
 /* "View all results for …" trailer row per data group */
@@ -311,3 +313,12 @@
    active bar itself (same 3px x inset-6 box as the ::before below), so the
    per-item bar hides. No accent: no indicator, no data-glide, legacy bar. */
 :root[data-accent] .v4-nav[data-glide] .v4-item.active::before { visibility: hidden; }
+
+/* ── Theme cycle button (sidebar foot) ─────────────────────────────────── */
+.v4-theme-btn {
+  padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
+  color: var(--text-tertiary);
+  transition: color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+.v4-theme-btn svg { width: 16px; height: 16px; }
+.v4-theme-btn:hover { color: var(--text-primary); }

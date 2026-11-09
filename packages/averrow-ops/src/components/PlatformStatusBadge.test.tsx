@@ -48,37 +48,37 @@ describe('PlatformStatusBadge', () => {
     vi.clearAllMocks();
   });
 
-  it('renders the neutral CHECKING… state without throwing when the hook returns data:null, isLoading:false (post-fix malformed-response behavior)', () => {
+  it('renders the neutral Checking… state without throwing when the hook returns data:null, isLoading:false (post-fix malformed-response behavior)', () => {
     mockStatus({ data: null, isLoading: false });
     expect(() => renderWithProviders(<PlatformStatusBadge />)).not.toThrow();
-    expect(screen.getByText('CHECKING…')).toBeInTheDocument();
+    expect(screen.getByText('Checking…')).toBeInTheDocument();
   });
 
-  it('renders CHECKING… while the query is loading', () => {
+  it('renders Checking… while the query is loading', () => {
     mockStatus({ data: null, isLoading: true });
     renderWithProviders(<PlatformStatusBadge />);
-    expect(screen.getByText('CHECKING…')).toBeInTheDocument();
+    expect(screen.getByText('Checking…')).toBeInTheDocument();
   });
 
-  it('renders "ALL SYSTEMS OPERATIONAL" for a valid operational status', () => {
+  it('renders "All systems operational" for a valid operational status', () => {
     mockStatus({ data: makeStatus('operational'), isLoading: false });
     renderWithProviders(<PlatformStatusBadge />);
-    expect(screen.getByText('ALL SYSTEMS OPERATIONAL')).toBeInTheDocument();
+    expect(screen.getByText('All systems operational')).toBeInTheDocument();
   });
 
-  it('renders "OUTAGE" for a valid outage status', () => {
+  it('renders "Outage" for a valid outage status', () => {
     mockStatus({ data: makeStatus('outage'), isLoading: false });
     renderWithProviders(<PlatformStatusBadge />);
-    expect(screen.getByText('OUTAGE')).toBeInTheDocument();
+    expect(screen.getByText('Outage')).toBeInTheDocument();
   });
 
-  it('renders "DEGRADED" for a valid degraded status', () => {
+  it('renders "Degraded" for a valid degraded status', () => {
     mockStatus({ data: makeStatus('degraded'), isLoading: false });
     renderWithProviders(<PlatformStatusBadge />);
-    expect(screen.getByText('DEGRADED')).toBeInTheDocument();
+    expect(screen.getByText('Degraded')).toBeInTheDocument();
   });
 
-  it('the crux of the regression: an unexpected status string reaching the palette lookup falls back to CHECKING… instead of crashing', () => {
+  it('the crux of the regression: an unexpected status string reaching the palette lookup falls back to Checking… instead of crashing', () => {
     // Simulates a future malformed/unrecognized `overall` value slipping
     // past the hook's guard (e.g. a new backend status enum member the
     // frontend hasn't shipped yet) reaching PlatformStatusBadge's
@@ -86,12 +86,43 @@ describe('PlatformStatusBadge', () => {
     const bogusStatus = { ...makeStatus('operational'), overall: 'unknown_future_state' } as unknown as PlatformStatus;
     mockStatus({ data: bogusStatus, isLoading: false });
     expect(() => renderWithProviders(<PlatformStatusBadge />)).not.toThrow();
-    expect(screen.getByText('CHECKING…')).toBeInTheDocument();
+    expect(screen.getByText('Checking…')).toBeInTheDocument();
   });
 
   it('renders without throwing in the prominent variant too, for the malformed-response case', () => {
     mockStatus({ data: null, isLoading: false });
     expect(() => renderWithProviders(<PlatformStatusBadge variant="prominent" />)).not.toThrow();
-    expect(screen.getByText('CHECKING…')).toBeInTheDocument();
+    expect(screen.getByText('Checking…')).toBeInTheDocument();
+  });
+
+  // Facelift (Phase 6 screen 2): static, token-coloured, no glow or loop.
+  describe.each(['compact', 'prominent'] as const)('%s variant look', (variant) => {
+    it.each(['operational', 'degraded', 'outage'] as const)('%s: no animation, no hex/rgb colour, no glow', (overall) => {
+      mockStatus({ data: makeStatus(overall), isLoading: false });
+      const { container } = renderWithProviders(<PlatformStatusBadge variant={variant} />);
+      const html = container.innerHTML;
+      expect(html).not.toMatch(/animation/i);
+      expect(html).not.toMatch(/infinite/i);
+      expect(html).not.toMatch(/live-ping/);
+      expect(html).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+      expect(html).not.toMatch(/rgba?\(/i);
+      expect(html).not.toMatch(/box-shadow|text-shadow/i);
+      expect(html).toMatch(/var\(--/);
+    });
+
+    it('uses sans sentence case, not mono or uppercase', () => {
+      mockStatus({ data: makeStatus('operational'), isLoading: false });
+      renderWithProviders(<PlatformStatusBadge variant={variant} />);
+      const label = screen.getByText('All systems operational');
+      expect(label.style.fontFamily).toBe('var(--font-sans)');
+      expect(label.style.textTransform).toBe('');
+      expect(label.style.textShadow).toBe('');
+    });
+  });
+
+  it('colours the label with the theme-aware status text tokens', () => {
+    mockStatus({ data: makeStatus('degraded'), isLoading: false });
+    renderWithProviders(<PlatformStatusBadge />);
+    expect(screen.getByText('Degraded').style.color).toBe('var(--sev-medium-text)');
   });
 });

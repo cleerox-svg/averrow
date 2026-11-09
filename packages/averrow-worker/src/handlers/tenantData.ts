@@ -5,6 +5,7 @@ import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
 import { emitOrgEvent } from "../lib/org-events";
 import { cachedValue } from "../lib/cached-value";
+import { scopeCacheSegment } from "../lib/scope-cache-key";
 import type { Env, MonitoringConfigBody } from "../types";
 import { verifyOrgAccess, canPerformHITL, isPlatformStaff, ORG_ROLE_HIERARCHY } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
@@ -127,6 +128,61 @@ export function toTenantAlertView(
 
 // ─── GET /api/orgs/:orgId/dashboard ──────────────────────────
 
+/**
+ * KV TTL of the tenant dashboard payload. The dashboard is the tenant app's
+ * first paint; 60s keeps its counts close to live while a reload, a second
+ * tab or a teammate on the same org reads KV instead of re-running five
+ * queries (incl. a 7-day threats GROUP BY).
+ */
+export const TENANT_DASHBOARD_TTL_S = 60;
+
+/**
+ * Cache key for an org's dashboard. The payload depends only on the org
+ * (every query is org_brands-scoped; no field varies by caller or role), so
+ * the key is the route org plus scopeCacheSegment over the org's CURRENT
+ * brand set (read from org_brands, not the caller's JWT scope — a staff
+ * caller's scope is null/"global", and a client's embedded scope can lag).
+ * Adding or removing a brand changes the digest, so the next load misses
+ * instead of serving the old brand set for the rest of the TTL.
+ */
+export async function tenantDashboardCacheKey(orgId: string, brandIds: string[]): Promise<string> {
+  const segment = await scopeCacheSegment({ org_id: Number(orgId), brand_ids: brandIds });
+  return `tenant_dashboard:v1:${orgId}:${segment}`;
+}
+
+/**
+ * Per-brand active social-profile counts, restricted to the org's brands
+ * BEFORE grouping (`brand_id IN (org's brands)` seeks idx_social_profiles_brand
+ * per brand). The former two subqueries grouped the WHOLE social_profiles
+ * table — every brand on the platform — on each dashboard load, then joined
+ * the org's handful of brands against that. `+status` keeps the planner off
+ * idx_social_profiles_status (status='active' is most of the table), which
+ * it otherwise prefers over the brand_id seek (plan pinned in
+ * test/tenant-dashboard-cache.test.ts).
+ */
+export const TENANT_DASHBOARD_BRANDS_SQL = `
+      SELECT b.id, b.name, b.canonical_domain, b.sector, b.threat_count,
+             b.exposure_score, b.email_security_grade, b.social_risk_score,
+             b.last_social_scan, b.last_threat_seen, ob.is_primary,
+             b.active_threat_count AS active_threats,
+             COALESCE(sp.cnt, 0) AS social_profiles_count,
+             COALESCE(sp.imp_cnt, 0) AS impersonation_count
+      FROM org_brands ob
+      JOIN brands b ON b.id = ob.brand_id
+      LEFT JOIN (
+        SELECT brand_id,
+               COUNT(*) AS cnt,
+               SUM(CASE WHEN classification = 'impersonation' THEN 1 ELSE 0 END) AS imp_cnt
+        FROM social_profiles
+        WHERE +status = 'active'
+          AND brand_id IN (SELECT brand_id FROM org_brands WHERE org_id = ?)
+        GROUP BY brand_id
+      ) sp ON sp.brand_id = b.id
+      WHERE ob.org_id = ?
+      ORDER BY b.threat_count DESC
+      LIMIT 200
+    `;
+
 export async function handleTenantDashboard(
   request: Request,
   env: Env,
@@ -138,100 +194,94 @@ export async function handleTenantDashboard(
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
 
   try {
-    // Brands with rich data
-    const brandsResult = await env.DB.prepare(`
-      SELECT b.id, b.name, b.canonical_domain, b.sector, b.threat_count,
-             b.exposure_score, b.email_security_grade, b.social_risk_score,
-             b.last_social_scan, b.last_threat_seen, ob.is_primary,
-             b.active_threat_count AS active_threats,
-             COALESCE(sp_all.cnt, 0) AS social_profiles_count,
-             COALESCE(sp_imp.cnt, 0) AS impersonation_count
-      FROM org_brands ob
-      JOIN brands b ON b.id = ob.brand_id
-      LEFT JOIN (SELECT brand_id, COUNT(*) AS cnt FROM social_profiles WHERE status = 'active' GROUP BY brand_id) sp_all ON sp_all.brand_id = b.id
-      LEFT JOIN (SELECT brand_id, COUNT(*) AS cnt FROM social_profiles WHERE classification = 'impersonation' AND status = 'active' GROUP BY brand_id) sp_imp ON sp_imp.brand_id = b.id
-      WHERE ob.org_id = ?
-      ORDER BY b.threat_count DESC
-      LIMIT 200
-    `).bind(orgId).all();
+    // One indexed read (idx_ob_org) for the cache key's brand-set digest.
+    const orgBrands = await env.DB.prepare(
+      "SELECT brand_id FROM org_brands WHERE org_id = ?",
+    ).bind(orgId).all<{ brand_id: string }>();
+    const cacheKey = await tenantDashboardCacheKey(orgId, (orgBrands.results ?? []).map((r) => r.brand_id));
 
-    const brands = brandsResult.results || [];
-
-    // Aggregate stats
-    let totalActiveThreats = 0;
-    let totalSocialProfiles = 0;
-    let totalImpersonation = 0;
-    let exposureSum = 0;
-    let exposureCount = 0;
-
-    for (const b of brands as Array<Record<string, unknown>>) {
-      totalActiveThreats += Number(b.active_threats) || 0;
-      totalSocialProfiles += Number(b.social_profiles_count) || 0;
-      totalImpersonation += Number(b.impersonation_count) || 0;
-      if (b.exposure_score != null) {
-        exposureSum += Number(b.exposure_score);
-        exposureCount++;
-      }
-    }
-
-    // Open alerts count
-    const alertCountResult = await env.DB.prepare(`
-      SELECT COUNT(*) AS cnt FROM alerts a
-      JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
-      WHERE a.status IN ('new', 'acknowledged', 'investigating')
-        AND (a.org_id IS NULL OR a.org_id = ?)
-    `).bind(orgId, Number(orgId)).first<{ cnt: number }>();
-
-    // Recent alerts (top 5) — diversified across alert_type so one noisy
-    // category (e.g. campaign_impacts_brand) can't crowd out the rest.
-    // Take the 2 most recent of each type, then pick top 5 by severity + recency.
-    const recentAlertsResult = await env.DB.prepare(`
-      WITH ranked AS (
-        SELECT a.id, a.title, a.severity, a.alert_type, a.status, a.created_at,
-               b.name AS brand_name,
-               ROW_NUMBER() OVER (PARTITION BY a.alert_type ORDER BY a.created_at DESC) AS type_rank
-        FROM alerts a
-        JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
-        JOIN brands b ON b.id = a.brand_id
-        WHERE a.status IN ('new', 'acknowledged', 'investigating')
-          AND (a.org_id IS NULL OR a.org_id = ?)
-      )
-      SELECT id, title, severity, alert_type, status, created_at, brand_name
-      FROM ranked
-      WHERE type_rank <= 2
-      ORDER BY
-        CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
-        created_at DESC
-      LIMIT 5
-    `).bind(orgId, Number(orgId)).all();
-
-    // 7-day threat trend
-    const trendResult = await env.DB.prepare(`
-      SELECT date(t.created_at) AS date, COUNT(*) AS count
-      FROM threats t
-      JOIN org_brands ob ON ob.brand_id = t.target_brand_id AND ob.org_id = ?
-      WHERE t.created_at >= datetime('now', '-7 days')
-      GROUP BY date(t.created_at)
-      ORDER BY date ASC
-    `).bind(orgId).all();
-
-    return json({
-      success: true,
-      data: {
-        total_brands: brands.length,
-        total_active_threats: totalActiveThreats,
-        total_alerts_open: alertCountResult?.cnt ?? 0,
-        total_social_profiles: totalSocialProfiles,
-        total_impersonation_alerts: totalImpersonation,
-        avg_exposure_score: exposureCount > 0 ? Math.round(exposureSum / exposureCount) : null,
-        brands,
-        recent_alerts: recentAlertsResult.results || [],
-        threat_trend: trendResult.results || [],
-      },
-    }, 200, origin);
+    const data = await cachedValue(env, cacheKey, TENANT_DASHBOARD_TTL_S, () => computeTenantDashboard(env, orgId));
+    return json({ success: true, data }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
+}
+
+async function computeTenantDashboard(env: Env, orgId: string) {
+  // Brands with rich data
+  const brandsResult = await env.DB.prepare(TENANT_DASHBOARD_BRANDS_SQL).bind(orgId, orgId).all();
+
+  const brands = brandsResult.results || [];
+
+  // Aggregate stats
+  let totalActiveThreats = 0;
+  let totalSocialProfiles = 0;
+  let totalImpersonation = 0;
+  let exposureSum = 0;
+  let exposureCount = 0;
+
+  for (const b of brands as Array<Record<string, unknown>>) {
+    totalActiveThreats += Number(b.active_threats) || 0;
+    totalSocialProfiles += Number(b.social_profiles_count) || 0;
+    totalImpersonation += Number(b.impersonation_count) || 0;
+    if (b.exposure_score != null) {
+      exposureSum += Number(b.exposure_score);
+      exposureCount++;
+    }
+  }
+
+  // Open alerts count
+  const alertCountResult = await env.DB.prepare(`
+    SELECT COUNT(*) AS cnt FROM alerts a
+    JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
+    WHERE a.status IN ('new', 'acknowledged', 'investigating')
+      AND (a.org_id IS NULL OR a.org_id = ?)
+  `).bind(orgId, Number(orgId)).first<{ cnt: number }>();
+
+  // Recent alerts (top 5) — diversified across alert_type so one noisy
+  // category (e.g. campaign_impacts_brand) can't crowd out the rest.
+  // Take the 2 most recent of each type, then pick top 5 by severity + recency.
+  const recentAlertsResult = await env.DB.prepare(`
+    WITH ranked AS (
+      SELECT a.id, a.title, a.severity, a.alert_type, a.status, a.created_at,
+             b.name AS brand_name,
+             ROW_NUMBER() OVER (PARTITION BY a.alert_type ORDER BY a.created_at DESC) AS type_rank
+      FROM alerts a
+      JOIN org_brands ob ON ob.brand_id = a.brand_id AND ob.org_id = ?
+      JOIN brands b ON b.id = a.brand_id
+      WHERE a.status IN ('new', 'acknowledged', 'investigating')
+        AND (a.org_id IS NULL OR a.org_id = ?)
+    )
+    SELECT id, title, severity, alert_type, status, created_at, brand_name
+    FROM ranked
+    WHERE type_rank <= 2
+    ORDER BY
+      CASE LOWER(severity) WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+      created_at DESC
+    LIMIT 5
+  `).bind(orgId, Number(orgId)).all();
+
+  // 7-day threat trend
+  const trendResult = await env.DB.prepare(`
+    SELECT date(t.created_at) AS date, COUNT(*) AS count
+    FROM threats t
+    JOIN org_brands ob ON ob.brand_id = t.target_brand_id AND ob.org_id = ?
+    WHERE t.created_at >= datetime('now', '-7 days')
+    GROUP BY date(t.created_at)
+    ORDER BY date ASC
+  `).bind(orgId).all();
+
+  return {
+    total_brands: brands.length,
+    total_active_threats: totalActiveThreats,
+    total_alerts_open: alertCountResult?.cnt ?? 0,
+    total_social_profiles: totalSocialProfiles,
+    total_impersonation_alerts: totalImpersonation,
+    avg_exposure_score: exposureCount > 0 ? Math.round(exposureSum / exposureCount) : null,
+    brands,
+    recent_alerts: recentAlertsResult.results || [],
+    threat_trend: trendResult.results || [],
+  };
 }
 
 // ─── GET /api/orgs/:orgId/alerts ─────────────────────────────

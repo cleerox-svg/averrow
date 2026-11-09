@@ -3,6 +3,7 @@
 import { Link } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { Card } from '@/design-system/components';
+import { HOME_CARD_VARIANT } from '@/features/home/homeCard';
 import { useIdentityThreats } from './useIdentityThreats';
 
 export function IdentityThreatsTile() {
@@ -12,17 +13,16 @@ export function IdentityThreatsTile() {
 
   return (
     <section className="home-section" aria-label="Identity Provider Impersonation">
-      <Card padding="md">
+      <Card variant={HOME_CARD_VARIANT} padding="none">
         <Link
           to="/identity-threats"
-          className="flex items-center justify-between gap-3 no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
-          style={{ color: 'var(--text-primary)' }}
+          className="identity-tile-link"
         >
-          <span className="flex items-center gap-2 text-sm">
+          <span className="flex items-center gap-2 text-type-body">
             <ShieldCheck size={16} aria-hidden style={{ color: 'var(--primary-text)' }} />
             Identity Provider Impersonation — <strong>{n.toLocaleString('en-US')} {n === 1 ? 'detection' : 'detections'}</strong> (7d)
           </span>
-          <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>View →</span>
+          <span className="text-type-small" style={{ color: 'var(--text-secondary)' }}>View →</span>
         </Link>
       </Card>
     </section>

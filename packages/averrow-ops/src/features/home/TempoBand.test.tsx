@@ -70,13 +70,31 @@ describe('TempoBand', () => {
     expect(chip).toHaveTextContent('1.1× baseline');
   });
 
+  it('facelift: sans sentence-case chip, neutral normal accent, no looping/entrance animation', async () => {
+    serve(110);
+    const { container } = setup();
+    await screen.findByText('110');
+    const chip = container.querySelector('[data-tempo-state]')!;
+    expect(chip).toHaveClass('tempo-chip');
+    expect(chip.className).not.toMatch(/font-mono|uppercase/);
+    expect((container.firstChild as HTMLElement).style.getPropertyValue('--st-accent')).toBe('var(--text-secondary)');
+    expect(container.innerHTML).not.toMatch(/animation|var\(--blue\)/);
+  });
+
+  it('a surge keeps the high-severity accent', async () => {
+    serve(180);
+    const { container } = setup();
+    await screen.findByText('180');
+    expect((container.firstChild as HTMLElement).style.getPropertyValue('--st-accent')).toBe('var(--sev-high)');
+  });
+
   it('reads "quiet" (not calm) below 0.5x baseline', async () => {
     serve(20);
     const { container } = setup();
     await screen.findByText('20');
     const chip = container.querySelector('[data-tempo-state]')!;
     expect(chip).toHaveAttribute('data-tempo-state', 'quiet');
-    expect(chip).toHaveTextContent('quiet · 0.2× baseline');
+    expect(chip).toHaveTextContent('Quiet · 0.2× baseline');
   });
 
   it('a genuinely silent pipeline shows 0/hr and quiet, not a dash', async () => {
@@ -86,7 +104,7 @@ describe('TempoBand', () => {
     const { container } = setup();
     expect(await screen.findByText('0')).toBeInTheDocument();
     expect(container.querySelector('[data-tempo-state]')).toHaveAttribute('data-tempo-state', 'quiet');
-    expect(container.querySelector('[data-tempo-state]')).toHaveTextContent('no ingest in 7d');
+    expect(container.querySelector('[data-tempo-state]')).toHaveTextContent('Quiet · no ingest in 7d');
   });
 
   it('is loading (null value, aria-busy), never 0, until both windows land', () => {
@@ -142,6 +160,6 @@ describe('tempoChipText', () => {
     expect(tempoChipText(t([200, 0], [...new Array<number>(100).fill(100), 0]))).toBe('2.0× baseline');
   });
   it('says the baseline is unavailable instead of inventing one', () => {
-    expect(tempoChipText(t([200, 0], [1, 2, 0]))).toBe('baseline unavailable');
+    expect(tempoChipText(t([200, 0], [1, 2, 0]))).toBe('Baseline unavailable');
   });
 });

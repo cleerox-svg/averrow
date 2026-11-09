@@ -49,7 +49,7 @@ const VARIANT_STYLES: Record<CardVariant, { bg: string; border: string; rim: str
   // Inset panel (e.g. a table's expansion row): surface + border only, no
   // shadow, rims or blur.
   flat: {
-    bg: 'var(--bg-card-deep)',
+    bg: 'var(--card-flat-bg, var(--bg-card-deep))',
     border: 'var(--border-base)',
     rim: 'transparent',
     shadow: 'none',

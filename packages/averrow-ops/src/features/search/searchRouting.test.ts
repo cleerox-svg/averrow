@@ -18,7 +18,7 @@ function groupFor(type: SearchResultType) {
 }
 
 describe('SEARCH_GROUPS — fixed render order', () => {
-  it('is BRANDS -> THREAT ACTORS -> PROVIDERS -> CAMPAIGNS -> APPS, shared by both surfaces', () => {
+  it('is Brands -> Threat actors -> Providers -> Campaigns -> Apps, shared by both surfaces', () => {
     expect(SEARCH_GROUPS.map(g => g.type)).toEqual([
       'brand',
       'threat_actor',
@@ -27,11 +27,11 @@ describe('SEARCH_GROUPS — fixed render order', () => {
       'app_store',
     ]);
     expect(SEARCH_GROUPS.map(g => g.heading)).toEqual([
-      'BRANDS',
-      'THREAT ACTORS',
-      'PROVIDERS',
-      'CAMPAIGNS',
-      'APPS',
+      'Brands',
+      'Threat actors',
+      'Providers',
+      'Campaigns',
+      'Apps',
     ]);
   });
 });

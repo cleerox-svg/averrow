@@ -20,6 +20,7 @@ import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from ".
 import { handleAdminUpdateUser } from "../src/handlers/admin/users";
 import { handleInviteAcceptance } from "../src/handlers/auth";
 import { hashToken } from "../src/lib/hash";
+import { parseForcedLogout } from "../src/lib/forced-logout";
 import type { Env } from "../src/types";
 
 const TABLES = ["users", "org_members", "org_brands", "organizations", "invitations", "sessions"];
@@ -309,8 +310,8 @@ describe.skipIf(!hasSqlite())("PR-F follow-up: role PATCH change detection + tok
   let rig: FollowRig;
   beforeEach(() => { rig = makeFollowRig(); });
 
-  it("a role change sets forced_logout; status-only and same-role PATCHes do not", async () => {
-    expect((await handleAdminUpdateUser(patch({ status: "suspended" }), rig.env, "cust1", "root", "super_admin")).status).toBe(200);
+  it("a role change sets forced_logout; status=active and same-role PATCHes do not", async () => {
+    expect((await handleAdminUpdateUser(patch({ status: "active" }), rig.env, "cust1", "root", "super_admin")).status).toBe(200);
     expect((await handleAdminUpdateUser(patch({ role: "client" }), rig.env, "cust1", "root", "super_admin")).status).toBe(200);
     expect(rig.kv.store.has("forced_logout:cust1")).toBe(false);
 
@@ -318,13 +319,15 @@ describe.skipIf(!hasSqlite())("PR-F follow-up: role PATCH change detection + tok
     expect((await handleAdminUpdateUser(patch({ role: "analyst" }), rig.env, "cust2", "root", "super_admin")).status).toBe(200);
     const stamp = rig.kv.store.get("forced_logout:cust2");
     expect(stamp).toBeDefined();
-    expect(Number(stamp)).toBeGreaterThanOrEqual(before);
+    expect(parseForcedLogout(stamp ?? null)?.ts).toBeGreaterThanOrEqual(before);
   });
 
   it("same-role + status PATCH on an org-affiliated staff user is allowed (no change → no refusal)", async () => {
     const res = await handleAdminUpdateUser(patch({ role: "analyst", status: "suspended" }), rig.env, "legacy1", "root", "super_admin");
     expect(res.status).toBe(200);
     expect(roleOf(rig.raw, "legacy1")).toBe("analyst");
-    expect(rig.kv.store.has("forced_logout:legacy1")).toBe(false);
+    // Suspension revokes live tokens (requireAuth's status check is KV-cached,
+    // the forced_logout gate runs before it — lib/auth-user-cache.ts).
+    expect(rig.kv.store.has("forced_logout:legacy1")).toBe(true);
   });
 });

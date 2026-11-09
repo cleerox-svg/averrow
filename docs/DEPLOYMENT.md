@@ -141,6 +141,14 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - One-time build cost: one pass over `threats` per index (~1.25M rows read each, ~2.5M total), paid back within the first hour.
 - To verify, `SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_threats_asn', 'idx_threats_gsb_pending')` returns both rows.
 
+### Migration 0322 — `threats` work-queue partial indexes (D1 read-spend, 2026-11-08)
+
+- `0322_d1_rescan_partial_indexes.sql` adds three partial indexes on `threats`, all keyed on `created_at`: `idx_threats_active_no_geo` (`WHERE (lat IS NULL OR lng IS NULL) AND status = 'active'`, Flight Control's `backlog.total_no_geo.probe`, now a bounded probe capped at 5001 for the `> 5000` geo-backlog gate), `idx_threats_ip_no_provider` (`WHERE hosting_provider_id IS NULL AND ip_address IS NOT NULL`, Cartographer's `count.threats.without_provider`), and `idx_threats_surbl_pending` (`WHERE surbl_checked = 0 AND malicious_domain IS NOT NULL`, the SURBL feed's work SELECT and FC's `backlog.surbl.pending`, which now share one WHERE). `CREATE INDEX IF NOT EXISTS` only.
+- Applied automatically before the Worker (CI runs `db:migrate:prod` first; with a manual `npx wrangler deploy`, run `pnpm run db:migrate:prod` first). The queries name their index with `INDEXED BY` through `withIndexHintFallback`, so without the migration they re-run unhinted — correct, at the old cost (~1.5M / ~644K / ~426K rows per call).
+- Each index WHERE is a constant in `src/lib/threat-rescan-predicates.ts`; SQLite only uses a partial index when the query's WHERE contains every index term, so change both together. `test/d1-rescan-partial-indexes.test.ts` pins the plans and result parity.
+- One-time build: one pass over `threats` per index. Afterwards one index write when a row enters or leaves a set.
+- Verify: `SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_threats_active_no_geo', 'idx_threats_ip_no_provider', 'idx_threats_surbl_pending')` returns three rows.
+
 ### Migration 0278 — `idx_threats_malicious_url` (D1 read-spend)
 
 - `0278_threats_malicious_url_index.sql` adds the partial index `idx_threats_malicious_url` (`threats(malicious_url) WHERE malicious_url IS NOT NULL`). It is index-only: no columns change.

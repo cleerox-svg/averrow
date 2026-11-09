@@ -5,6 +5,12 @@ import { json } from "../lib/cors";
 import { logger } from "../lib/logger";
 import { roleHasPermission, type StaffPermission } from "../lib/role-permissions";
 import { forcedLogoutKey, isForcedOut, parseForcedLogout } from "../lib/forced-logout";
+import {
+  readAuthUserCache, writeAuthUserCache, lastActiveIsStale, sqliteNow,
+  memoGetAuthUser, memoSetAuthUser,
+  memoDeleteAuthUser, type AuthUserCacheEntry,
+} from "../lib/auth-user-cache";
+import { runInBackground } from "../lib/request-context";
 import type { Env, JWTPayload, UserRole } from "../types";
 
 export interface AuthContext {
@@ -39,7 +45,11 @@ export interface AuthContext {
 
 /**
  * Validates JWT access token and returns auth context.
- * Checks for forced logout via KV.
+ * Checks for forced logout via KV, then that the user is still `active`
+ * (cached per user in a 15s isolate memo + 60s KV entry,
+ * lib/auth-user-cache.ts — the admin status PATCH invalidates it; a manual
+ * SQL status change takes effect within about 75s). last_active is written at
+ * most every 5 minutes.
  *
  * H-3 (AUTH_AUDIT_2026-06): rejects enrollment-scoped tokens
  * (`scope === 'passkey_enroll'`) with a 403 `passkey_enrollment_required`.
@@ -99,22 +109,71 @@ async function requireAuthInternal(
   // Forced-logout gate: one KV read carries both the blanket per-user stamp
   // (iat <= ts) and the per-session revocations (sid listed) — see
   // lib/forced-logout.ts. Tokens without a `sid` claim only face the stamp.
-  const forced = parseForcedLogout(await env.CACHE.get(forcedLogoutKey(payload.sub)));
+  // It runs on EVERY request. The status cache (lib/auth-user-cache.ts: a
+  // per-isolate memo, then KV `auth_user:<sub>`, fetched in the same round
+  // trip) is only consulted AFTER this gate passes. Both keys derive from the
+  // verified subject, never from the token. A cache read failure is a miss
+  // (D1 fallback); a forced_logout read failure still throws (fail closed).
+  const userId = payload.sub;
+  const memoUser = memoGetAuthUser(userId);
+  const [forcedRaw, kvUser] = await Promise.all([
+    env.CACHE.get(forcedLogoutKey(userId)),
+    memoUser ? Promise.resolve(null) : readAuthUserCache(env, userId),
+  ]);
+  const forced = parseForcedLogout(forcedRaw);
   if (isForcedOut(forced, payload.iat, payload.sid)) {
     return json({ success: false, error: "Session invalidated" }, 401, origin);
   }
 
-  // Verify user still active in DB
-  const user = await env.DB.prepare("SELECT status FROM users WHERE id = ?")
-    .bind(payload.sub).first<{ status: string }>();
-
-  if (!user || user.status !== "active") {
-    return json({ success: false, error: "Account is not active" }, 403, origin);
+  // Verify user still active. A cached entry is only ever active and at most
+  // ~75s old (60s KV trust window + 15s memo); a miss reads D1. Non-active
+  // users are never cached.
+  let user: AuthUserCacheEntry | null = memoUser ?? kvUser;
+  const fromD1 = user === null;
+  if (user) {
+    if (kvUser) memoSetAuthUser(userId, kvUser);
+  } else {
+    const checkedAt = Date.now();
+    const row = await env.DB.prepare("SELECT status, last_active FROM users WHERE id = ?")
+      .bind(userId).first<{ status: string; last_active: string | null }>();
+    if (!row || row.status !== "active") {
+      return json({ success: false, error: "Account is not active" }, 403, origin);
+    }
+    user = { status: "active", last_active: row.last_active ?? null, checked_at: checkedAt };
+    memoSetAuthUser(userId, user);
   }
 
-  // Update last_active timestamp (fire-and-forget)
-  env.DB.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?")
-    .bind(payload.sub).run().catch(() => {});
+  // last_active, throttled to one write per LAST_ACTIVE_THROTTLE_MS, in the
+  // background (ctx.waitUntil when reachable). The UPDATE is guarded in SQL
+  // on the throttle (a burst of concurrent misses writes the row once) AND on
+  // status = 'active'; the cache entry is (re)written only when it changed a
+  // row, which proves the user is still active. A cache HIT is never renewed
+  // without that D1 proof, so a manual SQL suspend can't be kept alive by a
+  // re-cache, and a late put can't resurrect a concurrently suspended user.
+  if (lastActiveIsStale(user.last_active)) {
+    runInBackground(async () => {
+      const writtenAt = Date.now();
+      const res = await env.DB.prepare(
+        "UPDATE users SET last_active = datetime('now') WHERE id = ? AND status = 'active' " +
+        "AND (last_active IS NULL OR last_active < datetime('now', '-5 minutes'))",
+      ).bind(userId).run();
+      if (Number(res.meta?.changes ?? 0) > 0) {
+        const entry: AuthUserCacheEntry = { status: "active", last_active: sqliteNow(writtenAt), checked_at: writtenAt };
+        memoSetAuthUser(userId, entry);
+        await writeAuthUserCache(env, userId, entry);
+      } else {
+        // 0 rows: another isolate already refreshed last_active (or the user
+        // is no longer active). Drop the memo entry rather than keep its stale
+        // last_active, which would re-run this no-op UPDATE on every request
+        // until the memo expires. Never re-set it here: that would renew trust
+        // without D1 proof.
+        memoDeleteAuthUser(userId);
+      }
+    });
+  } else if (fromD1) {
+    const entry = user;
+    runInBackground(() => writeAuthUserCache(env, userId, entry));
+  }
 
   return {
     userId: payload.sub,

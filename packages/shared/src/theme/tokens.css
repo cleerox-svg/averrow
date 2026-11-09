@@ -1284,7 +1284,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 @media (hover: hover) {
   .ds-stat--interactive:hover {
     transform: translateY(-2px);
-    box-shadow: var(--card-shadow), inset 0 1px 0 var(--card-highlight), 0 0 0 1px color-mix(in srgb, var(--st-accent) 22%, transparent);
+    box-shadow: var(--card-shadow), inset 0 1px 0 var(--card-highlight), 0 0 0 1px var(--border-strong);
   }
 }
 .ds-stat--interactive:active { transform: none; }
@@ -1345,6 +1345,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   .ds-stat { padding: 10px 14px; border-radius: var(--radius-md); }
   .ds-stat--interactive { padding-bottom: 10px; }
   .ds-stat-label { font-size: 11.5px; }
+  :root[data-accent] .ds-stat-label { font-size: 12px; } /* facelift: 12px floor */
   .ds-stat-value { margin-top: 2px; font-size: 26px; }
   .ds-stat-value--fit { font-size: clamp(16px, calc(100cqi / var(--ds-stat-em, 3.1)), 26px); }
   .ds-stat-sub { margin-top: 4px; }
@@ -1403,4 +1404,14 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
    (see --primary-rim above); under an accent it follows the accent. */
 :root[data-accent] {
   --primary-rim: var(--primary-border);
+}
+
+/* Facelift kit floors (polish): Badge text >= 12px (every size/font) with no
+   outer glow, Avatar initials >= 12px. Badge/Avatar set sizes inline, so the
+   floor is a custom property (a min() in the inline size) with legacy fallbacks; with
+   FACELIFT=false (no data-accent) nothing here applies. */
+:root[data-accent] {
+  --ds-badge-glow: 0 0 0 transparent;
+  --ds-badge-min-fs: 12px;
+  --ds-avatar-min-fs: 12px;
 }

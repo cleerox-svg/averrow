@@ -15,11 +15,12 @@
 // The nav command list is supplied by ShellV4 so it inherits the same
 // role-gating the sidebar applies — nothing here re-derives permissions.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, CornerDownLeft, Loader2, ArrowRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useGlobalSearch, type SearchResultType } from '@/hooks/useGlobalSearch';
+import { sentenceCase } from '@/lib/sentence-case';
 import { SEARCH_GROUPS, searchPageUrl } from '@/features/search/searchRouting';
 
 export interface PaletteCommand {
@@ -74,6 +75,7 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const groupIdBase = useId();
 
   const { brands, threatActors, providers, campaigns, appStore, isLoading } = useGlobalSearch(query);
 
@@ -103,7 +105,18 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
   // rows + trailing "view all" row, in BRANDS / THREAT ACTORS / PROVIDERS /
   // CAMPAIGNS / APPS order.
   const flat: FlatEntry[] = useMemo(() => {
-    const navFiltered = commands.filter(c => scoreMatch(c, trimmedQuery.toLowerCase()));
+    // Commands from different sources (nav rows, then workspace-tab extras) can name the same group
+    // non-adjacently; bucket them by group (first-seen order) so each heading renders once, and keyboard
+    // order matches render order.
+    const buckets = new Map<string, PaletteCommand[]>();
+    for (const c of commands) {
+      if (!scoreMatch(c, trimmedQuery.toLowerCase())) continue;
+      const key = sentenceCase(c.group);
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(c);
+      else buckets.set(key, [c]);
+    }
+    const navFiltered = [...buckets.values()].flat();
     const entries: FlatEntry[] = navFiltered.map(cmd => ({
       key: `nav:${cmd.to}`,
       heading: cmd.group,
@@ -139,7 +152,7 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
     // query. Always trails the per-group "view all" rows.
     entries.push({
       key: 'search-everything',
-      heading: 'ALL RESULTS',
+      heading: 'All results',
       icon: ArrowRight,
       label: `Search everything for “${trimmedQuery}” →`,
       to: searchPageUrl(trimmedQuery),
@@ -189,8 +202,13 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
 
   const showEmpty = flat.length === 0 && !(dataSectionActive && isLoading);
 
-  // group consecutive rows under their heading
-  let lastHeading: string | null = null;
+  // group consecutive rows under their heading (each section is an a11y group labelled by its heading)
+  const sections: { heading: string; rows: { entry: FlatEntry; idx: number }[] }[] = [];
+  flat.forEach((entry, idx) => {
+    const last = sections[sections.length - 1];
+    if (last && sentenceCase(last.heading) === sentenceCase(entry.heading)) last.rows.push({ entry, idx });
+    else sections.push({ heading: entry.heading, rows: [{ entry, idx }] });
+  });
 
   return (
     <div className="cmdk-overlay" onMouseDown={onClose} role="presentation">
@@ -223,27 +241,31 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
           {showEmpty && (
             <div className="cmdk-empty">No matches for “{query}”.</div>
           )}
-          {flat.map((entry, i) => {
-            const Icon = entry.icon;
-            const showHeading = entry.heading !== lastHeading;
-            lastHeading = entry.heading;
+          {sections.map((section, si) => {
+            const headingId = `${groupIdBase}-grp-${si}`;
             return (
-              <div key={entry.key}>
-                {showHeading && <div className="cmdk-group">{entry.heading}</div>}
-                <button
-                  type="button"
-                  data-idx={i}
-                  className={'cmdk-item' + (entry.viewAll ? ' cmdk-viewall' : '') + (i === active ? ' active' : '')}
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => go(entry)}
-                >
-                  {Icon && <Icon size={16} strokeWidth={2} className="cmdk-item-icon" />}
-                  <span className="cmdk-item-text">
-                    <span className="cmdk-item-label">{entry.label}</span>
-                    {entry.sublabel && <span className="cmdk-item-sublabel">{entry.sublabel}</span>}
-                  </span>
-                  {i === active && <CornerDownLeft size={13} strokeWidth={2} className="cmdk-item-enter" />}
-                </button>
+              <div key={`${section.heading}:${si}`} className="cmdk-group" role="group" aria-labelledby={headingId}>
+                <div id={headingId} className="cmdk-group-label">{sentenceCase(section.heading)}</div>
+                {section.rows.map(({ entry, idx: i }) => {
+                  const Icon = entry.icon;
+                  return (
+                    <button
+                      key={entry.key}
+                      type="button"
+                      data-idx={i}
+                      className={'cmdk-item' + (entry.viewAll ? ' cmdk-viewall' : '') + (i === active ? ' active' : '')}
+                      onMouseEnter={() => setActive(i)}
+                      onClick={() => go(entry)}
+                    >
+                      {Icon && <Icon size={16} strokeWidth={2} className="cmdk-item-icon" />}
+                      <span className="cmdk-item-text">
+                        <span className="cmdk-item-label">{entry.label}</span>
+                        {entry.sublabel && <span className="cmdk-item-sublabel">{entry.sublabel}</span>}
+                      </span>
+                      {i === active && <CornerDownLeft size={13} strokeWidth={2} className="cmdk-item-enter" />}
+                    </button>
+                  );
+                })}
               </div>
             );
           })}

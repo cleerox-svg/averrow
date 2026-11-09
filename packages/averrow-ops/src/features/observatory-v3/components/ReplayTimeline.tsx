@@ -31,6 +31,8 @@ import {
   pointerFrac, stackedPaths, velocityPaths, windowBuckets, type ReplayWindow, type TimelineSeries,
 } from '../lib/lens/timeline';
 import { VELOCITY_RGB } from '../lib/lens/velocity';
+import { SEVERITY_COLORS, getTypeColor, rgbCss } from '../lib/map-colors';
+import { BODY, COARSE_TARGET, FACT } from '../lib/chrome-classes';
 import { CYCLE_LENGTH } from '../lib/trips';
 
 // ─── Playhead bus ───────────────────────────────────────────
@@ -53,8 +55,10 @@ export function usePlayheadBus() {
 export const REPLAY_SPEEDS = [0.5, 1, 3] as const;
 const SPEED_LABEL: Record<number, string> = { 0.5: '½×', 1: '1×', 3: '3×' };
 const HIST_HEIGHT = 30;
+/** The histogram's fills are the map's own severity colours (same tuples), so a bar and the dots it counts match. */
 const SEV_FILL = {
-  critical: 'rgb(200, 60, 60)', high: 'rgb(251, 146, 60)', medium: 'rgb(250, 204, 21)', low: 'rgb(120, 160, 200)', other: 'rgb(120, 130, 145)',
+  critical: rgbCss(SEVERITY_COLORS.critical!), high: rgbCss(SEVERITY_COLORS.high!), medium: rgbCss(SEVERITY_COLORS.medium!), low: rgbCss(SEVERITY_COLORS.low!),
+  other: rgbCss(getTypeColor(null)),
 } as const;
 
 export interface ReplayTimelineProps {
@@ -224,9 +228,8 @@ export function ReplayTimeline({
         aria-pressed={reducedMotion ? false : playing}
         aria-disabled={reducedMotion || undefined}
         title={reducedMotion ? 'Playback is off: reduced motion. Scrub the timeline to explore.' : undefined}
-        className="ds-focusable inline-flex items-center justify-center shrink-0 rounded-lg"
+        className={`ds-focusable inline-flex items-center justify-center shrink-0 rounded-lg ${isMobile ? 'h-11 w-11' : 'h-8 w-8'} ${COARSE_TARGET}`}
         style={{
-          width: isMobile ? 44 : 32, height: isMobile ? 44 : 32,
           background: 'var(--bg-card)', border: '1px solid var(--border-base)',
           color: reducedMotion ? 'var(--text-muted)' : 'var(--primary-text)',
           cursor: reducedMotion ? 'not-allowed' : 'pointer', opacity: reducedMotion ? 0.55 : 1,
@@ -244,7 +247,7 @@ export function ReplayTimeline({
               type="button"
               aria-pressed={speed === s}
               onClick={() => onSpeed(s)}
-              className="ds-focusable font-mono text-[10px] px-2 min-h-[30px]"
+              className={`ds-focusable ${FACT} px-2 min-h-[30px] ${COARSE_TARGET}`}
               style={{
                 background: speed === s ? 'color-mix(in srgb, var(--primary) 15%, transparent)' : 'transparent',
                 color: speed === s ? 'var(--primary-text)' : 'var(--text-tertiary)',
@@ -295,15 +298,15 @@ export function ReplayTimeline({
               ref={headRef}
               aria-hidden
               className="absolute top-0 bottom-0 left-0 pointer-events-none"
-              style={{ width: 2, marginLeft: -1, background: 'var(--primary)', boxShadow: '0 0 6px var(--primary)', willChange: 'transform' }}
+              style={{ width: 2, marginLeft: -1, background: 'var(--primary)', willChange: 'transform' }}
             />}
           </div>
           {(isLoading || error || empty || !hist) && (
-            <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px] pointer-events-none" style={{ color: 'var(--text-muted)' }}>
+            <div className={`absolute inset-0 flex items-center justify-center ${BODY} pointer-events-none`} style={{ color: 'var(--text-muted)' }}>
               {error ? (
-                <span role="alert" className="pointer-events-auto">
+                <span role="alert" className="pointer-events-auto inline-flex items-center gap-1">
                   Timeline unavailable{' '}
-                  <button type="button" onClick={e => { e.stopPropagation(); onRetry(); }} className="ds-focusable" style={{ background: 'none', border: 'none', color: 'var(--primary-text)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>Retry</button>
+                  <button type="button" onClick={e => { e.stopPropagation(); onRetry(); }} className={`ds-focusable ${COARSE_TARGET}`} style={{ background: 'none', border: 'none', color: 'var(--primary-text)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>Retry</button>
                 </span>
               ) : isLoading ? <span role="status">Loading timeline…</span>
                 : empty ? <span role="status">{velocity ? 'Coverage still filling: no fast-weaponized threats counted yet' : 'No activity in this period'}</span>
@@ -311,15 +314,15 @@ export function ReplayTimeline({
             </div>
           )}
         </div>
-        <div className="flex items-center justify-between gap-2 font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <div className={`flex items-center justify-between gap-2 ${BODY}`} style={{ color: 'var(--text-tertiary)' }}>
           {/* The readout follows the playhead's bucket (written imperatively, never via React state). */}
           {velocity
             ? <span style={{ color: 'var(--text-secondary)', minWidth: 0 }}>
               {hist && !empty ? <><span style={{ color: VELOCITY_RGB }}>■</span> very fast (≤ 24h) <span style={{ opacity: 0.6, color: VELOCITY_RGB }}>■</span> fast (≤ 72h)</> : null}
             </span>
-            : <span ref={readoutRef} aria-hidden style={{ color: 'var(--primary-text)', minWidth: 0 }} />}
+            : <span ref={readoutRef} aria-hidden className="font-mono" style={{ color: 'var(--primary-text)', minWidth: 0 }} />}
           {!isMobile && (
-            <span className="truncate">
+            <span className="truncate font-mono">
               {hist ? `${formatPlayheadTime(hist.startMs, hist.bucketMs)} – ${formatPlayheadTime(hist.endMs, hist.bucketMs)}` : subtitle}
             </span>
           )}

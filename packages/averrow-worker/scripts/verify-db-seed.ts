@@ -25,9 +25,19 @@ import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
-interface Assertion {
+export interface Assertion {
   label: string;
-  /** SQL that returns a single row with column `n` = count. */
+  /**
+   * SQL that returns a single row with column `n` = count.
+   *
+   * Presence checks on BIG tables (cubes, threats, anything Navigator or a
+   * feed writes continuously) must be O(1):
+   * `SELECT EXISTS(SELECT 1 FROM <table> LIMIT 1) AS n` (n is 0 or 1).
+   * A bare `SELECT COUNT(*) FROM <big table>` reads every row; on
+   * 2026-11-09 00:08 UTC `COUNT(*) FROM threat_cube_arcs` timed out three
+   * times against a busy D1 and blocked a deploy. Keep exact COUNT(*) only
+   * for small, filtered seed tables whose threshold needs a real count.
+   */
   query: string;
   /** Expected minimum count. Most assertions are "n >= 1" presence checks. */
   min: number;
@@ -35,7 +45,7 @@ interface Assertion {
   source: string;
 }
 
-const ASSERTIONS: Assertion[] = [
+export const ASSERTIONS: Assertion[] = [
   {
     label: "Averrow self-org provisioned",
     query: "SELECT COUNT(*) AS n FROM organizations WHERE slug = '_averrow_platform'",
@@ -56,7 +66,9 @@ const ASSERTIONS: Assertion[] = [
   },
   {
     label: "threat_cube_arcs has rows (cube actively populated by Navigator + cube-healer)",
-    query: "SELECT COUNT(*) AS n FROM threat_cube_arcs",
+    // O(1) presence probe: a full COUNT(*) over the cube timed out and
+    // blocked the 2026-11-09 deploy (see Assertion.query).
+    query: "SELECT EXISTS(SELECT 1 FROM threat_cube_arcs LIMIT 1) AS n",
     min: 1,
     source: "0179_cube_arcs.sql + cron/navigator.ts (current+prev hour builds) + agents/cube-healer.ts (30-day rebuild)",
   },

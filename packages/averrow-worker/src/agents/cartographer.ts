@@ -28,6 +28,8 @@ import { emitIntelNotification, renderIntelRecommendedAction } from "../lib/inte
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { cachedCount, peekCount } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
+import { withIndexHintFallback } from "../lib/indexed-by-fallback";
+import { THREATS_WITHOUT_PROVIDER_COUNT_SQL } from "../lib/threat-rescan-predicates";
 // Alert-type registry — single source of truth for alert_type column
 // values. Importing the key here means any future rename of the
 // 'geopolitical_threat' string changes in one place; the CHECK
@@ -755,12 +757,16 @@ export const cartographerAgent: AgentModule = {
     const threatsWithProvider: { n: number | null } = { n: providerRollup.with_provider };
 
     // No pre-computed source for "has an IP but no provider yet", so it
-    // stays a raw threats index scan — restricted to the maintenance
-    // instance. Backlog instances peek (never compute).
+    // stays a raw threats count — restricted to the maintenance instance.
+    // Backlog instances peek (never compute). It reads the partial index
+    // idx_threats_ip_no_provider (migration 0322), which holds only the
+    // matching rows; it used to walk every NULL-provider entry of
+    // idx_threats_provider (~644K rows/call, mostly IP-less domain threats).
     const threatsWithoutProvider: { n: number | null } = {
       n: isMaintenanceRun
         ? await cachedCount(env, 'count.threats.without_provider', DIAG_COUNT_TTL, async () => {
-            const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats WHERE hosting_provider_id IS NULL AND ip_address IS NOT NULL").first<{ n: number }>();
+            const row = await withIndexHintFallback(THREATS_WITHOUT_PROVIDER_COUNT_SQL, (q) =>
+              env.DB.prepare(q).first<{ n: number }>());
             return row?.n ?? 0;
           })
         : await peekCount(env, 'count.threats.without_provider', DIAG_COUNT_TTL),
@@ -1366,7 +1372,84 @@ export function shouldRunProviderStats(
   return now - last > intervalMs;
 }
 
-async function aggregateProviderStats(env: { DB: D1Database }): Promise<number> {
+/**
+ * KV freshness per provider_threat_stats period for the country lists.
+ * `top_countries` is display-only — up to five distinct country codes per
+ * provider, in no particular order, each with a placeholder count of 1 —
+ * so a day-old list for the long windows costs nothing in accuracy. The
+ * GROUP_CONCAT over the top-50 providers read ~607K threats rows per
+ * Phase 5 run (~32 runs/day, prod 2026-11-08), nearly all of it in the
+ * 30d/all windows; with these TTLs and per-provider keys each provider's
+ * list is recomputed about once a day per period. `today` keeps an hour (its window is small and seeks
+ * idx_threats_provider_created) and its key carries the UTC date, so a
+ * list never outlives its day.
+ */
+export const PROVIDER_COUNTRIES_TTL_S: Record<string, number> = {
+  today: 3600,
+  "7d": 21600,
+  "30d": 86400,
+  all: 86400,
+};
+
+/** KV key for one provider's country list in a period (+ UTC day for `today`). Per provider, so a change at the tail of the top-50 ranking only recomputes the providers that entered it. */
+export function providerCountriesCacheKey(periodKey: string, providerId: string, now = new Date()): string {
+  const period = periodKey === "today" ? `today:${now.toISOString().slice(0, 10)}` : periodKey;
+  return `provider_stats.countries:${period}:${providerId}`;
+}
+
+/**
+ * `{ provider_id: "CC,CC,…" }` for `providerIds` over the period's window
+ * (`periodWhere` is one of aggregateProviderStats' constant period clauses,
+ * never caller input). Providers with no countries are omitted, as in the
+ * query result. Each provider's list is cached on its own key;
+ * only the misses are queried, in one statement (≤ 50 ids, well under
+ * D1's 100-bind cap). KV errors fall through to the query.
+ */
+export async function providerCountriesForPeriod(
+  env: Env,
+  periodKey: string,
+  periodWhere: string,
+  providerIds: string[],
+): Promise<Record<string, string>> {
+  const ids = [...new Set(providerIds)];
+  if (ids.length === 0) return {};
+  const ttl = PROVIDER_COUNTRIES_TTL_S[periodKey] ?? 3600;
+  const now = new Date();
+  const out: Record<string, string> = {};
+  const misses: string[] = [];
+
+  await Promise.all(ids.map(async (id) => {
+    try {
+      const hit = await env.CACHE.get(providerCountriesCacheKey(periodKey, id, now));
+      if (hit !== null) { if (hit !== "") out[id] = hit; return; }
+    } catch { /* fall through to the query */ }
+    misses.push(id);
+  }));
+  if (misses.length === 0) return out;
+
+  const placeholders = misses.map(() => "?").join(",");
+  const rows = await env.DB.prepare(`
+      SELECT hosting_provider_id,
+             GROUP_CONCAT(DISTINCT country_code) as countries
+      FROM threats
+      WHERE hosting_provider_id IN (${placeholders})
+        AND country_code IS NOT NULL
+        AND ${periodWhere}
+      GROUP BY hosting_provider_id
+    `).bind(...misses).all<{ hosting_provider_id: string; countries: string | null }>();
+  const found = new Map(rows.results.map((r) => [r.hosting_provider_id, r.countries ?? ""]));
+
+  await Promise.all(misses.map(async (id) => {
+    const countries = found.get(id) ?? "";
+    if (countries !== "") out[id] = countries; // same shape as the query: no row, no key
+    try {
+      await env.CACHE.put(providerCountriesCacheKey(periodKey, id, now), countries, { expirationTtl: ttl });
+    } catch { /* cache write is best-effort */ }
+  }));
+  return out;
+}
+
+async function aggregateProviderStats(env: Env): Promise<number> {
   const db = env.DB;
   let totalEntries = 0;
 
@@ -1424,26 +1507,13 @@ async function aggregateProviderStats(env: { DB: D1Database }): Promise<number> 
       phishing_count: number; malware_count: number;
     }>();
 
-    // Resolve countries only for the 50 providers we actually care about.
-    // Bounded IN-list keeps the scan small even though it touches the
-    // threats table — vs the pre-migration query which scanned the full
-    // 30d window across ALL providers.
+    // Resolve countries only for the 50 providers we actually care about,
+    // KV-cached per period + provider (providerCountriesForPeriod).
     const countryMap = new Map<string, string>();
     if (providerRows.results.length > 0) {
       const ids = providerRows.results.map(r => r.hosting_provider_id);
-      const placeholders = ids.map(() => "?").join(",");
-      const countryRows = await db.prepare(`
-        SELECT hosting_provider_id,
-               GROUP_CONCAT(DISTINCT country_code) as countries
-        FROM threats
-        WHERE hosting_provider_id IN (${placeholders})
-          AND country_code IS NOT NULL
-          AND ${period.where}
-        GROUP BY hosting_provider_id
-      `).bind(...ids).all<{ hosting_provider_id: string; countries: string | null }>();
-      for (const r of countryRows.results) {
-        countryMap.set(r.hosting_provider_id, r.countries ?? "");
-      }
+      const countries = await providerCountriesForPeriod(env, period.key, period.where, ids);
+      for (const [id, list] of Object.entries(countries)) countryMap.set(id, list);
     }
 
     // Get prior period for trend calculation — also from the cube.

@@ -1,25 +1,23 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { accentText } from '@/lib/accent-text';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
 import { api } from '@/lib/api';
-import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Card,
-  DataRow,
+  KitButton,
   PageHeader,
   PageState,
-  SaasTechniqueBadge,
-  type Severity,
 } from '@/design-system/components';
-import { SectionLabel } from '@/components/ui/SectionLabel';
 import { ThreatInflowChart } from './ThreatInflowChart';
 import { MultiFeedConsensusPanel } from './MultiFeedConsensusPanel';
 import { PanelHeader } from './PanelHeader';
-import { relativeTime } from '@/lib/time';
-import { CheckCircle, Search, X, ShieldCheck, Network, Users, Activity, TrendingUp } from 'lucide-react';
+import { sentenceCase } from '@/lib/sentence-case';
+import { THREATS_CARD_VARIANT } from './threatsCard';
+import './threats.css';
+import { ShieldCheck, Network, Users, Activity, TrendingUp } from 'lucide-react';
 import { useThreatAggregate, type ThreatAggregateFilters, type ThreatAggregate } from '@/hooks/useThreatAggregate';
 import { tabUrl } from '@/lib/workspaceRoutes';
 
@@ -42,29 +40,6 @@ interface Threat {
   saas_technique_phase: string | null;
   saas_technique_phase_label: string | null;
   saas_technique_severity: string | null;
-}
-
-function toSeverity(s: string | null): Severity | undefined {
-  if (s === 'critical' || s === 'high' || s === 'medium' || s === 'low' || s === 'info') return s;
-  return undefined;
-}
-
-const STATUS_OPTIONS = ['active', 'down', 'remediated'] as const;
-const SEVERITY_OPTIONS = ['critical', 'high', 'medium', 'low'] as const;
-const SINCE_OPTIONS = [
-  { value: '',       label: 'All time' },
-  { value: '24h',    label: 'Last 24h' },
-  { value: '7d',     label: 'Last 7d' },
-  { value: '30d',    label: 'Last 30d' },
-] as const;
-
-// Convert UI date label to ISO since-string for the API
-function sinceLabelToIso(label: string): string | undefined {
-  if (!label) return undefined;
-  const now = Date.now();
-  const hours = label === '24h' ? 24 : label === '7d' ? 168 : label === '30d' ? 720 : 0;
-  if (!hours) return undefined;
-  return new Date(now - hours * 60 * 60_000).toISOString();
 }
 
 export function Threats() {
@@ -202,7 +177,7 @@ export function Threats() {
   const hasAnyFilter = !!(s.severity || s.type || s.status || s.country || s.brandId || s.q);
 
   return (
-    <div className="p-6 space-y-5 max-w-7xl">
+    <div className="threats-v4 p-6 space-y-5 max-w-7xl">
       {/* Count in `meta` (not subtitle) so it survives the Console embedding. */}
       <PageHeader
         title="Threats"
@@ -248,34 +223,29 @@ export function Threats() {
           // remediated (brand bulk-remediate), false_positive (curator), active.
           const transitions = isAdmin
             ? ([
-                status !== 'remediated'     && { label: 'Mark remediated', to: 'remediated',     color: 'var(--green-text)' },
-                status !== 'false_positive' && { label: 'False positive',  to: 'false_positive', color: 'var(--text-tertiary)' },
-                status !== 'active'         && { label: 'Re-open',         to: 'active',         color: 'var(--primary-text)' },
-              ].filter(Boolean) as Array<{ label: string; to: string; color: string }>)
+                status !== 'remediated'     && { label: 'Mark remediated', to: 'remediated' },
+                status !== 'false_positive' && { label: 'False positive',  to: 'false_positive' },
+                status !== 'active'         && { label: 'Re-open',         to: 'active' },
+              ].filter(Boolean) as Array<{ label: string; to: string }>)
             : [];
           if (!brandId && !actorId && transitions.length === 0) return null;
           return (
-            <div style={{ marginTop: 14, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-              {brandId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(`/brands/${brandId}`)}>↗ Brand</button>}
-              {actorId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(tabUrl('actors', { focus: actorId }))}>↗ Threat actor</button>}
+            <div className="thr-actions">
+              {brandId && <button type="button" className="tt-link" onClick={() => navigate(`/brands/${brandId}`)}>↗ Brand</button>}
+              {actorId && <button type="button" className="tt-link" onClick={() => navigate(tabUrl('actors', { focus: actorId }))}>↗ Threat actor</button>}
               {transitions.length > 0 && (
-                <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>Triage:</span>
+                <span className="thr-triage">
+                  <span className="thr-label">Triage:</span>
                   {transitions.map(t => (
-                    <button
+                    <KitButton
                       key={t.to}
+                      variant="secondary"
+                      size="sm"
                       onClick={() => updateThreat.mutate({ id: r.id, status: t.to })}
                       disabled={updateThreat.isPending}
-                      style={{
-                        fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600,
-                        textTransform: 'uppercase', letterSpacing: '0.06em',
-                        padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
-                        border: '1px solid var(--border-base)', background: 'transparent',
-                        color: t.color, opacity: updateThreat.isPending ? 0.5 : 1,
-                      }}
                     >
                       {t.label}
-                    </button>
+                    </KitButton>
                   ))}
                 </span>
               )}
@@ -286,6 +256,7 @@ export function Threats() {
     </div>
   );
 }
+
 
 // ── Slice summary strip ─────────────────────────────────────────
 // One-line narrative summary of the current slice — answers
@@ -305,14 +276,8 @@ function SliceSummaryStrip({ agg, hasFilters }: {
   const addressedPct  = Math.round(agg.remediation_rate * 100);
 
   return (
-    <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-mono px-3 py-2 rounded-md"
-      style={{
-        border: '1px solid var(--border-base)',
-        background: hasFilters ? 'var(--primary-tint)' : 'var(--bg-input)',
-      }}
-    >
-      <span style={{ color: 'var(--text-tertiary)' }}>{hasFilters ? 'In slice:' : 'Across catalog:'}</span>
+    <div className="thr-strip thr-label thr-num" data-filtered={hasFilters}>
+      <span>{hasFilters ? 'In slice:' : 'Across catalog:'}</span>
       <Stat label="Confirmed"  value={`${agg.confirmed.toLocaleString()} (${confirmedPct}%)`}  tone="info" />
       {attributionFailed
         ? <Stat label="Correlated / Attributed" value="unavailable" tone="warn" />
@@ -329,148 +294,15 @@ function SliceSummaryStrip({ agg, hasFilters }: {
 function Stat({ label, value, tone }: {
   label: string; value: string; tone: 'info' | 'primary' | 'ok' | 'warn';
 }) {
-  const color = tone === 'primary' ? 'var(--primary-as-text)'
-    : tone === 'ok' ? 'var(--green)'
-    : tone === 'warn' ? 'var(--sev-medium)'
+  const color = tone === 'primary' ? 'var(--primary-text)'
+    : tone === 'ok' ? 'var(--green-text)'
+    : tone === 'warn' ? 'var(--sev-medium-text)'
     : 'var(--text-secondary)';
   return (
     <span className="flex items-center gap-1">
-      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+      <span>{label}</span>
       <span style={{ color }}>{value}</span>
     </span>
-  );
-}
-
-// ── Slicers bar ────────────────────────────────────────────────
-function SlicersBar(props: {
-  severity: string; setSeverity: (v: string) => void;
-  type: string;     setType: (v: string) => void;
-  status: string;   setStatus: (v: string) => void;
-  country: string;  setCountry: (v: string) => void;
-  brandId: string;  setBrandId: (v: string) => void;
-  actorId: string;  setActorId: (v: string) => void;
-  sinceLabel: string; setSinceLabel: (v: string) => void;
-  search: string;   setSearch: (v: string) => void;
-  agg: ReturnType<typeof useThreatAggregate>['data'];
-}) {
-  // Populate option lists from the current aggregate so dropdowns
-  // only show values that actually have data in the slice.
-  const typeOptions = props.agg?.by_type ?? [];
-  const countryOptions = props.agg?.top_countries ?? [];
-  const brandOptions = props.agg?.top_brands ?? [];
-  const actorOptions = props.agg?.top_actors ?? [];
-
-  return (
-    <div className="flex flex-wrap items-center gap-2 p-2 rounded-md"
-      style={{ border: '1px solid var(--border-base)', background: 'var(--bg-card)' }}>
-      <Slicer label="Severity" value={props.severity} onChange={props.setSeverity}
-        options={SEVERITY_OPTIONS.map(s => ({ value: s, label: s.toUpperCase() }))} />
-      <Slicer label="Type" value={props.type} onChange={props.setType}
-        options={typeOptions.map(t => ({ value: t.type, label: `${t.type.replace(/_/g,' ')} (${t.count})` }))} />
-      <Slicer label="Status" value={props.status} onChange={props.setStatus}
-        options={STATUS_OPTIONS.map(s => ({ value: s, label: s }))} />
-      <Slicer label="Brand" value={props.brandId} onChange={props.setBrandId}
-        options={brandOptions.map(b => ({ value: b.brand_id, label: `${b.brand_name} (${b.count})` }))} />
-      <Slicer label="Actor" value={props.actorId} onChange={props.setActorId}
-        options={actorOptions.map(a => ({ value: a.actor_id, label: `${a.actor_name} (${a.count})` }))} />
-      <Slicer label="Country" value={props.country} onChange={props.setCountry}
-        options={countryOptions.map(c => ({ value: c.country, label: `${c.country} (${c.count})` }))} />
-      <Slicer label="Window" value={props.sinceLabel} onChange={props.setSinceLabel}
-        options={SINCE_OPTIONS.filter(o => o.value !== '').map(o => ({ value: o.value, label: o.label }))} />
-      <div className="flex items-center gap-2 ml-auto">
-        <Search size={12} style={{ color: 'var(--text-muted)' }} />
-        <input
-          type="text"
-          value={props.search}
-          onChange={(e) => props.setSearch(e.target.value)}
-          placeholder="Search domain / URL / IP"
-          className="bg-transparent border-none focus:outline-none text-[11px] font-mono"
-          style={{ color: 'var(--text-primary)', width: 220 }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function Slicer({ label, value, onChange, options }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: Array<{ value: string; label: string }>;
-}) {
-  return (
-    <label className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider"
-      style={{ color: 'var(--text-muted)' }}>
-      <span>{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="bg-transparent text-[11px] font-mono px-1 py-0.5 rounded"
-        style={{
-          color: value ? 'var(--primary-as-text)' : 'var(--text-secondary)',
-          border: '1px solid var(--border-base)',
-          textTransform: 'none',
-          letterSpacing: 0,
-        }}
-      >
-        <option value="">All</option>
-        {options.map(o => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-// ── Active filter chips ───────────────────────────────────────
-function ActiveFilterChips(props: {
-  severity: string; onClearSeverity: () => void;
-  type: string;     onClearType: () => void;
-  status: string;   onClearStatus: () => void;
-  country: string;  onClearCountry: () => void;
-  brandId: string;  brandLabel?: string; onClearBrand: () => void;
-  actorId: string;  actorLabel?: string; onClearActor: () => void;
-  sinceLabel: string; onClearSince: () => void;
-  search: string;   onClearSearch: () => void;
-  onClearAll: () => void;
-}) {
-  const chips: Array<{ label: string; onClear: () => void }> = [];
-  if (props.severity)   chips.push({ label: `Severity: ${props.severity}`, onClear: props.onClearSeverity });
-  if (props.type)       chips.push({ label: `Type: ${props.type.replace(/_/g, ' ')}`, onClear: props.onClearType });
-  if (props.status)     chips.push({ label: `Status: ${props.status}`, onClear: props.onClearStatus });
-  if (props.country)    chips.push({ label: `Country: ${props.country}`, onClear: props.onClearCountry });
-  if (props.brandId)    chips.push({ label: `Brand: ${props.brandLabel ?? props.brandId}`, onClear: props.onClearBrand });
-  if (props.actorId)    chips.push({ label: `Actor: ${props.actorLabel ?? props.actorId}`, onClear: props.onClearActor });
-  if (props.sinceLabel) chips.push({ label: `Window: ${props.sinceLabel}`, onClear: props.onClearSince });
-  if (props.search)     chips.push({ label: `Search: ${props.search}`, onClear: props.onClearSearch });
-  if (chips.length === 0) return null;
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      {chips.map(c => (
-        <span key={c.label}
-          className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded"
-          style={{
-            background: 'color-mix(in srgb, var(--primary) 10%, transparent)',
-            color: 'var(--primary-text)',
-            border: '1px solid color-mix(in srgb, var(--primary) 30%, transparent)',
-          }}>
-          <span>{c.label}</span>
-          <button onClick={c.onClear}
-            className="ml-1 hover:opacity-70 transition-opacity"
-            aria-label={`Clear ${c.label}`}>
-            <X size={11} />
-          </button>
-        </span>
-      ))}
-      <button
-        onClick={props.onClearAll}
-        className="text-[10px] font-mono uppercase tracking-wider hover:opacity-80 ml-2"
-        style={{ color: 'var(--text-tertiary)' }}
-      >
-        Clear all
-      </button>
-    </div>
   );
 }
 
@@ -497,7 +329,7 @@ function HeroStrip({ agg, failed, degraded }: { agg: ThreatAggregate | null | un
       label: 'Active',
       value: (agg?.active ?? 0).toLocaleString(),
       sub: agg ? `${(agg.new_24h ?? 0).toLocaleString()} new in 24h` : '',
-      accent: '#C83C3C',
+      accent: 'var(--red)',
       failed: headlineFailed,
     },
     {
@@ -505,7 +337,7 @@ function HeroStrip({ agg, failed, degraded }: { agg: ThreatAggregate | null | un
       label: 'Confirmed',
       value: `${confirmedPct}%`,
       sub: agg ? `${(agg.confirmed ?? 0).toLocaleString()} high-confidence` : '',
-      accent: '#0A8AB5',
+      accent: 'var(--blue)',
       failed: headlineFailed,
     },
     {
@@ -521,7 +353,7 @@ function HeroStrip({ agg, failed, degraded }: { agg: ThreatAggregate | null | un
       label: 'Addressed',
       value: `${addressedPct}%`,
       sub: agg ? `${(agg.addressed ?? 0).toLocaleString()} of ${total.toLocaleString()} · ${attributionFailed ? 'attribution unavailable' : `${attributedPct}% attributed`}` : '',
-      accent: '#3CB878',
+      accent: 'var(--green)',
       failed: headlineFailed,
     },
   ];
@@ -531,31 +363,18 @@ function HeroStrip({ agg, failed, degraded }: { agg: ThreatAggregate | null | un
       {tiles.map(t => {
         const Icon = t.icon;
         return (
-          <Card key={t.label} variant="active" accent={t.accent} aria-label={t.failed ? `${t.label}: couldn't load` : undefined}
+          <Card key={t.label} variant={THREATS_CARD_VARIANT} aria-label={t.failed ? `${t.label}: couldn't load` : undefined}
             role={t.failed ? 'group' : undefined}
-            style={{ padding: '18px 20px', position: 'relative', overflow: 'hidden', minHeight: 110 }}>
-            <div style={{
-              position: 'absolute', right: -20, bottom: -20,
-              width: 110, height: 110, borderRadius: '50%',
-              background: `radial-gradient(circle, color-mix(in srgb, ${t.accent} 19%, transparent), transparent 70%)`,
-              pointerEvents: 'none',
-            }} />
-            <div style={{ position: 'relative' }}>
-              <div className="flex items-center gap-2 mb-2">
-                <Icon size={14} style={{ color: accentText(t.accent) }} />
-                <span className="text-[9px] font-mono uppercase tracking-[0.20em]" style={{ color: 'var(--text-tertiary)' }}>
-                  {t.label}
-                </span>
-              </div>
-              <div style={{
-                fontSize: 30, fontWeight: 800, lineHeight: 1.05,
-                color: accentText(t.accent), textShadow: `0 0 12px color-mix(in srgb, ${t.accent} 33%, transparent)`,
-              }}>
-                {agg && !t.failed ? t.value : (t.failed ? '—' : '…')}
-              </div>
-              <div className="mt-1 text-[11px] font-mono text-[var(--text-secondary)] truncate">
-                {t.failed ? "Couldn't load" : t.sub}
-              </div>
+            style={{ padding: '18px 20px', minHeight: 110 }}>
+            <div className="flex items-center gap-2 mb-2">
+              <Icon size={14} style={{ color: accentText(t.accent) }} />
+              <span className="thr-label">{sentenceCase(t.label)}</span>
+            </div>
+            <div className="thr-hero-value" style={{ color: accentText(t.accent) }}>
+              {agg && !t.failed ? t.value : (t.failed ? '—' : '…')}
+            </div>
+            <div className="mt-1 thr-label thr-num truncate" style={{ color: 'var(--text-secondary)' }}>
+              {t.failed ? "Couldn't load" : t.sub}
             </div>
           </Card>
         );
@@ -575,6 +394,16 @@ function AggregateState({ failed, onRetry, what, retrying }: { failed: boolean; 
     : <PageState kind="loading" layout="card" title={`Loading ${what}…`} />;
 }
 
+/** A list row: a real button when it navigates (keyboard + focus ring), a plain div otherwise. */
+function ListRow({ onClick, bordered, tight, children }: {
+  onClick?: () => void; bordered?: boolean; tight?: boolean; children: ReactNode;
+}) {
+  const common = { className: 'thr-row', 'data-bordered': bordered ? 'true' : undefined, 'data-tight': tight ? 'true' : undefined };
+  return onClick
+    ? <button type="button" {...common} onClick={onClick}>{children}</button>
+    : <div {...common}>{children}</div>;
+}
+
 function MultiBrandPanel({ agg, failed, retrying, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; retrying: boolean; onRetry: () => void }) {
   const campaigns = agg?.multi_brand_campaigns ?? [];
   const actors = agg?.multi_brand_actors ?? [];
@@ -585,7 +414,7 @@ function MultiBrandPanel({ agg, failed, retrying, onRetry }: { agg: ThreatAggreg
   if (!agg || failed) return <AggregateState failed={failed} retrying={retrying} onRetry={onRetry} what="multi-brand patterns" />;
   if (allEmpty) {
     return (
-      <Card>
+      <Card variant={THREATS_CARD_VARIANT}>
         <div className="text-xs text-[var(--text-tertiary)] py-3">
           No multi-brand patterns in the current slice — every active threat targets a single brand.
         </div>
@@ -609,7 +438,7 @@ function MultiBrandPanel({ agg, failed, retrying, onRetry }: { agg: ThreatAggreg
       />
       <MultiBrandCard
         title="Threat actors"
-        accent="#C83C3C"
+        accent="var(--red)"
         rows={actors.map(a => ({
           id: a.id, name: a.name,
           brand_count: a.brand_count,
@@ -620,7 +449,7 @@ function MultiBrandPanel({ agg, failed, retrying, onRetry }: { agg: ThreatAggreg
       />
       <MultiBrandCard
         title="Hosting providers"
-        accent="#0A8AB5"
+        accent="var(--blue)"
         rows={providers.map(p => ({
           id: p.id, name: p.name,
           tag: p.asn ?? undefined,
@@ -641,34 +470,28 @@ function MultiBrandCard({ title, accent, rows, emptyMsg }: {
   emptyMsg: string;
 }) {
   return (
-    <Card>
-      <SectionLabel>{title}</SectionLabel>
+    <Card variant={THREATS_CARD_VARIANT}>
+      <h3 className="thr-label">{sentenceCase(title)}</h3>
       <div className="mt-2 space-y-1.5">
         {rows.length === 0 && (
           <div className="text-xs text-[var(--text-tertiary)] py-2">{emptyMsg}</div>
         )}
         {rows.slice(0, 5).map(r => (
-          <div key={r.id}
-            onClick={r.onClick}
-            className="cursor-pointer hover:bg-white/[0.03] transition-colors"
-            style={{
-              padding: '8px 10px', borderRadius: 5,
-              border: '1px solid var(--border-base)', background: 'var(--bg-input)',
-            }}>
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+          <ListRow key={r.id} onClick={r.onClick} bordered>
+            <span className="flex items-center justify-between gap-2">
+              <span className="min-w-0 flex-1" style={{ display: 'block' }}>
+                <span className="text-xs font-semibold truncate" style={{ display: 'block', color: 'var(--text-primary)' }}>
                   {r.name}
-                </div>
-                <div className="text-[10px] font-mono text-[var(--text-tertiary)]">
+                </span>
+                <span className="thr-label thr-num" style={{ display: 'block' }}>
                   {r.brand_count} brands · {r.threat_count} threats{r.tag ? ` · ${r.tag}` : ''}
-                </div>
-              </div>
-              <span className="text-base font-bold flex-shrink-0" style={{ color: accentText(accent) }}>
+                </span>
+              </span>
+              <span className="text-base font-bold flex-shrink-0 thr-num" style={{ color: accentText(accent) }}>
                 {r.brand_count}
               </span>
-            </div>
-          </div>
+            </span>
+          </ListRow>
         ))}
       </div>
     </Card>
@@ -679,11 +502,12 @@ function MultiBrandCard({ title, accent, rows, emptyMsg }: {
 // SurgingSignalsPanel — week-over-week deltas
 // ══════════════════════════════════════════════════════════════════
 function SurgingSignalsPanel({ agg, failed, retrying, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; retrying: boolean; onRetry: () => void }) {
+  const navigate = useNavigate();
   const signals = agg?.surging_signals ?? [];
   if (!agg || failed) return <AggregateState failed={failed} retrying={retrying} onRetry={onRetry} what="surging signals" />;
   if (signals.length === 0) {
     return (
-      <Card>
+      <Card variant={THREATS_CARD_VARIANT}>
         <div className="text-xs text-[var(--text-tertiary)] py-3">
           No surging signals this week. Catalog activity is steady.
         </div>
@@ -691,51 +515,41 @@ function SurgingSignalsPanel({ agg, failed, retrying, onRetry }: { agg: ThreatAg
     );
   }
   const maxAbs = Math.max(1, ...signals.map(s => Math.abs(s.delta_pct)));
-  const navigate = useNavigate();
 
   return (
-    <Card>
-      <SectionLabel>Surging this week vs last</SectionLabel>
+    <Card variant={THREATS_CARD_VARIANT}>
+      <h3 className="thr-label">Surging this week vs last</h3>
       <div className="mt-3 space-y-1.5">
         {signals.map(s => {
           const isUp = s.delta_pct >= 0;
-          const accent = isUp ? '#C83C3C' : '#3CB878';
+          const accent = isUp ? 'var(--red)' : 'var(--green)';
           const barW = (Math.abs(s.delta_pct) / maxAbs) * 100;
-          const clickable = s.kind === 'campaign' && s.id;
+          const campaignId = s.kind === 'campaign' && s.id ? s.id : null;
           return (
-            <div key={`${s.kind}:${s.id ?? s.label}`}
-              onClick={() => clickable && navigate(`/campaigns/${s.id}`)}
-              className={clickable ? 'cursor-pointer hover:bg-white/[0.03] transition-colors' : ''}
-              style={{
-                padding: '8px 10px', borderRadius: 5,
-                position: 'relative', overflow: 'hidden',
-                border: '1px solid var(--border-base)', background: 'var(--bg-input)',
-              }}>
-              <div style={{
-                position: 'absolute', left: 0, top: 0, bottom: 0,
+            <ListRow key={`${s.kind}:${s.id ?? s.label}`} bordered
+              onClick={campaignId ? () => navigate(`/campaigns/${campaignId}`) : undefined}>
+              <span className="thr-bar" style={{
                 width: `${barW}%`,
-                background: `linear-gradient(90deg, ${accent}1a, transparent)`,
+                background: `color-mix(in srgb, ${accent} 10%, transparent)`,
               }} />
-              <div className="relative flex items-center justify-between gap-2">
-                <div className="min-w-0 flex-1 flex items-center gap-2">
+              <span className="relative flex items-center justify-between gap-2">
+                <span className="min-w-0 flex-1 flex items-center gap-2">
                   <TrendingUp size={12} style={{ color: accentText(accent), transform: isUp ? 'none' : 'rotate(180deg)' }} />
-                  <span className="text-xs font-mono truncate" style={{ color: 'var(--text-primary)' }}>
+                  <span className="text-xs truncate" style={{ color: 'var(--text-primary)' }}>
                     {s.label.replace(/_/g, ' ')}
                   </span>
-                  <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                    {s.kind}
-                  </span>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="text-sm font-bold" style={{ color: accentText(accent) }}>
+                  <span className="thr-label">{s.kind}</span>
+                </span>
+                <span className="text-right flex-shrink-0" style={{ display: 'block' }}>
+                  <span className="text-sm font-bold thr-num" style={{ display: 'block', color: accentText(accent) }}>
                     {isUp ? '+' : ''}{s.delta_pct}%
-                  </div>
-                  <div className="text-[10px] font-mono text-[var(--text-tertiary)]">
+                  </span>
+                  <span className="thr-label thr-num" style={{ display: 'block' }}>
                     {s.current_7d} vs {s.previous_7d}
-                  </div>
-                </div>
-              </div>
-            </div>
+                  </span>
+                </span>
+              </span>
+            </ListRow>
           );
         })}
       </div>
@@ -747,8 +561,8 @@ function SurgingSignalsPanel({ agg, failed, retrying, onRetry }: { agg: ThreatAg
 // LeaderboardsPanel — top brands / countries / providers / actors
 // ══════════════════════════════════════════════════════════════════
 function LeaderboardsPanel({ agg, failed, degraded, retrying, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; degraded: ReadonlySet<string>; retrying: boolean; onRetry: () => void }) {
-  if (!agg) return failed ? <AggregateState failed onRetry={onRetry} what="leaderboards" /> : null;
   const navigate = useNavigate();
+  if (!agg) return failed ? <AggregateState failed onRetry={onRetry} what="leaderboards" /> : null;
   const boards = ['top_brands', 'top_providers', 'top_actors', 'top_countries'] as const;
   // Every board down: one panel-level error. Otherwise each board owns its error.
   if (boards.every(b => degraded.has(b))) return <AggregateState failed retrying={retrying} onRetry={onRetry} what="leaderboards" />;
@@ -771,7 +585,7 @@ function LeaderboardsPanel({ agg, failed, degraded, retrying, onRetry }: { agg: 
         onRetry={onRetry}
         retrying={retrying}
         title="Top providers"
-        accent="#0A8AB5"
+        accent="var(--blue)"
         rows={agg.top_providers.slice(0, 5).map(p => ({
           id: p.provider_id, label: p.name, sub: p.asn ?? '',
           count: p.count,
@@ -783,7 +597,7 @@ function LeaderboardsPanel({ agg, failed, degraded, retrying, onRetry }: { agg: 
         onRetry={onRetry}
         retrying={retrying}
         title="Top actors"
-        accent="#C83C3C"
+        accent="var(--red)"
         rows={agg.top_actors.slice(0, 5).map(a => ({
           id: a.actor_id, label: a.actor_name,
           count: a.count,
@@ -795,7 +609,7 @@ function LeaderboardsPanel({ agg, failed, degraded, retrying, onRetry }: { agg: 
         onRetry={onRetry}
         retrying={retrying}
         title="Top countries"
-        accent="#9B59B6"
+        accent="var(--violet)"
         rows={agg.top_countries.slice(0, 5).map(c => ({
           id: c.country, label: c.country, count: c.count,
         }))}
@@ -817,8 +631,8 @@ function Leaderboard({ title, accent, rows, failed, retrying, onRetry }: {
     return <PageState kind="error" layout="card" compact title={`Couldn't load ${title.toLowerCase()}`} description={retrying ? RETRYING_COPY : undefined} onRetry={onRetry} />;
   }
   return (
-    <Card style={{ minHeight: 200 }}>
-      <SectionLabel>{title}</SectionLabel>
+    <Card variant={THREATS_CARD_VARIANT} style={{ minHeight: 200 }}>
+      <h3 className="thr-label">{sentenceCase(title)}</h3>
       <div className="mt-2 space-y-1.5">
         {rows.length === 0 && (
           <div className="text-xs text-[var(--text-tertiary)] py-2">No data</div>
@@ -826,32 +640,25 @@ function Leaderboard({ title, accent, rows, failed, retrying, onRetry }: {
         {rows.map(r => {
           const barW = (r.count / max) * 100;
           return (
-            <div key={r.id}
-              onClick={r.onClick}
-              className={r.onClick ? 'cursor-pointer hover:bg-white/[0.03] transition-colors' : ''}
-              style={{
-                padding: '6px 8px', borderRadius: 5,
-                position: 'relative', overflow: 'hidden',
-              }}>
-              <div style={{
-                position: 'absolute', left: 0, top: 0, bottom: 0,
+            <ListRow key={r.id} onClick={r.onClick} tight>
+              <span className="thr-bar" style={{
                 width: `${barW}%`,
-                background: `linear-gradient(90deg, color-mix(in srgb, ${accent} 10%, transparent), transparent)`,
+                background: `color-mix(in srgb, ${accent} 10%, transparent)`,
               }} />
-              <div className="relative flex items-center justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              <span className="relative flex items-center justify-between gap-2">
+                <span className="min-w-0 flex-1" style={{ display: 'block' }}>
+                  <span className="text-xs font-semibold truncate" style={{ display: 'block', color: 'var(--text-primary)' }}>
                     {r.label}
-                  </div>
+                  </span>
                   {r.sub && (
-                    <div className="text-[10px] font-mono text-[var(--text-tertiary)] truncate">{r.sub}</div>
+                    <span className="thr-label font-mono truncate" style={{ display: 'block' }}>{r.sub}</span>
                   )}
-                </div>
-                <span className="text-xs font-bold flex-shrink-0" style={{ color: accentText(accent) }}>
+                </span>
+                <span className="text-xs font-bold flex-shrink-0 thr-num" style={{ color: accentText(accent) }}>
                   {r.count}
                 </span>
-              </div>
-            </div>
+              </span>
+            </ListRow>
           );
         })}
       </div>

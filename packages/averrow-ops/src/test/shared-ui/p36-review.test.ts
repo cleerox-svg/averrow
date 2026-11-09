@@ -43,8 +43,18 @@ describe('threats table', () => {
       expect(body, sel).toMatch(/var\(--(primary|link)/);
     }
   });
-  it('severity pills stay amber (status colour)', () => {
-    expect(css).not.toMatch(/:root\[data-accent\] \.tt-pill/);
+  it('severity pills read the AA --sev-*-text tokens under the facelift, not amber (Phase 6 screen 3b)', () => {
+    const rule = (tone: string) => {
+      const i = css.indexOf(`:root[data-accent] .tt-pill[data-tone="${tone}"] {`);
+      expect(i, tone).toBeGreaterThan(-1);
+      return css.slice(i, css.indexOf('}', i));
+    };
+    expect(rule('high')).toMatch(/color: var\(--sev-high-text\)/);
+    expect(rule('high')).not.toMatch(/amber|229,\s*168/);
+    expect(rule('medium')).toMatch(/color: var\(--sev-medium-text\)/);
+    expect(rule('medium')).not.toMatch(/amber|229,\s*168/);
+    // The legacy (FACELIFT=false) rules keep amber for high / medium.
+    expect(css).toMatch(/\.tt-pill\[data-tone="high"\]\s+\{ color: var\(--amber-text\)/);
   });
 });
 
@@ -129,20 +139,18 @@ describe('settings tiles + role badge', () => {
 });
 
 describe('shell', () => {
-  it('the top wash follows the accent; the legacy red wash is kept without one', () => {
+  it('the canvas is flat under an accent (Phase 6 D2); the legacy red wash is kept without one', () => {
     const shell = read('averrow-ops/src/components/layout/shell-v4.css');
     expect(shell).toContain('radial-gradient(1200px 700px at 80% -12%, rgba(200,60,60,0.14), transparent 60%)');
-    const i = shell.indexOf(':root[data-accent] .shell-v4::before {');
+    const i = shell.indexOf(':root[data-accent] .shell-v4::before');
     expect(i).toBeGreaterThan(-1);
     const body = shell.slice(i, shell.indexOf('}', i));
-    expect(body).not.toContain('200,60,60');
-    expect(body).toContain('var(--primary)');
+    expect(body).toContain('content: none');
+    expect(body).not.toContain('radial-gradient');
   });
-  it('light cards in the shell use a soft ink shadow under an accent', () => {
+  it('the shell resets card shadow in every theme under an accent (no light-only override)', () => {
     const css = read('averrow-ops/src/index.css');
-    const i = css.indexOf(':root[data-accent][data-theme="light"] .shell-v4 {');
-    expect(i).toBeGreaterThan(-1);
-    const body = css.slice(i, css.indexOf('}', i));
-    expect(body).toMatch(/--card-shadow:\s*0 8px 28px rgba\(15, 20, 35, 0\.10\)/);
+    expect(css).not.toContain(':root[data-accent][data-theme="light"] .shell-v4 {');
+    expect(css).toContain(':root[data-accent] .shell-v4 {');
   });
 });

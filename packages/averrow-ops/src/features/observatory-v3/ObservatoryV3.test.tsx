@@ -383,9 +383,9 @@ describe('ObservatoryV3 Operations: shared infrastructure and row previews', () 
   it('names each row\'s evidence, marks shared infrastructure, and works without the new fields', async () => {
     routeOps();
     renderAt('/observatory?lens=operations');
-    expect(await screen.findByText('shared cert')).toBeInTheDocument();
+    expect(await screen.findByText('Shared cert')).toBeInTheDocument();
     expect(screen.getByText(/60% conf · shared infra/)).toBeInTheDocument();
-    expect(screen.getByText('same ASN')).toBeInTheDocument();
+    expect(screen.getByText('Same ASN')).toBeInTheDocument();
     expect(screen.queryByText(/low-evidence clusters? hidden/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show low-evidence clusters' })).not.toBeInTheDocument();
   });
@@ -541,7 +541,7 @@ describe('ObservatoryV3 bot share (a Baseline measure)', () => {
     await waitFor(() => expect(search).toContain('lens=baseline'));
     expect(search).toContain('measure=bot');
     expect(search).not.toContain('mode=');
-    const footer = screen.getByText(/countries/, { selector: 'div.font-mono' });
+    const footer = screen.getByText(/countries/, { selector: 'div[data-stats-bar]' });
     expect(footer.textContent).toMatch(/^7D/);
     // The intel feed (headline bar) is not map data: it is the only request this scene makes.
     expect(urls().filter(u => !u.startsWith('/api/observatory/events'))).toEqual([]);
@@ -981,7 +981,7 @@ describe('ObservatoryV3 chrome', () => {
       return Promise.resolve({ success: true, data: [] });
     });
     renderAt('/observatory');
-    const footer = () => document.querySelector('div.font-mono[aria-busy]') as HTMLElement;
+    const footer = () => document.querySelector('div[data-stats-bar][aria-busy]') as HTMLElement;
     await waitFor(() => expect(footer().textContent).toContain('5'));
     expect(footer().textContent).toMatch(/^7D/);
 
@@ -1013,7 +1013,7 @@ describe('ObservatoryV3 footer label follows the stats query only', () => {
       return Promise.resolve({ success: true, data: [] });
     });
     renderAt('/observatory');
-    const footer = () => document.querySelector('div.font-mono[aria-busy]') as HTMLElement;
+    const footer = () => document.querySelector('div[data-stats-bar][aria-busy]') as HTMLElement;
     await waitFor(() => expect(footer().textContent).toMatch(/^7D/));
     await userEvent.click(screen.getByRole('radio', { name: '30D' }));
     await waitFor(() => expect(footer().textContent).toMatch(/^30D/));
@@ -1263,7 +1263,7 @@ describe('ObservatoryV3 intel feed (headline bar + event rail)', () => {
     expect(await screen.findByTestId('headline-title')).toHaveTextContent('Title crit1');
     expect(urls().filter(u => u.startsWith('/api/observatory/events'))).toEqual(['/api/observatory/events?period=1h&limit=40']);
     const bar = screen.getByRole('region', { name: 'Live threat events' });
-    expect(within(bar).getByText('CRITICAL')).toBeInTheDocument();
+    expect(within(bar).getByText('Critical')).toBeInTheDocument();
     expect(within(bar).getByText('5m')).toBeInTheDocument();
     expect(within(bar).getByRole('button', { name: 'Open all 3 events' })).toHaveTextContent('All 3 events ›');
   });

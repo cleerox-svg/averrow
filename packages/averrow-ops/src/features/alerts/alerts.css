@@ -1,0 +1,251 @@
+/* Alerts tab (Phase 6, screen 3a). Everything is scoped under `.alerts-v4`
+   (the Alerts root) and uses tokens only. Type: sentence-case sans at the
+   --type-label-* / --type-small-* scale; mono only for domains, handles and
+   ids; tabular figures for counts, times and scores. Hover darkens (light) or
+   brightens the text over a faint --bg-page fill (dark); focus is a 2px
+   --focus-ring outline (--text-primary in light). Token fallbacks keep
+   FACELIFT=false working. */
+
+.alerts-v4 {
+  --al-hover-ease: var(--motion-fast, 120ms) var(--ease-standard, ease);
+  container: alerts / inline-size;
+}
+
+/* ── Type roles ─────────────────────────────────────────────── */
+/* One label-scale size/line-height for every label-sized role below. */
+.alerts-v4 :is(.al-label, .al-mono, .al-time, .al-footer-count, .al-readonly-note, .al-chip, .al-score, .al-section,
+  .al-link, .al-pill, .ds-banner-eyebrow) {
+  font-size: var(--type-label-size, 12px);
+  line-height: var(--type-label-lh, 16px);
+}
+/* The label role is the kit's `text-type-label` scale in sans; the margin reset
+   is scoped to <p> so Tailwind spacing utilities (ml-1.5, mt-0.5) still apply
+   to the span/div labels. */
+.alerts-v4 .al-label {
+  font-family: var(--font-sans);
+  font-weight: var(--type-label-weight, 500);
+  letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none;
+  color: var(--text-tertiary);
+}
+.alerts-v4 p.al-label { margin: 0; }
+.alerts-v4 .al-label--num { font-variant-numeric: tabular-nums; }
+.alerts-v4 .al-section {
+  margin: 0 0 8px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: var(--type-label-tracking, 0.01em);
+  color: var(--text-secondary);
+}
+.alerts-v4 .al-body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--type-small-size, 13px);
+  line-height: var(--type-small-lh, 18px);
+  color: var(--text-secondary);
+}
+.alerts-v4 .al-body--muted { color: var(--text-tertiary); }
+.alerts-v4 .al-mono {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.alerts-v4 .al-mono--strong { font-size: var(--type-small-size, 13px); font-weight: 500; color: var(--text-primary); }
+/* Prose row title (no @handle to set in mono): sans, medium. */
+.alerts-v4 .al-title-prose {
+  font-family: var(--font-sans);
+  font-size: var(--type-small-size, 13px); line-height: var(--type-small-lh, 18px);
+  font-weight: 500; color: var(--text-primary); overflow-wrap: anywhere;
+}
+.alerts-v4 .al-num { font-variant-numeric: tabular-nums; }
+.alerts-v4 .al-value {
+  font-family: var(--font-sans);
+  font-size: var(--type-small-size, 13px);
+  line-height: var(--type-small-lh, 18px);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.alerts-v4 .al-time {
+  width: 4rem; flex-shrink: 0; text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.alerts-v4 .al-footer-count {
+  padding-bottom: 16px; text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.alerts-v4 .al-readonly-note {color: var(--text-secondary); }
+
+/* ── Chips (platform, AI verdict, owner, SLA, status) ──────── */
+.alerts-v4 .al-chip {
+  display: inline-flex; align-items: center; flex-shrink: 0;
+  padding: 2px 8px; border-radius: 6px; border: 1px solid transparent;
+  font-family: var(--font-sans);
+  font-weight: 600; letter-spacing: var(--type-label-tracking, 0.01em);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  color: var(--text-secondary); background: var(--bg-card-deep, transparent); border-color: var(--border-base);
+}
+.alerts-v4 .al-chip[data-tone="critical"] { color: var(--sev-critical-text); background: var(--sev-critical-bg); border-color: var(--sev-critical-border); }
+.alerts-v4 .al-chip[data-tone="high"]     { color: var(--sev-high-text);     background: var(--sev-high-bg);     border-color: transparent; }
+.alerts-v4 .al-chip[data-tone="medium"]   { color: var(--sev-medium-text);   background: var(--sev-medium-bg);   border-color: transparent; }
+.alerts-v4 .al-chip[data-tone="ok"]       { color: var(--sev-info-text);     background: var(--sev-info-bg);     border-color: transparent; }
+.alerts-v4 .al-chip[data-tone="primary"]  { color: var(--primary-text);      background: var(--primary-tint);    border-color: var(--primary-border); }
+
+/* ── Score ──────────────────────────────────────────────────── */
+.alerts-v4 .al-score { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-tertiary); }
+.alerts-v4 .al-score--hi { color: var(--sev-high-text); }
+.alerts-v4 .al-score-big {
+  font-size: var(--type-h1-size, 24px); line-height: var(--type-h1-lh, 30px);
+  font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-secondary);
+}
+.alerts-v4 .al-score-big--hi { color: var(--sev-high-text); }
+.alerts-v4 .al-bar { width: 100%; height: 8px; border-radius: 9999px; overflow: hidden; background: var(--border-base); }
+.alerts-v4 .al-bar > span { display: block; height: 100%; border-radius: 9999px; background: var(--sev-low); }
+.alerts-v4 .al-bar > span[data-level="hi"]  { background: var(--sev-high); }
+.alerts-v4 .al-bar > span[data-level="mid"] { background: var(--sev-medium); }
+
+/* ── Row layout ─────────────────────────────────────────────── */
+.alerts-v4 .al-row-title { flex: 1 1 0; min-width: 8rem; }
+/* Fixed-basis, left-aligned meta group: its left edge sits at the same x on
+   every row (row width − basis). Neither the title (basis 0) nor the meta
+   (no shrink) depends on title length, so the severity / status slots line
+   up whatever chips a row carries. Time stays pinned right. The basis fits
+   the common row (sev + status + score + one chip + time) while leaving the
+   title most of the width (12px facelift badges need the wider basis so the
+   busiest row, incl. the overdue time, stays on one line at desktop); a row with every chip wraps its extra chips to a
+   second line instead of squeezing the title. */
+.alerts-v4 .al-row-meta {
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px;
+  flex: 0 0 min(34rem, 60%); min-width: 0; flex-wrap: wrap; row-gap: 6px;
+}
+.alerts-v4 .al-row-meta .al-time { margin-left: auto; }
+/* Fixed slots so severity / status align down the list. */
+.alerts-v4 .al-slot { display: inline-flex; align-items: center; }
+.alerts-v4 .al-slot--sev { min-width: 4.5rem; }
+.alerts-v4 .al-slot--status { min-width: 6rem; }
+
+/* Narrow container: the title takes the first line, the badges and time wrap
+   beneath it, indented to sit under the title (dot 8px + gap 12px). */
+@container alerts (max-width: 639px) {
+  .alerts-v4 .al-row { flex-wrap: wrap; row-gap: 8px; }
+  .alerts-v4 .al-row-title { flex: 1 1 calc(100% - 20px); min-width: 0; }
+  .alerts-v4 .al-row-meta {
+    flex: 1 1 100%; flex-wrap: wrap; flex-shrink: 1; gap: 6px 8px; padding-left: 20px;
+  }
+  .alerts-v4 .al-slot--sev, .alerts-v4 .al-slot--status { min-width: 0; }
+  .alerts-v4 .al-time { width: auto; margin-left: auto; }
+}
+
+/* ── Row / group interactions ───────────────────────────────── */
+.alerts-v4 .data-row {
+  transition: background-color var(--al-hover-ease), border-color var(--al-hover-ease);
+}
+/* :not(.al-row--selected) keeps the selected highlight on hover (the hover
+   rules would otherwise out-specify it in light theme). */
+:root[data-accent] .alerts-v4 .data-row:not(.al-row--selected):hover { background: var(--bg-page) !important; }
+:root[data-accent][data-theme="light"] .alerts-v4 .data-row:not(.al-row--selected):hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent) !important;
+}
+:root[data-accent] .alerts-v4 .data-row.al-row--selected { background: var(--primary-tint) !important; }
+
+.alerts-v4 .al-group-head {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 12px 16px; text-align: left; background: transparent; border: 0; cursor: pointer;
+  color: var(--text-primary);
+  transition: background-color var(--al-hover-ease);
+}
+.alerts-v4 .al-group-head:hover { background: var(--bg-page); }
+[data-theme="light"] .alerts-v4 .al-group-head:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.alerts-v4 .al-group-name {
+  font-family: var(--font-sans);
+  font-size: var(--type-body-size, 14px); line-height: var(--type-body-lh, 21px);
+  font-weight: 600; color: var(--text-primary);
+}
+.alerts-v4 .al-chevron { width: 16px; height: 16px; color: var(--text-secondary); transition: transform var(--al-hover-ease); }
+.alerts-v4 .al-chevron[data-open="true"] { transform: rotate(180deg); }
+
+/* Text-style controls (show more / pivots / delete view). */
+.alerts-v4 .al-link {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 0;
+  background: transparent; border: 0; cursor: pointer;
+  font-family: var(--font-sans);
+font-weight: 500;
+  color: var(--text-secondary); text-decoration: none;
+  transition: color var(--al-hover-ease);
+}
+.alerts-v4 .al-link:hover { color: var(--text-primary); }
+.alerts-v4 .al-link--accent { color: var(--primary-text); }
+[data-theme="light"] .alerts-v4 .al-link--accent:hover { color: var(--text-primary); }
+
+/* ── Pills (filters, saved views) ───────────────────────────── */
+.alerts-v4 .al-pillgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.alerts-v4 .al-pill {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 28px;
+  padding: 4px 10px; border-radius: 9999px; cursor: pointer;
+  font-family: var(--font-sans);
+font-weight: 500;
+  color: var(--text-secondary); background: transparent; border: 1px solid var(--border-base);
+  transition: background-color var(--al-hover-ease), border-color var(--al-hover-ease), color var(--al-hover-ease);
+}
+.alerts-v4 .al-pill:hover { color: var(--text-primary); border-color: var(--border-strong); background: var(--bg-page); }
+[data-theme="light"] .alerts-v4 .al-pill:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.alerts-v4 .al-pill[aria-pressed="true"], .alerts-v4 .al-pill[data-active="true"] {
+  color: var(--primary-text); background: var(--primary-tint); border-color: var(--primary-border);
+}
+.alerts-v4 .al-pill--dashed { border-style: dashed; }
+.alerts-v4 .al-pill:disabled { opacity: 0.5; cursor: not-allowed; }
+/* A removable saved view: the pill and its delete button share one boundary
+   (the wrapper carries the border and the pressed colours). */
+.alerts-v4 .al-pill-wrap { display: inline-flex; align-items: center; }
+.alerts-v4 .al-pill-wrap[data-removable="true"] {
+  border: 1px solid var(--border-base); border-radius: 9999px; color: var(--text-secondary);
+}
+.alerts-v4 .al-pill-wrap[data-removable="true"] .al-pill { border-color: transparent; background: transparent; }
+.alerts-v4 .al-pill-wrap[data-removable="true"]:hover { border-color: var(--border-strong); }
+.alerts-v4 .al-pill-wrap[data-removable="true"][data-active="true"] {
+  color: var(--primary-text); background: var(--primary-tint); border-color: var(--primary-border);
+}
+.alerts-v4 .al-pill-x {
+  display: inline-flex; align-items: center; justify-content: center; padding: 2px; margin: 0 6px 0 -4px;
+  background: transparent; border: 0; border-radius: 4px; cursor: pointer; color: inherit; opacity: 0.7;
+}
+.alerts-v4 .al-pill-x:hover { opacity: 1; }
+
+/* ── Notes textarea ─────────────────────────────────────────── */
+.alerts-v4 .al-textarea {
+  width: 100%; resize: none; padding: 8px 12px; border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: var(--type-small-size, 13px); line-height: var(--type-small-lh, 18px);
+  color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border-base);
+  transition: border-color var(--al-hover-ease);
+}
+.alerts-v4 .al-textarea::placeholder { color: var(--text-tertiary); }
+.alerts-v4 .al-textarea:hover { border-color: var(--border-strong); }
+
+/* ── Focus ──────────────────────────────────────────────────── */
+.alerts-v4 :is(.al-group-head, .al-link, .al-pill, .al-pill-x, .al-textarea):focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
+[data-theme="light"] .alerts-v4 :is(.al-group-head, .al-link, .al-pill, .al-pill-x, .al-textarea):focus-visible {
+  outline-color: var(--text-primary);
+}
+.alerts-v4 .al-group-head:focus-visible { outline-offset: -2px; }
+
+/* ── Queue banner eyebrow: sentence-case label, not caps ───── */
+.alerts-v4 .ds-banner-eyebrow {
+  font-family: var(--font-sans);
+  font-weight: var(--type-label-weight, 500); letter-spacing: var(--type-label-tracking, 0.01em);
+  text-transform: none;
+}
+
+/* ── Touch ──────────────────────────────────────────────────── */
+@media (pointer: coarse) {
+  .alerts-v4 .al-pill, .alerts-v4 .al-link, .alerts-v4 .al-group-head, .alerts-v4 .al-pill-x { min-height: 44px; }
+  .alerts-v4 .al-pill-x { min-width: 44px; }
+  .alerts-v4 .al-brand-link { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alerts-v4 .al-chevron, .alerts-v4 .al-pill, .alerts-v4 .al-group-head, .alerts-v4 .data-row { transition: none; }
+}

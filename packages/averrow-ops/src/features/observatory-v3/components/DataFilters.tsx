@@ -16,7 +16,8 @@ import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode,
 import { ChevronDown, Filter as FilterIcon, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ObservatorySearch } from './ObservatorySearch';
-import { FILTER_LABEL } from './ToolbarControls';
+import { BODY, FACT, LABEL } from '../lib/chrome-classes';
+import { focusInto } from '../lib/popover-focus';
 import { TYPE_OPTIONS, toggleType, type FilterChip } from '../lib/filters';
 import { rgbCss, sevText, THREAT_TYPE_COLORS } from '../lib/map-colors';
 import type { SearchData, SearchKind, SearchResult } from '../lib/search';
@@ -31,14 +32,14 @@ export const FILTERS_MUTED_NOTE = 'Applies to Threats';
 export function TypeMultiSelect({ types, onChange, touch = false }: { types: readonly string[]; onChange: (types: string[]) => void; touch?: boolean }) {
   return (
     <fieldset className="m-0 p-0 border-0 flex flex-col gap-1.5" data-filter="type">
-      <legend className={cn(FILTER_LABEL, 'p-0 mb-1.5')} style={{ color: 'var(--text-tertiary)' }}>Threat type</legend>
-      <div className={cn('grid gap-x-2 gap-y-0.5', touch ? 'grid-cols-1' : 'grid-cols-2')}>
+      <legend className={cn(LABEL, 'p-0 mb-1.5')} style={{ color: 'var(--text-secondary)' }}>Threat type</legend>
+      <div className="grid gap-x-2 gap-y-0.5" style={{ gridTemplateColumns: touch ? '1fr' : 'repeat(auto-fit, minmax(180px, 1fr))' }}>
         {TYPE_OPTIONS.map(t => {
           const on = types.includes(t.id);
           return (
             <label
               key={t.id}
-              className="ds-focusable flex items-center gap-2 rounded-md px-1.5 font-mono text-[11px] cursor-pointer"
+              className={cn('ds-focusable flex min-w-0 items-center gap-2 rounded-md px-1.5 cursor-pointer', BODY)}
               style={{ minHeight: touch ? 44 : 28, color: on ? 'var(--text-primary)' : 'var(--text-secondary)' }}
             >
               <input
@@ -49,7 +50,7 @@ export function TypeMultiSelect({ types, onChange, touch = false }: { types: rea
                 style={{ accentColor: 'var(--primary)', width: 14, height: 14 }}
               />
               <span aria-hidden className="shrink-0 rounded-full" style={{ width: 8, height: 8, background: rgbCss(THREAT_TYPE_COLORS[t.id] ?? [120, 130, 145, 255]) }} />
-              <span className="min-w-0 truncate capitalize">{t.label}</span>
+              <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{t.label}</span>
             </label>
           );
         })}
@@ -67,7 +68,7 @@ export function BrandFilter({ brand, brandName, data, onChange, onActivate, touc
 }) {
   return (
     <div className="flex flex-col gap-1.5" data-filter="brand">
-      <div className={FILTER_LABEL} style={{ color: 'var(--text-tertiary)' }}>Brand</div>
+      <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>Brand</div>
       <ObservatorySearch
         data={data}
         kinds={BRAND_ONLY}
@@ -80,7 +81,7 @@ export function BrandFilter({ brand, brandName, data, onChange, onActivate, touc
         onPick={(r: SearchResult) => { if (r.brandId) onChange({ id: r.brandId, name: r.label }); }}
       />
       <div
-        className="font-mono text-[11px]"
+        className={BODY}
         style={{ color: !brand && failed && !loading ? 'var(--sev-critical-text)' : 'var(--text-tertiary)' }}
         aria-live="polite"
         aria-busy={!brand && loading ? true : undefined}
@@ -108,7 +109,7 @@ export function DataFiltersBody({ types, brand, brandName, onTypes, onBrand, sea
 
 const GLASS: CSSProperties = {
   background: 'var(--bg-card)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-  border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)',
+  border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)',
 };
 
 /** Toolbar button + popover for the type / brand filters. `count` = how many filter values are on (all kinds). */
@@ -117,10 +118,27 @@ export function DataFiltersPopover({ count, children, touch = false, className }
   const rootRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const id = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Focus moves into the dialog on open; Escape (below) and the trigger itself hand it back.
+  useEffect(() => { if (open) focusInto(dialogRef.current); }, [open]);
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent | TouchEvent) => { if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false); };
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        // Closing must not strand focus on <body>: once the press has settled, if nothing took focus (a click on a
+        // non-focusable area), it goes back to the trigger. A focusable target (the map, another control) keeps it.
+        const hadFocusInside = !!dialogRef.current?.contains(document.activeElement);
+        setOpen(false);
+        if (hadFocusInside) {
+          setTimeout(() => {
+            const a = document.activeElement;
+            if (!a || a === document.body || dialogRef.current?.contains(a)) btnRef.current?.focus({ preventScroll: true });
+          }, 0);
+        }
+      }
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); btnRef.current?.focus(); }
     };
@@ -144,20 +162,22 @@ export function DataFiltersPopover({ count, children, touch = false, className }
         aria-haspopup="dialog"
         aria-label={count > 0 ? `Data filters: ${count} active` : 'Data filters'}
         onClick={() => setOpen(o => !o)}
-        className="ds-focusable inline-flex items-center gap-2 rounded-xl px-3 font-mono text-[11px] cursor-pointer"
+        className={cn('ds-focusable inline-flex items-center gap-2 rounded-xl px-3 cursor-pointer', LABEL)}
         style={{ ...GLASS, height: touch ? 48 : 40, color: count > 0 ? 'var(--primary-text)' : 'var(--text-secondary)' }}
       >
         <FilterIcon size={13} aria-hidden />
         <span>Filter</span>
-        {count > 0 && <span className="rounded-full px-1.5" style={{ background: 'color-mix(in srgb, var(--primary) 18%, transparent)', color: 'var(--primary-text)' }}>{count}</span>}
+        {count > 0 && <span className={cn('rounded-full px-1.5', FACT)} style={{ background: 'var(--primary-tint)', color: 'var(--primary-text)' }}>{count}</span>}
         <ChevronDown size={13} aria-hidden className={cn('shrink-0 transition-transform duration-200 motion-reduce:transition-none', open && 'rotate-180')} style={{ color: 'var(--text-tertiary)' }} />
       </button>
       <div
+        ref={dialogRef}
         id={id}
         role="dialog"
         aria-label="Data filters"
+        tabIndex={-1}
         hidden={!open}
-        className="absolute top-full right-0 mt-2 z-40 w-[min(340px,calc(100vw-24px))] max-h-[calc(100dvh-140px)] overflow-y-auto rounded-xl p-3 flex flex-col gap-3 animate-sheet-in motion-reduce:animate-none [&[hidden]]:hidden"
+        className="absolute top-full right-0 mt-2 z-40 w-[min(340px,calc(100vw-24px))] max-h-[calc(100dvh-140px)] overflow-y-auto rounded-xl p-3 flex flex-col gap-3 outline-none animate-sheet-in motion-reduce:animate-none [&[hidden]]:hidden"
         style={{ background: 'var(--bg-card-deep)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)' }}
       >
         {children}
@@ -205,7 +225,7 @@ export function FilterChips({ chips, onRemove, onClear, touch = false, className
         <span
           key={c.key}
           data-chip={c.key}
-          className="inline-flex shrink-0 items-center gap-1 rounded-full pl-2.5 pr-1 font-mono text-[11px]"
+          className={cn('inline-flex shrink-0 items-center gap-1 rounded-full pl-2.5 pr-1', BODY)}
           style={{
             ...pill, opacity: muted ? 0.55 : 1,
             color: c.kind === 'sev' ? sevText(c.value) : 'var(--text-primary)',
@@ -231,7 +251,7 @@ export function FilterChips({ chips, onRemove, onClear, touch = false, className
           aria-expanded={false}
           aria-label={`Show ${hidden} more active filter${hidden === 1 ? '' : 's'}`}
           onClick={() => setExpanded(true)}
-          className="ds-focusable shrink-0 rounded-full px-2.5 font-mono text-[11px]"
+          className={cn('ds-focusable shrink-0 rounded-full px-2.5', FACT)}
           style={{ ...pill, color: 'var(--primary-text)', cursor: 'pointer', opacity: muted ? 0.55 : 1 }}
         >
           +{hidden}
@@ -242,7 +262,7 @@ export function FilterChips({ chips, onRemove, onClear, touch = false, className
           type="button"
           aria-expanded
           onClick={() => setExpanded(false)}
-          className="ds-focusable shrink-0 rounded-full px-2.5 font-mono text-[11px]"
+          className={cn('ds-focusable shrink-0 rounded-full px-2.5', BODY)}
           style={{ ...pill, color: 'var(--text-secondary)', cursor: 'pointer' }}
         >
           Show less
@@ -252,14 +272,14 @@ export function FilterChips({ chips, onRemove, onClear, touch = false, className
         <button
           type="button"
           onClick={onClear}
-          className="ds-focusable shrink-0 rounded-full px-2.5 font-mono text-[11px]"
+          className={cn('ds-focusable shrink-0 rounded-full px-2.5', BODY)}
           style={{ ...pill, color: 'var(--text-secondary)', cursor: 'pointer' }}
         >
           Clear all
         </button>
       )}
       {muted && mutedNote && (
-        <span data-chip-note className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 font-mono text-[11px]" style={{ ...pill, color: 'var(--text-secondary)' }}>{mutedNote}</span>
+        <span data-chip-note className={cn('inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5', BODY)} style={{ ...pill, color: 'var(--text-secondary)' }}>{mutedNote}</span>
       )}
     </div>
   );

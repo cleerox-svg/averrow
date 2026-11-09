@@ -13,6 +13,7 @@
  *    the map); the globe draws the lifted great circle (layers/lens-layers.ts).
  */
 
+import { sentenceCase } from '@/lib/sentence-case';
 import type { ComponentGeo, OperationGeo } from '@/hooks/useObservatoryLenses';
 import { cumulativeDistances } from '../../anim/dash-flow-extension';
 import { phaseForKey } from '../../anim/pulse';
@@ -78,22 +79,22 @@ export interface OperationsModel {
 }
 
 export const KIND_LABELS: Record<string, string> = {
-  cert: 'shared cert',
-  cert_serial: 'shared cert serial',
-  cert_san: 'shared cert SAN',
-  per_ip: 'shared IP',
-  ip: 'shared IP',
-  subnet: 'same subnet',
-  registrar: 'same registrar',
-  asn: 'same ASN',
-  app_store: 'app store',
-  dark_web: 'dark web',
-  residue: 'weak evidence',
-  other: 'linked',
+  cert: 'Shared cert',
+  cert_serial: 'Shared cert serial',
+  cert_san: 'Shared cert SAN',
+  per_ip: 'Shared IP',
+  ip: 'Shared IP',
+  subnet: 'Same subnet',
+  registrar: 'Same registrar',
+  asn: 'Same ASN',
+  app_store: 'App store',
+  dark_web: 'Dark web',
+  residue: 'Weak evidence',
+  other: 'Linked',
 };
 
 export function kindLabel(kind: string): string {
-  return KIND_LABELS[kind] ?? kind.replace(/_/g, ' ');
+  return KIND_LABELS[kind] ?? sentenceCase(kind.replace(/_/g, ' '));
 }
 
 /** Confidence arrives 0..100 (or 0..1): normalise to 0..1, null stays null. */
@@ -104,11 +105,11 @@ export function normalizeConfidence(v: number | null | undefined): number | null
 }
 
 /**
- * Label for an edge; an unresolved (null) kind falls back to "linked". The shared ASNs are listed only when the
+ * Label for an edge; an unresolved (null) kind falls back to "Linked". The shared ASNs are listed only when the
  * evidence IS the ASN (a cert or IP link has ASNs too, but they are not why the countries are joined).
  */
 export function edgeLabel(kind: string | null, asns: readonly string[]): string {
-  const base = kind === null ? 'linked' : kindLabel(kind);
+  const base = kind === null ? 'Linked' : kindLabel(kind);
   if (kind !== 'asn' || asns.length === 0) return base;
   const shown = asns.slice(0, 2).join(' ');
   return `${base} · ${shown}${asns.length > 2 ? ` +${asns.length - 2}` : ''}`;

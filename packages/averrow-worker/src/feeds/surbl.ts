@@ -1,6 +1,8 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import type { Env } from "../types";
 import { logger } from "../lib/logger";
+import { withIndexHintFallback } from "../lib/indexed-by-fallback";
+import { SURBL_WORK_SELECT_SQL } from "../lib/threat-rescan-predicates";
 
 /**
  * SURBL — DNS-based domain reputation checks.
@@ -117,14 +119,12 @@ export const surbl: FeedModule = {
     const { env } = ctx;
 
     // Query recent threats with unchecked domains (last 7 days, limit 200)
-    const unchecked = await env.DB.prepare(`
-      SELECT DISTINCT malicious_domain FROM threats
-      WHERE surbl_checked = 0
-        AND malicious_domain IS NOT NULL
-        AND malicious_domain != ''
-        AND created_at > datetime('now', '-7 days')
-      LIMIT 200
-    `).all<{ malicious_domain: string }>();
+    // Seeks the partial index idx_threats_surbl_pending (migration 0322)
+    // over unchecked rows only; was ~426K rows/call through
+    // idx_threats_domain. Same WHERE as before, shared with Flight
+    // Control's backlog count (lib/threat-rescan-predicates.ts).
+    const unchecked = await withIndexHintFallback(SURBL_WORK_SELECT_SQL, (q) =>
+      env.DB.prepare(q).all<{ malicious_domain: string }>());
 
     const domains = unchecked.results;
     let itemsFetched = 0;

@@ -10,6 +10,7 @@
  * null and the caller drops the dead key.
  */
 
+import { typeDisplayLabel } from './map-colors';
 import type { ArcData, ThreatPoint } from '@/hooks/useObservatory';
 import type {
   ActorListItem, CampaignGeo, Movement, OperationGeo, OverindexRow, ProviderGeo, TakedownGeoRow,
@@ -143,7 +144,7 @@ export function drillFromMapSelection(s: MapSelection): DrillTarget {
 export function drillTitle(t: DrillTarget): string {
   switch (t.kind) {
     case 'node': return `${t.node.threat_count.toLocaleString()} threat${t.node.threat_count === 1 ? '' : 's'}`;
-    case 'arc': return (t.arc.threat_type ?? '').replace(/_/g, ' ') || 'Threat corridor';
+    case 'arc': return typeDisplayLabel(t.arc.threat_type) || 'Threat corridor';
     case 'country': return countryName(t.code) || t.code;
     case 'operation': return t.op?.name ?? `Operation ${t.id}`;
     case 'provider': return t.provider?.name ?? 'Hosting provider';

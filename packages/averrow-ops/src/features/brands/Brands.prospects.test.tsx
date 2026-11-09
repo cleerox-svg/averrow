@@ -33,13 +33,13 @@ describe('Brands prospects role gating', () => {
     mocks.role = role;
     renderWithProviders(<BrandsV3 />);
     await new Promise((r) => setTimeout(r, 30));
-    expect(screen.queryByRole('button', { name: /Prospects/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Prospects/ })).not.toBeInTheDocument();
     expect(get.mock.calls.filter((c) => String(c[0]).includes('/api/admin/brand-candidates'))).toEqual([]);
   });
 
   it.each(['admin', 'super_admin'])('%s sees the Prospects tab', async (role) => {
     mocks.role = role;
     renderWithProviders(<BrandsV3 />);
-    expect(await screen.findByRole('button', { name: /Prospects/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /Prospects/ })).toBeInTheDocument();
   });
 });

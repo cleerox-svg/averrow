@@ -59,6 +59,7 @@ import {
   asnKeySql,
 } from "./shared-infra-asns";
 import { DEFAULT_HUB_FANOUT_THRESHOLD } from "./cluster-components";
+import { withIndexHintFallback } from "./indexed-by-fallback";
 import { buildDormancyPivotPayload } from "./cluster-infra-movement";
 import {
   slugifyKey,
@@ -670,9 +671,37 @@ export async function runPerIpLane(db: D1Database): Promise<LaneResult> {
 // Bogon / private ranges are excluded too. distinct_ips >= 2 distinguishes
 // it from the per-IP lane; brand_count <= hub threshold is the over-merge
 // guard.
+//
+// Read path (migration 0323). The SELECT groups by SUBNET24_KEY_SQL under
+// SUBNET24_IPV4_SQL instead of naming the ip_subnet24 column: those are
+// ip_subnet24's own value expression and its non-NULL condition (0235), so
+// the groups are identical, but an index on a VIRTUAL generated column is
+// never covering in SQLite. Grouping by the expression lets the lane walk
+// the covering partial index idx_threats_subnet_lane (active, IP-bearing,
+// brand-attributed rows only; pinned with INDEXED BY, unhinted fallback via
+// withIndexHintFallback) in group order with no table lookups. It used to
+// walk idx_threats_subnet24 — every IPv4 row of any status — with a lookup
+// per entry (~1.34M rows read per call in prod). The stamp keeps its
+// `ip_subnet24 = ?` seek on idx_threats_subnet24.
+
+/**
+ * ip_subnet24's value expression (migration 0235) — also the key of
+ * idx_threats_subnet_lane (0323). Must stay byte-identical to both
+ * (test/nexus-lane-covering-indexes.test.ts).
+ */
+export const SUBNET24_KEY_SQL = "rtrim(ip_address, '0123456789')";
+
+/**
+ * The condition under which ip_subnet24 (0235) is non-NULL, written as
+ * separate terms so `ip_address IS NOT NULL` matches the partial WHERE of
+ * idx_threats_subnet_lane.
+ */
+export const SUBNET24_IPV4_SQL = `ip_address IS NOT NULL
+         AND ip_address NOT LIKE '%:%'
+         AND ip_address NOT IN ('', '0.0.0.0')`;
 
 export const SUBNET_LANE_SQL = `
-      SELECT ip_subnet24                            AS subnet24,
+      SELECT ${SUBNET24_KEY_SQL}       AS subnet24,
              COUNT(*)                               AS threat_count,
              COUNT(DISTINCT ip_address)             AS distinct_ips,
              COUNT(DISTINCT target_brand_id)        AS brand_count,
@@ -682,13 +711,13 @@ export const SUBNET_LANE_SQL = `
              GROUP_CONCAT(DISTINCT threat_type)     AS attack_types,
              MIN(first_seen)                        AS first_seen,
              MAX(first_seen)                        AS last_seen
-        FROM threats
+        FROM threats INDEXED BY idx_threats_subnet_lane
        WHERE status = 'active'
-         AND ip_subnet24 IS NOT NULL
+         AND ${SUBNET24_IPV4_SQL}
          AND ${NOT_BOGON_IP_SQL}
          AND target_brand_id IS NOT NULL
          AND ${NOT_SHARED_ASN_SQL}
-       GROUP BY ip_subnet24
+       GROUP BY ${SUBNET24_KEY_SQL}
       HAVING distinct_ips >= 2 AND brand_count >= 3 AND threat_count >= 8 AND brand_count <= ?
        ORDER BY brand_count DESC, threat_count DESC
        LIMIT 50`;
@@ -705,7 +734,7 @@ export function computeSubnetConfidence(brandCount: number): number {
 }
 
 export async function runSubnetLane(db: D1Database): Promise<LaneResult> {
-  const rows = (await db.prepare(SUBNET_LANE_SQL).bind(DEFAULT_HUB_FANOUT_THRESHOLD).all<{
+  const rows = (await withIndexHintFallback(SUBNET_LANE_SQL, (sql) => db.prepare(sql).bind(DEFAULT_HUB_FANOUT_THRESHOLD).all<{
     subnet24: string;
     threat_count: number;
     distinct_ips: number;
@@ -716,7 +745,7 @@ export async function runSubnetLane(db: D1Database): Promise<LaneResult> {
     attack_types: string | null;
     first_seen: string | null;
     last_seen: string | null;
-  }>()).results ?? [];
+  }>())).results ?? [];
   const out: LaneResult = { clustersWritten: 0, analyzed: rows.length, writeErrors: 0 };
   for (const row of rows) {
     if (row.brand_count > DEFAULT_HUB_FANOUT_THRESHOLD) continue; // belt-and-braces (HAVING caps)
@@ -861,6 +890,18 @@ export async function runRegistrarLane(db: D1Database): Promise<LaneResult> {
 // key is the NORMALISED ASN; the stamp matches the raw asn spellings that
 // normalise to it (`asn IN (…)`, index-backed by (asn, threat_type)).
 //
+// Read path (migration 0323): idx_threats_asn_lane is a covering partial
+// index keyed on (asnKeySql(asn), threat_type, …) — the same ASN_NORM_SQL
+// text this query groups by — pinned with INDEXED BY, so the SELECT is one
+// ordered walk over active, ASN-bearing, non-IP-reputation rows with no
+// table lookups and no temp b-tree for the GROUP BY. It used to drive
+// idx_threats_status_created with a lookup per active row (~2.28M rows read
+// per call in prod). Keep the inner WHERE terms and ASN_NORM_SQL as they
+// are: the planner matches the index's partial WHERE and key expression
+// against them. If they drift (or the index is missing) the hint errors and
+// withIndexHintFallback re-runs the query unhinted — correct, just
+// expensive; test/nexus-lane-covering-indexes.test.ts fails first.
+//
 // Skipped: shared-infra ASNs of either kind, IP-reputation types, NULL / ''
 // types (a '' type slugs to `_unknown`, which the retire pass supersedes as a
 // missing type — the lane would reactivate it every run), and any group whose
@@ -885,7 +926,7 @@ export const ASN_LANE_SQL = `
         FROM (
           SELECT ${ASN_NORM_SQL} AS asn_norm, asn AS asn_raw, threat_type,
                  campaign_id, target_brand_id, country_code, hosting_provider_id, first_seen
-            FROM threats
+            FROM threats INDEXED BY idx_threats_asn_lane
            WHERE status = 'active'
              AND asn IS NOT NULL
              AND threat_type IS NOT NULL
@@ -928,7 +969,7 @@ export interface AsnLaneResult extends LaneResult {
 }
 
 export async function runAsnLane(db: D1Database): Promise<AsnLaneResult> {
-  const rows = (await db.prepare(ASN_LANE_SQL).bind(ASN_MAX_BRAND_FANOUT).all<{
+  const rows = (await withIndexHintFallback(ASN_LANE_SQL, (sql) => db.prepare(sql).bind(ASN_MAX_BRAND_FANOUT).all<{
     asn: string;
     threat_type: string;
     campaigns: number;
@@ -942,7 +983,7 @@ export async function runAsnLane(db: D1Database): Promise<AsnLaneResult> {
     last_seen: string | null;
     last_7d: number;
     prev_7d: number;
-  }>()).results ?? [];
+  }>())).results ?? [];
   const out: AsnLaneResult = {
     clustersWritten: 0, analyzed: rows.length, writeErrors: 0,
     pivotsDetected: 0, accelerating: 0, clusters: [],

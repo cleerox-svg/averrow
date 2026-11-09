@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { Search, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { BODY, COARSE_TARGET, FACT, LABEL } from '../lib/chrome-classes';
 import { buildSearchIndex, runSearch, kindNoun, type SearchData, type SearchKind, type SearchResult } from '../lib/search';
 
 export interface ObservatorySearchProps {
@@ -90,6 +91,9 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
     };
   }, [open, popover]);
 
+  // The phone's inline field is mounted when its toggle opens it: focus goes straight into it.
+  useEffect(() => { if (inline) inputRef.current?.focus({ preventScroll: true }); }, [inline]);
+
   // The popover input takes focus as it opens.
   useEffect(() => { if (popover) inputRef.current?.focus(); }, [popover]);
 
@@ -136,7 +140,8 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
 
   const field = (
     <div
-      className="flex items-center gap-2 rounded-xl px-3"
+      // The ring sits on the wrapper: the input is borderless inside it, so its own outline would be clipped by the field.
+      className="flex items-center gap-2 rounded-xl px-3 focus-within:[outline:2px_solid_var(--focus-ring)] focus-within:outline-offset-2"
       style={{
         background: 'var(--card-bg, var(--bg-card))',
         border: '1px solid var(--border-base)',
@@ -163,7 +168,7 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
         onChange={e => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => { setOpen(true); activate(); }}
         onKeyDown={onKeyDown}
-        className="flex-1 min-w-0 bg-transparent outline-none font-mono text-[11px] ds-focusable"
+        className={cn('flex-1 min-w-0 bg-transparent outline-none', BODY)}
         style={{ color: 'var(--text-primary)', border: 'none' }}
       />
       {query && (
@@ -171,8 +176,8 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
           type="button"
           aria-label="Clear search"
           onClick={() => { setQuery(''); inputRef.current?.focus(); }}
-          className="ds-focusable inline-flex items-center justify-center shrink-0"
-          style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', minWidth: touch ? 32 : 20, minHeight: touch ? 32 : 20 }}
+          className={cn('ds-focusable inline-flex items-center justify-center shrink-0', touch ? 'min-w-8 min-h-8' : 'min-w-5 min-h-5', COARSE_TARGET)}
+          style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
         >
           <X size={12} />
         </button>
@@ -191,14 +196,14 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
         style={{
           background: 'var(--bg-elevated)',
           border: '1px solid var(--border-base)',
-          boxShadow: 'var(--card-shadow)',
+          boxShadow: 'var(--card-shadow-elevated)',
           zIndex: 60,
           maxHeight: 320,
           overflowY: 'auto',
         }}
       >
         {results.length === 0 ? (
-          <li role="presentation" className="px-3 py-2 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+          <li role="presentation" className={cn('px-3 py-2', BODY)} style={{ color: 'var(--text-tertiary)' }}>
             Nothing loaded matches &ldquo;{query.trim()}&rdquo;
           </li>
         ) : results.map((r, i) => (
@@ -217,14 +222,14 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
             }}
           >
             <span
-              className="font-mono text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5 shrink-0"
+              className={cn('rounded px-1.5 py-0.5 shrink-0', LABEL)}
               style={{ border: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}
             >
               {kindNoun(r.kind)}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-xs truncate" style={{ color: 'var(--text-primary)' }}>{r.label}</span>
-              {r.sublabel && <span className="block font-mono text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{r.sublabel}</span>}
+              <span className={cn('block truncate', BODY)} style={{ color: 'var(--text-primary)' }}>{r.label}</span>
+              {r.sublabel && <span className={cn('block truncate', FACT)} style={{ color: 'var(--text-muted)' }}>{r.sublabel}</span>}
             </span>
           </li>
         ))}
@@ -250,7 +255,7 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
           style={{
             width: touch ? 44 : 40, height: touch ? 44 : 40,
             background: 'var(--bg-card)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-            border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)',
+            border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)',
             color: popover ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer',
           }}
         >

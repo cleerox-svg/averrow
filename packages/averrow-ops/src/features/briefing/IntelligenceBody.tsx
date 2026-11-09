@@ -13,7 +13,9 @@ import { Badge } from '@/design-system/components';
 import { relativeTime } from '@/lib/time';
 import { parseIdList, splitBriefing, truncateText } from '@/lib/briefing-text';
 import { tabUrl } from '@/lib/workspaceRoutes';
+import { HOME_CARD_VARIANT } from '@/features/home/homeCard';
 import { BriefingShell } from './BriefingShell';
+import './briefing.css';
 
 const BODY_PREVIEW = 420;
 const MAX_CHIPS_PER_KIND = 3;
@@ -69,21 +71,18 @@ function SourceChips({ briefing }: { briefing: IntelligenceBriefing }) {
   if (chips.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5" aria-label="Sources">
-      <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
-        Sources
-      </span>
+      <span className="text-type-label" style={{ color: 'var(--text-tertiary)' }}>Sources</span>
       {chips.map((c) => (
         <Link
           key={c.key}
           to={c.to}
-          className="rounded px-2 py-1 font-mono text-[10px] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
-          style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}
+          className="briefing-chip"
         >
           {c.label}
         </Link>
       ))}
       {more > 0 && (
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>+{more} more</span>
+        <span className="text-[12px] leading-4 tabular-nums" style={{ color: 'var(--text-secondary)' }}>+{more} more</span>
       )}
     </div>
   );
@@ -103,7 +102,7 @@ export function IntelligenceBriefingBody() {
     <BriefingShell
       source="intelligence"
       title="Daily briefing"
-      eyebrow={<Badge status="active" label="Observer" size="xs" />}
+      eyebrow={<Badge status="active" label="Observer" size="md" font="sans" />}
       generatedAt={latest?.created_at}
       status={status}
       onRetry={() => { void refetch(); }}
@@ -111,12 +110,13 @@ export function IntelligenceBriefingBody() {
       emptyTitle="No briefing generated yet"
       emptyDescription="Observer publishes a briefing as threat data accumulates."
       loadingTitle="Loading the daily briefing…"
+      cardVariant={HOME_CARD_VARIANT}
     >
       {latest && (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            {sev && <Badge severity={sev} size="xs" />}
-            <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+            {sev && <Badge severity={sev} size="md" font="sans" />}
+            <span className="font-mono text-[12px] leading-4" style={{ color: 'var(--text-secondary)' }}>
               {relativeTime(latest.created_at)}
             </span>
           </div>
@@ -130,7 +130,7 @@ export function IntelligenceBriefingBody() {
               </p>
               {body.length > BODY_PREVIEW && (
                 <details className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                  <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-widest focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]" style={{ color: 'var(--primary-text)' }}>
+                  <summary className="briefing-link cursor-pointer" style={{ color: 'var(--primary-text)' }}>
                     Read full briefing
                   </summary>
                   <div className="mt-2 whitespace-pre-wrap leading-relaxed">{body}</div>
@@ -141,7 +141,7 @@ export function IntelligenceBriefingBody() {
           <SourceChips briefing={latest} />
           <Link
             to={tabUrl('trends')}
-            className="font-mono text-[10px] uppercase tracking-widest hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
+            className="briefing-link"
             style={{ color: 'var(--primary-text)' }}
           >
             View all briefings →

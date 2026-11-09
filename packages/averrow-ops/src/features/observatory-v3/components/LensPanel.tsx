@@ -12,6 +12,7 @@ import type { DrillTarget } from '../lib/drill';
 import { LENS_DEFS, type LensId } from '../lib/lenses';
 import { Badge } from '@/design-system/components';
 import type { PanelSection } from '../lib/panel-rows';
+import { BODY, COARSE_TARGET, FACT_STRONG, LABEL } from '../lib/chrome-classes';
 
 export interface LensPanelProps {
   lens: LensId;
@@ -38,9 +39,9 @@ function LinkedGlyph() {
   return (
     <span className="inline-flex shrink-0" title="Links drawn on the map">
       <svg width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false">
-        <line x1="3" y1="5" x2="13" y2="5" stroke="var(--cyan-text, #7aeaff)" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
-        <circle cx="2.5" cy="5" r="2" fill="var(--cyan-text, #7aeaff)" />
-        <circle cx="13.5" cy="5" r="2" fill="var(--cyan-text, #7aeaff)" />
+        <line x1="3" y1="5" x2="13" y2="5" stroke="var(--cyan-text)" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
+        <circle cx="2.5" cy="5" r="2" fill="var(--cyan-text)" />
+        <circle cx="13.5" cy="5" r="2" fill="var(--cyan-text)" />
       </svg>
       <span className="sr-only">links drawn on the map</span>
     </span>
@@ -56,23 +57,23 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
   const body = (
     <div className="flex flex-col gap-3 px-4 pb-4 pt-3">
       <div>
-        <div className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>{def.label}</div>
-        <p className="m-0 mt-1 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{question ?? def.question}</p>
-        {note && <p role="status" className="m-0 mt-1.5 font-mono text-[11px]" style={{ color: 'var(--amber-text)' }}>{note}</p>}
+        <div className={LABEL} style={{ color: 'var(--text-secondary)' }}>{def.label}</div>
+        <p className={`m-0 mt-1 ${BODY}`} style={{ color: 'var(--text-tertiary)' }}>{question ?? def.question}</p>
+        {note && <p role="status" className={`m-0 mt-1.5 ${BODY}`} style={{ color: 'var(--amber-text)' }}>{note}</p>}
       </div>
       <section aria-label={section.title} className="flex flex-col">
-        <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] m-0 mb-2" style={{ color: 'var(--text-tertiary)' }}>
+        <h2 className={`${LABEL} m-0 mb-2`} style={{ color: 'var(--text-secondary)' }}>
           {section.title}{section.rows.length > 0 ? ` · ${section.rows.length}` : ''}
         </h2>
         {error && section.rows.length === 0 ? (
           <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1.5 rounded" style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}>
-            <span className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>Failed to load</span>
-            <button type="button" onClick={onRetry} className="ds-focusable font-mono text-[11px] font-bold uppercase" style={{ background: 'none', border: 'none', color: 'var(--sev-critical-text)', cursor: 'pointer', padding: 0 }}>Retry</button>
+            <span className={BODY} style={{ color: 'var(--sev-critical-text)' }}>Failed to load</span>
+            <button type="button" onClick={onRetry} className={`ds-focusable inline-flex items-center ${LABEL} ${COARSE_TARGET}`} style={{ background: 'none', border: 'none', color: 'var(--sev-critical-text)', cursor: 'pointer', padding: 0 }}>Retry</button>
           </div>
         ) : loading && section.rows.length === 0 ? (
-          <div role="status" className="font-mono text-[11px] py-2" style={{ color: 'var(--text-muted)' }}>Loading…</div>
+          <div role="status" className={`${BODY} py-2`} style={{ color: 'var(--text-muted)' }}>Loading…</div>
         ) : section.rows.length === 0 ? (
-          <div className="font-mono text-[11px] py-2" style={{ color: 'var(--text-muted)' }}>{section.empty}</div>
+          <div className={`${BODY} py-2`} style={{ color: 'var(--text-muted)' }}>{section.empty}</div>
         ) : (
           <ul className="list-none p-0 m-0 flex flex-col">
             {section.rows.map(row => {
@@ -83,12 +84,12 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
                       {row.linked && <LinkedGlyph />}
                       <span className="block text-xs font-medium truncate min-w-0" style={{ color: 'var(--text-primary)' }}>{row.primary}</span>
                       {/* The tier badge never truncates: the NAME gives way, so the evidence stays readable. */}
-                      {row.badge && <span className="shrink-0"><Badge context="nexus" size="xs" label={row.badge} /></span>}
+                      {row.badge && <span className="shrink-0"><Badge verdict="stable" size="md" font="sans" label={row.badge} /></span>}
                     </span>
-                    {row.secondary && <span className="block font-mono text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>{row.secondary}</span>}
+                    {row.secondary && <span className={`block ${BODY} truncate mt-0.5`} style={{ color: 'var(--text-muted)' }}>{row.secondary}</span>}
                   </span>
                   {row.trailing && (
-                    <span className="font-mono text-xs font-bold tabular-nums shrink-0" style={{ color: TONE[row.tone ?? 'neutral'] }}>{row.trailing}</span>
+                    <span className={`${FACT_STRONG} tabular-nums shrink-0`} style={{ color: TONE[row.tone ?? 'neutral'] }}>{row.trailing}</span>
                   )}
                 </>
               );
@@ -102,7 +103,7 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
                       onMouseLeave={onPreview ? () => onPreview(null) : undefined}
                       onFocus={onPreview ? () => onPreview(row.target!) : undefined}
                       onBlur={onPreview ? () => onPreview(null) : undefined}
-                      className="ds-focusable w-full flex items-center gap-3 rounded-md px-1.5 py-1.5 min-h-[44px] sm:min-h-[40px] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] transition-colors motion-reduce:transition-none"
+                      className="ds-focusable w-full flex items-center gap-3 rounded-md px-1.5 py-1.5 min-h-[40px] [@media(pointer:coarse)]:min-h-[44px] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] transition-colors motion-reduce:transition-none"
                       style={{ background: 'none', border: 'none', cursor: 'pointer' }}
                     >
                       {inner}
@@ -114,7 +115,7 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
               );
             })}
             {section.more !== undefined && section.more > 0 && (
-              <li className="font-mono text-[11px] px-1.5 py-1.5" style={{ color: 'var(--text-muted)' }}>
+              <li className={`${BODY} px-1.5 py-1.5`} style={{ color: 'var(--text-muted)' }}>
                 {`+${section.more.toLocaleString()} more — search or filter`}
               </li>
             )}

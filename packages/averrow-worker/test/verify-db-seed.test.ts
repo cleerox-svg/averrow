@@ -14,7 +14,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { runQuery, type ExecFn } from "../scripts/verify-db-seed";
+import { runQuery, ASSERTIONS, type ExecFn } from "../scripts/verify-db-seed";
+import { hasSqlite, openMigratedDb } from "./sqlite-d1-harness";
 
 const VALID_N1 = JSON.stringify([{ results: [{ n: 1 }] }]);
 const VALID_N0 = JSON.stringify([{ results: [{ n: 0 }] }]);
@@ -73,5 +74,46 @@ describe("verify-db-seed runQuery retry resilience", () => {
     // hide it by re-querying.
     expect(got).toBe(0);
     expect(exec).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── Assertion query cost (2026-11-09 deploy block) ──────────────────
+// `SELECT COUNT(*) AS n FROM threat_cube_arcs` timed out 3x against a busy
+// prod D1 and blocked a deploy. Presence checks on big tables must be O(1)
+// EXISTS probes; an unfiltered COUNT(*) over a whole table is never allowed.
+
+describe("verify-db-seed assertion queries stay O(1) on big tables", () => {
+  it("no assertion is an unfiltered COUNT(*) over a whole table", () => {
+    for (const a of ASSERTIONS) {
+      expect(a.query, a.label).not.toMatch(/^SELECT\s+COUNT\(\*\)\s+AS\s+n\s+FROM\s+\w+\s*$/i);
+    }
+  });
+
+  it("every exact-count assertion is filtered (WHERE) — small seed sets only", () => {
+    for (const a of ASSERTIONS.filter((x) => /COUNT\(\*\)/i.test(x.query))) {
+      expect(a.query, a.label).toMatch(/\bWHERE\b/i);
+    }
+  });
+
+  it("threat_cube_arcs presence is an EXISTS probe with min 1", () => {
+    const arcs = ASSERTIONS.filter((a) => /threat_cube_arcs/.test(a.query));
+    expect(arcs).toHaveLength(1);
+    expect(arcs[0]!.query).toBe("SELECT EXISTS(SELECT 1 FROM threat_cube_arcs LIMIT 1) AS n");
+    expect(arcs[0]!.min).toBe(1);
+  });
+
+  it.skipIf(!hasSqlite())("the EXISTS probe returns n = 0 on an empty cube and n = 1 once a row lands", () => {
+    const db = openMigratedDb();
+    const q = ASSERTIONS.find((a) => /threat_cube_arcs/.test(a.query))!.query;
+    db.prepare("DELETE FROM threat_cube_arcs").run();
+    expect((db.prepare(q).all()[0] as { n: number }).n).toBe(0);
+    const required = (db.prepare("PRAGMA table_info(threat_cube_arcs)").all() as Array<{
+      name: string; type: string; notnull: number; dflt_value: unknown;
+    }>).filter((c) => c.notnull === 1 && c.dflt_value === null);
+    const cols = required.map((c) => c.name).join(", ");
+    const marks = required.map(() => "?").join(", ");
+    db.prepare(`INSERT INTO threat_cube_arcs (${cols}) VALUES (${marks})`)
+      .run(...required.map((c) => (/INT|REAL|NUM/i.test(c.type) ? 0 : "x")));
+    expect((db.prepare(q).all()[0] as { n: number }).n).toBe(1);
   });
 });

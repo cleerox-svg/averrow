@@ -81,6 +81,13 @@ export function Tabs({
     return () => { el.removeEventListener('scroll', update); ro?.disconnect(); };
   }, [tabs.length, variant]);
 
+  // A deep link (?tab=bot-traffic on a phone) can select a tab that starts off-screen in the scroller:
+  // bring it into view, instantly (no animation), without moving the page.
+  React.useEffect(() => {
+    const el = refs.current.get(activeTab);
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [activeTab]);
+
   const focusTab = (id: string) => {
     setRovingId(id);
     refs.current.get(id)?.focus();
