@@ -225,3 +225,22 @@ describe('shared Tabs size', () => {
     expect(sm.className).toMatch(/text-\[(10|11)px\]/);
   });
 });
+
+describe('shared Tabs: selected tab is brought into view', () => {
+  it('scrolls the selected tab into view (instant, nearest) on mount and when the selection changes', () => {
+    const spy = vi.fn();
+    const saved = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = spy;
+    try {
+      const { rerender } = render(<Tabs aria-label="S" variant="underline" tabs={TABS} activeTab="three" onChange={() => {}} />);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenLastCalledWith({ inline: 'nearest', block: 'nearest' });
+      expect(spy.mock.instances[0]).toBe(screen.getByRole('tab', { name: /^Three/ }));
+      rerender(<Tabs aria-label="S" variant="underline" tabs={TABS} activeTab="one" onChange={() => {}} />);
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy.mock.instances[1]).toBe(screen.getByRole('tab', { name: /^One/ }));
+    } finally {
+      Element.prototype.scrollIntoView = saved;
+    }
+  });
+});
