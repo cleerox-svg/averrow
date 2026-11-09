@@ -137,11 +137,13 @@ describe('preloadRouteForPath with hostile ?tab= values', () => {
       await new Promise(r => setTimeout(r, 0));
     });
 
-  it('booting directly on /v2/console?tab=toString does not break App module evaluation', async () => {
+  it('importing App starts no preload (the boot call lives in main.tsx)', async () => {
     vi.resetModules();
-    vi.doUnmock('@/features/console/tabLoaders');
-    window.history.pushState({}, '', '/v2/console?tab=toString');
-    await expect(import('@/App')).resolves.toBeDefined();
+    registerMocks();
+    window.history.pushState({}, '', '/v2/console?tab=threats');
+    loaded.length = 0;
+    await import('@/App');
     await new Promise(r => setTimeout(r, 0));
+    expect(loaded).toEqual([]);
   });
 });

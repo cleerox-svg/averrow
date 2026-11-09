@@ -8,7 +8,7 @@ import { ToastProvider } from '@/components/ui/Toast';
 import { registerServiceWorker, captureInstallPrompt } from '@/lib/pwa';
 import { bootstrapTheme } from '@/design-system/hooks/useTheme';
 import { bootstrapAppearance } from '@averrow/shared/theme';
-import App from '@/App';
+import App, { preloadRouteForPath } from '@/App';
 import '@/index.css';
 
 // Apply persisted theme synchronously, before React mounts. Without
@@ -21,6 +21,16 @@ bootstrapAppearance(); // accent/base attributes (no-op in the legacy look)
 
 // Catch Chrome's one-shot `beforeinstallprompt` before any lazy route mounts.
 captureInstallPrompt();
+
+// Start the current route's (and workspace tab's) lazy chunk now, in parallel
+// with the auth round-trip, instead of after auth settles. Called here, at the
+// browser entry, rather than at App.tsx module scope so importing App (tests)
+// never starts module loads. An optimisation only: it must never throw.
+try {
+  preloadRouteForPath(window.location.pathname, window.location.search);
+} catch {
+  /* the route's React.lazy loads it on render instead */
+}
 
 const queryClient = createAppQueryClient();
 
