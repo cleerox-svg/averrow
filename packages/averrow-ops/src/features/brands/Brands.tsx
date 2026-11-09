@@ -218,7 +218,7 @@ function IntelTab({ canReview, onViewProspects }: { canReview: boolean; onViewPr
           data={postureAgg?.health_score_buckets}
           tone="ok"
           status={postureS}
-          subtitle={postureAgg ? `${formatNumber(postureAgg.total_scored)} brands scored` : 'Awaiting daily snapshot'}
+          subtitle={typeof postureAgg?.total_scored === 'number' ? `${formatNumber(postureAgg.total_scored)} brands scored` : 'Awaiting daily snapshot'}
         />
         <ScoreBucketCard
           title="Brand-Exposure distribution"
@@ -392,7 +392,7 @@ function SectorDonut({ breakdown, totalTracked, status }: {
         <SectionLabel>Sector mix</SectionLabel>
         <div className="mt-3 flex items-center justify-center" style={{ height: 160 }}>
           <span className="text-xs text-[var(--text-tertiary)]">
-            Sector classification pending for {formatNumber(totalTracked)} brands
+            {Number(totalTracked) > 0 ? `Sector classification pending for ${formatNumber(totalTracked)} brands` : 'No sector data yet'}
           </span>
         </div>
       </Card>
@@ -609,7 +609,7 @@ function MoversCard({ title, rows: rawRows, tone, emptyMsg, loading, status }: {
   const accent = tone === 'crit' ? 'var(--sev-critical)' : 'var(--green)';
   // Bar widths relative to the largest abs delta in this card's set
   const maxDelta = rows.length > 0
-    ? Math.max(...rows.slice(0, 5).map(r => Math.abs(r.delta_7d)), 1)
+    ? Math.max(...rows.slice(0, 5).map(r => Math.abs(r.delta_7d || 0)), 1)
     : 1;
   const top5 = rows.slice(0, 5);
 
@@ -633,7 +633,7 @@ function MoversCard({ title, rows: rawRows, tone, emptyMsg, loading, status }: {
           <div className="text-xs text-[var(--text-tertiary)] py-4 text-center">{emptyMsg}</div>
         )}
         {top5.map(b => {
-          const barPct = (Math.abs(b.delta_7d) / maxDelta) * 100;
+          const barPct = (Math.abs(b.delta_7d || 0) / maxDelta) * 100;
           return (
             <div
               key={b.id}
@@ -686,7 +686,7 @@ function MoversCard({ title, rows: rawRows, tone, emptyMsg, loading, status }: {
 // The aggregate endpoints can settle with `{}` / partial payloads (fresh catalog, snapshot not run yet): every
 // number and list read in the Intel tab goes through these so a missing field renders the empty state, never a throw.
 function formatNumber(n: number | null | undefined): string {
-  return typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString('en-US') : '0';
+  return typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString('en-US') : '—';
 }
 
 function asList<T>(v: unknown): T[] {
@@ -1022,8 +1022,10 @@ const GRADE_TONE: Record<string, string> = {
   'F':  '#C83C3C',
 };
 
-function EmailGradeCard({ data, status }: { data: EmailSecurityAggregate | null | undefined; status: AggStatus }) {
-  if (!data) return <AggCardState status={status} title="email security grade" />;
+function EmailGradeCard({ data: raw, status }: { data: EmailSecurityAggregate | null | undefined; status: AggStatus }) {
+  // Only a failed or still-loading query shows the state card; a query that succeeded with nothing is an empty card.
+  if (!raw && (status.failed || status.loading)) return <AggCardState status={status} title="email security grade" />;
+  const data: Partial<EmailSecurityAggregate> = raw ?? {};
   const grades = asList<EmailSecurityAggregate['grade_distribution'][number]>(data.grade_distribution);
   const total = grades.reduce((s, r) => s + (r.count || 0), 0);
   const max = Math.max(1, ...grades.map(r => r.count || 0));
@@ -1065,8 +1067,9 @@ function EmailGradeCard({ data, status }: { data: EmailSecurityAggregate | null 
   );
 }
 
-function DmarcEnforcementCard({ data, status }: { data: EmailSecurityAggregate | null | undefined; status: AggStatus }) {
-  if (!data) return <AggCardState status={status} title="DMARC enforcement" />;
+function DmarcEnforcementCard({ data: raw, status }: { data: EmailSecurityAggregate | null | undefined; status: AggStatus }) {
+  if (!raw && (status.failed || status.loading)) return <AggCardState status={status} title="DMARC enforcement" />;
+  const data: Partial<EmailSecurityAggregate> = raw ?? {};
   const policies = asList<EmailSecurityAggregate['dmarc_distribution'][number]>(data.dmarc_distribution);
   const total = policies.reduce((s, r) => s + (r.count || 0), 0);
   const POLICY_COLORS: Record<string, string> = {
@@ -1177,8 +1180,9 @@ const TIER_COLORS: Record<string, string> = {
   customer: '#3CB878', monitored: '#E5A832', tracked: '#78A0C8',
 };
 
-function CompositionMixCard({ data, status }: { data: CompositionAggregate | null | undefined; status: AggStatus }) {
-  if (!data) return <AggCardState status={status} title="catalog composition" />;
+function CompositionMixCard({ data: raw, status }: { data: CompositionAggregate | null | undefined; status: AggStatus }) {
+  if (!raw && (status.failed || status.loading)) return <AggCardState status={status} title="catalog composition" />;
+  const data: Partial<CompositionAggregate> = raw ?? {};
   const total = Number(data.total) || 0;
   const tierMix = asList<CompositionAggregate['tier_mix'][number]>(data.tier_mix);
   const trancoBuckets = asList<CompositionAggregate['tranco_buckets'][number]>(data.tranco_buckets);
@@ -1263,8 +1267,9 @@ function StackedBar({ data, total }: {
   );
 }
 
-function GeoDistributionCard({ data, status }: { data: CompositionAggregate | null | undefined; status: AggStatus }) {
-  if (!data) return <AggCardState status={status} title="geographic distribution" />;
+function GeoDistributionCard({ data: raw, status }: { data: CompositionAggregate | null | undefined; status: AggStatus }) {
+  if (!raw && (status.failed || status.loading)) return <AggCardState status={status} title="geographic distribution" />;
+  const data: Partial<CompositionAggregate> = raw ?? {};
   const countries = asList<CompositionAggregate['hq_countries'][number]>(data.hq_countries);
   const top10 = countries.slice(0, 10);
   const max = Math.max(1, ...top10.map(c => c.count || 0));
@@ -1344,7 +1349,7 @@ function ScoreBucketCard({ title, data: rawData, tone, subtitle, status }: {
       <div className="mt-3 space-y-1.5">
         {data.map((row, i) => {
           if (row.bucket === 'unscored') return null;
-          const barW = (row.count / max) * 100;
+          const barW = ((row.count || 0) / max) * 100;
           const color = palette[i % palette.length];
           return (
             <div key={row.bucket}>

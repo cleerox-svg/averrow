@@ -107,4 +107,38 @@ describe('Brands Intel tab — empty / partial API data does not crash', () => {
     expect(() => renderWithProviders(<BrandsV3 />)).not.toThrow();
     expect(screen.getByText('Defense')).toBeInTheDocument();
   });
+
+  it('a query that succeeded with null renders empty cards, never an endless Loading state', () => {
+    hooks.forEach((h) => h.mockReturnValue(ok(null)));
+    renderWithProviders(<BrandsV3 />);
+    expect(screen.queryByText(/^Loading /)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('Email security grade')).toBeInTheDocument();
+    expect(screen.getByText('DMARC enforcement')).toBeInTheDocument();
+    expect(screen.getByText('Catalog composition')).toBeInTheDocument();
+    expect(screen.getByText('Geographic distribution')).toBeInTheDocument();
+    expect(screen.getByText('No graded brands yet')).toBeInTheDocument();
+    expect(screen.getByText('No HQ data resolved yet')).toBeInTheDocument();
+    expect(screen.getByText('No sector data yet')).toBeInTheDocument();
+  });
+
+  it('a posture aggregate without total_scored keeps "Awaiting daily snapshot"; missing numbers read —, not 0', () => {
+    hooks.forEach((h) => h.mockReturnValue(ok({})));
+    renderWithProviders(<BrandsV3 />);
+    expect(screen.getAllByText('Awaiting daily snapshot').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+    expect(screen.getByText(/^— enforcing/)).toBeInTheDocument();
+  });
+
+  it('mover and bucket rows with a missing numeric field render without NaN widths', () => {
+    hooks.forEach((h) => h.mockReturnValue(ok({
+      rising: [{ id: 'b1', name: 'Acme', canonical_domain: 'acme.com' }],
+      falling: [],
+      health_score_buckets: [{ bucket: '0-20' }],
+      exposure_score_buckets: [{ bucket: '0-20' }],
+    })));
+    const { container } = renderWithProviders(<BrandsV3 />);
+    expect(screen.getByText('Acme')).toBeInTheDocument();
+    expect(container.innerHTML).not.toMatch(/NaN/);
+  });
 });
