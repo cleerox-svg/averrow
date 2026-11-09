@@ -466,18 +466,15 @@
 
 /* ── INTEL FEED (Observatory headline bar + event rail) ─────────────
    Replaced the scrolling EventTicker (2026-10-15). Colours are theme tokens only;
-   motion is limited to: the live dot, the headline's slide-in, its progress bar
-   and the rail's new-row flash — all off under prefers-reduced-motion. */
-@keyframes ev-live {
-  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 55%, transparent); }
-  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--green) 0%, transparent); }
-  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 0%, transparent); }
-}
+   motion is limited to: the headline's slide-in, its progress bar and the rail's
+   new-row flash (each plays once or is paused by a reader) — all off under
+   prefers-reduced-motion. The live dot is static (no looping motion in chrome). */
 .ev-live-dot {
   width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
   background: var(--green);
-  animation: ev-live 2s infinite;
 }
+/* The feed failed or is quiet: nothing is live, so the dot greys out. */
+.ev-live-dot--idle { background: var(--text-muted); }
 @keyframes ev-hl-in {
   from { transform: translateY(70%); opacity: 0; }
   to   { transform: translateY(0);   opacity: 1; }
@@ -511,7 +508,7 @@
 }
 .ev-row-new { animation: ev-row-arrive 1.2s ease-out 1; }
 @media (prefers-reduced-motion: reduce) {
-  .ev-live-dot, .ev-hl-enter, .ev-progress, .ev-row-new { animation: none !important; }
+  .ev-hl-enter, .ev-progress, .ev-row-new { animation: none !important; }
 }
 
 

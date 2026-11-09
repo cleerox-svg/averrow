@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import { BODY, COARSE_TARGET, LABEL } from '../lib/chrome-classes';
 
 interface Props {
   children: ReactNode;
@@ -22,13 +23,13 @@ export class PanelErrorBoundary extends Component<Props, { failed: boolean }> {
     return (
       <div
         role="alert"
-        className="flex flex-col items-start gap-2 p-3 m-3 rounded-lg font-mono text-[11px]"
+        className={`flex flex-col items-start gap-2 p-3 m-3 rounded-lg ${BODY}`}
         style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)', color: 'var(--sev-critical-text)' }}
       >
         <span>{this.props.label} failed to render.</span>
         <button
           type="button"
-          className="ds-focusable font-bold uppercase tracking-wide text-[10px]"
+          className={`ds-focusable inline-flex items-center ${LABEL} ${COARSE_TARGET}`}
           style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'inherit', textDecoration: 'underline' }}
           onClick={() => this.setState({ failed: false })}
         >

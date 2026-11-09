@@ -1,4 +1,5 @@
-// Facelift Phase 6, screen 6a: the Observatory's top bar, lens strip, legends, stats bar and map controls.
+// Facelift Phase 6, screens 6a (top bar, lens strip, legends, stats bar, map controls) and 6b (panels, drawer, event rail,
+// headline bar, replay timeline, wall overlay).
 // Source guards (no raw colours, no sub-12px type, no capitals-with-tracking, no glow) + the behaviour they protect.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -12,7 +13,8 @@ import { DataFiltersPopover } from './DataFilters';
 import { FiltersPopover } from './ToolbarControls';
 import { BODY, FACT, LABEL } from '../lib/chrome-classes';
 import { TYPE_OPTIONS } from '../lib/filters';
-import { typeDisplayLabel } from '../lib/map-colors';
+import { typeDisplayLabel, SEVERITY_COLORS, rgbCss } from '../lib/map-colors';
+import { PeekSheet } from './PeekSheet';
 
 const HERE = __dirname;
 const V3 = resolve(HERE, '..');
@@ -24,21 +26,17 @@ const SCOPE_FILES = [
   'LensLegend.tsx', 'ProjectionToggle.tsx', 'MapAttribution.tsx', 'ControlRail.tsx',
 ].map(f => resolve(HERE, f)).concat(resolve(V3, 'lib/chrome-classes.ts'));
 
-/** The stats bar, loading pill and panel toggles in ObservatoryV3.tsx are in scope; the rest of that file is not. */
-function statsBarAndPill(): string {
-  const src = read(resolve(V3, 'ObservatoryV3.tsx'));
-  const a = src.indexOf('Subtle loading / updating pill');
-  const b = src.indexOf('Bot share: loading / error / empty states');
-  const c = src.indexOf('{/* ─── Stats bar');
-  const d = src.indexOf('{/* ─── Headline bar');
-  if (!(a >= 0 && a < b && b < c && c < d)) throw new Error('ObservatoryV3.tsx section markers moved: update statsBarAndPill()');
-  return src.slice(a, b) + src.slice(c, d);
-}
+/** 6b: the panels and the bars along the bottom. ObservatoryV3.tsx is guarded whole (every 6a and 6b region of it is clean). */
+const PANEL_FILES = [
+  'DrillDrawer.tsx', 'SidePanel.tsx', 'LensPanel.tsx', 'EventRail.tsx', 'EventChip.tsx', 'HeadlineBar.tsx', 'PeekSheet.tsx',
+  'PanelDock.tsx', 'PanelTabs.tsx', 'PanelErrorBoundary.tsx', 'ReplayTimeline.tsx', 'WallOverlay.tsx',
+].map(f => resolve(HERE, f));
 
-describe('chrome source guards (6a)', () => {
+describe('chrome source guards (6a + 6b)', () => {
   const sources: Array<[string, string]> = [
     ...SCOPE_FILES.map(f => [f.split('/').pop()!, read(f)] as [string, string]),
-    ['ObservatoryV3.tsx (stats bar + pill)', statsBarAndPill()],
+    ...PANEL_FILES.map(f => [f.split('/').pop()!, read(f)] as [string, string]),
+    ['ObservatoryV3.tsx (whole file)', read(resolve(V3, 'ObservatoryV3.tsx'))],
   ];
 
   for (const [name, src] of sources) {
@@ -59,9 +57,9 @@ describe('chrome source guards (6a)', () => {
         expect(joined).not.toMatch(/text-\[1[01]px\]/);
         expect(joined).not.toMatch(/fontSize:\s*1[01]\b/);
       });
-      it('has no uppercase class or letter-spaced capitals', () => {
+      it('has no uppercase / capitalize class or letter-spaced capitals', () => {
         const joined = code.join('\n');
-        expect(joined).not.toMatch(/(^|[\s"'`])uppercase\b/);
+        expect(joined).not.toMatch(/(^|[\s"'`])(uppercase|capitalize)\b/);
         expect(joined).not.toMatch(/tracking-\[0\.2em\]|tracking-wider|tracking-wide\b/);
       });
       it('has no primary-glow box-shadow', () => {
@@ -233,5 +231,49 @@ describe('MapLibre control override (index.css)', () => {
   });
   it('nothing outside the Observatory styles MapLibre controls', () => {
     expect(css.slice(0, start)).not.toMatch(/\.maplibregl-ctrl/);
+  });
+});
+
+describe('panels and bars (6b)', () => {
+  const css = read(resolve(SRC, 'index.css'));
+
+  it('the live dot is static: no looping animation is attached to it', () => {
+    expect(css).not.toMatch(/animation:\s*ev-live[^;]*infinite/);
+    expect(css).not.toContain('@keyframes ev-live');
+    const rule = css.match(/\.ev-live-dot\s*\{[^}]*\}/)![0];
+    expect(rule).not.toMatch(/animation|box-shadow/);
+  });
+  it('the headline countdown stays (it has pause + reduced-motion handling)', () => {
+    expect(css).toContain('@keyframes ev-progress');
+    expect(css).toMatch(/prefers-reduced-motion: reduce\)[^}]*\.ev-progress/);
+  });
+  it('no chrome file loops a pulse or draws a glow', () => {
+    for (const f of PANEL_FILES) {
+      const src = read(f);
+      expect(src, f).not.toMatch(/animate-pulse|animate-ping|animate-spin/);
+      expect(src, f).not.toMatch(/boxShadow:\s*'0 0 \d/);
+      expect(src, f).not.toMatch(/textShadow/);
+    }
+  });
+  it('the replay histogram uses the map severity colours, with no glow on the playhead', () => {
+    const src = read(resolve(HERE, 'ReplayTimeline.tsx'));
+    expect(src).toContain("from '../lib/map-colors'");
+    expect(src).toMatch(/rgbCss\(SEVERITY_COLORS\.critical/);
+    expect(src).not.toMatch(/boxShadow/);
+    expect(rgbCss(SEVERITY_COLORS.critical!)).toBe('rgb(200, 60, 60)');
+  });
+  it('touch targets follow the pointer, not the viewport width', () => {
+    for (const f of ['DrillDrawer.tsx', 'EventRail.tsx', 'LensPanel.tsx', 'SidePanel.tsx', 'ReplayTimeline.tsx']) {
+      expect(read(resolve(HERE, f)), f).not.toMatch(/max-\[899px\]|\bsm:min-h-/);
+    }
+  });
+  it('the peek sheet casts the elevated card shadow, never the flat one', () => {
+    render(<PeekSheet open onClose={() => {}} label="Test sheet"><div>content</div></PeekSheet>);
+    const sheet = screen.getByRole('dialog', { name: 'Test sheet' });
+    expect(sheet.style.boxShadow).toBe('var(--card-shadow-elevated)');
+  });
+  it('the panel tab strip lifts the kit 11px tab to 12px and keeps its names', () => {
+    const src = read(resolve(HERE, 'PanelTabs.tsx'));
+    expect(src).toContain('!text-[12px]');
   });
 });

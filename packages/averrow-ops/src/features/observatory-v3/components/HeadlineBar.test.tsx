@@ -46,7 +46,7 @@ describe('rendering', () => {
   it('shows one event: kind chip, title and relative age', () => {
     render(bar({ result: result([ev('a', { kind: 'fast', occurred_at: ago(3) })]) }));
     expect(title()).toBe('Headline a');
-    expect(screen.getByText('FAST')).toBeInTheDocument();
+    expect(screen.getByText('Fast')).toBeInTheDocument();
     expect(screen.getByText('3m')).toBeInTheDocument();
     // A single event has nothing to rotate or step through.
     expect(screen.queryByRole('button', { name: 'Next event' })).toBeNull();
@@ -113,7 +113,7 @@ describe('rendering', () => {
     render(bar({ result: result([ev('a'), ev('b')], { failed_kinds: ['lookalike', 'actor'] }) }));
     const note = screen.getByTestId('events-partial');
     expect(note).toHaveAttribute('title', expect.stringContaining('lookalikes, actors'));
-    expect(note).toHaveAccessibleName(/PARTIAL — lookalikes, actors could not be loaded/);
+    expect(note).toHaveAccessibleName(/Partial — lookalikes, actors could not be loaded/);
     expect(title()).toBe('Headline a');
     expect(screen.getByRole('button', { name: 'Next event' })).toBeInTheDocument();
   });
@@ -130,7 +130,7 @@ describe('rendering', () => {
     expect(screen.queryByTestId('events-empty')).toBeNull();
   });
 
-  it('the PARTIAL tag is focusable and shows the kinds on screen when activated', () => {
+  it('the Partial tag is focusable and shows the kinds on screen when activated', () => {
     render(bar({ result: result([ev('a'), ev('b')], { failed_kinds: ['lookalike', 'actor'] }) }));
     const note = screen.getByTestId('events-partial');
     expect(note.tagName).toBe('BUTTON');
