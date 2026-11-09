@@ -48,6 +48,8 @@ export interface ThreatAggregate {
   top_providers: Array<{ provider_id: string; name: string; asn: string | null; count: number }>;
   top_actors:    Array<{ actor_id: string; actor_name: string; count: number }>;
   top_campaigns: Array<{ campaign_id: string; name: string; threat_count: number; brand_count: number; status: string }>;
+  /** Sections whose server-side read failed and came back empty/zero. Empty or absent when healthy. */
+  degraded_sections?: string[];
 }
 
 function toQuery(filters: ThreatAggregateFilters): string {

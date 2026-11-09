@@ -15,13 +15,18 @@ import { describe, it, expect } from "vitest";
 import {
   hasSqlite,
   openDerivedDb,
+  openMigratedDb,
   d1FromSqlite,
   fakeKv,
   sqliteTimestampHoursAgo,
   type StatementLogEntry,
 } from "./sqlite-d1-harness";
 import type { Env } from "../src/types";
-import { threatAggregate } from "../src/lib/threat-aggregates";
+import {
+  threatAggregate,
+  THREAT_AGGREGATE_DEGRADED_TTL_S,
+  THREAT_AGGREGATE_UNFILTERED_TTL_S,
+} from "../src/lib/threat-aggregates";
 
 const TABLES = [
   "threats", "brands", "hosting_providers", "campaigns",
@@ -29,7 +34,7 @@ const TABLES = [
 ];
 
 function seed() {
-  const db = openDerivedDb(TABLES);
+  const db = openDerivedDb(TABLES, { indexes: ["idx_threats_created_brand"] });
   // Raw rows: b1×2 / b2×1, p1×2 / p2×1. Counters say otherwise on purpose.
   db.exec(`INSERT INTO brands (id, name, canonical_domain, logo_url, threat_count) VALUES
              ('b1', 'Brand One', 'b1.example', NULL, 500),
@@ -125,5 +130,111 @@ describe.skipIf(!hasSqlite())("threatAggregate unfiltered slice — pre-computed
     puts.length = 0;
     await threatAggregate(env, { status: "active" });
     expect(puts.some((k) => k.startsWith("cvlock:"))).toBe(false);
+  });
+});
+
+// ─── Fail-soft sections + surge index pin (2026-11-09) ────────────────
+//
+// Prod: while D1 threw `D1 DB is overloaded`, any one of nine un-caught
+// reads rejected the whole compute, so nothing was cached and every page
+// view / Retry re-ran the full ~15-read refill. Now each read is a
+// softSection: one failure degrades that section only, is listed in
+// `degraded_sections`, and the result is cached for the short degraded TTL.
+
+/** A D1 whose prepare() throws for any SQL matching `fail`. */
+function failingDb(base: D1Database, fail: (sql: string) => boolean): D1Database {
+  return new Proxy(base, {
+    get(target, prop, receiver) {
+      if (prop === "prepare") {
+        return (sql: string) => {
+          if (fail(sql)) throw new Error("D1 DB is overloaded. Too many resources consumed within a 10 second window");
+          return target.prepare(sql);
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+
+/** Age (s) the cached entry is stamped with — cachedValue stamps a short-TTL entry as pre-aged. */
+function cachedAgeSeconds(kv: { store: Map<string, string> }): number {
+  const raw = [...kv.store.entries()].find(([k]) => k.startsWith("cv:threat-agg:"))?.[1];
+  if (!raw) throw new Error("no cached threat-agg entry");
+  const entry = JSON.parse(raw) as { t: number };
+  return (Date.now() - entry.t) / 1000;
+}
+
+const isByType = (sql: string) => /GROUP BY t\.threat_type ORDER BY count DESC LIMIT 8/.test(sql.replace(/\s+/g, " "));
+
+describe.skipIf(!hasSqlite())("threatAggregate fail-soft sections", () => {
+  it("healthy compute: degraded_sections is empty and the entry gets the full slice TTL", async () => {
+    const kv = fakeKv();
+    const env = { DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env;
+    const agg = await threatAggregate(env, {});
+    expect(agg.degraded_sections).toEqual([]);
+    expect(cachedAgeSeconds(kv)).toBeLessThan(5);
+  });
+
+  it("one failing section → partial result, degraded_sections names it, cached for the short TTL", async () => {
+    const kv = fakeKv();
+    const env = { DB: failingDb(d1FromSqlite(seed()), isByType), CACHE: kv } as unknown as Env;
+    const agg = await threatAggregate(env, {});
+    expect(agg.degraded_sections).toEqual(["by_type"]);
+    expect(agg.by_type).toEqual([]);
+    // Every other section still has its real data.
+    expect(agg.total).toBe(3);
+    expect(byKey(agg.by_status, (r) => r.status, (r) => r.count)).toEqual({ active: 2, down: 1 });
+    expect(agg.top_providers.length).toBe(2);
+    // Stamped as written (unfiltered TTL − degraded TTL) ago → expires after ~60s.
+    const age = cachedAgeSeconds(kv);
+    const expected = THREAT_AGGREGATE_UNFILTERED_TTL_S - THREAT_AGGREGATE_DEGRADED_TTL_S;
+    expect(age).toBeGreaterThanOrEqual(expected - 1);
+    expect(age).toBeLessThan(expected + 5);
+  });
+
+  it("a failing headline degrades to zeros without failing the response", async () => {
+    const env = {
+      DB: failingDb(d1FromSqlite(seed()), (sql) => sql.includes("AS correlated_by_campaign")),
+      CACHE: fakeKv(),
+    } as unknown as Env;
+    const agg = await threatAggregate(env, { status: "active" });
+    expect(agg.degraded_sections).toEqual(["headline"]);
+    expect(agg.total).toBe(0);
+    expect(byKey(agg.by_status, (r) => r.status, (r) => r.count)).toEqual({ active: 2 });
+  });
+
+  it("every section failing throws and caches nothing", async () => {
+    const kv = fakeKv();
+    const env = { DB: failingDb(d1FromSqlite(seed()), () => true), CACHE: kv } as unknown as Env;
+    await expect(threatAggregate(env, {})).rejects.toThrow(/every section failed/);
+    expect([...kv.store.keys()].some((k) => k.startsWith("cv:threat-agg:"))).toBe(false);
+  });
+});
+
+describe.skipIf(!hasSqlite())("threatAggregate surge queries pin idx_threats_created_brand", () => {
+  const surgeSqls = async (): Promise<string[]> => {
+    const log: StatementLogEntry[] = [];
+    const env = { DB: d1FromSqlite(seed(), { log }), CACHE: fakeKv() } as unknown as Env;
+    const agg = await threatAggregate(env, {});
+    expect(agg.degraded_sections).toEqual([]);   // pinned SQL is valid against the schema
+    return log.map((e) => e.sql).filter((q) => q.includes("AS previous_7d"));
+  };
+
+  it("surging_types and surging_campaigns SQL carry INDEXED BY idx_threats_created_brand", async () => {
+    const sqls = await surgeSqls();
+    expect(sqls.length).toBe(2);
+    for (const q of sqls) {
+      expect(q.replace(/\s+/g, " ")).toContain("FROM threats t INDEXED BY idx_threats_created_brand");
+    }
+  });
+
+  it("the pinned index exists in the migrations and gives a created_at range SEARCH", async () => {
+    const db = openMigratedDb();
+    for (const q of await surgeSqls()) {
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${q}`).all() as Array<{ detail: string }>;
+      const details = plan.map((r) => r.detail).join(" | ");
+      expect(details).toMatch(/SEARCH t USING (COVERING )?INDEX idx_threats_created_brand \(created_at>\?\)/);
+      expect(details).not.toMatch(/idx_threats_type/);
+    }
   });
 });
