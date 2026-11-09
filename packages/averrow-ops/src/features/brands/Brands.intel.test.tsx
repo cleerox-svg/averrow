@@ -71,3 +71,40 @@ describe('Brands Intel tab — failures are errors, never empty', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
+
+describe('Brands Intel tab — empty / partial API data does not crash', () => {
+  beforeEach(() => vi.clearAllMocks());
+  const ok = (data: unknown) => ({ data, isLoading: false, isError: false, refetch: vi.fn() });
+
+  it.each([
+    ['empty objects', {}],
+    ['null payloads', null],
+    ['empty collections', { sector_breakdown: [], top_threat_types: [], rising: [], falling: [], buckets: [] }],
+  ])('renders the empty state for %s', (_name, payload) => {
+    hooks.forEach((h) => h.mockReturnValue(ok(payload)));
+    expect(() => renderWithProviders(<BrandsV3 />)).not.toThrow();
+    expect(screen.getByText('Defense')).toBeInTheDocument();
+    expect(screen.getByText(/No rising attack pressure/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('settled-but-empty aggregates render the calm empty copy in each card', () => {
+    hooks.forEach((h) => h.mockReturnValue(ok({})));
+    renderWithProviders(<BrandsV3 />);
+    expect(screen.getByText('No threat type data yet')).toBeInTheDocument();
+    expect(screen.getAllByText('No signal yet')).toHaveLength(4);
+    expect(screen.getByText('No graded brands yet')).toBeInTheDocument();
+  });
+
+  it('survives wrong-typed fields (non-array / non-number) in every aggregate', () => {
+    const junk = {
+      sector_breakdown: 'x', top_threat_types: 5, total_tracked: 'n/a', rising: {}, falling: 'x',
+      top_lookalikes: {}, top_social_imps: 'x', top_app_imps: 3, top_dark_web: null,
+      health_score_buckets: 'x', exposure_score_buckets: {}, improving_brands: 'x', declining_brands: 7,
+      total_scored: undefined, grades: 'x', dmarc: 4, tiers: 'x', countries: 3,
+    };
+    hooks.forEach((h) => h.mockReturnValue(ok(junk)));
+    expect(() => renderWithProviders(<BrandsV3 />)).not.toThrow();
+    expect(screen.getByText('Defense')).toBeInTheDocument();
+  });
+});

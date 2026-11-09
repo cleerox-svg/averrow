@@ -381,9 +381,9 @@ function SectorDonut({ breakdown, totalTracked, status }: {
   totalTracked: number;
   status: AggStatus;
 }) {
-  const data = (breakdown ?? []).slice(0, 8);
-  const sumClassified = data.reduce((s, x) => s + x.count, 0);
-  const unclassified = Math.max(0, totalTracked - sumClassified);
+  const data = asList<{ sector: string; count: number }>(breakdown).slice(0, 8);
+  const sumClassified = data.reduce((s, x) => s + (x.count || 0), 0);
+  const unclassified = Math.max(0, (Number(totalTracked) || 0) - sumClassified);
 
   if (status.failed || (status.loading && data.length === 0)) return <AggCardState status={status} title="sector mix" />;
   if (data.length === 0) {
@@ -440,7 +440,7 @@ function SectorDonut({ breakdown, totalTracked, status }: {
                 </span>
               </div>
               <span className="font-mono text-[var(--text-tertiary)] flex-shrink-0">
-                {Math.round((s.count / sumClassified) * 100)}%
+                {sumClassified > 0 ? Math.round(((s.count || 0) / sumClassified) * 100) : 0}%
               </span>
             </div>
           ))}
@@ -473,10 +473,9 @@ const THREAT_TYPE_COLORS = [
 ];
 
 function ThreatTypeBreakdown({ stats, status }: { stats: any; status: AggStatus }) {
-  const raw: Array<{ threat_type: string; count: number; pct: number }> =
-    stats?.threat_type_breakdown ?? [];
+  const raw = asList<{ threat_type: string; count: number; pct: number }>(stats?.threat_type_breakdown);
   const data = raw.slice(0, 8);
-  const total = data.reduce((s, x) => s + x.count, 0);
+  const total = data.reduce((s, x) => s + (x.count || 0), 0);
 
   if (status.failed || (status.loading && data.length === 0)) return <AggCardState status={status} title="attack types" />;
   if (data.length === 0) {
@@ -597,7 +596,7 @@ function CatalogStatusFooter() {
   );
 }
 
-function MoversCard({ title, rows, tone, emptyMsg, loading, status }: {
+function MoversCard({ title, rows: rawRows, tone, emptyMsg, loading, status }: {
   title: string;
   rows: BrandMover[];
   tone: 'crit' | 'ok';
@@ -605,6 +604,7 @@ function MoversCard({ title, rows, tone, emptyMsg, loading, status }: {
   loading?: boolean;
   status: AggStatus;
 }) {
+  const rows = asList<BrandMover>(rawRows);
   const navigate = useNavigate();
   const accent = tone === 'crit' ? 'var(--sev-critical)' : 'var(--green)';
   // Bar widths relative to the largest abs delta in this card's set
@@ -683,8 +683,14 @@ function MoversCard({ title, rows, tone, emptyMsg, loading, status }: {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
-function formatNumber(n: number): string {
-  return n.toLocaleString('en-US');
+// The aggregate endpoints can settle with `{}` / partial payloads (fresh catalog, snapshot not run yet): every
+// number and list read in the Intel tab goes through these so a missing field renders the empty state, never a throw.
+function formatNumber(n: number | null | undefined): string {
+  return typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString('en-US') : '0';
+}
+
+function asList<T>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
 }
 
 function humanizeThreatType(t: string): string {
@@ -1018,8 +1024,9 @@ const GRADE_TONE: Record<string, string> = {
 
 function EmailGradeCard({ data, status }: { data: EmailSecurityAggregate | null | undefined; status: AggStatus }) {
   if (!data) return <AggCardState status={status} title="email security grade" />;
-  const total = data.grade_distribution.reduce((s, r) => s + r.count, 0);
-  const max = Math.max(1, ...data.grade_distribution.map(r => r.count));
+  const grades = asList<EmailSecurityAggregate['grade_distribution'][number]>(data.grade_distribution);
+  const total = grades.reduce((s, r) => s + (r.count || 0), 0);
+  const max = Math.max(1, ...grades.map(r => r.count || 0));
 
   return (
     <Card>
@@ -1027,14 +1034,14 @@ function EmailGradeCard({ data, status }: { data: EmailSecurityAggregate | null 
         <SectionLabel>Email security grade</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
           {formatNumber(total)} graded
-          {data.ungraded > 0 && ` · ${formatNumber(data.ungraded)} pending`}
+          {Number(data.ungraded) > 0 && ` · ${formatNumber(data.ungraded)} pending`}
         </span>
       </div>
       <div className="mt-3 space-y-2">
-        {data.grade_distribution.length === 0 && (
+        {grades.length === 0 && (
           <div className="text-xs text-[var(--text-tertiary)] py-2">No graded brands yet</div>
         )}
-        {data.grade_distribution.map(row => {
+        {grades.map(row => {
           const pct = total > 0 ? (row.count / total) * 100 : 0;
           const barW = (row.count / max) * 100;
           const accent = GRADE_TONE[row.grade] ?? '#78A0C8';
@@ -1060,12 +1067,13 @@ function EmailGradeCard({ data, status }: { data: EmailSecurityAggregate | null 
 
 function DmarcEnforcementCard({ data, status }: { data: EmailSecurityAggregate | null | undefined; status: AggStatus }) {
   if (!data) return <AggCardState status={status} title="DMARC enforcement" />;
-  const total = data.dmarc_distribution.reduce((s, r) => s + r.count, 0);
+  const policies = asList<EmailSecurityAggregate['dmarc_distribution'][number]>(data.dmarc_distribution);
+  const total = policies.reduce((s, r) => s + (r.count || 0), 0);
   const POLICY_COLORS: Record<string, string> = {
     reject: '#3CB878', quarantine: '#0A8AB5',
     none: '#E8923C', unspecified: '#9B59B6',
   };
-  const enforcePct = total > 0 ? (data.dmarc_enforcing / total) * 100 : 0;
+  const enforcePct = total > 0 ? ((Number(data.dmarc_enforcing) || 0) / total) * 100 : 0;
 
   return (
     <Card>
@@ -1084,7 +1092,7 @@ function DmarcEnforcementCard({ data, status }: { data: EmailSecurityAggregate |
         </div>
       </div>
       <div className="mt-4 space-y-1.5">
-        {data.dmarc_distribution.map(row => {
+        {policies.map(row => {
           const pct = total > 0 ? (row.count / total) * 100 : 0;
           const accent = POLICY_COLORS[row.policy] ?? '#78A0C8';
           return (
@@ -1108,7 +1116,7 @@ function DmarcEnforcementCard({ data, status }: { data: EmailSecurityAggregate |
 // Pressure panel — leaderboards
 // ══════════════════════════════════════════════════════════════════
 
-function PressureLeaderboard({ title, rows, accent, subtitle, status }: {
+function PressureLeaderboard({ title, rows: rawRows, accent, subtitle, status }: {
   title: string;
   rows: PressureMover[] | undefined;
   accent: string;
@@ -1116,10 +1124,12 @@ function PressureLeaderboard({ title, rows, accent, subtitle, status }: {
   status: AggStatus;
 }) {
   const navigate = useNavigate();
+  const rows = Array.isArray(rawRows) ? rawRows : undefined;
   const top5 = (rows ?? []).slice(0, 5);
-  const max = Math.max(1, ...top5.map(r => r.count));
+  const max = Math.max(1, ...top5.map(r => r.count || 0));
 
-  if (!rows) return <AggCardState status={status} title={title.toLowerCase()} />;
+  // A settled payload without this list is an empty board, not a pending one.
+  if (!rows && (status.failed || status.loading)) return <AggCardState status={status} title={title.toLowerCase()} />;
 
   return (
     <Card style={{ minHeight: 200 }}>
@@ -1130,7 +1140,7 @@ function PressureLeaderboard({ title, rows, accent, subtitle, status }: {
           <div className="text-xs text-[var(--text-tertiary)] py-3 text-center">No signal yet</div>
         )}
         {top5.map(b => {
-          const barW = (b.count / max) * 100;
+          const barW = ((b.count || 0) / max) * 100;
           return (
             <div key={b.brand_id}
               onClick={() => navigate(`/brands/${b.brand_id}`)}
@@ -1169,25 +1179,29 @@ const TIER_COLORS: Record<string, string> = {
 
 function CompositionMixCard({ data, status }: { data: CompositionAggregate | null | undefined; status: AggStatus }) {
   if (!data) return <AggCardState status={status} title="catalog composition" />;
+  const total = Number(data.total) || 0;
+  const tierMix = asList<CompositionAggregate['tier_mix'][number]>(data.tier_mix);
+  const trancoBuckets = asList<CompositionAggregate['tranco_buckets'][number]>(data.tranco_buckets);
+  const sourceMix = asList<CompositionAggregate['source_mix'][number]>(data.source_mix);
   return (
     <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Catalog composition</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
-          {formatNumber(data.total)} total
+          {formatNumber(total)} total
         </span>
       </div>
 
       <div className="mt-3">
         <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tier</div>
-        <StackedBar data={data.tier_mix.map(t => ({ key: t.tier, value: t.count, color: TIER_COLORS[t.tier] ?? '#78A0C8' }))} total={data.total} />
+        <StackedBar data={tierMix.map(t => ({ key: t.tier, value: t.count, color: TIER_COLORS[t.tier] ?? '#78A0C8' }))} total={total} />
       </div>
 
       <div className="mt-4">
         <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tranco rank</div>
         <div className="mt-1 space-y-1">
-          {data.tranco_buckets.map(b => {
-            const pct = data.total > 0 ? (b.count / data.total) * 100 : 0;
+          {trancoBuckets.map(b => {
+            const pct = total > 0 ? (b.count / total) * 100 : 0;
             return (
               <div key={b.bucket} className="flex items-center justify-between text-[11px] font-mono">
                 <span className="text-[var(--text-secondary)]">{b.bucket}</span>
@@ -1203,7 +1217,7 @@ function CompositionMixCard({ data, status }: { data: CompositionAggregate | nul
       <div className="mt-4">
         <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Source</div>
         <div className="mt-1 flex flex-wrap gap-1.5">
-          {data.source_mix.slice(0, 6).map(s => (
+          {sourceMix.slice(0, 6).map(s => (
             <span key={s.source} style={{
               padding: '2px 8px', borderRadius: 3,
               background: 'rgba(255,255,255,0.04)',
@@ -1251,17 +1265,18 @@ function StackedBar({ data, total }: {
 
 function GeoDistributionCard({ data, status }: { data: CompositionAggregate | null | undefined; status: AggStatus }) {
   if (!data) return <AggCardState status={status} title="geographic distribution" />;
-  const top10 = data.hq_countries.slice(0, 10);
-  const max = Math.max(1, ...top10.map(c => c.count));
-  const totalGeo = top10.reduce((s, c) => s + c.count, 0);
-  const unknown = data.total - data.hq_countries.reduce((s, c) => s + c.count, 0);
+  const countries = asList<CompositionAggregate['hq_countries'][number]>(data.hq_countries);
+  const top10 = countries.slice(0, 10);
+  const max = Math.max(1, ...top10.map(c => c.count || 0));
+  const totalGeo = top10.reduce((s, c) => s + (c.count || 0), 0);
+  const unknown = (Number(data.total) || 0) - countries.reduce((s, c) => s + (c.count || 0), 0);
 
   return (
     <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Geographic distribution</SectionLabel>
         <span className="text-[10px] font-mono text-[var(--text-muted)]">
-          top 10 of {data.hq_countries.length}{unknown > 0 ? ` · ${formatNumber(unknown)} unknown` : ''}
+          top 10 of {countries.length}{unknown > 0 ? ` · ${formatNumber(unknown)} unknown` : ''}
         </span>
       </div>
       <div className="mt-3 space-y-1.5">
@@ -1295,13 +1310,14 @@ function GeoDistributionCard({ data, status }: { data: CompositionAggregate | nu
 // Posture panel
 // ══════════════════════════════════════════════════════════════════
 
-function ScoreBucketCard({ title, data, tone, subtitle, status }: {
+function ScoreBucketCard({ title, data: rawData, tone, subtitle, status }: {
   title: string;
   data: Array<{ bucket: string; count: number }> | undefined;
   tone: 'ok' | 'crit';
   subtitle: string;
   status: AggStatus;
 }) {
+  const data = Array.isArray(rawData) ? rawData : undefined;
   if (!data && (status.failed || status.loading)) return <AggCardState status={status} title={title.toLowerCase()} />;
   if (!data) {
     return (
@@ -1310,8 +1326,8 @@ function ScoreBucketCard({ title, data, tone, subtitle, status }: {
       </Card>
     );
   }
-  const total = data.reduce((s, r) => s + r.count, 0);
-  const max = Math.max(1, ...data.map(r => r.count));
+  const total = data.reduce((s, r) => s + (r.count || 0), 0);
+  const max = Math.max(1, ...data.map(r => r.count || 0));
 
   const okPalette  = ['#3CB878', '#0A8AB5', '#DCAA32', '#E8923C', '#C83C3C'];
   const palette = tone === 'crit' ? [...okPalette].reverse() : okPalette;
@@ -1352,7 +1368,7 @@ function ScoreBucketCard({ title, data, tone, subtitle, status }: {
   );
 }
 
-function PostureMoversCard({ title, rows, tone, emptyMsg, status }: {
+function PostureMoversCard({ title, rows: rawRows, tone, emptyMsg, status }: {
   title: string;
   rows: PostureMover[] | undefined;
   tone: 'ok' | 'crit';
@@ -1361,6 +1377,7 @@ function PostureMoversCard({ title, rows, tone, emptyMsg, status }: {
 }) {
   const navigate = useNavigate();
   const accent = tone === 'crit' ? 'var(--sev-critical)' : 'var(--green)';
+  const rows = Array.isArray(rawRows) ? rawRows : undefined;
   const list = rows ?? [];
 
   if (!rows && (status.failed || status.loading)) return <AggCardState status={status} title={title.toLowerCase()} />;
