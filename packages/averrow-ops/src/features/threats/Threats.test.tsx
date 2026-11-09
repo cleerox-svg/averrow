@@ -73,6 +73,41 @@ describe('Threats aggregate panels — failure is never empty or zero', () => {
     expect(screen.getByText(/No surging signals/)).toBeInTheDocument();
   });
 
+  it('a degraded headline shows "Couldn\'t load" tiles, not zeros, and hides the meta counts', () => {
+    const zeroed = { ...EMPTY_AGG, total: 0, active: 0, confirmed: 0, correlated: 0, attributed: 0, addressed: 0, remediation_rate: 0, degraded_sections: ['headline'] };
+    agg.mockReturnValue({ data: zeroed, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getAllByText("Couldn't load")).toHaveLength(4);
+    expect(screen.queryByText('0%')).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 in slice/)).not.toBeInTheDocument();
+  });
+
+  it('a degraded multi_brand_* section shows the failed state, not the empty copy; surge stays calm', async () => {
+    const refetch = vi.fn();
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['multi_brand_actors'] }, isError: false, refetch });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load multi-brand patterns")).toBeInTheDocument();
+    expect(screen.queryByText(/No multi-brand patterns/)).not.toBeInTheDocument();
+    expect(screen.getByText(/No surging signals/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: "Try again: Couldn't load multi-brand patterns" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a degraded surging_* section shows the failed state, not the empty copy', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['surging_types'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load surging signals")).toBeInTheDocument();
+    expect(screen.queryByText(/No surging signals/)).not.toBeInTheDocument();
+    expect(screen.getByText(/No multi-brand patterns/)).toBeInTheDocument();
+  });
+
+  it('a healthy response (empty degraded_sections) renders numbers and meta normally', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: [] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.queryByText("Couldn't load")).not.toBeInTheDocument();
+    expect(screen.getByText(/10 in slice/)).toBeInTheDocument();
+  });
+
   it('a failed refetch with data on screen keeps the data', () => {
     agg.mockReturnValue({ data: EMPTY_AGG, isError: true, refetch: vi.fn() });
     renderWithProviders(<Threats />);

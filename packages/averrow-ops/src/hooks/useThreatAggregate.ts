@@ -74,6 +74,7 @@ export function useThreatAggregate(filters: ThreatAggregateFilters) {
       const res = await api.get<ThreatAggregate>(`/api/threats/aggregate${toQuery(filters)}`);
       return (res.data ?? null) as ThreatAggregate | null;
     },
-    staleTime: 5 * 60_000,
+    // A degraded payload (some sections failed server-side) goes stale quickly so it self-heals.
+    staleTime: (query) => (query.state.data?.degraded_sections?.length ? 60_000 : 5 * 60_000),
   });
 }

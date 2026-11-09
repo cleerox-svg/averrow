@@ -121,6 +121,11 @@ export function Threats() {
   // A failed aggregate is an error, never "no multi-brand patterns" / 0 tiles.
   const aggFailed = aggError && !agg;
   const retryAgg = () => { void refetchAgg(); };
+  // Sections the server failed to read come back empty/zero; never present them as real data.
+  const degraded = new Set(agg?.degraded_sections ?? []);
+  const headlineFailed = aggFailed || degraded.has('headline');
+  const multiBrandFailed = aggFailed || [...degraded].some((n) => n.startsWith('multi_brand_'));
+  const surgingFailed = aggFailed || [...degraded].some((n) => n.startsWith('surging_'));
 
   const { data, isLoading, isFetching, isPlaceholderData } = useQuery({
     queryKey: ['threats', table.params],
@@ -168,21 +173,21 @@ export function Threats() {
       {/* Count in `meta` (not subtitle) so it survives the Console embedding. */}
       <PageHeader
         title="Threats"
-        meta={agg ? <span>{agg.total.toLocaleString()} in slice · {agg.active.toLocaleString()} active</span> : undefined}
+        meta={agg && !headlineFailed ? <span>{agg.total.toLocaleString()} in slice · {agg.active.toLocaleString()} active</span> : undefined}
       />
 
-      <SliceSummaryStrip agg={agg} hasFilters={hasAnyFilter} />
+      <SliceSummaryStrip agg={headlineFailed ? null : agg} hasFilters={hasAnyFilter} />
 
-      <HeroStrip agg={agg} failed={aggFailed} />
+      <HeroStrip agg={agg} failed={headlineFailed} />
 
       <ThreatInflowChart />
 
       <PanelHeader title="Coordination" subtitle="Patterns hitting multiple brands at once" />
-      <MultiBrandPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
+      <MultiBrandPanel agg={multiBrandFailed ? null : agg} failed={multiBrandFailed} onRetry={retryAgg} />
       <MultiFeedConsensusPanel />
 
       <PanelHeader title="Evolving" subtitle="What's growing week-over-week" />
-      <SurgingSignalsPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
+      <SurgingSignalsPanel agg={surgingFailed ? null : agg} failed={surgingFailed} onRetry={retryAgg} />
 
       <PanelHeader title="Top of pile" subtitle="Where the pressure is concentrated" />
       <LeaderboardsPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
@@ -345,7 +350,7 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
               <span className="thr-label">{sentenceCase(t.label)}</span>
             </div>
             <div className="thr-hero-value" style={{ color: accentText(t.accent) }}>
-              {agg ? t.value : (failed ? '—' : '…')}
+              {agg && !failed ? t.value : (failed ? '—' : '…')}
             </div>
             <div className="mt-1 thr-label thr-num truncate" style={{ color: 'var(--text-secondary)' }}>
               {failed ? "Couldn't load" : t.sub}
