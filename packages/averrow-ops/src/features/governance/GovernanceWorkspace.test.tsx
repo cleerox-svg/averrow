@@ -27,21 +27,21 @@ function mount(role: string, isSuperAdmin = false) {
 }
 
 describe('GovernanceWorkspace role gating', () => {
-  it('shows Audit Log to admins', async () => {
+  it('shows Audit log to admins', async () => {
     mount('admin');
-    expect(await screen.findByRole('button', { name: /Audit Log/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /Audit log/ })).toBeInTheDocument();
   });
 
-  it('shows Audit Log to analysts, who hold view_audit, but not Users', async () => {
+  it('shows Audit log to analysts, who hold view_audit, but not Users', async () => {
     mount('analyst');
     expect(await screen.findByText('audit-pane')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Users/ })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /^Users/ })).toBeNull();
   });
 
-  it('hides Audit Log from staff without view_audit who still have another tab', async () => {
+  it('hides Audit log from staff without view_audit who still have another tab', async () => {
     mount('billing');
-    expect(await screen.findByRole('button', { name: /Pricing/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Audit Log/ })).toBeNull();
+    expect(await screen.findByRole('tab', { name: /Pricing/ })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Audit log/ })).toBeNull();
     expect(screen.queryByText('audit-pane')).toBeNull();
   });
 

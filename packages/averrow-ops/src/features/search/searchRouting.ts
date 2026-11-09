@@ -33,14 +33,14 @@ export interface SearchGroupConfig {
   viewAllTo: (q: string) => string;
 }
 
-// Fixed render order BRANDS → THREAT ACTORS → PROVIDERS → CAMPAIGNS → APPS,
+// Fixed render order Brands → Threat actors → Providers → Campaigns → Apps,
 // shared by the palette's flat list and the search page's sections.
 export const SEARCH_GROUPS: SearchGroupConfig[] = [
-  { type: 'brand', heading: 'BRANDS', icon: Building2, routeFor: id => `/brands/${id}`, viewAllTo: q => `/explore?tab=brands&q=${encodeURIComponent(q)}` },
-  { type: 'threat_actor', heading: 'THREAT ACTORS', icon: Network, routeFor: id => tabUrl('actors', { focus: id }), viewAllTo: q => `/explore?tab=actors&q=${encodeURIComponent(q)}` },
-  { type: 'provider', heading: 'PROVIDERS', icon: Server, routeFor: id => tabUrl('providers', { focus: id }), viewAllTo: q => `/explore?tab=providers&q=${encodeURIComponent(q)}` },
-  { type: 'campaign', heading: 'CAMPAIGNS', icon: Megaphone, routeFor: id => `/campaigns/${id}`, viewAllTo: q => `/explore?tab=campaigns&q=${encodeURIComponent(q)}` },
-  { type: 'app_store', heading: 'APPS', icon: Smartphone, routeFor: () => '/coverage?tab=apps', viewAllTo: () => '/coverage?tab=apps' },
+  { type: 'brand', heading: 'Brands', icon: Building2, routeFor: id => `/brands/${id}`, viewAllTo: q => `/explore?tab=brands&q=${encodeURIComponent(q)}` },
+  { type: 'threat_actor', heading: 'Threat actors', icon: Network, routeFor: id => tabUrl('actors', { focus: id }), viewAllTo: q => `/explore?tab=actors&q=${encodeURIComponent(q)}` },
+  { type: 'provider', heading: 'Providers', icon: Server, routeFor: id => tabUrl('providers', { focus: id }), viewAllTo: q => `/explore?tab=providers&q=${encodeURIComponent(q)}` },
+  { type: 'campaign', heading: 'Campaigns', icon: Megaphone, routeFor: id => `/campaigns/${id}`, viewAllTo: q => `/explore?tab=campaigns&q=${encodeURIComponent(q)}` },
+  { type: 'app_store', heading: 'Apps', icon: Smartphone, routeFor: () => '/coverage?tab=apps', viewAllTo: () => '/coverage?tab=apps' },
 ];
 
 /** Builds the persistent search-results page URL for a raw query string. */

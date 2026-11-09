@@ -6,9 +6,10 @@
  * activation) — arrowing across the strip must not fire a data request for every
  * lens it passes. A click or tap activates at once.
  *
- * Narrow screens: the strip scrolls horizontally; the ends fade out under an edge
- * mask with chevrons that page it, and the active tab is scrolled into view when
- * it changes. Tabs are 44px high on touch.
+ * Narrow screens: the strip scrolls horizontally with scroll-snap (tabs settle on
+ * their start edge, never cut mid-tab); a short edge fade on the scroller (not the
+ * chevron slots) softens a partly visible tab, chevrons page the strip, and the
+ * active tab is scrolled into view when it changes. Tabs are 44px high on touch.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -97,6 +98,12 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
   };
 
   const chevron = touch ? 28 : 24;
+  // Edge fade on the scroller only (the chevron slots are flex siblings, outside the mask): a tab cut by the scroller
+  // edge dissolves instead of being hard-clipped. Only the side that still has content to scroll to is faded.
+  const FADE = 14;
+  const fadeMask = edges.left || edges.right
+    ? `linear-gradient(to right, ${edges.left ? 'transparent' : 'black'} 0, black ${edges.left ? FADE : 0}px, black calc(100% - ${edges.right ? FADE : 0}px), ${edges.right ? 'transparent' : 'black'} 100%)`
+    : undefined;
   // When the tabs do not fit, both paging slots are reserved (the chevron inside shows only while that side has more to
   // scroll to). The slots are flex siblings of the scroller, never laid over it, so tab text can not sit under a chevron.
   const slot = (side: 'left' | 'right') => edges.overflowing && (
@@ -137,7 +144,14 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
         aria-orientation="horizontal"
         onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRove(null); }}
         className="flex items-center gap-[3px] px-1 overflow-x-auto min-w-0 flex-1 h-full"
-        style={{ scrollbarWidth: 'none' }}
+        style={{
+          scrollbarWidth: 'none',
+          // Tabs align to the start edge when a scroll settles nearby (proximity: arrow/centre scrolls are not fought).
+          scrollSnapType: 'x proximity',
+          scrollPaddingInline: FADE + 2,
+          maskImage: fadeMask,
+          WebkitMaskImage: fadeMask,
+        }}
       >
         {LENS_IDS.map((id, i) => {
           const active = id === lens;
@@ -155,7 +169,7 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
               onFocus={() => setRove(id)}
               onKeyDown={e => onKeyDown(e, i)}
               className={cn(
-                'ds-focusable shrink-0 inline-flex items-center justify-center whitespace-nowrap rounded-[9px] px-2.5 font-semibold cursor-pointer',
+                'ds-focusable shrink-0 snap-start inline-flex items-center justify-center whitespace-nowrap rounded-[9px] px-2.5 font-semibold cursor-pointer',
                 LABEL,
                 'transition-[background,color] duration-150 motion-reduce:transition-none',
                 touch ? 'min-h-[44px]' : 'min-h-[32px]',

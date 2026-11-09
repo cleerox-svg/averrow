@@ -607,6 +607,15 @@
   border-left-color: color-mix(in srgb, var(--primary) 25%, transparent) !important;
 }
 
+/* DataRow states (components/ui/DataRow.tsx): unread rail + fill come from two custom properties so the stylesheet
+   hover can still replace them; a row that is not clickable itself shows the pointer only inside a link. */
+.data-row--unread {
+  border-left-color: var(--row-rail);
+  background: linear-gradient(90deg, var(--row-rail-bg) 0%, transparent 30%);
+}
+.data-row--static { cursor: default; }
+a .data-row--static, [role="link"] .data-row--static { cursor: pointer; }
+
 /* Severity-specific hover overrides */
 .data-row--critical:hover {
   background: linear-gradient(90deg, var(--sev-critical-bg) 0%, transparent 40%);
@@ -627,6 +636,33 @@
 .data-row--info:hover {
   background: linear-gradient(90deg, var(--sev-info-bg) 0%, transparent 40%);
   border-left-color: var(--sev-info-border) !important;
+}
+
+/* Facelift (any appearance): the token row hover of AVERROW_UI_STANDARD "Table row standard". No glow gradient and no
+   primary/amber left rail; the hover darkens (dark: --bg-page, light: 6% text), and severity rows keep only their
+   severity-token left border. FACELIFT=false has no [data-accent], so the legacy rules above stay as they were. */
+:root[data-accent] .data-row {
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease), border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+:root[data-accent] .data-row:hover {
+  background: var(--bg-page);
+  color: var(--text-primary);
+}
+/* the hover only clears the rail of plain rows: an unread row keeps its rail (severity rows set theirs below) */
+:root[data-accent] .data-row:not(.data-row--unread):hover {
+  border-left-color: transparent !important;
+}
+:root[data-accent][data-theme="light"] .data-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+:root[data-accent] .data-row--critical:hover, :root[data-accent] .data-row[data-severity="critical"]:hover { border-left-color: var(--sev-critical) !important; }
+:root[data-accent] .data-row--high:hover,     :root[data-accent] .data-row[data-severity="high"]:hover     { border-left-color: var(--sev-high) !important; }
+:root[data-accent] .data-row--medium:hover,   :root[data-accent] .data-row[data-severity="medium"]:hover   { border-left-color: var(--sev-medium) !important; }
+:root[data-accent] .data-row--low:hover,      :root[data-accent] .data-row[data-severity="low"]:hover      { border-left-color: var(--sev-low) !important; }
+:root[data-accent] .data-row--info:hover                                                                    { border-left-color: var(--sev-info) !important; }
+:root[data-accent] .data-row--unread:hover { border-left-color: var(--row-rail) !important; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-accent] .data-row { transition: none; }
 }
 
 /* ── GAUGE PULSE ANIMATIONS ───────────────────── */

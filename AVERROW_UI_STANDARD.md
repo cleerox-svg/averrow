@@ -925,7 +925,7 @@ amber**, and never lightens the surface (Phase 6, screen 3a):
   (light: `--text-primary`), offset 2px. The row click is a mouse convenience;
   a real `<button>` inside the row is the keyboard control.
 - A selected row uses `--primary-tint`.
-- Severity rows keep their severity left border (`--sev-*-border`) on hover;
+- Severity rows keep their severity left border at the full `--sev-*` colour on hover (it does not fade);
   there is no amber / primary left-border slide.
 
 ```css
@@ -938,8 +938,10 @@ amber**, and never lightens the surface (Phase 6, screen 3a):
 ```
 
 First adopter: the Alerts tab (`features/alerts/alerts.css`, scoped under
-`.alerts-v4`). The global `.data-row` rules in `index.css` still carry the
-legacy primary-glow hover and migrate screen by screen.
+`.alerts-v4`). The global `.data-row` rules in ops `index.css` apply the same
+token hover under `:root[data-accent]` (no glow gradient, no primary/amber left
+rail; severity rows hold the full `--sev-*` rail); the legacy primary-glow
+rules remain only for `FACELIFT = false`.
 
 **Console chrome and Alerts (Phase 6, screen 3a).** The Console crumb is a
 sentence-case `--type-label-*` label, the title uses `--type-display-*`, there

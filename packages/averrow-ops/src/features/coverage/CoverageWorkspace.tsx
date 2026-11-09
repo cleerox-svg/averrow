@@ -4,7 +4,6 @@
 // here (LEGACY_TAB_PATHS).
 
 import { lazy } from 'react';
-import { Smartphone, EyeOff, Award, TrendingUp, Bot } from 'lucide-react';
 import { TabbedWorkspace, type WorkspaceTab } from '@/components/v4/TabbedWorkspace';
 
 const Apps = lazy(() => import('@/features/apps/Apps').then(m => ({ default: m.Apps })));
@@ -15,18 +14,18 @@ const Trends = lazy(() => import('@/features/trends/Trends').then(m => ({ defaul
 const BotTraffic = lazy(() => import('@/features/bot-traffic/BotTraffic').then(m => ({ default: m.BotTraffic })));
 
 const TABS: WorkspaceTab[] = [
-  { id: 'apps', label: 'Apps', icon: Smartphone, Component: Apps,
+  { id: 'apps', label: 'Apps', Component: Apps,
     def: 'App-store impersonation coverage — fake mobile listings mimicking your brand by bundle ID, name, or developer.' },
-  { id: 'dark-web', label: 'Dark Web', icon: EyeOff, Component: DarkWeb,
+  { id: 'dark-web', label: 'Dark web', Component: DarkWeb,
     def: 'Paste archives and leak forums monitored for brand mentions — confirmed leaks and ransomware listings.' },
-  { id: 'trademarks', label: 'Trademarks', icon: Award, Component: Trademarks,
+  { id: 'trademarks', label: 'Trademarks', Component: Trademarks,
     def: 'Wordmark misuse unified across social, app-store, and domain signals — where your marks are being abused.' },
-  { id: 'trends', label: 'Trends', icon: TrendingUp, Component: Trends,
+  { id: 'trends', label: 'Trends', Component: Trends,
     def: 'Threat trends over time — what is rising, falling, and shifting across the detection surfaces.' },
-  { id: 'bot-traffic', label: 'Bot Traffic', icon: Bot, Component: BotTraffic,
+  { id: 'bot-traffic', label: 'Bot traffic', Component: BotTraffic,
     def: 'Share of internet HTTP traffic classified as automated, with top origin countries, networks, and verified-bot categories.' },
 ];
 
 export function CoverageWorkspace() {
-  return <TabbedWorkspace crumb="INTELLIGENCE" title="Coverage" tabs={TABS} />;
+  return <TabbedWorkspace crumb="Intelligence" title="Coverage" tabs={TABS} />;
 }
