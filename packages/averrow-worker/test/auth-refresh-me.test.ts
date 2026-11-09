@@ -154,6 +154,70 @@ describe.skipIf(!hasSqlite())("POST /api/auth/refresh returns the /me payload", 
   });
 });
 
+describe.skipIf(!hasSqlite())("POST /api/auth/refresh response hygiene", () => {
+  let rig: Rig;
+  beforeEach(() => { rig = makeRig(); });
+
+  it("is Cache-Control: no-store (body carries a bearer token and profile)", async () => {
+    addUser(rig, "u1", "analyst");
+    await addSession(rig, "s1", "u1", "r1", "google_oauth");
+    const res = await handleRefreshToken(refreshReq("r1"), rig.env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("omits me when the user's role changed between the session read and the me read", async () => {
+    addUser(rig, "u1", "analyst");
+    await addSession(rig, "s1", "u1", "r1", "google_oauth");
+    // Simulate a concurrent role change landing right after the session
+    // rotation UPDATE (i.e. after the role used for the token was read).
+    const realDb = rig.env.DB;
+    const racing = {
+      prepare(sql: string) {
+        const stmt = realDb.prepare(sql);
+        if (!sql.startsWith("UPDATE sessions SET refresh_token_hash")) return stmt;
+        return new Proxy(stmt, {
+          get(target, prop, recv) {
+            if (prop === "bind") {
+              return (...args: unknown[]) => {
+                const bound = (target as unknown as { bind: (...a: unknown[]) => D1PreparedStatement }).bind(...args);
+                return new Proxy(bound, {
+                  get(t2, p2) {
+                    if (p2 === "run") {
+                      return async () => {
+                        const r = await t2.run();
+                        rig.raw.prepare("UPDATE users SET role = 'client' WHERE id = 'u1'").run();
+                        return r;
+                      };
+                    }
+                    const v = (t2 as unknown as Record<string | symbol, unknown>)[p2];
+                    return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t2) : v;
+                  },
+                });
+              };
+            }
+            return Reflect.get(target, prop, recv);
+          },
+        });
+      },
+      batch: realDb.batch.bind(realDb),
+    };
+    const env = { ...rig.env, DB: racing } as unknown as Env;
+    const res = await handleRefreshToken(refreshReq("r1"), env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as RefreshBody;
+    expect(body.data.token).toBeTruthy();
+    expect(body.data.user.role).toBe("analyst");
+    expect(body.data).not.toHaveProperty("me");
+  });
+
+  it("includes me when roles agree (guard does not fire on the normal path)", async () => {
+    addUser(rig, "u1", "analyst");
+    await addSession(rig, "s1", "u1", "r1", "google_oauth");
+    expect((await refresh(rig, "r1")).data.me?.role).toBe("analyst");
+  });
+});
+
 describe.skipIf(!hasSqlite())("GET /api/auth/me is unchanged", () => {
   let rig: Rig;
   beforeEach(() => { rig = makeRig(); });
