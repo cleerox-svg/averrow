@@ -8,6 +8,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { PERIOD_IDS, SOURCE_IDS, type Period, type Source } from '../lib/url-state';
+import { FACT, FACT_STRONG, LABEL } from '../lib/chrome-classes';
+import { focusInto } from '../lib/popover-focus';
 
 export const PERIOD_LABELS: Record<Period, string> = { '24h': '24H', '7d': '7D', '30d': '30D', '90d': '90D' };
 export const SOURCE_LABELS: Record<Source, string> = { all: 'All sources', feeds: 'Feeds', spam_trap: 'Spam trap' };
@@ -52,10 +54,10 @@ export function PeriodSegment({ period, onChange, touch = false, className }: { 
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(id)}
             onKeyDown={e => move(e, i)}
-            className={cn('ds-focusable rounded-[9px] px-2 font-mono text-[11px] font-bold tracking-[0.04em] cursor-pointer transition-[background,color] duration-150 motion-reduce:transition-none', touch ? 'min-h-[42px] min-w-[44px]' : 'min-h-[32px]')}
+            className={cn('ds-focusable rounded-[9px] px-2 cursor-pointer transition-[background,color] duration-150 motion-reduce:transition-none', FACT_STRONG, touch ? 'min-h-[42px] min-w-[44px]' : 'min-h-[32px]')}
             style={{
-              border: `1px solid ${on ? 'var(--pill-active-border)' : 'transparent'}`,
-              background: on ? 'linear-gradient(135deg, var(--primary-glow), var(--pill-active-fill-2-strong))' : 'transparent',
+              border: `1px solid ${on ? 'var(--primary-border)' : 'transparent'}`,
+              background: on ? 'var(--primary-tint)' : 'transparent',
               color: on ? 'var(--primary-text)' : 'var(--text-secondary)',
             }}
           >
@@ -80,7 +82,7 @@ export function SourceSelect({ source, onChange, touch = false, className, disab
         disabled={disabled}
         aria-describedby={disabled ? reasonId : undefined}
         onChange={e => onChange(e.target.value as Source)}
-        className={cn('ds-focusable appearance-none bg-transparent font-mono text-[11px] font-bold h-full pl-3 pr-8 rounded-xl [color-scheme:inherit]', disabled ? 'cursor-not-allowed' : 'cursor-pointer')}
+        className={cn('ds-focusable appearance-none bg-transparent font-medium h-full pl-3 pr-8 rounded-xl [color-scheme:inherit]', LABEL, disabled ? 'cursor-not-allowed' : 'cursor-pointer')}
         style={{ color: 'var(--text-secondary)', border: 'none', minWidth: touch ? 120 : 104 }}
       >
         {SOURCE_IDS.map(id => <option key={id} value={id}>{SOURCE_LABELS[id]}</option>)}
@@ -115,10 +117,27 @@ export function FiltersPopover({
   const rootRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const id = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Focus moves into the dialog on open; Escape (below) and the trigger itself hand it back.
+  useEffect(() => { if (open) focusInto(dialogRef.current); }, [open]);
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent | TouchEvent) => { if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false); };
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        // Closing must not strand focus on <body>: once the press has settled, if nothing took focus (a click on a
+        // non-focusable area), it goes back to the trigger. A focusable target (the map, another control) keeps it.
+        const hadFocusInside = !!dialogRef.current?.contains(document.activeElement);
+        setOpen(false);
+        if (hadFocusInside) {
+          setTimeout(() => {
+            const a = document.activeElement;
+            if (!a || a === document.body || dialogRef.current?.contains(a)) btnRef.current?.focus({ preventScroll: true });
+          }, 0);
+        }
+      }
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); btnRef.current?.focus(); }
     };
@@ -142,20 +161,22 @@ export function FiltersPopover({
         aria-haspopup="dialog"
         aria-label={`Filters: ${PERIOD_LABELS[period]}, ${SOURCE_LABELS[source]}`}
         onClick={() => setOpen(o => !o)}
-        className={cn('ds-focusable inline-flex items-center gap-2 rounded-xl px-3 font-mono text-[11px] cursor-pointer', triggerClassName)}
+        className={cn('ds-focusable inline-flex items-center gap-2 rounded-xl px-3 cursor-pointer', FACT, triggerClassName)}
         style={{ ...GLASS, height: touch ? 48 : 40, color: 'var(--text-secondary)' }}
       >
         <span style={{ color: 'var(--primary-text)' }}>{PERIOD_LABELS[period]}</span>
         <span aria-hidden style={{ color: 'var(--text-tertiary)' }}>·</span>
-        <span className="truncate max-w-[110px]" style={{ color: 'var(--primary-text)' }}>{SOURCE_LABELS[source]}</span>
+        <span className={cn('truncate max-w-[110px] font-sans', LABEL)} style={{ color: 'var(--primary-text)' }}>{SOURCE_LABELS[source]}</span>
         <ChevronDown size={13} aria-hidden className={cn('shrink-0 ml-auto transition-transform duration-200 motion-reduce:transition-none', open && 'rotate-180')} style={{ color: 'var(--text-tertiary)' }} />
       </button>
       <div
+        ref={dialogRef}
         id={id}
         role="dialog"
         aria-label="Filters"
+        tabIndex={-1}
         hidden={!open}
-        className={cn('absolute top-full mt-2 z-40 w-[min(320px,calc(100vw-24px))] max-h-[calc(100dvh-140px)] overflow-y-auto rounded-xl p-3 flex flex-col gap-3 animate-sheet-in motion-reduce:animate-none [&[hidden]]:hidden', align === 'right' ? 'right-0' : 'left-0')}
+        className={cn('absolute top-full mt-2 z-40 w-[min(320px,calc(100vw-24px))] max-h-[calc(100dvh-140px)] overflow-y-auto rounded-xl p-3 flex flex-col gap-3 outline-none animate-sheet-in motion-reduce:animate-none [&[hidden]]:hidden', align === 'right' ? 'right-0' : 'left-0')}
         style={{ background: 'var(--bg-card-deep)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)' }}
       >
         {children}
@@ -164,4 +185,3 @@ export function FiltersPopover({
   );
 }
 
-export const FILTER_LABEL = 'font-mono text-[10px] uppercase tracking-wider';

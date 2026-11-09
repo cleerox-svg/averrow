@@ -4,10 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { ProjectionToggle, HEAT_FLAT_ONLY, toggleLabel } from './ProjectionToggle';
 
 describe('ProjectionToggle: ONE button for Flat | Globe', () => {
-  it('flat: "Globe view", not pressed; pressing it asks for the globe and says so', async () => {
+  it('flat: "Flat or globe view", not pressed; pressing it asks for the globe and says so', async () => {
     const onToggle = vi.fn();
     render(<ProjectionToggle projection="flat" onToggle={onToggle} />);
-    const btn = screen.getByRole('button', { name: 'Globe view' });
+    const btn = screen.getByRole('button', { name: 'Flat or globe view' });
     expect(btn).toHaveAttribute('aria-pressed', 'false');
     await userEvent.click(btn);
     expect(onToggle).toHaveBeenCalledWith('globe');
@@ -17,7 +17,7 @@ describe('ProjectionToggle: ONE button for Flat | Globe', () => {
   it('globe: the SAME label, pressed; pressing it asks for flat', async () => {
     const onToggle = vi.fn();
     render(<ProjectionToggle projection="globe" onToggle={onToggle} />);
-    const btn = screen.getByRole('button', { name: 'Globe view' });
+    const btn = screen.getByRole('button', { name: 'Flat or globe view' });
     expect(btn).toHaveAttribute('aria-pressed', 'true');
     await userEvent.click(btn);
     expect(onToggle).toHaveBeenCalledWith('flat');
@@ -69,8 +69,8 @@ describe('ProjectionToggle: ONE button for Flat | Globe', () => {
 
     it('the label names the reason too (screen readers hear it without the description)', () => {
       expect(toggleLabel('flat', true)).toMatch(/heat view is flat-only/);
-      expect(toggleLabel('globe', false)).toBe('Globe view');
-      expect(toggleLabel('flat', false)).toBe('Globe view'); // fixed: aria-pressed carries the state
+      expect(toggleLabel('globe', false)).toBe('Flat or globe view');
+      expect(toggleLabel('flat', false)).toBe('Flat or globe view'); // fixed: aria-pressed carries the state
     });
   });
 
