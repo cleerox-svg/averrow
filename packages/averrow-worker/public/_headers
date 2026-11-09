@@ -32,3 +32,17 @@
 
 /v2/email/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Page-load perf (owner-requested 2026-11-09): the two SPA bundles' Vite output
+# under /v2/assets/ and /tenant/assets/ is content-hashed (index-C5K0wNNo.js),
+# so a changed file always ships under a new name. Long cache + immutable stops
+# the browser revalidating every JS/CSS/font chunk on each visit (it was
+# max-age=0, must-revalidate). index.html and /v2/sw.js are outside these paths
+# and keep revalidating. A missing hashed file never reaches this rule: Static
+# Assets misses fall through to the Worker, which serves the SPA shell under the
+# /v2/index.html or /tenant/index.html path with no-cache.
+/v2/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/tenant/assets/*
+  Cache-Control: public, max-age=31536000, immutable
