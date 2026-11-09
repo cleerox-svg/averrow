@@ -7,7 +7,8 @@ import { roleHasPermission, type StaffPermission } from "../lib/role-permissions
 import { forcedLogoutKey, isForcedOut, parseForcedLogout } from "../lib/forced-logout";
 import {
   readAuthUserCache, writeAuthUserCache, lastActiveIsStale, sqliteNow,
-  memoGetAuthUser, memoSetAuthUser, type AuthUserCacheEntry,
+  memoGetAuthUser, memoSetAuthUser,
+  memoDeleteAuthUser, type AuthUserCacheEntry,
 } from "../lib/auth-user-cache";
 import { runInBackground } from "../lib/request-context";
 import type { Env, JWTPayload, UserRole } from "../types";
@@ -160,6 +161,13 @@ async function requireAuthInternal(
         const entry: AuthUserCacheEntry = { status: "active", last_active: sqliteNow(writtenAt), checked_at: writtenAt };
         memoSetAuthUser(userId, entry);
         await writeAuthUserCache(env, userId, entry);
+      } else {
+        // 0 rows: another isolate already refreshed last_active (or the user
+        // is no longer active). Drop the memo entry rather than keep its stale
+        // last_active, which would re-run this no-op UPDATE on every request
+        // until the memo expires. Never re-set it here: that would renew trust
+        // without D1 proof.
+        memoDeleteAuthUser(userId);
       }
     });
   } else if (fromD1) {

@@ -8,8 +8,9 @@
 //
 //   legacy  "1759600000"                      — plain epoch seconds. Every
 //           token / session with iat <= ts is rejected. Still written by the
-//           admin force-logout, the admin role PATCH, invite acceptance and
-//           refresh-token reuse detection.
+//           admin force-logout, invite acceptance and refresh-token reuse
+//           detection. (The admin users PATCH now writes v2 via
+//           writeForcedLogout.)
 //   v2      {"ts":1759600000|null,"sids":{"<session id>":<expires epoch>}}
 //           `ts` keeps the legacy meaning. `sids` lists individually revoked
 //           sessions: an access token whose `sid` claim is listed is rejected

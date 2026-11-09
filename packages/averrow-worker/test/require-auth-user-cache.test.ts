@@ -257,7 +257,7 @@ describe.skipIf(!hasSqlite())("requireAuth: status cache", () => {
     expect(allowed(await auth(rig, "u1"))).toBe(true);            // still inside the trust window
     expect(lastActiveWrites(rig.sqls)).toHaveLength(1);
     expect(lastActiveOf(rig.raw, "u1")).toBeNull();              // status guard refused the write
-    expect(rig.kv.store.get(authUserCacheKey("u1"))).toBe(stored); // not renewed
+    expect(rig.kv.store.get(authUserCacheKey("u1"))).toBe(stored); // not renewed    expect(memoGetAuthUser("u1")).toBeNull();                     // stale memo entry dropped, not renewed
   });
 
   it("works outside a request scope (floating background promise)", async () => {

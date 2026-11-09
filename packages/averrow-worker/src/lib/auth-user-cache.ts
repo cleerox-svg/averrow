@@ -115,6 +115,11 @@ export function memoSetAuthUser(userId: string, entry: AuthUserCacheEntry, nowMs
   memo.set(userId, { entry, expiresAt: nowMs + AUTH_USER_MEMO_TTL_MS });
 }
 
+/** Drop this isolate's memo entry for one user (next request re-reads KV/D1). */
+export function memoDeleteAuthUser(userId: string): void {
+  memo.delete(userId);
+}
+
 /** Test helper. */
 export function clearAuthUserMemo(): void {
   memo.clear();
