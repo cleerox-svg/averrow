@@ -391,6 +391,10 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
   } catch {
     me = null;
   }
+  // The token's role/scope come from the session row read above; `me` re-reads
+  // users. If a concurrent role change landed in between, omit `me` so the
+  // client asks /me rather than render a UI role that disagrees with the token.
+  if (me && me.role !== session.role) me = null;
 
   const response = json({
     success: true,
@@ -401,6 +405,8 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
       ...(me ? { me } : {}),
     },
   }, 200, origin);
+  // The body carries a bearer token and the user's profile: never cacheable.
+  response.headers.set("Cache-Control", "no-store");
 
   return setRefreshCookie(response, newRefreshToken, request);
 }

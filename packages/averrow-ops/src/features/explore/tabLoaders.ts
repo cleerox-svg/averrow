@@ -15,6 +15,6 @@ const LOADERS: Record<string, () => Promise<unknown>> = {
 
 /** Start loading the pane for `?tab=` (default: brands). */
 export function preloadExploreTab(tab: string | null): void {
-  const key = tab && tab in LOADERS ? tab : 'brands';
+  const key = tab && Object.hasOwn(LOADERS, tab) ? tab : 'brands';
   void LOADERS[key]().catch(() => undefined);
 }

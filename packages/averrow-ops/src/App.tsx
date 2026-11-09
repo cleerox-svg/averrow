@@ -82,7 +82,13 @@ export function preloadRouteForPath(pathname: string, search: string): void {
 }
 
 if (typeof window !== 'undefined') {
-  preloadRouteForPath(window.location.pathname, window.location.search);
+  // A boot-time preload is an optimisation only: it must never be able to
+  // throw during module evaluation, which would stop the app from mounting.
+  try {
+    preloadRouteForPath(window.location.pathname, window.location.search);
+  } catch {
+    /* the route's React.lazy loads it on render instead */
+  }
 }
 
 function RouteLoader() {

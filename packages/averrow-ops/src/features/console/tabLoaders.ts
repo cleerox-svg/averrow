@@ -18,6 +18,6 @@ const LOADERS: Record<string, () => Promise<unknown>> = {
 
 /** Start loading the pane for `?tab=` (`signals` is the legacy alias of alerts; default alerts). */
 export function preloadConsoleTab(tab: string | null): void {
-  const key = tab === 'signals' || !tab || !(tab in LOADERS) ? 'alerts' : tab;
+  const key = tab === 'signals' || !tab || !Object.hasOwn(LOADERS, tab) ? 'alerts' : tab;
   void LOADERS[key]().catch(() => undefined);
 }
