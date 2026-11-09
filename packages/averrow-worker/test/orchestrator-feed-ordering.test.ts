@@ -70,6 +70,10 @@ const runAllFeedsSpy = vi.fn(async () => {
   callOrder.push("runAllFeeds");
   return { feedsRun: 1, totalNew: feedsTotalNew, feedsFailed: 0, feedsSkipped: 0 };
 });
+const runAllEnrichmentFeedsSpy = vi.fn(async (..._args: unknown[]) => {
+  callOrder.push("runAllEnrichmentFeeds");
+  return { feedsRun: 0, totalEnriched: 0, feedsFailed: 0, feedsSkipped: 0 };
+});
 vi.mock("../src/lib/feedRunner", async () => {
   const actual = await vi.importActual<typeof import("../src/lib/feedRunner")>(
     "../src/lib/feedRunner",
@@ -77,10 +81,7 @@ vi.mock("../src/lib/feedRunner", async () => {
   return {
     ...actual,
     runAllFeeds: runAllFeedsSpy,
-    runAllEnrichmentFeeds: vi.fn(async () => {
-      callOrder.push("runAllEnrichmentFeeds");
-      return { feedsRun: 0, totalEnriched: 0, feedsFailed: 0, feedsSkipped: 0 };
-    }),
+    runAllEnrichmentFeeds: runAllEnrichmentFeedsSpy,
     runAllSocialFeeds: vi.fn(async () => ({ feedsRun: 0, totalNew: 0, feedsFailed: 0, feedsSkipped: 0 })),
   };
 });
@@ -244,6 +245,22 @@ describe("orchestrator tick — feed ingestion precedes the bounded inline geo p
     expect(callOrder.indexOf("dispatchWorkflow")).toBeLessThan(feeds);
     expect(runAllFeedsSpy).toHaveBeenCalledTimes(1);
     expect(enrichThreatsGeoSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps the enrichment loop at scheduledTime + ENRICHMENT_TICK_DEADLINE_MS", async () => {
+    const { ENRICHMENT_TICK_DEADLINE_MS } = await import("../src/lib/feedRunner");
+    const event = eventAtHour(4);
+    vi.useFakeTimers();
+    try {
+      // A live tick, 2 min into the invocation.
+      vi.setSystemTime(event.scheduledTime + 2 * 60_000);
+      const { handleScheduled } = await import("../src/cron/orchestrator");
+      await handleScheduled(event, makeEnv(), ctx);
+    } finally {
+      vi.useRealTimers();
+    }
+    const call = runAllEnrichmentFeedsSpy.mock.calls.at(-1)!;
+    expect(call[2]).toEqual({ deadline: event.scheduledTime + ENRICHMENT_TICK_DEADLINE_MS });
   });
 
   it("still gates sentinel on runAllFeeds' totalNew", async () => {

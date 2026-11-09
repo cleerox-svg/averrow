@@ -1053,7 +1053,7 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   //  2. In flightControlAgent — a hourly watchdog that flags any enabled feed
   //     whose last_successful_pull is older than 3× its schedule_cron interval.
   //     Catches the broader symptom regardless of cause.
-  const { runAllFeeds, runAllEnrichmentFeeds } = await import('../lib/feedRunner');
+  const { runAllFeeds, runAllEnrichmentFeeds, enrichmentDeadlineForTick } = await import('../lib/feedRunner');
   let feedResult = { feedsRun: 0, totalNew: 0, feedsFailed: 0, feedsSkipped: 0 };
   try {
     feedResult = await runAllFeeds(env, feedModules);
@@ -1119,7 +1119,12 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     const enrichmentNames = Object.keys(enrichmentModules);
     console.log(`[cron] About to run enrichment feeds...`);
     console.log(`[cron] Enrichment modules registered: ${enrichmentNames.join(', ')}`);
-    const enrichResult = await runAllEnrichmentFeeds(env, enrichmentModules);
+    // Deadline anchored to the tick's scheduledTime, so enrichment can never
+    // push the rest of this tick past the invocation's wall-clock limit
+    // however long the feed pool above ran (ENRICHMENT_TICK_DEADLINE_MS).
+    const enrichResult = await runAllEnrichmentFeeds(env, enrichmentModules, {
+      deadline: enrichmentDeadlineForTick(scheduledTime.getTime()),
+    });
     console.log(`[cron] Enrichment feeds complete: run=${enrichResult.feedsRun} enriched=${enrichResult.totalEnriched} failed=${enrichResult.feedsFailed} skipped=${enrichResult.feedsSkipped}`);
     logger.info('threat_feed_scan_enrichment_feeds', {
       feedsRun: enrichResult.feedsRun,
