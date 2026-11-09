@@ -13,6 +13,7 @@ import { useCanViewAudit } from '@/lib/auditLog';
 import { useTheme } from '@/lib/useTheme';
 import { cn } from '@/lib/cn';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
+import { Badge } from '@averrow/shared/ui';
 import { AverrowLogo } from './AverrowLogo';
 
 const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
@@ -36,8 +37,8 @@ const MODULE_PATHS: Record<ModuleKey, string> = {
 };
 
 // min-h-11: 44px touch targets in the mobile drawer; desktop keeps its density.
-const NAV_BASE = 'flex items-center gap-3 px-3 py-2 min-h-11 md:min-h-0 rounded-lg text-[13px] transition-colors';
-const NAV_INACTIVE = 'text-white/55 hover:bg-white/[0.04] hover:text-white/85';
+const NAV_BASE = 'flex items-center gap-3 px-3 py-2 min-h-11 md:min-h-0 [@media(pointer:coarse)]:min-h-11 rounded-lg text-[13px] transition-colors ds-focusable';
+const NAV_INACTIVE = 'text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:text-[var(--text-primary)]';
 const NAV_ACTIVE   = 'bg-primary/[0.10] text-primary-text border border-primary/[0.20]';
 
 function themeIconFor(theme: 'auto' | 'dark' | 'light') {
@@ -69,7 +70,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
         // Below md the sidebar is an off-canvas drawer (a permanent 240px
         // column left ~150px of content at 390px and made every page scroll
         // horizontally). From md up it is the static column it always was.
-        'w-60 shrink-0 h-full flex flex-col bg-bg-sidebar border-r border-white/[0.06]',
+        'w-60 shrink-0 h-full flex flex-col bg-bg-sidebar border-r border-[var(--border-base)]',
         'fixed inset-y-0 left-0 z-40 transition-[transform,visibility] motion-reduce:transition-none md:static md:z-auto md:translate-x-0 md:visible',
         // Opening flips visibility instantly (0s) so focus can move in on the same
         // frame; closing keeps it visible for the 200ms slide-out, then hides it.
@@ -78,7 +79,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
           : '-translate-x-full invisible [transition-duration:200ms,200ms]',
       )}
     >
-      <div className="px-4 py-4 border-b border-white/[0.05] flex items-start justify-between gap-2">
+      <div className="px-4 py-4 border-b border-[var(--border-base)] flex items-start justify-between gap-2">
         <AverrowLogo />
         <div className="flex items-center gap-2 md:gap-1">
         <button
@@ -86,7 +87,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
           onClick={cycleTheme}
           aria-label={themeLabelFor(theme)}
           title={themeLabelFor(theme)}
-          className="inline-flex h-11 w-11 md:h-auto md:w-auto md:p-1.5 items-center justify-center rounded text-white/55 hover:text-white/95 hover:bg-white/[0.06] transition-colors"
+          className="inline-flex h-11 w-11 md:h-auto md:w-auto md:p-1.5 items-center justify-center rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] transition-colors ds-focusable"
         >
           <ThemeIcon size={14} />
         </button>
@@ -95,7 +96,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
           ref={closeRef}
           onClick={onClose}
           aria-label="Close navigation"
-          className="md:hidden inline-flex h-11 w-11 -mr-2 items-center justify-center rounded-lg text-white/85 hover:bg-white/[0.06] transition-colors ds-focusable"
+          className="md:hidden inline-flex h-11 w-11 -mr-2 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:text-[var(--text-primary)] transition-colors ds-focusable"
         >
           <X size={20} />
         </button>
@@ -141,9 +142,9 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
         </Section>
 
         <Section label="Modules">
-          {isLoading && <div className="px-3 py-2 text-[12px] text-white/55 font-mono">Loading…</div>}
+          {isLoading && <div className="px-3 py-2 text-[12px] text-[var(--text-tertiary)]">Loading…</div>}
           {!isLoading && active.length === 0 && (
-            <div className="px-3 py-2 text-[12px] text-white/55 font-mono">No modules entitled yet.</div>
+            <div className="px-3 py-2 text-[12px] text-[var(--text-tertiary)]">No modules entitled yet.</div>
           )}
           {active.map((m) => {
             const Icon = MODULE_ICONS[m.module_key];
@@ -156,7 +157,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
                 <Icon size={16} />
                 <span className="min-w-0 flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
                 {m.status === 'trial' && (
-                  <span className="shrink-0 text-[11px] uppercase tracking-wider font-mono text-amber">trial</span>
+                  <Badge status="warning" size="sm" font="sans" label="Trial" className="shrink-0" />
                 )}
               </NavLink>
             );
@@ -171,11 +172,11 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
                 <NavLink
                   key={m.module_key}
                   to={MODULE_PATHS[m.module_key]}
-                  className={cn(NAV_BASE, 'text-white/55 hover:text-white/75')}
+                  className={cn(NAV_BASE, 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]')}
                 >
                   <Icon size={16} className="opacity-50" />
                   <span className="min-w-0 flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
-                  <span className="shrink-0 text-[11px] uppercase tracking-wider font-mono text-white/55">upgrade</span>
+                  <span className="shrink-0 text-[12px] font-medium text-[var(--text-tertiary)]">Upgrade</span>
                 </NavLink>
               );
             })}
@@ -208,7 +209,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
         </Section>
       </nav>
       <div
-        className="px-3 py-2.5 border-t border-white/10 font-mono text-[11px] tracking-[0.08em] text-white/55"
+        className="px-3 py-2.5 border-t border-[var(--border-base)] font-mono text-[12px] text-[var(--text-tertiary)]"
         title={`${VERSION_LABEL} · ${BUILD_SHA}`}
       >
         {VERSION_LABEL} · {BUILD_SHA}
@@ -220,7 +221,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="px-3 mb-1 text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">{label}</div>
+      <div className="px-3 mb-1 text-[12px] font-medium text-[var(--text-tertiary)]">{label}</div>
       <div className="space-y-0.5">{children}</div>
     </div>
   );

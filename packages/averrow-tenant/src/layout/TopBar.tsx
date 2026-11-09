@@ -15,6 +15,9 @@ import { useAuth } from '@/lib/auth';
 // legacy look, the accent once one is set) with --primary-ink initials, per
 // the SHARED_LOGIN_SPEC §3 rule. Initials only — never the Google profile picture.
 
+// "admin" / "professional" -> "Admin" / "Professional" (sentence case authored here, not via CSS).
+const sentenceCase = (v: string) => (v ? v.charAt(0).toUpperCase() + v.slice(1) : v);
+
 export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?: boolean; onOpenNav?: () => void; hamburgerRef?: Ref<HTMLButtonElement> }) {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
@@ -54,7 +57,7 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
   };
 
   return (
-    <header className="h-14 shrink-0 flex items-center justify-between gap-2 px-4 md:px-6 border-b border-white/[0.05] bg-bg-page/80 backdrop-blur">
+    <header className="h-14 shrink-0 flex items-center justify-between gap-2 px-4 md:px-6 border-b border-[var(--border-base)] bg-bg-page/80 backdrop-blur">
       {onOpenNav && (
         // Only ever opens: while the drawer is open this button sits inside
         // the inert page content, so closing goes through the drawer.
@@ -65,29 +68,29 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
           aria-label="Open navigation"
           aria-controls="tenant-sidebar"
           aria-expanded={navOpen}
-          className="md:hidden shrink-0 inline-flex h-11 w-11 -ml-2 items-center justify-center rounded-lg text-white/85 hover:bg-white/[0.06] transition-colors ds-focusable"
+          className="md:hidden shrink-0 inline-flex h-11 w-11 -ml-2 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:text-[var(--text-primary)] transition-colors ds-focusable"
         >
           <Menu size={20} />
         </button>
       )}
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Organization</div>
-        <div className="text-sm font-semibold text-white/90 truncate">{orgName}</div>
+        <div className="text-[12px] font-medium text-[var(--text-tertiary)]">Organization</div>
+        <div className="text-sm font-semibold text-[var(--text-primary)] truncate">{orgName}</div>
       </div>
 
       <div className="relative shrink-0" ref={popoverRef}>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-white/[0.05] transition-colors"
+          className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] transition-colors ds-focusable [@media(pointer:coarse)]:min-h-11"
           aria-haspopup="menu"
           aria-expanded={open}
         >
-          <span className="hidden md:inline text-[11px] font-mono text-white/55 max-w-[180px] truncate">
+          <span className="hidden md:inline text-[12px] font-mono text-[var(--text-tertiary)] max-w-[180px] truncate">
             {user?.email}
           </span>
           <span
-            className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold"
             style={{
               background: SELF_AVATAR_COLOR,
               color: 'var(--primary-ink)',
@@ -95,25 +98,25 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
           >
             {initials || '?'}
           </span>
-          <ChevronDown size={14} className="text-white/55" />
+          <ChevronDown size={14} className="text-[var(--text-tertiary)]" aria-hidden="true" />
         </button>
 
         {open && (
           <div
             role="menu"
-            className="absolute right-0 mt-2 w-64 rounded-xl border border-white/[0.08] bg-bg-card shadow-xl backdrop-blur z-30"
+            className="absolute right-0 mt-2 w-64 rounded-xl border border-[var(--border-base)] bg-bg-card shadow-xl backdrop-blur z-30"
             style={{ background: 'var(--bg-card)' }}
           >
-            <div className="px-3 py-3 border-b border-white/[0.06]">
-              <div className="text-sm font-semibold text-white/95 truncate">
+            <div className="px-3 py-3 border-b border-[var(--border-base)]">
+              <div className="text-sm font-semibold text-[var(--text-primary)] truncate">
                 {user?.display_name ?? user?.name ?? user?.email ?? 'Signed in'}
               </div>
-              <div className="text-[11px] font-mono text-white/55 truncate mt-0.5">
+              <div className="text-[12px] font-mono text-[var(--text-tertiary)] truncate mt-0.5">
                 {user?.email}
               </div>
               {user?.organization && (
-                <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-primary-text mt-1.5">
-                  {user.organization.role} · {user.organization.plan}
+                <div className="text-[12px] font-medium text-primary-text mt-1.5">
+                  {sentenceCase(user.organization.role)} · {sentenceCase(user.organization.plan)}
                 </div>
               )}
             </div>
@@ -122,7 +125,7 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
               <Link
                 to="/account/profile"
                 onClick={() => setOpen(false)}
-                className="flex items-center gap-2 px-3 py-2 text-[13px] text-white/85 hover:bg-white/[0.04]"
+                className="flex items-center gap-2 px-3 py-2 text-[13px] text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:text-[var(--text-primary)] ds-focusable [@media(pointer:coarse)]:min-h-11"
                 role="menuitem"
               >
                 <UserCircle size={15} />
@@ -131,7 +134,7 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
               <Link
                 to="/settings/billing"
                 onClick={() => setOpen(false)}
-                className="flex items-center gap-2 px-3 py-2 text-[13px] text-white/85 hover:bg-white/[0.04]"
+                className="flex items-center gap-2 px-3 py-2 text-[13px] text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:text-[var(--text-primary)] ds-focusable [@media(pointer:coarse)]:min-h-11"
                 role="menuitem"
               >
                 <SettingsIcon size={15} />
@@ -139,12 +142,12 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
               </Link>
             </div>
 
-            <div className="py-1 border-t border-white/[0.06]">
+            <div className="py-1 border-t border-[var(--border-base)]">
               <button
                 type="button"
                 onClick={handleLogout}
                 disabled={busy}
-                className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-white/85 hover:bg-white/[0.04] disabled:opacity-60"
+                className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:text-[var(--text-primary)] ds-focusable [@media(pointer:coarse)]:min-h-11 disabled:opacity-60"
                 role="menuitem"
                 title="Sign out then sign in as a different user"
               >
@@ -155,7 +158,7 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
                 type="button"
                 onClick={handleLogout}
                 disabled={busy}
-                className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-accent hover:bg-accent/[0.08] disabled:opacity-60"
+                className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] ds-focusable [@media(pointer:coarse)]:min-h-11 disabled:opacity-60"
                 role="menuitem"
               >
                 <LogOut size={15} />
