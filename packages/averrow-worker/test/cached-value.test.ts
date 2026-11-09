@@ -45,6 +45,91 @@ describe("cachedValue", () => {
     expect(parsed.v).toEqual({ items: [1, 2, 3], total: 3 });
   });
 
+  it("refresh (Navigator warm): recomputes once the entry is refreshAfterSeconds(ttl) old; live reads keep the full ttl", async () => {
+    // 3600s TTL → refresh threshold 3600 − 1800 − 60 = 1740s.
+    const seedAged = (ageS: number) =>
+      kv.store.set("cv:test.refresh", JSON.stringify({ v: "old", t: Date.now() - ageS * 1000 }));
+    const compute = vi.fn().mockResolvedValue("new");
+
+    seedAged(1700);
+    expect(await cachedValue(env, "test.refresh", 3600, compute, { refresh: true })).toBe("old");
+    seedAged(1800);
+    expect(await cachedValue(env, "test.refresh", 3600, compute)).toBe("old"); // live: still fresh
+    expect(await cachedValue(env, "test.refresh", 3600, compute, { refresh: true })).toBe("new");
+    expect(compute).toHaveBeenCalledOnce();
+  });
+
+  describe("staleWhileRevalidate", () => {
+    const seedAged = (value: string, ageS: number) =>
+      kv.store.set("cv:test.swr", JSON.stringify({ v: value, t: Date.now() - ageS * 1000 }));
+    const swrOpts = (pending: Promise<unknown>[] | null) => ({
+      staleWhileRevalidate: {
+        freshSeconds: 75,
+        waitUntil: pending ? (p: Promise<unknown>) => { pending.push(p); } : undefined,
+      },
+    });
+
+    it("an entry younger than freshSeconds is a hit", async () => {
+      seedAged("old", 70);
+      const compute = vi.fn().mockResolvedValue("new");
+      expect(await cachedValue(env, "test.swr", 1200, compute, swrOpts([]))).toBe("old");
+      expect(compute).not.toHaveBeenCalled();
+    });
+
+    it("stale (> fresh, < ttl): served at once; the lock holder refills in the background, then drops the lock", async () => {
+      seedAged("old", 600);
+      const pending: Promise<unknown>[] = [];
+      const compute = vi.fn().mockResolvedValue("new");
+      expect(await cachedValue(env, "test.swr", 1200, compute, swrOpts(pending))).toBe("old");
+      expect(kv.store.has("cvlock:test.swr")).toBe(true);
+      expect(pending).toHaveLength(1);
+      await Promise.all(pending);
+      expect(compute).toHaveBeenCalledOnce();
+      expect(JSON.parse(kv.store.get("cv:test.swr")!).v).toBe("new");
+      expect(kv.store.has("cvlock:test.swr")).toBe(false);
+    });
+
+    it("only the lock holder refills: concurrent stale readers schedule no second compute", async () => {
+      seedAged("old", 600);
+      kv.store.set("cvlock:test.swr", "held");
+      const pending: Promise<unknown>[] = [];
+      const compute = vi.fn().mockResolvedValue("new");
+      expect(await cachedValue(env, "test.swr", 1200, compute, swrOpts(pending))).toBe("old");
+      expect(pending).toHaveLength(0);
+      expect(compute).not.toHaveBeenCalled();
+    });
+
+    it("a failing background refill is swallowed; the stale entry stays", async () => {
+      seedAged("old", 600);
+      const pending: Promise<unknown>[] = [];
+      const compute = vi.fn().mockRejectedValue(new Error("D1 overloaded"));
+      expect(await cachedValue(env, "test.swr", 1200, compute, swrOpts(pending))).toBe("old");
+      await Promise.all(pending);
+      expect(JSON.parse(kv.store.get("cv:test.swr")!).v).toBe("old");
+      expect(kv.store.has("cvlock:test.swr")).toBe(false);
+    });
+
+    it("no waitUntil → a stale entry is recomputed inline (plain freshSeconds TTL)", async () => {
+      seedAged("old", 80);
+      expect(await cachedValue(env, "test.swr", 1200, vi.fn().mockResolvedValue("new"), swrOpts(null))).toBe("new");
+    });
+
+    it("older than ttlSeconds → not servable, recomputed inline even with waitUntil", async () => {
+      seedAged("old", 1300);
+      const pending: Promise<unknown>[] = [];
+      expect(await cachedValue(env, "test.swr", 1200, vi.fn().mockResolvedValue("new"), swrOpts(pending))).toBe("new");
+      expect(pending).toHaveLength(0);
+    });
+
+    it("a refresh (warm) call ignores freshSeconds and uses refreshAfterSeconds(ttl)", async () => {
+      seedAged("old", 300); // > 75s fresh, < 540s refresh threshold for 1200s
+      const compute = vi.fn().mockResolvedValue("new");
+      expect(await cachedValue(env, "test.swr", 1200, compute, { ...swrOpts([]), refresh: true })).toBe("old");
+      seedAged("old", 600);
+      expect(await cachedValue(env, "test.swr", 1200, compute, { ...swrOpts([]), refresh: true })).toBe("new");
+    });
+  });
+
   it("returns cached value on warm cache without computing", async () => {
     const compute = vi.fn().mockResolvedValue([{ a: 1 }, { a: 2 }]);
     await cachedValue(env, "test.warm", 60, compute);

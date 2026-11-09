@@ -85,10 +85,12 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   // Tier 2a P5 — single KV-cached composite the /admin landing reads
   // instead of fanning out to ~6 endpoints. Slices are independently
   // nullable (partial failure → missing slice, never a 500).
-  router.get("/api/admin/dashboard", async (request: Request, env: Env) => {
+  // execCtx: a stale snapshot is served at once and refreshed under
+  // waitUntil (cachedValue staleWhileRevalidate).
+  router.get("/api/admin/dashboard", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleAdminDashboard(request, env, ctx);
+    return handleAdminDashboard(request, env, ctx, execCtx);
   });
   // Pipeline drill-down detail — must be defined after the bare
   // /api/admin/pipeline-status above so itty-router doesn't
@@ -1051,6 +1053,13 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     try {
       const { runAlertJudgeBackfill } = await import("../lib/alert-ai-judge");
       const result = await runAlertJudgeBackfill(env, { limit, offset });
+      // A judged alert carries a new ai_assessment (a list-row column) and a
+      // dismissal changes counts: drop the ops alert caches (list generation,
+      // triage summary, stats) — staff caller, so the global segment.
+      if (result.judged > 0 || result.dismissed > 0) {
+        const { invalidateAlertCaches } = await import("../handlers/alerts");
+        await invalidateAlertCaches(env, null);
+      }
       return new Response(JSON.stringify({ success: true, data: result }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -1151,6 +1160,11 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     try {
       const { runAlertTriageBackfill } = await import("../lib/alert-triage");
       const result = await runAlertTriageBackfill(env.DB, { limit, offset, impersonationThreshold });
+      // Dismissals change status / counts: drop the ops alert caches.
+      if (result.dismissed > 0) {
+        const { invalidateAlertCaches } = await import("../handlers/alerts");
+        await invalidateAlertCaches(env, null);
+      }
       return new Response(JSON.stringify({ success: true, data: result }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
