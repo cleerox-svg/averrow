@@ -136,9 +136,17 @@ describe('LensStrip paging chevrons', () => {
       expect(chevron.className).not.toMatch(/\babsolute\b/);
       expect(strip.contains(chevron)).toBe(false);
       expect(strip.parentElement!.contains(chevron)).toBe(true);
+      // the edge fade is on the scroller only, and only on the side that has more to scroll to
+      expect(strip.style.maskImage).toContain('transparent');
+      expect(strip.parentElement!.style.maskImage).toBe('');
     } finally {
       for (const [k, d] of saved) { if (d) Object.defineProperty(proto, k, d); else delete (proto as unknown as Record<string, unknown>)[k]; }
     }
+  });
+  it('scroller snaps tabs to their start edge so none is left hard-clipped mid-tab', () => {
+    render(<LensStrip lens="threats" onChange={() => {}} />);
+    expect(screen.getByRole('tablist').style.scrollSnapType).toBe('x proximity');
+    for (const t of screen.getAllByRole('tab')) expect(t.className).toMatch(/\bsnap-start\b/);
   });
   it('the source has no absolutely positioned chevron', () => {
     expect(read(resolve(HERE, 'LensStrip.tsx'))).not.toMatch(/absolute top-0 bottom-0/);
