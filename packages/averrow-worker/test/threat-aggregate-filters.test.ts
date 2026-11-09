@@ -56,7 +56,7 @@ const PROVIDER_NAME: Record<string, string> = { p1: "Prov One", p2: "Prov Two", 
 const CAMPAIGN_NAME: Record<string, string> = { c1: "Camp One", c2: "Camp Two", c3: "Camp Three" };
 
 function seedDb() {
-  const db = openDerivedDb(TABLES);
+  const db = openDerivedDb(TABLES, { indexes: ["idx_threats_created_brand"] });
   const brands = db.prepare("INSERT INTO brands (id, name, canonical_domain) VALUES (?, ?, ?)");
   for (const [id, name] of Object.entries(BRAND_NAME)) brands.run(id, name, `${id}.example`);
   const prov = db.prepare("INSERT INTO hosting_providers (id, name, asn) VALUES (?, ?, ?)");
@@ -187,6 +187,8 @@ describe.skipIf(!hasSqlite())("threatAggregate filters + org scope (JOIN-after-W
 
       const agg = await threatAggregate(env, c.filters, c.scope ?? null);
       const exp = expected(SEEDS.filter(c.pred));
+      // Fail-soft must not hide a broken query: every section succeeded.
+      expect(agg.degraded_sections).toEqual([]);
 
       // No statement may fail — the old bug was also swallowed by .catch on
       // the campaign queries, so assert on the statement log, not just output.

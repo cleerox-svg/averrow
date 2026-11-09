@@ -12,9 +12,13 @@ vi.mock('@/lib/api', () => ({
   api: { get: vi.fn().mockResolvedValue({ success: true, data: { threats: [], total: 0 } }), patch: vi.fn() },
 }));
 // The mock honours `initial` the way the real hook does, so the seeded filters reach the request.
+const tableProps = vi.hoisted(() => ({ last: undefined as { brands?: Array<{ value: string; label: string }>; countries?: Array<{ value: string; label: string }> } | undefined }));
 const tableInitial = vi.hoisted(() => ({ calls: [] as Array<Record<string, string> | undefined> }));
 vi.mock('@averrow/shared/threats-table', () => ({
-  ThreatsTable: () => null,
+  ThreatsTable: (props: { brands?: Array<{ value: string; label: string }>; countries?: Array<{ value: string; label: string }> }) => {
+    tableProps.last = props;
+    return null;
+  },
   useThreatsTable: (opts?: { initial?: Record<string, string> }) => {
     tableInitial.calls.push(opts?.initial);
     return {
@@ -71,6 +75,82 @@ describe('Threats aggregate panels — failure is never empty or zero', () => {
     renderWithProviders(<Threats />);
     expect(screen.getByText(/No multi-brand patterns/)).toBeInTheDocument();
     expect(screen.getByText(/No surging signals/)).toBeInTheDocument();
+  });
+
+  it('a degraded headline shows "Couldn\'t load" tiles, not zeros, and hides the meta counts', () => {
+    const zeroed = { ...EMPTY_AGG, total: 0, active: 0, confirmed: 0, correlated: 0, attributed: 0, addressed: 0, remediation_rate: 0, degraded_sections: ['headline'] };
+    agg.mockReturnValue({ data: zeroed, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getAllByText("Couldn't load")).toHaveLength(4);
+    expect(screen.queryByText('0%')).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 in slice/)).not.toBeInTheDocument();
+  });
+
+  it('a degraded multi_brand_* section shows the failed state, not the empty copy; surge stays calm', async () => {
+    const refetch = vi.fn();
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['multi_brand_actors'] }, isError: false, refetch });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load multi-brand patterns")).toBeInTheDocument();
+    expect(screen.queryByText(/No multi-brand patterns/)).not.toBeInTheDocument();
+    expect(screen.getByText(/No surging signals/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: "Try again: Couldn't load multi-brand patterns" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a degraded surging_* section shows the failed state, not the empty copy', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['surging_types'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load surging signals")).toBeInTheDocument();
+    expect(screen.queryByText(/No surging signals/)).not.toBeInTheDocument();
+    expect(screen.getByText(/No multi-brand patterns/)).toBeInTheDocument();
+  });
+
+  it('a degraded attributed section shows "unavailable", not 0%, and only the Correlated tile fails', () => {
+    const zeroed = { ...EMPTY_AGG, correlated: 0, attributed: 0, degraded_sections: ['attributed'] };
+    agg.mockReturnValue({ data: zeroed, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getAllByText("Couldn't load")).toHaveLength(1);
+    expect(screen.getByText('Correlated / Attributed')).toBeInTheDocument();
+    expect(screen.getByText('unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/attribution unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/% attributed/)).not.toBeInTheDocument();
+  });
+
+  it('a degraded multi_brand_* section says multi-brand unavailable and that it retries automatically', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['multi_brand_campaigns'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText(/multi-brand unavailable/)).toBeInTheDocument();
+    expect(screen.getByText('Retrying automatically.')).toBeInTheDocument();
+  });
+
+  it('a degraded top_brands shows only that board failed, and the brand filter says unavailable', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['top_brands'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load top brands")).toBeInTheDocument();
+    expect(screen.getByText('Top actors')).toBeInTheDocument();
+    expect(screen.getByText('Retrying automatically.')).toBeInTheDocument();
+    expect(tableProps.last?.brands).toEqual([{ value: '', label: 'Brand list unavailable' }]);
+    expect(tableProps.last?.countries).toEqual([]);
+  });
+
+  it('a degraded top_countries gives the country filter a placeholder', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['top_countries'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(tableProps.last?.countries).toEqual([{ value: '', label: 'Country list unavailable' }]);
+  });
+
+  it('all four leaderboards degraded collapses to one panel-level error', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['top_brands', 'top_providers', 'top_actors', 'top_countries'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load leaderboards")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load top brands")).not.toBeInTheDocument();
+  });
+
+  it('a healthy response (empty degraded_sections) renders numbers and meta normally', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: [] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.queryByText("Couldn't load")).not.toBeInTheDocument();
+    expect(screen.getByText(/10 in slice/)).toBeInTheDocument();
   });
 
   it('a failed refetch with data on screen keeps the data', () => {

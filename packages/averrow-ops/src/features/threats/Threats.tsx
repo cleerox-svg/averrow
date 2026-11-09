@@ -121,6 +121,15 @@ export function Threats() {
   // A failed aggregate is an error, never "no multi-brand patterns" / 0 tiles.
   const aggFailed = aggError && !agg;
   const retryAgg = () => { void refetchAgg(); };
+  // Sections the server failed to read come back empty/zero; never present them as real data.
+  const degraded = new Set(agg?.degraded_sections ?? []);
+  const headlineFailed = aggFailed || degraded.has('headline');
+  const multiBrandFailed = aggFailed || [...degraded].some((n) => n.startsWith('multi_brand_'));
+  const surgingFailed = aggFailed || [...degraded].some((n) => n.startsWith('surging_'));
+  const attributedFailed = degraded.has('attributed');
+  // While a degraded body is on screen the hook re-polls every 60s; Try again may
+  // return the same server-cached body, so say it retries on its own.
+  const retrying = degraded.size > 0;
 
   const { data, isLoading, isFetching, isPlaceholderData } = useQuery({
     queryKey: ['threats', table.params],
@@ -159,8 +168,15 @@ export function Threats() {
     });
   }, [listSettled]);
 
-  const brandOpts = (agg?.top_brands ?? []).map((b) => ({ value: b.brand_id, label: b.brand_name ?? b.brand_id }));
-  const countryOpts = (agg?.top_countries ?? []).map((c) => ({ value: c.country, label: c.country }));
+  // ThreatsTable's option lists are plain {value,label} (no disabled flag). When a
+  // source section is degraded, an empty-value option says so; '' is the same as
+  // "All", so picking it filters nothing.
+  const brandOpts = degraded.has('top_brands')
+    ? [{ value: '', label: 'Brand list unavailable' }]
+    : (agg?.top_brands ?? []).map((b) => ({ value: b.brand_id, label: b.brand_name ?? b.brand_id }));
+  const countryOpts = degraded.has('top_countries')
+    ? [{ value: '', label: 'Country list unavailable' }]
+    : (agg?.top_countries ?? []).map((c) => ({ value: c.country, label: c.country }));
   const hasAnyFilter = !!(s.severity || s.type || s.status || s.country || s.brandId || s.q);
 
   return (
@@ -168,24 +184,24 @@ export function Threats() {
       {/* Count in `meta` (not subtitle) so it survives the Console embedding. */}
       <PageHeader
         title="Threats"
-        meta={agg ? <span>{agg.total.toLocaleString()} in slice · {agg.active.toLocaleString()} active</span> : undefined}
+        meta={agg && !headlineFailed ? <span>{agg.total.toLocaleString()} in slice · {agg.active.toLocaleString()} active</span> : undefined}
       />
 
-      <SliceSummaryStrip agg={agg} hasFilters={hasAnyFilter} />
+      <SliceSummaryStrip agg={headlineFailed ? null : agg} hasFilters={hasAnyFilter} attributedFailed={attributedFailed} />
 
-      <HeroStrip agg={agg} failed={aggFailed} />
+      <HeroStrip agg={agg} failed={headlineFailed} attributedFailed={attributedFailed} multiBrandFailed={multiBrandFailed && !aggFailed} />
 
       <ThreatInflowChart />
 
       <PanelHeader title="Coordination" subtitle="Patterns hitting multiple brands at once" />
-      <MultiBrandPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
+      <MultiBrandPanel agg={multiBrandFailed ? null : agg} failed={multiBrandFailed} retrying={retrying} onRetry={retryAgg} />
       <MultiFeedConsensusPanel />
 
       <PanelHeader title="Evolving" subtitle="What's growing week-over-week" />
-      <SurgingSignalsPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
+      <SurgingSignalsPanel agg={surgingFailed ? null : agg} failed={surgingFailed} retrying={retrying} onRetry={retryAgg} />
 
       <PanelHeader title="Top of pile" subtitle="Where the pressure is concentrated" />
-      <LeaderboardsPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
+      <LeaderboardsPanel agg={agg} failed={aggFailed} degraded={degraded} retrying={retrying} onRetry={retryAgg} />
 
       <PanelHeader id="threats-table" innerRef={sliceRef} title="Slice" subtitle="Filter, sort, and inspect — click a row for the evidence behind the verdict" />
       <ThreatsTable
@@ -248,9 +264,10 @@ export function Threats() {
 // ── Slice summary strip ─────────────────────────────────────────
 // One-line narrative summary of the current slice — answers
 // "what am I looking at right now" before the operator scans rows.
-function SliceSummaryStrip({ agg, hasFilters }: {
+function SliceSummaryStrip({ agg, hasFilters, attributedFailed }: {
   agg: ReturnType<typeof useThreatAggregate>['data'];
   hasFilters: boolean;
+  attributedFailed: boolean;
 }) {
   if (!agg) return null;
   const total = agg.total;
@@ -264,8 +281,12 @@ function SliceSummaryStrip({ agg, hasFilters }: {
     <div className="thr-strip thr-label thr-num" data-filtered={hasFilters}>
       <span>{hasFilters ? 'In slice:' : 'Across catalog:'}</span>
       <Stat label="Confirmed"  value={`${agg.confirmed.toLocaleString()} (${confirmedPct}%)`}  tone="info" />
-      <Stat label="Correlated" value={`${agg.correlated.toLocaleString()} (${correlatedPct}%)`} tone="info" />
-      <Stat label="Attributed" value={`${agg.attributed.toLocaleString()} (${attributedPct}%)`} tone="primary" />
+      {attributedFailed
+        ? <Stat label="Correlated / Attributed" value="unavailable" tone="warn" />
+        : <>
+            <Stat label="Correlated" value={`${agg.correlated.toLocaleString()} (${correlatedPct}%)`} tone="info" />
+            <Stat label="Attributed" value={`${agg.attributed.toLocaleString()} (${attributedPct}%)`} tone="primary" />
+          </>}
       <Stat label="Addressed"  value={`${agg.addressed.toLocaleString()} (${addressedPct}%)`}  tone="ok" />
       {agg.new_24h > 0 && <Stat label="New 24h" value={agg.new_24h.toLocaleString()} tone="warn" />}
     </div>
@@ -290,7 +311,9 @@ function Stat({ label, value, tone }: {
 // ══════════════════════════════════════════════════════════════════
 // HeroStrip — 4 Card hero tiles condensing the 6 narrative axes
 // ══════════════════════════════════════════════════════════════════
-function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; failed: boolean }) {
+function HeroStrip({ agg, failed, attributedFailed, multiBrandFailed }: {
+  agg: ThreatAggregate | null | undefined; failed: boolean; attributedFailed: boolean; multiBrandFailed: boolean;
+}) {
   const total = agg?.total ?? 0;
   const confirmedPct = total > 0 ? Math.round(((agg?.confirmed ?? 0) / total) * 100) : 0;
   const correlatedPct = total > 0 ? Math.round(((agg?.correlated ?? 0) / total) * 100) : 0;
@@ -308,6 +331,7 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
       value: (agg?.active ?? 0).toLocaleString(),
       sub: agg ? `${(agg.new_24h ?? 0).toLocaleString()} new in 24h` : '',
       accent: 'var(--red)',
+      failed,
     },
     {
       icon: ShieldCheck,
@@ -315,20 +339,23 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
       value: `${confirmedPct}%`,
       sub: agg ? `${(agg.confirmed ?? 0).toLocaleString()} high-confidence` : '',
       accent: 'var(--blue)',
+      failed,
     },
     {
       icon: Network,
       label: 'Correlated',
       value: `${correlatedPct}%`,
-      sub: agg ? `${(agg.correlated ?? 0).toLocaleString()} linked · ${multiBrandCount} multi-brand patterns` : '',
+      sub: agg ? `${(agg.correlated ?? 0).toLocaleString()} linked · ${multiBrandFailed ? 'multi-brand unavailable' : `${multiBrandCount} multi-brand patterns`}` : '',
       accent: 'var(--primary)',
+      failed: failed || attributedFailed,
     },
     {
       icon: Users,
       label: 'Addressed',
       value: `${addressedPct}%`,
-      sub: agg ? `${(agg.addressed ?? 0).toLocaleString()} of ${total.toLocaleString()} · ${attributedPct}% attributed` : '',
+      sub: agg ? `${(agg.addressed ?? 0).toLocaleString()} of ${total.toLocaleString()} · ${attributedFailed ? 'attribution unavailable' : `${attributedPct}% attributed`}` : '',
       accent: 'var(--green)',
+      failed,
     },
   ];
 
@@ -337,18 +364,18 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
       {tiles.map(t => {
         const Icon = t.icon;
         return (
-          <Card key={t.label} variant={THREATS_CARD_VARIANT} aria-label={failed ? `${t.label}: couldn't load` : undefined}
-            role={failed ? 'group' : undefined}
+          <Card key={t.label} variant={THREATS_CARD_VARIANT} aria-label={t.failed ? `${t.label}: couldn't load` : undefined}
+            role={t.failed ? 'group' : undefined}
             style={{ padding: '18px 20px', minHeight: 110 }}>
             <div className="flex items-center gap-2 mb-2">
               <Icon size={14} style={{ color: accentText(t.accent) }} />
               <span className="thr-label">{sentenceCase(t.label)}</span>
             </div>
             <div className="thr-hero-value" style={{ color: accentText(t.accent) }}>
-              {agg ? t.value : (failed ? '—' : '…')}
+              {agg && !t.failed ? t.value : (t.failed ? '—' : '…')}
             </div>
             <div className="mt-1 thr-label thr-num truncate" style={{ color: 'var(--text-secondary)' }}>
-              {failed ? "Couldn't load" : t.sub}
+              {t.failed ? "Couldn't load" : t.sub}
             </div>
           </Card>
         );
@@ -360,9 +387,11 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
 // ══════════════════════════════════════════════════════════════════
 // MultiBrandPanel — coordination signals
 // ══════════════════════════════════════════════════════════════════
-function AggregateState({ failed, onRetry, what }: { failed: boolean; onRetry: () => void; what: string }) {
+const RETRYING_COPY = 'Retrying automatically.';
+
+function AggregateState({ failed, onRetry, what, retrying }: { failed: boolean; onRetry: () => void; what: string; retrying?: boolean }) {
   return failed
-    ? <PageState kind="error" layout="card" compact title={`Couldn't load ${what}`} onRetry={onRetry} />
+    ? <PageState kind="error" layout="card" compact title={`Couldn't load ${what}`} description={retrying ? RETRYING_COPY : undefined} onRetry={onRetry} />
     : <PageState kind="loading" layout="card" title={`Loading ${what}…`} />;
 }
 
@@ -376,14 +405,14 @@ function ListRow({ onClick, bordered, tight, children }: {
     : <div {...common}>{children}</div>;
 }
 
-function MultiBrandPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; onRetry: () => void }) {
+function MultiBrandPanel({ agg, failed, retrying, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; retrying: boolean; onRetry: () => void }) {
   const campaigns = agg?.multi_brand_campaigns ?? [];
   const actors = agg?.multi_brand_actors ?? [];
   const providers = agg?.multi_brand_providers ?? [];
   const navigate = useNavigate();
   const allEmpty = campaigns.length === 0 && actors.length === 0 && providers.length === 0;
 
-  if (!agg) return <AggregateState failed={failed} onRetry={onRetry} what="multi-brand patterns" />;
+  if (!agg) return <AggregateState failed={failed} retrying={retrying} onRetry={onRetry} what="multi-brand patterns" />;
   if (allEmpty) {
     return (
       <Card variant={THREATS_CARD_VARIANT}>
@@ -473,10 +502,10 @@ function MultiBrandCard({ title, accent, rows, emptyMsg }: {
 // ══════════════════════════════════════════════════════════════════
 // SurgingSignalsPanel — week-over-week deltas
 // ══════════════════════════════════════════════════════════════════
-function SurgingSignalsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; onRetry: () => void }) {
+function SurgingSignalsPanel({ agg, failed, retrying, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; retrying: boolean; onRetry: () => void }) {
   const navigate = useNavigate();
   const signals = agg?.surging_signals ?? [];
-  if (!agg) return <AggregateState failed={failed} onRetry={onRetry} what="surging signals" />;
+  if (!agg) return <AggregateState failed={failed} retrying={retrying} onRetry={onRetry} what="surging signals" />;
   if (signals.length === 0) {
     return (
       <Card variant={THREATS_CARD_VARIANT}>
@@ -532,12 +561,21 @@ function SurgingSignalsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | 
 // ══════════════════════════════════════════════════════════════════
 // LeaderboardsPanel — top brands / countries / providers / actors
 // ══════════════════════════════════════════════════════════════════
-function LeaderboardsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | null | undefined; failed: boolean; onRetry: () => void }) {
+function LeaderboardsPanel({ agg, failed, degraded, retrying, onRetry }: {
+  agg: ThreatAggregate | null | undefined; failed: boolean; degraded: ReadonlySet<string>; retrying: boolean; onRetry: () => void;
+}) {
   const navigate = useNavigate();
   if (!agg) return failed ? <AggregateState failed onRetry={onRetry} what="leaderboards" /> : null;
+  // Every board down: one panel-level error. Otherwise each board owns its error.
+  if (['top_brands', 'top_providers', 'top_actors', 'top_countries'].every((b) => degraded.has(b))) {
+    return <AggregateState failed retrying={retrying} onRetry={onRetry} what="leaderboards" />;
+  }
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       <Leaderboard
+        failed={degraded.has('top_brands')}
+        retrying={retrying}
+        onRetry={onRetry}
         title="Top brands"
         accent="var(--primary)"
         rows={agg.top_brands.slice(0, 5).map(b => ({
@@ -547,6 +585,9 @@ function LeaderboardsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | nu
         }))}
       />
       <Leaderboard
+        failed={degraded.has('top_providers')}
+        retrying={retrying}
+        onRetry={onRetry}
         title="Top providers"
         accent="var(--blue)"
         rows={agg.top_providers.slice(0, 5).map(p => ({
@@ -556,6 +597,9 @@ function LeaderboardsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | nu
         }))}
       />
       <Leaderboard
+        failed={degraded.has('top_actors')}
+        retrying={retrying}
+        onRetry={onRetry}
         title="Top actors"
         accent="var(--red)"
         rows={agg.top_actors.slice(0, 5).map(a => ({
@@ -565,6 +609,9 @@ function LeaderboardsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | nu
         }))}
       />
       <Leaderboard
+        failed={degraded.has('top_countries')}
+        retrying={retrying}
+        onRetry={onRetry}
         title="Top countries"
         accent="var(--violet)"
         rows={agg.top_countries.slice(0, 5).map(c => ({
@@ -575,12 +622,18 @@ function LeaderboardsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | nu
   );
 }
 
-function Leaderboard({ title, accent, rows }: {
+function Leaderboard({ title, accent, rows, failed, retrying, onRetry }: {
   title: string;
   accent: string;
+  failed?: boolean;
+  retrying?: boolean;
+  onRetry?: () => void;
   rows: Array<{ id: string; label: string; sub?: string; count: number; logoUrl?: string | null; onClick?: () => void }>;
 }) {
   const max = Math.max(1, ...rows.map(r => r.count));
+  if (failed && onRetry) {
+    return <AggregateState failed retrying={retrying} onRetry={onRetry} what={title.toLowerCase()} />;
+  }
   return (
     <Card variant={THREATS_CARD_VARIANT} style={{ minHeight: 200 }}>
       <h3 className="thr-label">{sentenceCase(title)}</h3>

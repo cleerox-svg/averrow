@@ -48,6 +48,8 @@ export interface ThreatAggregate {
   top_providers: Array<{ provider_id: string; name: string; asn: string | null; count: number }>;
   top_actors:    Array<{ actor_id: string; actor_name: string; count: number }>;
   top_campaigns: Array<{ campaign_id: string; name: string; threat_count: number; brand_count: number; status: string }>;
+  /** Sections whose server-side read failed and came back empty/zero. Empty or absent when healthy. */
+  degraded_sections?: string[];
 }
 
 function toQuery(filters: ThreatAggregateFilters): string {
@@ -72,6 +74,9 @@ export function useThreatAggregate(filters: ThreatAggregateFilters) {
       const res = await api.get<ThreatAggregate>(`/api/threats/aggregate${toQuery(filters)}`);
       return (res.data ?? null) as ThreatAggregate | null;
     },
-    staleTime: 5 * 60_000,
+    // A degraded payload (some sections failed server-side) is never fresh, and
+    // polls every 60s (the server's degraded cache TTL) until it heals.
+    staleTime: (query) => (query.state.data?.degraded_sections?.length ? 0 : 5 * 60_000),
+    refetchInterval: (query) => (query.state.data?.degraded_sections?.length ? 60_000 : false),
   });
 }

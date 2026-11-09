@@ -85,13 +85,20 @@ interface CachedEntry<T> {
   v: T;
   /** Epoch ms when the entry was written. */
   t: number;
+  /**
+   * Epoch ms of the original write when `t` was re-stamped by a
+   * `keepExistingWhen` back-off (absent otherwise). Bounds how long a kept
+   * entry can live: never past `w + 2 * ttlSeconds`.
+   */
+  w?: number;
 }
 
 /**
  * Read a JSON value from KV if fresh, otherwise run `compute`, write
  * the result back, and return it. On any KV error the helper falls
  * through to `compute()` — never crashes, never returns stale data
- * (except via the opt-in `singleFlight` stale-while-revalidate below).
+ * (except via the opt-in `singleFlight` / `staleWhileRevalidate` /
+ * `keepExistingWhen` options below).
  *
  * @param env          Worker environment (provides `CACHE` KV binding)
  * @param key          Stable cache key (e.g. `agents.last_output_per_agent`)
@@ -103,6 +110,31 @@ interface CachedEntry<T> {
  *                     response). The entry is stamped as if written `ttlSeconds - ttlFor`
  *                     ago, so readers (who only know `ttlSeconds`) treat it as expired
  *                     after `ttlFor`. A value <= 0 skips the write. Never lengthens.
+ * @param opts.keepExistingWhen Optional "don't overwrite good data with bad" guard.
+ *                     When it returns true for the freshly computed value (e.g. a
+ *                     degraded/partial result) AND an entry for the key is still in
+ *                     KV (fresh or expired) whose value it returns false for, that
+ *                     existing value is returned instead of writing the fresh one.
+ *                     With `ttlFor` set, the kept entry is re-stamped fresh for
+ *                     `ttlFor(fresh)` seconds (a refill back-off), keeping its
+ *                     original write time in `w`; its KV expiry never passes
+ *                     `w + 2 * ttlSeconds` (assumes the kept entry was written with
+ *                     the full `ttlSeconds`). If the key changed since it was read
+ *                     (another caller refilled), nothing is written. With no usable entry
+ *                     (cold key, or the existing one also matches) the fresh value
+ *                     is written as usual (subject to `ttlFor`). Uses the entry this
+ *                     call last read: the first read, or the single-flight lock
+ *                     holder's re-read. Omitted = always write (default), i.e.
+ *                     exactly the behaviour without this option.
+ *                     Staleness: the kept entry may be EXPIRED (it stays in KV for
+ *                     2× its TTL), so with this option a caller WITHOUT
+ *                     `singleFlight` can also serve data up to `2 * ttlSeconds` old
+ *                     while its refills keep coming back degraded (e.g. a D1
+ *                     overload) — the same bound `singleFlight` already has.
+ *                     Within the last 60s of the kept entry's KV life no back-off
+ *                     is written (KV's 60s minimum `expirationTtl` would outlive
+ *                     it), so each request in that minute recomputes; once it
+ *                     expires the key is cold and a degraded value is written.
  * @param opts.singleFlight Optional best-effort refill lock with
  *                     stale-while-revalidate. On an expired entry: if another
  *                     caller holds the lock, the STALE value is returned at once
@@ -110,7 +142,8 @@ interface CachedEntry<T> {
  *                     old); otherwise this caller takes the lock, re-reads, and
  *                     recomputes. Only a cold key (no entry at all) with the
  *                     lock held waits — at most `waitMs` (≤10s) — then computes.
- *                     Fails open on KV errors. This option is the one case
+ *                     Fails open on KV errors. With `keepExistingWhen` (and the
+ *                     SWR window of `staleWhileRevalidate`), one of the cases
  *                     where the helper can return data older than `ttlSeconds`.
  * @param opts.staleWhileRevalidate Serve-stale-then-refresh: see
  *                     StaleWhileRevalidateOptions. `ttlSeconds` is then the
@@ -131,6 +164,7 @@ export async function cachedValue<T>(
   compute: () => Promise<T>,
   opts: {
     ttlFor?: (value: T) => number;
+    keepExistingWhen?: (value: T) => boolean;
     singleFlight?: SingleFlightOptions;
     refresh?: boolean;
     staleWhileRevalidate?: StaleWhileRevalidateOptions;
@@ -175,9 +209,51 @@ export async function cachedValue<T>(
     return first.entry.v;
   }
 
+  // The newest entry this call has seen (expired, since a fresh one returned
+  // above). Updated by the single-flight lock holder's re-read.
+  let existing: CachedEntry<T> | null = first?.entry ?? null;
+
   const computeAndStore = async (): Promise<T> => {
     const value = await compute();
     void recordStat(env, "miss");
+
+    if (
+      opts.keepExistingWhen &&
+      existing &&
+      opts.keepExistingWhen(value) &&
+      !opts.keepExistingWhen(existing.v)
+    ) {
+      // Keep the existing (good, possibly stale) value. Back off the next
+      // refill by re-stamping it fresh for `ttlFor(value)` seconds (e.g. 60s
+      // for a degraded result) — otherwise, under the overload that degraded
+      // this refill, the very next request would recompute again at once.
+      // The KV expiry stays bounded by the entry's ORIGINAL write.
+      const backoff = opts.ttlFor ? Math.min(ttlSeconds, opts.ttlFor(value)) : 0;
+      if (backoff > 0) {
+        const writtenAt = existing.w ?? existing.t;
+        const remaining = Math.floor((writtenAt + ttlSeconds * 2000 - Date.now()) / 1000);
+        if (remaining >= 60) {
+          try {
+            // Another caller may have refilled the key while we computed; never
+            // clobber a newer entry with this older value.
+            const current = await env.CACHE.get(cacheKey);
+            const cur = current ? (JSON.parse(current) as CachedEntry<T>) : null;
+            if (!cur || cur.t !== existing.t || (cur.w ?? null) !== (existing.w ?? null)) {
+              return cur && !opts.keepExistingWhen(cur.v) ? cur.v : existing.v;
+            }
+            const kept: CachedEntry<T> = {
+              v: existing.v,
+              t: Date.now() - (ttlSeconds - backoff) * 1000,
+              w: writtenAt,
+            };
+            await env.CACHE.put(cacheKey, JSON.stringify(kept), { expirationTtl: remaining });
+          } catch {
+            // Non-fatal: the entry stays as it was.
+          }
+        }
+      }
+      return existing.v;
+    }
 
     const effective = opts.ttlFor ? Math.min(ttlSeconds, opts.ttlFor(value)) : ttlSeconds;
     if (effective <= 0) return value;
@@ -277,6 +353,9 @@ export async function cachedValue<T>(
         // Another caller may have finished a refill between our first read
         // and taking the lock.
         const again = await readEntry();
+        // A null re-read is a KV miss or a KV error; keep the first read's
+        // entry in the latter case rather than writing over good data.
+        if (again) existing = again.entry;
         if (again?.fresh) {
           try { await env.CACHE.delete(lockKey); } catch { /* expires on its TTL */ }
           void recordStat(env, "hit");
