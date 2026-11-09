@@ -6,6 +6,8 @@ import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { RedirectToTab } from '@/components/routing/RedirectToTab';
 import { Login } from '@/pages/Login';
 import { NotFound } from '@/pages/NotFound';
+import { preloadConsoleTab } from '@/features/console/tabLoaders';
+import { preloadExploreTab } from '@/features/explore/tabLoaders';
 import { tabUrl, LEGACY_TAB_PATHS } from '@/lib/workspaceRoutes';
 
 // All feature routes are lazy-loaded so a cold visit to any single page
@@ -19,7 +21,8 @@ import { tabUrl, LEGACY_TAB_PATHS } from '@/lib/workspaceRoutes';
 // List pages that live as workspace tabs (Console / Explorer / Coverage /
 // Operations / Governance) are NOT imported here: their old standalone paths
 // are <RedirectToTab/> routes (lib/workspaceRoutes.ts is the mapping).
-const BrandDetail = React.lazy(() => import('@/features/brands/BrandDetail').then(m => ({ default: m.BrandDetailV3 })));
+const loadBrandDetail = () => import('@/features/brands/BrandDetail').then(m => ({ default: m.BrandDetailV3 }));
+const BrandDetail = React.lazy(loadBrandDetail);
 const AgentApprovals = React.lazy(() => import('@/features/agents/AgentApprovals').then(m => ({ default: m.AgentApprovals })));
 const AgentReview = React.lazy(() => import('@/features/agents/AgentReview').then(m => ({ default: m.AgentReview })));
 const SpamTrap = React.lazy(() => import('@/features/spam-trap/SpamTrap').then(m => ({ default: m.SpamTrap })));
@@ -34,12 +37,18 @@ const ArchitectDetail = React.lazy(() => import('@/features/agents/ArchitectDeta
 const CampaignDetail = React.lazy(() => import('@/features/campaigns/CampaignDetail').then(m => ({ default: m.CampaignDetail })));
 const GeopoliticalCampaignDashboard = React.lazy(() => import('@/features/campaigns/GeopoliticalCampaignDashboard').then(m => ({ default: m.GeopoliticalCampaignDashboard })));
 const Leads = React.lazy(() => import('@/features/leads/Leads').then(m => ({ default: m.Leads })));
-const Console = React.lazy(() => import('@/features/console/Console').then(m => ({ default: m.Console })));
-const ExploreWorkspace = React.lazy(() => import('@/features/explore/ExploreWorkspace').then(m => ({ default: m.ExploreWorkspace })));
-const CoverageWorkspace = React.lazy(() => import('@/features/coverage/CoverageWorkspace').then(m => ({ default: m.CoverageWorkspace })));
-const OperationsWorkspace = React.lazy(() => import('@/features/operations/OperationsWorkspace').then(m => ({ default: m.OperationsWorkspace })));
-const GovernanceWorkspace = React.lazy(() => import('@/features/governance/GovernanceWorkspace').then(m => ({ default: m.GovernanceWorkspace })));
-const OverviewV4 = React.lazy(() => import('@/features/home/OverviewV4').then(m => ({ default: m.OverviewV4 })));
+const loadConsole = () => import('@/features/console/Console').then(m => ({ default: m.Console }));
+const Console = React.lazy(loadConsole);
+const loadExploreWorkspace = () => import('@/features/explore/ExploreWorkspace').then(m => ({ default: m.ExploreWorkspace }));
+const ExploreWorkspace = React.lazy(loadExploreWorkspace);
+const loadCoverageWorkspace = () => import('@/features/coverage/CoverageWorkspace').then(m => ({ default: m.CoverageWorkspace }));
+const CoverageWorkspace = React.lazy(loadCoverageWorkspace);
+const loadOperationsWorkspace = () => import('@/features/operations/OperationsWorkspace').then(m => ({ default: m.OperationsWorkspace }));
+const OperationsWorkspace = React.lazy(loadOperationsWorkspace);
+const loadGovernanceWorkspace = () => import('@/features/governance/GovernanceWorkspace').then(m => ({ default: m.GovernanceWorkspace }));
+const GovernanceWorkspace = React.lazy(loadGovernanceWorkspace);
+const loadOverviewV4 = () => import('@/features/home/OverviewV4').then(m => ({ default: m.OverviewV4 }));
+const OverviewV4 = React.lazy(loadOverviewV4);
 const SettingsLayout = React.lazy(() => import('@/features/settings/SettingsLayout').then(m => ({ default: m.SettingsLayout })));
 const SettingsIndex = React.lazy(() => import('@/features/settings/SettingsLayout').then(m => ({ default: m.SettingsIndex })));
 const ProfileSettingsPage = React.lazy(() => import('@/features/settings/ProfileSettingsPage').then(m => ({ default: m.ProfileSettingsPage })));
@@ -48,10 +57,33 @@ const DevicesSettingsPage = React.lazy(() => import('@/features/settings/Devices
 const Notifications = React.lazy(() => import('@/features/settings/Notifications').then(m => ({ default: m.Notifications })));
 const SecurityPage = React.lazy(() => import('@/features/settings/SecurityPage').then(m => ({ default: m.SecurityPage })));
 const NotificationSettingsPage = React.lazy(() => import('@/features/settings/NotificationSettingsPage').then(m => ({ default: m.NotificationSettingsPage })));
-const ObservatoryV3 = React.lazy(() => import('@/features/observatory-v3/ObservatoryV3').then(m => ({ default: m.ObservatoryV3 })));
+const loadObservatoryV3 = () => import('@/features/observatory-v3/ObservatoryV3').then(m => ({ default: m.ObservatoryV3 }));
+const ObservatoryV3 = React.lazy(loadObservatoryV3);
 const IdentityThreatsPage = React.lazy(() => import('@/features/identity-threats/IdentityThreatsPage').then(m => ({ default: m.IdentityThreatsPage })));
 const KitGallery = React.lazy(() => import('@/features/kit/KitGallery').then(m => ({ default: m.KitGallery })));
 const SearchResults = React.lazy(() => import('@/features/search/SearchResults').then(m => ({ default: m.SearchResults })));
+
+// Start the current route's chunk(s) at module-eval time, in parallel with the
+// auth round-trips (refresh -> me), instead of after auth settles. Each factory
+// is shared with its React.lazy, so the module is fetched once. Tab panes of
+// Console / Explorer come from their light tabLoaders registries.
+export function preloadRouteForPath(pathname: string, search: string): void {
+  const path = pathname.replace(/^\/v2(?=\/|$)/, '').replace(/\/+$/, '') || '/';
+  const tab = new URLSearchParams(search).get('tab');
+  const go = (f: () => Promise<unknown>) => { void f().catch(() => undefined); };
+  if (path === '/') go(loadOverviewV4);
+  else if (path === '/observatory') go(loadObservatoryV3);
+  else if (path === '/console') { go(loadConsole); preloadConsoleTab(tab); }
+  else if (path === '/explore') { go(loadExploreWorkspace); preloadExploreTab(tab); }
+  else if (path === '/coverage') go(loadCoverageWorkspace);
+  else if (path === '/admin/operations') go(loadOperationsWorkspace);
+  else if (path === '/admin/governance') go(loadGovernanceWorkspace);
+  else if (/^\/brands\/[^/]+$/.test(path)) go(loadBrandDetail);
+}
+
+if (typeof window !== 'undefined') {
+  preloadRouteForPath(window.location.pathname, window.location.search);
+}
 
 function RouteLoader() {
   return (

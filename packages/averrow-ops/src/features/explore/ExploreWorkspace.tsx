@@ -6,11 +6,12 @@
 import { lazy } from 'react';
 import { Shield, Users, Activity, Server } from 'lucide-react';
 import { TabbedWorkspace, type WorkspaceTab } from '@/components/v4/TabbedWorkspace';
+import { loadBrands, loadThreatActors, loadCampaigns, loadProviders } from './tabLoaders';
 
-const Brands = lazy(() => import('@/features/brands/Brands').then(m => ({ default: m.BrandsV3 })));
-const ThreatActors = lazy(() => import('@/features/threat-actors/ThreatActors').then(m => ({ default: m.ThreatActors })));
-const Campaigns = lazy(() => import('@/features/campaigns/Campaigns').then(m => ({ default: m.Campaigns })));
-const Providers = lazy(() => import('@/features/providers/Providers').then(m => ({ default: m.Providers })));
+const Brands = lazy(loadBrands);
+const ThreatActors = lazy(loadThreatActors);
+const Campaigns = lazy(loadCampaigns);
+const Providers = lazy(loadProviders);
 
 const TABS: WorkspaceTab[] = [
   { id: 'brands', label: 'Brands', icon: Shield, Component: Brands,

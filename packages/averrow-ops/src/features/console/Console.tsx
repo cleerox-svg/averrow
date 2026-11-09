@@ -12,6 +12,7 @@ import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { useIncidents } from '@/features/admin-incidents/useIncidents';
 import { useAuth } from '@/lib/auth';
 import { PageState } from '@/design-system/components';
+import { loadAlerts, loadThreats, loadTakedowns, loadIncidents } from './tabLoaders';
 import './console.css';
 
 type ConsoleTab = 'alerts' | 'threats' | 'incidents' | 'takedowns';
@@ -44,10 +45,10 @@ function tabFromParam(v: string | null): ConsoleTab {
   return isTab(v) ? v : 'alerts';
 }
 
-const Alerts = lazy(() => import('@/features/alerts/Alerts').then(m => ({ default: m.Alerts })));
-const Threats = lazy(() => import('@/features/threats/Threats').then(m => ({ default: m.Threats })));
-const Takedowns = lazy(() => import('@/features/takedowns/Takedowns').then(m => ({ default: m.Takedowns })));
-const Incidents = lazy(() => import('@/features/admin-incidents/Incidents').then(m => ({ default: m.AdminIncidents })));
+const Alerts = lazy(loadAlerts);
+const Threats = lazy(loadThreats);
+const Takedowns = lazy(loadTakedowns);
+const Incidents = lazy(loadIncidents);
 
 export function Console() {
   const [params, setParams] = useSearchParams();
