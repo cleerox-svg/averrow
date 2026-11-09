@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
+import { Bug } from 'lucide-react';
 import { CommandPalette } from './CommandPalette';
 
 const mocks = vi.hoisted(() => ({
@@ -232,5 +233,24 @@ describe('CommandPalette — data search routing', () => {
       expect(document.getElementById(id!)).toHaveClass('cmdk-group-label');
     });
     expect(screen.getByRole('group', { name: 'Brands' })).toBeInTheDocument();
+  });
+});
+
+describe('CommandPalette — headings', () => {
+  it('renders each group heading once even when its commands arrive non-adjacently', () => {
+    mocks.useGlobalSearch.mockReturnValue({ ...RESULTS, brands: [], threatActors: [], providers: [], campaigns: [], appStore: [] });
+    const commands = [
+      { label: 'Console', to: '/console', group: 'SOC CONSOLE', icon: Bug },
+      { label: 'Dashboard', to: '/admin', group: 'PLATFORM', icon: Bug },
+      { label: 'Alerts', to: '/console?tab=alerts', group: 'SOC CONSOLE', icon: Bug },
+      { label: 'Feeds', to: '/admin/operations?tab=feeds', group: 'PLATFORM', icon: Bug },
+    ];
+    renderWithProviders(<CommandPalette open onClose={vi.fn()} commands={commands} />);
+    const labels = [...document.querySelectorAll('.cmdk-group-label')].map(n => n.textContent);
+    expect(labels).toEqual(['SOC console', 'Platform']);
+    expect(new Set(labels).size).toBe(labels.length);
+    // keyboard order matches render order
+    const items = [...document.querySelectorAll('.cmdk-item-label')].map(n => n.textContent);
+    expect(items).toEqual(['Console', 'Alerts', 'Dashboard', 'Feeds']);
   });
 });

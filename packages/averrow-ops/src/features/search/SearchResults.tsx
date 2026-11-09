@@ -30,7 +30,7 @@ function ResultRow({ result, to }: { result: SearchResult; to: string }) {
           </div>
           {result.sublabel && (
             <div
-              className="font-mono text-[11px] truncate mt-0.5"
+              className="font-mono text-[12px] truncate mt-0.5"
               style={{ color: 'var(--text-tertiary)' }}
             >
               {result.sublabel}
@@ -90,7 +90,7 @@ export function SearchResults() {
       {showLoading && (
         <Card variant="base" padding="0">
           <div
-            className="flex items-center justify-center gap-2 py-16 font-mono text-[12px]"
+            className="flex items-center justify-center gap-2 py-16 text-[13px]"
             style={{ color: 'var(--text-tertiary)' }}
           >
             <Loader2 size={14} strokeWidth={2} className="animate-spin" />
@@ -133,13 +133,13 @@ export function SearchResults() {
                   <div className="flex items-center gap-2">
                     <Icon size={14} strokeWidth={2} style={{ color: 'var(--text-tertiary)' }} />
                     <span
-                      className="font-mono text-[11px] font-bold uppercase tracking-widest"
+                      className="text-[13px] font-semibold"
                       style={{ color: 'var(--text-secondary)' }}
                     >
                       {group.heading}
                     </span>
                     <span
-                      className="font-mono text-[10px]"
+                      className="font-mono text-[12px]"
                       style={{ color: 'var(--text-muted)' }}
                     >
                       {rows.length}
@@ -147,7 +147,7 @@ export function SearchResults() {
                   </div>
                   <Link
                     to={group.viewAllTo(q)}
-                    className="font-mono text-[10px] font-bold uppercase tracking-wide"
+                    className="text-[12px] font-semibold"
                     style={{ color: 'var(--link)' }}
                   >
                     View all in {group.heading.toLowerCase()} →

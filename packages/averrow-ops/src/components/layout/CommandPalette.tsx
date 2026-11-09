@@ -105,7 +105,18 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
   // rows + trailing "view all" row, in BRANDS / THREAT ACTORS / PROVIDERS /
   // CAMPAIGNS / APPS order.
   const flat: FlatEntry[] = useMemo(() => {
-    const navFiltered = commands.filter(c => scoreMatch(c, trimmedQuery.toLowerCase()));
+    // Commands from different sources (nav rows, then workspace-tab extras) can name the same group
+    // non-adjacently; bucket them by group (first-seen order) so each heading renders once, and keyboard
+    // order matches render order.
+    const buckets = new Map<string, PaletteCommand[]>();
+    for (const c of commands) {
+      if (!scoreMatch(c, trimmedQuery.toLowerCase())) continue;
+      const key = sentenceCase(c.group);
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(c);
+      else buckets.set(key, [c]);
+    }
+    const navFiltered = [...buckets.values()].flat();
     const entries: FlatEntry[] = navFiltered.map(cmd => ({
       key: `nav:${cmd.to}`,
       heading: cmd.group,
@@ -141,7 +152,7 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
     // query. Always trails the per-group "view all" rows.
     entries.push({
       key: 'search-everything',
-      heading: 'ALL RESULTS',
+      heading: 'All results',
       icon: ArrowRight,
       label: `Search everything for “${trimmedQuery}” →`,
       to: searchPageUrl(trimmedQuery),
@@ -195,7 +206,7 @@ export function CommandPalette({ open, onClose, commands }: CommandPaletteProps)
   const sections: { heading: string; rows: { entry: FlatEntry; idx: number }[] }[] = [];
   flat.forEach((entry, idx) => {
     const last = sections[sections.length - 1];
-    if (last && last.heading === entry.heading) last.rows.push({ entry, idx });
+    if (last && sentenceCase(last.heading) === sentenceCase(entry.heading)) last.rows.push({ entry, idx });
     else sections.push({ heading: entry.heading, rows: [{ entry, idx }] });
   });
 
