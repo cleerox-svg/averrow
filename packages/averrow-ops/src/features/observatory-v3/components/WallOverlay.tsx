@@ -54,13 +54,13 @@ export function WallOverlay({ periodLabel, threats, countries, operations, loadF
       >
         {/* The map behind is dark in both themes: the words sit on a card surface so the tokens keep their contrast. */}
         <div
-          className="flex w-fit items-center gap-2 rounded-full px-3 py-1.5 font-mono text-sm uppercase tracking-[0.18em]"
+          className="flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold"
           style={{ color: 'var(--text-secondary)', background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)' }}
         >
-          <span aria-hidden className="inline-block rounded-full motion-safe:animate-pulse" style={{ width: 10, height: 10, background: 'var(--green)', boxShadow: '0 0 10px var(--green)' }} />
+          <span aria-hidden className="inline-block rounded-full" style={{ width: 10, height: 10, background: 'var(--green)' }} />
           <span style={{ color: 'var(--green-text)' }}>Live</span>
           <span aria-hidden>·</span>
-          <span style={{ color: 'var(--primary-text)' }}>{periodLabel}</span>
+          <span className="font-mono" style={{ color: 'var(--primary-text)' }}>{periodLabel}</span>
         </div>
         <div className={phone ? 'grid gap-2' : 'flex gap-3'} style={phone ? { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } : undefined} role="group" aria-label={`Headline numbers, ${periodLabel}`}>
           {tiles.map(t => (
@@ -86,9 +86,9 @@ export function WallOverlay({ periodLabel, threats, countries, operations, loadF
         type="button"
         onClick={onExit}
         onFocus={wake}
-        className="ds-focusable absolute top-3 right-3 rounded-full px-4 font-mono text-xs uppercase tracking-wider transition-opacity duration-300 motion-reduce:transition-none"
+        className="ds-focusable absolute top-3 right-3 min-h-[32px] [@media(pointer:coarse)]:min-h-[44px] rounded-full px-4 text-type-label font-semibold transition-opacity duration-300 motion-reduce:transition-none"
         style={{
-          zIndex, minHeight: phone ? 44 : 32, background: 'var(--bg-card)', border: '1px solid var(--border-base)',
+          zIndex, background: 'var(--bg-card)', border: '1px solid var(--border-base)',
           color: 'var(--text-secondary)', cursor: 'pointer', opacity: awake ? 1 : 0, pointerEvents: awake ? 'auto' : 'none',
         }}
       >

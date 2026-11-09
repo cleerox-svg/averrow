@@ -36,7 +36,7 @@ describe('DrillDrawer', () => {
     expect(screen.getByRole('heading', { name: 'credential harvesting' })).toBeInTheDocument();
     expect(screen.getByText('PayPal')).toBeInTheDocument();
     expect(screen.getByText(/approximate/i)).toBeInTheDocument();
-    expect(screen.getAllByText('critical').some(el => el.style.color === 'var(--sev-critical-text)')).toBe(true);
+    expect(screen.getAllByText('Critical').some(el => el.style.color === 'var(--sev-critical-text)')).toBe(true);
   });
 
   it('opens with a hero: two stat tiles, a status badge and one primary action', () => {

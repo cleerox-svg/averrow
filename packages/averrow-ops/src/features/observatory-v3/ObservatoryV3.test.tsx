@@ -1263,7 +1263,7 @@ describe('ObservatoryV3 intel feed (headline bar + event rail)', () => {
     expect(await screen.findByTestId('headline-title')).toHaveTextContent('Title crit1');
     expect(urls().filter(u => u.startsWith('/api/observatory/events'))).toEqual(['/api/observatory/events?period=1h&limit=40']);
     const bar = screen.getByRole('region', { name: 'Live threat events' });
-    expect(within(bar).getByText('CRITICAL')).toBeInTheDocument();
+    expect(within(bar).getByText('Critical')).toBeInTheDocument();
     expect(within(bar).getByText('5m')).toBeInTheDocument();
     expect(within(bar).getByRole('button', { name: 'Open all 3 events' })).toHaveTextContent('All 3 events ›');
   });

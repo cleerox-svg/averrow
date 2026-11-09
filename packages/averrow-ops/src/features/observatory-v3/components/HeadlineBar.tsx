@@ -16,7 +16,7 @@
  *   touch      coarse pointers: every control is 44px (extended hit areas inside the
  *              72px phone band), 8px apart
  *   states     empty (copy true to the server window), loading, failed, and a
- *              focusable PARTIAL tag that names the kinds the server could not read
+ *              focusable Partial tag that names the kinds the server could not read
  *   click      the headline asks the page to fly to the event and open its drawer;
  *              "All N" opens the event rail
  *
@@ -31,6 +31,7 @@ import {
   KIND_SPOKEN, eventAge, eventAgeSpoken, emptyFeedCopy, freshCriticals, holdFor, orderQueue, stepIndex, totalCount, KIND_CHIP_LABEL,
   type EventsResult, type ObservatoryEvent,
 } from '../lib/events';
+import { BODY, FACT, LABEL } from '../lib/chrome-classes';
 import { EventChip } from './EventChip';
 import { EventTitle } from './EventTitle';
 
@@ -161,7 +162,7 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
         <span
           data-testid="headline-held"
           aria-hidden="true"
-          className="mr-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em]"
+          className={`mr-1 ${LABEL}`}
           style={{ color: 'var(--text-secondary)' }}
           title="Rotation is held while you hover or use the keyboard here"
         >
@@ -173,7 +174,7 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
           <button type="button" className={`${ICON_BTN} ${btnSize}`} style={{ color: 'var(--text-secondary)' }} onClick={() => step(-1)} aria-label="Previous event">
             <ChevronLeft size={14} aria-hidden="true" />
           </button>
-          <span className="min-w-[44px] text-center font-mono text-[11px] tabular-nums [@media(pointer:coarse)]:min-w-[40px]" style={{ color: 'var(--text-secondary)' }}>
+          <span className={`min-w-[44px] text-center ${FACT} tabular-nums [@media(pointer:coarse)]:min-w-[40px]`} style={{ color: 'var(--text-secondary)' }}>
             <span className="sr-only">Event {index + 1} of {queue.length}</span>
             <span aria-hidden="true">{index + 1} / {queue.length}</span>
           </span>
@@ -201,11 +202,11 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
           data-testid="events-partial"
           onClick={() => setPartialOpen(o => !o)}
           aria-expanded={partialOpen}
-          className="ds-focusable ev-hit ml-1 shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] tracking-wide"
+          className={`ds-focusable ev-hit ml-1 shrink-0 rounded px-1.5 py-0.5 ${BODY}`}
           style={{ color: 'var(--text-secondary)', border: '1px dashed var(--border-base)', background: 'none', cursor: 'pointer' }}
           title={`Some event kinds could not be loaded: ${failedNames}`}
         >
-          PARTIAL
+          Partial
           <span className="sr-only"> — {failedNames} could not be loaded</span>
           {partialOpen && <span aria-hidden="true"> · {failedNames}</span>}
         </button>
@@ -214,7 +215,7 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
         <button
           type="button"
           onClick={onOpenAll}
-          className={`ds-focusable ev-hit ml-1 shrink-0 rounded-full px-2.5 font-mono text-[11px] ${phone ? 'py-1.5' : 'py-0.5'}`}
+          className={`ds-focusable ev-hit ml-1 shrink-0 rounded-full px-2.5 ${LABEL} ${phone ? 'py-1.5' : 'py-0.5'}`}
           style={{ color: 'var(--primary-text)', border: '1px solid color-mix(in srgb, var(--primary) 25%, transparent)', background: 'var(--primary-glow)', cursor: 'pointer' }}
           aria-label={`Open all ${queue.length} events`}
           title={`${queue.length} ${queue.length === 1 ? 'event' : 'events'} · ${total} records`}
@@ -245,23 +246,23 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
           </span>
         </button>
       </div>
-      <span className={`shrink-0 font-mono text-[11px] tabular-nums ${phone ? 'pt-0.5' : ''}`} style={{ color: 'var(--text-secondary)' }} title={eventAgeSpoken(current.occurred_at, now)}>
+      <span className={`shrink-0 ${FACT} tabular-nums ${phone ? 'pt-0.5' : ''}`} style={{ color: 'var(--text-secondary)' }} title={eventAgeSpoken(current.occurred_at, now)}>
         {eventAge(current.occurred_at, now)}
       </span>
     </div>
   ) : (error && !result) || (result && failed.length > 0) ? (
     // No event to show AND something failed: never read as a quiet feed. (Some kinds failed with nothing from the rest, or
-    // every kind failed; the PARTIAL tag lives with the controls, which only exist when there is an event.)
-    <div className="flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }} data-testid="events-failed">
+    // every kind failed; the Partial tag lives with the controls, which only exist when there is an event.)
+    <div className={`flex min-w-0 flex-1 items-center gap-2 ${BODY}`} style={{ color: 'var(--text-secondary)' }} data-testid="events-failed">
       <span role="status" className="truncate">
         {result && failed.length < 7 - result.meta.omitted_kinds.length ? `Event feed partly unavailable (${failedNames} could not be loaded)` : 'Event feed unavailable'}
       </span>
       <button type="button" onClick={onRetry} className="ds-focusable ev-hit inline-flex items-center gap-1 rounded px-1.5 py-0.5" style={{ background: 'none', border: '1px solid var(--border-base)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-        <RefreshCw size={10} aria-hidden="true" /> Retry
+        <RefreshCw size={12} aria-hidden="true" /> Retry
       </button>
     </div>
   ) : (
-    <div className="min-w-0 flex-1 truncate font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }} role="status" data-testid={loading || !result ? 'events-loading' : 'events-empty'}>
+    <div className={`min-w-0 flex-1 truncate ${BODY}`} style={{ color: 'var(--text-secondary)' }} role="status" data-testid={loading || !result ? 'events-loading' : 'events-empty'}>
       {loading || !result ? 'Loading events…' : EMPTY_COPY}
     </div>
   );

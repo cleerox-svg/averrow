@@ -149,7 +149,7 @@ export function PeekSheet({ open, onClose, label, onHeight, initialSnap = 0, res
         zIndex: 25,
         background: 'var(--bg-elevated-solid, var(--bg-elevated))',
         borderTop: '1px solid var(--border-base)',
-        boxShadow: '0 -10px 32px rgba(0,0,0,0.35)',
+        boxShadow: 'var(--card-shadow-elevated)',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         transition: drag === null ? 'height 200ms cubic-bezier(0.22, 0.9, 0.3, 1)' : 'none',
       }}

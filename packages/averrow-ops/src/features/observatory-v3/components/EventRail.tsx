@@ -29,6 +29,8 @@ import {
   groupByAge, railLimit, viaLine, visibleKinds,
   type EventKind, type EventPeriod, type ObservatoryEvent,
 } from '../lib/events';
+import { Banner } from '@/design-system/components';
+import { BODY, FACT, FACT_STRONG, LABEL } from '../lib/chrome-classes';
 import { EventChip } from './EventChip';
 import { EventTitle } from './EventTitle';
 
@@ -137,7 +139,7 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
   return (
     <div role={phoneSheet ? 'group' : undefined} aria-label={phoneSheet ? 'Event rail' : undefined} className="flex w-full flex-col">
       <div className="flex items-center justify-between gap-2 px-3 pt-2">
-        <h2 className="m-0 flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>
+        <h2 className={`m-0 flex items-center gap-2 ${LABEL}`} style={{ color: 'var(--text-secondary)' }}>
           <span className="ev-live-dot" aria-hidden="true" />
           Events · {period.toUpperCase()}
         </h2>
@@ -165,14 +167,14 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
               tabIndex={p === period ? 0 : -1}
               onClick={() => onPeriod(p)}
               onKeyDown={e => onRadioKey(e, i)}
-              className={`ds-focusable min-h-[28px] flex-1 rounded px-2 font-mono text-[11px] font-semibold uppercase tracking-wider [@media(pointer:coarse)]:min-h-[44px]`}
+              className={`ds-focusable min-h-[28px] flex-1 rounded px-2 ${FACT_STRONG} [@media(pointer:coarse)]:min-h-[44px]`}
               style={{
                 background: p === period ? 'var(--primary-glow)' : 'transparent',
                 color: p === period ? 'var(--primary-text)' : 'var(--text-secondary)',
                 border: 'none', cursor: 'pointer',
               }}
             >
-              {p}
+              {p.toUpperCase()}
             </button>
           ))}
         </div>
@@ -198,38 +200,38 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
               aria-label={spelled ? `${KIND_CHIP_LABEL[k]}: ${spelled}` : undefined}
             >
               {KIND_CHIP_LABEL[k]}
-              {typeof n === 'number' ? <span className="ml-1 tabular-nums" aria-hidden="true" style={{ color: 'var(--text-secondary)' }}>{n}</span> : null}
+              {typeof n === 'number' ? <span className="ml-1 font-mono tabular-nums" aria-hidden="true" style={{ color: 'var(--text-secondary)' }}>{n}</span> : null}
             </button>
           );
         })}
       </div>
 
       {failed.length > 0 && (
-        <div role="status" className="px-3 pt-2 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-          Partial feed. {failedNames.charAt(0).toUpperCase() + failedNames.slice(1)} could not be loaded.
+        <div role="status" className="px-3 pt-2">
+          <Banner tone="medium" density="compact" title={`Partial feed. ${failedNames.charAt(0).toUpperCase() + failedNames.slice(1)} could not be loaded.`} />
         </div>
       )}
 
       <div className="pb-3" aria-busy={q.isUpdating} style={{ opacity: q.isUpdating ? 0.6 : 1 }} data-testid="event-rail-list">
         {hasError ? (
           <div role="alert" className="mx-3 mt-3 flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}>
-            <span className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>Failed to load events</span>
-            <button type="button" onClick={() => void q.refetch()} className={`ds-focusable inline-flex items-center gap-1 font-mono text-[11px] font-bold uppercase [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-2`} style={{ background: 'none', border: 'none', color: 'var(--sev-critical-text)', cursor: 'pointer' }}>
-              <RefreshCw size={10} aria-hidden="true" /> Retry
+            <span className={BODY} style={{ color: 'var(--sev-critical-text)' }}>Failed to load events</span>
+            <button type="button" onClick={() => void q.refetch()} className={`ds-focusable inline-flex items-center gap-1 ${LABEL} [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-2`} style={{ background: 'none', border: 'none', color: 'var(--sev-critical-text)', cursor: 'pointer' }}>
+              <RefreshCw size={12} aria-hidden="true" /> Retry
             </button>
           </div>
         ) : loading ? (
-          <div role="status" className="px-3 py-3 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>Loading events…</div>
+          <div role="status" className={`px-3 py-3 ${BODY}`} style={{ color: 'var(--text-secondary)' }}>Loading events…</div>
         ) : groups.length === 0 ? (
-          <div role="status" className="px-3 py-3 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }} data-testid="event-rail-empty">
+          <div role="status" className={`px-3 py-3 ${BODY}`} style={{ color: 'var(--text-secondary)' }} data-testid="event-rail-empty">
             {emptyFeedCopy(period, selected)}
           </div>
         ) : (
           groups.map(g => (
             <section key={g.key} aria-label={g.label}>
-              <h3 className="m-0 px-3 pt-3 pb-1 font-mono text-[11px] font-semibold tracking-[0.06em]" style={{ color: 'var(--text-secondary)' }}>
+              <h3 className={`m-0 px-3 pt-3 pb-1 ${LABEL}`} style={{ color: 'var(--text-secondary)' }}>
                 {g.label}
-                <span data-group-count className="ml-1.5 tabular-nums font-normal" style={{ color: 'var(--text-tertiary)' }}>
+                <span data-group-count className={`ml-1.5 tabular-nums ${FACT}`} style={{ color: 'var(--text-tertiary)' }}>
                   <span aria-hidden="true">· {g.events.length}</span>
                   <span className="sr-only">, {g.events.length} {g.events.length === 1 ? 'event' : 'events'}</span>
                 </span>
@@ -251,12 +253,12 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
                           <span className="block text-[13px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
                             <EventTitle title={e.title} name={e.entity.name} />
                           </span>
-                          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                          <span className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 ${BODY}`} style={{ color: 'var(--text-secondary)' }}>
                             <EventChip kind={e.kind} />
                             <span>{SEVERITY_LABEL[e.severity]} · {viaLine(e)}</span>
                           </span>
                         </span>
-                        <span className="whitespace-nowrap font-mono text-[11px] tabular-nums" style={{ color: 'var(--text-secondary)' }} title={eventAgeSpoken(e.occurred_at, now)}>
+                        <span className={`whitespace-nowrap ${FACT} tabular-nums`} style={{ color: 'var(--text-secondary)' }} title={eventAgeSpoken(e.occurred_at, now)}>
                           {eventAge(e.occurred_at, now)}
                         </span>
                       </button>
@@ -273,7 +275,7 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
 }
 
 const chipClass = (on: boolean) =>
-  `ds-focusable rounded-full px-2.5 font-mono text-[11px] min-h-[28px] [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-3.5 ${on ? 'font-semibold' : ''}`;
+  `ds-focusable rounded-full px-2.5 ${BODY} min-h-[28px] [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-3.5 ${on ? '!font-semibold' : ''}`;
 const chipStyle = (on: boolean) => ({
   color: on ? 'var(--primary-text)' : 'var(--text-secondary)',
   background: on ? 'var(--primary-glow)' : 'transparent',

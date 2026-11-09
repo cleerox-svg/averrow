@@ -97,7 +97,7 @@ export const visibleKinds = (omitted: readonly EventKind[]): EventKind[] => EVEN
 
 /** Short tag on the headline bar and the rail rows. */
 export const KIND_LABEL: Record<EventKind, string> = {
-  critical: 'CRITICAL', operation: 'OPERATION', fast: 'FAST', lookalike: 'LOOKALIKE', takedown: 'TAKEDOWN', actor: 'ACTOR', spike: 'SPIKE',
+  critical: 'Critical', operation: 'Operation', fast: 'Fast', lookalike: 'Lookalike', takedown: 'Takedown', actor: 'Actor', spike: 'Spike',
 };
 /** Filter chip names. */
 export const KIND_CHIP_LABEL: Record<EventKind, string> = {

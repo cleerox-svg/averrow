@@ -188,7 +188,7 @@ describe('wall overlay', () => {
     const onExit = vi.fn();
     render(<WallOverlay {...props} onExit={onExit} />);
     const btn = screen.getByRole('button', { name: 'Exit wall screen' });
-    expect(btn.className).toContain('text-xs'); // 12px
+    expect(btn.className).toContain('text-type-label'); // 12px
     expect(btn.style.color).toBe('var(--text-secondary)');
     expect(btn.style.opacity).toBe('0');
     expect(btn.style.pointerEvents).toBe('none');

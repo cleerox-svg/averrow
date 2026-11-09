@@ -888,13 +888,13 @@ export function ObservatoryV3() {
         note={takedownNote}
         onPreview={lens === 'operations' ? onPanelPreview : undefined}
         aside={lens === 'operations' && (excludedTotal > 0 || state.shared) ? (
-          <div className="flex flex-col gap-1.5 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <div className={`flex flex-col gap-1.5 ${BODY}`} style={{ color: 'var(--text-tertiary)' }}>
             {excludedTotal > 0 && <span role="status">{lowEvidenceNote(excludedTotal, state.shared, L.operationsQ.data?.meta?.shared_returned)}</span>}
             <button
               type="button"
               onClick={toggleShared}
               aria-pressed={state.shared}
-              className="ds-focusable self-start rounded-md px-2 py-1 min-h-[32px]"
+              className={`ds-focusable self-start rounded-md px-2 py-1 min-h-[32px] ${BODY} ${COARSE_TARGET}`}
               style={{ background: 'none', border: '1px solid var(--border-base)', color: state.shared ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
             >
               Show low-evidence clusters
@@ -1037,10 +1037,10 @@ export function ObservatoryV3() {
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: Z_CHROME }}>
           <Card variant="elevated" padding="16px 24px" className="text-center pointer-events-auto" style={{ maxWidth: 280 }}>
             {botLoading ? (
-              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>Loading bot share&hellip;</div>
+              <div role="status" className={BODY} style={{ color: 'var(--text-tertiary)' }}>Loading bot share&hellip;</div>
             ) : botError ? (
               <div role="alert">
-                <div className="flex items-center justify-center gap-2 font-mono text-xs" style={{ color: 'var(--sev-critical-text)' }}>
+                <div className={`flex items-center justify-center gap-2 ${BODY}`} style={{ color: 'var(--sev-critical-text)' }}>
                   <AlertTriangle size={13} /> Bot share failed to load
                 </div>
                 <div className="mt-2">
@@ -1048,7 +1048,7 @@ export function ObservatoryV3() {
                 </div>
               </div>
             ) : (
-              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>No bot-share data yet</div>
+              <div role="status" className={BODY} style={{ color: 'var(--text-tertiary)' }}>No bot-share data yet</div>
             )}
           </Card>
         </div>
@@ -1369,7 +1369,7 @@ export function ObservatoryV3() {
         <PeekSheet open={showMobilePanel && !drill} onClose={() => setShowMobilePanel(false)} label="Intelligence panel" onHeight={onPanelSheetHeight} restoreFocus={restorePanelFocus} initialSnap={sheetInitialSnap}>
           <div className="sticky top-0 z-[1]" style={{ background: 'var(--bg-elevated-solid, var(--bg-elevated))' }}>
             <div className="flex items-center justify-between px-4 pb-1">
-              <span className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>Intelligence</span>
+              <span className={LABEL} style={{ color: 'var(--text-secondary)' }}>Intelligence</span>
               <button
                 type="button"
                 onClick={() => setShowMobilePanel(false)}
