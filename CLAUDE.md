@@ -490,7 +490,8 @@ Telemetry only (target_agent=NULL):
 
 Cron-driven dispatch (no event needed):
   Cartographer  every hour via dedicated `9 * * * *` cron (PR-F)
-                + FC scaleAgents for backlog drain
+                (FC scaleAgents no longer starts cartographer inside the :07 tick —
+                 2026-11-09; it logs `scaling_deferred` and leaves it to :09)
   Nexus         every 4h via NEXUS_RUN workflow (PR-B/D)
   Analyst       every hour via orchestrator inline await
   Strategist    every 6h via orchestrator
@@ -638,8 +639,10 @@ enricher:     8 * * * *     (hourly at :08 — own invocation so it doesn't shar
                              was dropping ~30-50% of ticks.)
 cartographer: 9 * * * *     (hourly at :09 — guaranteed maintenance run with own
                              worker budget. Maintains rule-based provider scoring + email
-                             security scans + provider stats. FC scaleAgents still
-                             fires ADDITIONAL instances on top for backlog drain.
+                             security scans + provider stats. Its only scheduled path:
+                             FC scaleAgents defers to it (2026-11-09) instead of
+                             starting extra instances inside the :07 tick, which were
+                             killed with the tick and starved feed ingestion.
                              Dedicated cron added in PR-F after 24% failure rate
                              observed at the orchestrator's :07-:12 window.)
 strategist:   10 */6 * * * (every 6h at :10 — relocated from orchestrator in PR-Q because
@@ -756,16 +759,17 @@ Time gates use `event.scheduledTime` hour-only — **no minute gates** (see cron
 Always (every tick):  Flight Control, Incident recovery sweep, CertStream health, agent_events consumer
                       (Enricher moved to its own `8 * * * *` cron — see schedule above)
                       (Cartographer's baseline maintenance moved to its own `9 * * * *` cron in PR-F.
-                       FC scaleAgents still fires additional cart instances for backlog drain.)
+                       FC scaleAgents defers cartographer to that cron instead of starting it here.)
                       (CT monitor, lookalike check, and trademark scan moved OFF this hourly
                        tick to dedicated crons `18 * * * *` / `22 * * * *` / `23 * * * *` in
                        S0.1 — see schedule above. Each now runs via `executeAgent` so it
                        writes `agent_runs`; no more inline tail dispatch / bare `runJob`.)
-Always (every tick):  Feed ingestion, brand match, email security, Cartographer, Analyst
+Always (every tick):  Feed ingestion, brand match, email security, Analyst
                       (The former hourly Haiku "AI attribution" batch step is gone — removed in
                        AI_STRATEGY Phase 1 #27; rule-based brand match is the only attribution here.)
 Sentinel:             after feed ingestion if totalNew > 0 (inline await)
-Cartographer:         after Sentinel OR as fallback (dispatched as Workflow)
+Cartographer:         NOT dispatched on this hourly tick — dedicated `9 * * * *` cron only
+                       (FC scaleAgents defers to it, 2026-11-09)
 Analyst:              every tick (ctx.waitUntil)
 NEXUS:                hour % 4 === 0 (dispatched as Workflow)
 Attributor:           hour % 4 === 1 (executeAgent — one tick after NEXUS's hour % 4 === 0
@@ -819,7 +823,7 @@ for 22 hours. All orchestrator gates now use hour-only checks. If sub-hourly
 scheduling is needed, use Navigator (`*/5`) or add a dedicated cron trigger.
 
 ### Execution patterns:
-- **Workflow dispatch:** NEXUS runs as a Cloudflare Workflow (`NEXUS_RUN`), dispatched from the orchestrator cron at `hour % 4 === 0` via `dispatchWorkflow()` in `lib/workflow-dispatch.ts` (KV cooldown on platform errors, FC supervisor watches the last-dispatch stamp). The agent module (`agents/nexus.ts`) stays available as the manual trigger fallback at `/api/internal/agents/nexus/run`. Cartographer still runs as the agent module via FC's `scaleAgents` (workflow path exists but is enrichment-only — see `docs/runbooks/workflow-dispatch.md`). Both NEXUS paths finish with a connected-components post-pass (`lib/cluster-components.ts`, S2.4/D5a) that groups the six lanes' per-key `infrastructure_clusters` rows into `component_id`s via specific-evidence bridges only — additive, doesn't touch `threats.cluster_id` or attribution. The six threats-table lanes are ONE implementation in `lib/nexus-threat-lanes.ts`, called by both paths, with parity pinned by `test/nexus-lane-parity.test.ts`. Never re-inline lane SQL into either file.
+- **Workflow dispatch:** NEXUS runs as a Cloudflare Workflow (`NEXUS_RUN`), dispatched from the orchestrator cron at `hour % 4 === 0` via `dispatchWorkflow()` in `lib/workflow-dispatch.ts` (KV cooldown on platform errors, FC supervisor watches the last-dispatch stamp). The agent module (`agents/nexus.ts`) stays available as the manual trigger fallback at `/api/internal/agents/nexus/run`. Cartographer runs as the agent module from its dedicated `9 * * * *` cron; FC `scaleAgents` no longer starts it inside the `:07` tick (2026-11-09 — it logs `scaling_deferred`). The workflow path exists but is manual / enrichment-only — see `docs/runbooks/workflow-dispatch.md`. Both NEXUS paths finish with a connected-components post-pass (`lib/cluster-components.ts`, S2.4/D5a) that groups the six lanes' per-key `infrastructure_clusters` rows into `component_id`s via specific-evidence bridges only — additive, doesn't touch `threats.cluster_id` or attribution. The six threats-table lanes are ONE implementation in `lib/nexus-threat-lanes.ts`, called by both paths, with parity pinned by `test/nexus-lane-parity.test.ts`. Never re-inline lane SQL into either file.
   - **Cluster-quality rules (2026-10-14):**
     - `lib/shared-infra-asns.ts` holds two disjoint lists. `MULTI_TENANT_ASNS` (27) are networks where one IP serves many tenants (CDN, site builders, parking, free hosts, Google's front-end AS15169 and Amazon's primary AS16509, which carries CloudFront/S3-website/Amplify). `SINGLE_TENANT_IAAS_ASNS` (14) are hyperscalers and VPS providers, where an IP is one customer (EC2 AS14618/AS8987; Google Cloud AS396982, whose LB IPs are per customer project). `SHARED_INFRA_ASNS` is their union (41). The ASN and /24 lanes skip the union. The per-IP lane skips only multi-tenant ASNs. The same file holds the only ASN normaliser (`asnKey` + SQL twin `asnKeySql`), shared with the Observatory operations-geo classifier. Don't add a second one.
     - The ASN lane groups only active threats and skips the IP-reputation types `scanning` and `malicious_ip`, as well as empty types. It does not emit a group that spans more than 150 brands. It normalises ASN strings to `AS<digits>` and caps confidence at 40. Confidence rises with campaign overlap (the main lift), volume and low brand fan-out, never with brand breadth or country.

@@ -711,7 +711,8 @@ export const cartographerAgent: AgentModule = {
     // a read-through cache with NO single-flight. Phase 2 runs on every
     // cartographer instance — the dedicated `9 * * * *` maintenance
     // cron, the 1-3 FC scaleAgents backlog instances, and the
-    // geo_backlog instance — and they overlap, so each one reads the key
+    // geo_backlog instance (FC instances only on a manual FC run since
+    // 2026-11-09; the :07 cron defers to :09) — and they overlap, so each one reads the key
     // before any of them has written it. No TTL suppresses that.
     //
     // Two-part fix, neither of which depends on out-TTL-ing the herd:
@@ -1041,8 +1042,8 @@ export const cartographerAgent: AgentModule = {
     // ─── Phase 5: Aggregate provider threat stats across time periods ───
     // KV self-throttle (Fix #5): Phase 5 runs on EVERY cartographer
     // instance — the dedicated `9 * * * *` maintenance cron AND the 1-3
-    // backlog-drain instances Flight Control fires per hour via scaleAgents
-    // (trigger='flight_control'). The provider rollup is identical work
+    // backlog-drain instances Flight Control fires via scaleAgents
+    // (trigger='flight_control'; only on a manual FC run since 2026-11-09). The provider rollup is identical work
     // regardless of which instance runs it, so re-running it on each
     // backlog instance was ~2x redundant (~28M reads/24h). Gate on a KV
     // stamp with a <hourly window so exactly one run per hour lands. We do

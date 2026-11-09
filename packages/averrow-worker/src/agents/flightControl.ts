@@ -2994,6 +2994,10 @@ export async function scaleAgents(
   // The ExecutionContext is passed from the cron handler via
   // ctx.input._executionCtx. If absent (manual trigger), fall back to
   // the old await behavior for backward compatibility.
+  //
+  // Since 2026-11-09 only Analyst is fired this way; Cartographer is
+  // deferred to its dedicated `9 * * * *` cron when execCtx is present
+  // (see below).
   const execCtx = ctx.input._executionCtx as ExecutionContext | undefined;
 
   // Scale Cartographer. NOT gated on limits.pause_all_ai: cartographer
@@ -3001,60 +3005,82 @@ export async function scaleAgents(
   // provider scoring, costGuard 'exempt'), so an AI-budget emergency is
   // no reason to let the enrichment backlog grow. Analyst below keeps
   // its gate.
+  //
+  // INCIDENT 2026-11-09: inside the hourly `7 * * * *` cron (execCtx
+  // present) cartographer is NOT dispatched. waitUntil work runs inside
+  // the orchestrator invocation's own budget, so 1-3 background cart
+  // instances (+ a geo_backlog run) competed with feed ingestion; none of
+  // them ever finished (agent_runs: trigger=flight_control, partial, NULL
+  // completed_at on every tick) and the tick was killed mid-ingestion,
+  // leaving feed pulls partial and sentinel unrun. Cartographer's budget
+  // is the dedicated `9 * * * *` cron (own invocation). FC only logs the
+  // deferral there. The manual-trigger path (no execCtx) still awaits
+  // instances in its own request, unchanged.
   const cartBacklog = backlogs.cartographer;
-  if (cartBacklog > 0) {
-    const cfg = SCALING.cartographer;
-    const instances = cartBacklog >= cfg.high ? cfg.max_parallel
-      : cartBacklog >= cfg.medium ? 2
-      : 1;
-
-    const cartMod = agentModules['cartographer'];
-    if (cartMod) {
-      // Offset stride must equal one instance's full row window so the three
-      // instances cover disjoint ranges. Each instance processes 5 batches ×
-      // 500 rows = 2,500 rows; a smaller stride (e.g. 500) makes every
-      // instance's later batches overlap with the next instance's earlier
-      // ones, wasting ip-api.com subrequests and D1 writes on idempotent
-      // re-enrichments of the same rows.
-      const CART_ROWS_PER_INSTANCE = 2500;
-      for (let i = 0; i < instances; i++) {
-        const promise = executeAgent(env, cartMod, { trigger: 'flight_control', offset: i * CART_ROWS_PER_INSTANCE }, 'flight_control', 'event');
-        if (execCtx) {
-          // Fire-and-forget: cron keeps running, cartographer runs in background
-          execCtx.waitUntil(promise.catch(() => { /* logged by agentRunner */ }));
-        } else {
-          // Fallback for manual triggers: await as before
-          try { await promise; } catch { /* logged by agentRunner */ }
+  // totalNoGeo only feeds this >5000 gate and log labels — never an
+  // instance count (test/d1-read-spend-ttls.test.ts fix 12).
+  const geoBacklogWanted = backlogs.totalNoGeo > 5000 && cartBacklog === 0;
+  const noGeoLabel = noGeoProbeLabel(backlogs.totalNoGeo);
+  if (execCtx) {
+    if (cartBacklog > 0 || geoBacklogWanted) {
+      const detail = cartBacklog > 0
+        ? `backlog ${cartBacklog}`
+        : `geo backlog ${noGeoLabel} threats missing geo`;
+      await logActivity(db, 'flight_control', 'info', 'scaling_deferred',
+        `Cartographer ${detail} — deferred to the dedicated :09 cron (not dispatched inside the :07 orchestrator invocation)`,
+        {
+          agent: 'cartographer',
+          backlog: cartBacklog,
+          ...(geoBacklogWanted ? { mode: 'geo_backlog', no_geo_count: noGeoLabel } : {}),
+          deferred_to: '9 * * * *',
         }
+      );
+    }
+  } else {
+    if (cartBacklog > 0) {
+      const cfg = SCALING.cartographer;
+      const instances = cartBacklog >= cfg.high ? cfg.max_parallel
+        : cartBacklog >= cfg.medium ? 2
+        : 1;
+
+      const cartMod = agentModules['cartographer'];
+      if (cartMod) {
+        // Offset stride between parallel instances. NOTE: cartographer
+        // currently processes MAX_BATCHES_PER_RUN (3) × 500 = 1,500 rows per
+        // run, so a 2,500 stride leaves a 1,000-row gap between instances.
+        const CART_ROWS_PER_INSTANCE = 2500;
+        for (let i = 0; i < instances; i++) {
+          // Manual trigger: await in this request (no execCtx to defer to).
+          try {
+            await executeAgent(env, cartMod, { trigger: 'flight_control', offset: i * CART_ROWS_PER_INSTANCE }, 'flight_control', 'event');
+          } catch { /* logged by agentRunner */ }
+          actions++;
+        }
+      }
+
+      if (instances > 1) {
+        await logActivity(db, 'flight_control', 'info', 'scaling',
+          `Scaling Cartographer to ${instances} instances (backlog: ${cartBacklog})`,
+          { agent: 'cartographer', instances, backlog: cartBacklog }
+        );
+      }
+    }
+
+    // Cartographer geo backlog — trigger geo enrichment if geo backlog is large
+    // and cartographer isn't already busy with unenriched threats
+    if (geoBacklogWanted) {
+      const cartMod2 = agentModules['cartographer'];
+      if (cartMod2) {
+        try {
+          await executeAgent(env, cartMod2, { trigger: 'flight_control', mode: 'geo_backlog', priority: 'low' }, 'flight_control', 'event');
+        } catch { /* logged by agentRunner */ }
         actions++;
+
+        await logActivity(db, 'flight_control', 'info', 'scaling',
+          `Ran Cartographer geo backlog pass (${noGeoLabel} threats missing geo)`,
+          { agent: 'cartographer', mode: 'geo_backlog', no_geo_count: noGeoLabel }
+        );
       }
-    }
-
-    if (instances > 1) {
-      await logActivity(db, 'flight_control', 'info', 'scaling',
-        `Scaling Cartographer to ${instances} background instances (backlog: ${cartBacklog})`,
-        { agent: 'cartographer', instances, backlog: cartBacklog }
-      );
-    }
-  }
-
-  // Cartographer geo backlog — trigger geo enrichment if geo backlog is large
-  // and cartographer isn't already busy with unenriched threats
-  if (backlogs.totalNoGeo > 5000 && cartBacklog === 0) {
-    const cartMod2 = agentModules['cartographer'];
-    if (cartMod2) {
-      const promise = executeAgent(env, cartMod2, { trigger: 'flight_control', mode: 'geo_backlog', priority: 'low' }, 'flight_control', 'event');
-      if (execCtx) {
-        execCtx.waitUntil(promise.catch(() => {}));
-      } else {
-        try { await promise; } catch { /* logged by agentRunner */ }
-      }
-      actions++;
-
-      await logActivity(db, 'flight_control', 'info', 'scaling',
-        `Queued Cartographer geo backlog run (${noGeoProbeLabel(backlogs.totalNoGeo)} threats missing geo)`,
-        { agent: 'cartographer', mode: 'geo_backlog', no_geo_count: noGeoProbeLabel(backlogs.totalNoGeo) }
-      );
     }
   }
 
@@ -3146,7 +3172,7 @@ export async function scaleAgents(
 /** Max agents FC re-dispatches per tick. 1, not 2: every recovery runs via
  *  ctx.waitUntil inside the hourly orchestrator invocation, sharing its
  *  single cpu_ms = 300_000 budget with feed ingestion, the analyst inline
- *  await and scaleAgents' background instances. Recoverable agents take
+ *  await and scaleAgents' background Analyst instances. Recoverable agents take
  *  100-200 s each, so even two can consume most of that budget on their
  *  own. One keeps the worst case bounded while still guaranteeing forward
  *  progress (the cooldown below rotates the slot across stalled agents). */
@@ -3171,7 +3197,7 @@ export const SCHEDULE_OWNED_AGENTS: ReadonlySet<string> = new Set([
   // Dedicated crons (own invocation, exact event.cron match):
   'navigator',             // */5 * * * *
   'enricher',              // 8 * * * *
-  'cartographer',          // 9 * * * *  (+ FC scaleAgents backlog instances)
+  'cartographer',          // 9 * * * *  (FC scaleAgents defers to it inside the :07 cron)
   'strategist',            // 10 */6 * * *
   'sparrow',               // 11 */6 * * *
   'cube_healer',           // 12 */6 * * *

@@ -332,6 +332,8 @@ Expected: minute=`08` dominates. Some `09` is fine (cron jitter).
 
 PR-F gives cartographer its own `9 * * * *` cron — same pattern as PR-E for enricher. Addresses 24% failure rate observed at the orchestrator's :07-:12 window over a 2-day window (14 failed / 58 total). FC `scaleAgents` continues to fire backlog-driven instances on top; the dedicated cron just guarantees a baseline maintenance run with a fresh Worker budget.
 
+> **Superseded 2026-11-09:** FC `scaleAgents` no longer fires cartographer (backlog or `geo_backlog`) instances when it runs inside the `7 * * * *` orchestrator invocation. Those `ctx.waitUntil` instances shared the orchestrator's budget, never finished (`trigger=flight_control`, `partial`, `completed_at` NULL on every tick) and coincided with the tick being killed mid feed ingestion. FC now logs one `flight_control` `scaling_deferred` activity row and the `9 * * * *` cron is cartographer's only scheduled run. A manual Flight Control run (no ExecutionContext) still awaits backlog instances in its own request. The `:08`/`:10` run counts described below no longer apply.
+
 ### 1. New cron entry visible
 
 After deploy, the Worker's Cron Triggers list should show **6** entries:

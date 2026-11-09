@@ -177,18 +177,14 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
   // 2026-05-13 over a 2-day window (14 failed / 58 total at :07-:12).
   //
   // Same fix as PR-E (enricher): own cron trigger = own Worker
-  // invocation = fresh 5-min CPU / 15-min wall budget. FC scaleAgents
-  // continues to fire ADDITIONAL cart instances on top when the
-  // backlog warrants — those still share the orchestrator's CPU but
-  // they're now backlog-scaling on top of a guaranteed baseline run,
-  // not the only path.
+  // invocation = fresh 5-min CPU / 15-min wall budget.
   //
-  // Overlap with FC's scaleAgents instances is harmless: cart writes
-  // are idempotent (ON CONFLICT on provider_threat_stats; per-row
-  // UPDATEs on threats; brand-by-brand idempotent scans on
-  // email_security_scans). Worst case is wasted ip-api subrequests
-  // when two instances hit the same unenriched rows — quantifiable
-  // and below the 50K subrequest cap.
+  // Since 2026-11-09 this is cartographer's ONLY scheduled path: FC
+  // scaleAgents no longer fires backlog instances via waitUntil inside the
+  // `7 * * * *` invocation (they never finished and starved feed
+  // ingestion), it logs a `scaling_deferred` row pointing here instead.
+  // One run drains up to 3 × 500 = 1,500 unenriched rows (cartographer
+  // MAX_BATCHES_PER_RUN).
   if (event.cron === '9 * * * *') {
     try {
       const { cartographerAgent } = await import('../agents/cartographer');
@@ -611,6 +607,10 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
   try {
     const { flightControlAgent } = await import('../agents/flightControl');
     const { executeAgent } = await import('../lib/agentRunner');
+    // NOTE: FC treats a present _executionCtx as "running inside the :07
+    // cron" and defers cartographer scaling to the 9 * * * * cron. Don't
+    // pass an ExecutionContext to FC from any other caller (e.g. a manual
+    // route) without revisiting scaleAgents, or that caller drains nothing.
     await executeAgent(env, flightControlAgent, { _executionCtx: ctx }, 'cron', 'scheduled');
   } catch (err) {
     logger.error('flight_control_error', { error: err instanceof Error ? err.message : String(err) });

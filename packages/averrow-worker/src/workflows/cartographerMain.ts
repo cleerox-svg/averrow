@@ -36,8 +36,9 @@
  * AGENT MODULE FALLBACK:
  *  - agents/cartographer.ts.cartographerAgent.execute() stays in place
  *    as the manual fallback at /api/internal/agents/cartographer/run.
- *    FC scaleAgents continues to use the agent module for backlog drain
- *    (multi-instance offset stride).
+ *    FC scaleAgents uses the agent module for backlog drain only on a
+ *    manual FC run; inside the :07 cron it defers to the :09 cron
+ *    (2026-11-09).
  */
 
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
