@@ -68,11 +68,15 @@ vi.mock("../src/lib/geoip", async () => {
 let feedsTotalNew = 0;
 const runAllFeedsSpy = vi.fn(async () => {
   callOrder.push("runAllFeeds");
-  return { feedsRun: 1, totalNew: feedsTotalNew, feedsFailed: 0, feedsSkipped: 0 };
+  return { feedsRun: 1, totalNew: feedsTotalNew, feedsFailed: 2, feedsSkipped: 3, feedsTimedOut: 1, feedsDeferred: 2 };
 });
 const runAllEnrichmentFeedsSpy = vi.fn(async (..._args: unknown[]) => {
   callOrder.push("runAllEnrichmentFeeds");
-  return { feedsRun: 0, totalEnriched: 0, feedsFailed: 0, feedsSkipped: 0 };
+  return { feedsRun: 2, totalEnriched: 0, feedsFailed: 1, feedsSkipped: 1, feedsTimedOut: 1, feedsDeferred: 1 };
+});
+const runAllSocialFeedsSpy = vi.fn(async (..._args: unknown[]) => {
+  callOrder.push("runAllSocialFeeds");
+  return { feedsRun: 1, totalNew: 0, feedsFailed: 1, feedsSkipped: 2, feedsTimedOut: 1, feedsDeferred: 2 };
 });
 vi.mock("../src/lib/feedRunner", async () => {
   const actual = await vi.importActual<typeof import("../src/lib/feedRunner")>(
@@ -82,7 +86,7 @@ vi.mock("../src/lib/feedRunner", async () => {
     ...actual,
     runAllFeeds: runAllFeedsSpy,
     runAllEnrichmentFeeds: runAllEnrichmentFeedsSpy,
-    runAllSocialFeeds: vi.fn(async () => ({ feedsRun: 0, totalNew: 0, feedsFailed: 0, feedsSkipped: 0 })),
+    runAllSocialFeeds: runAllSocialFeedsSpy,
   };
 });
 
@@ -146,6 +150,7 @@ vi.mock("../src/handlers/admin", async () => {
   };
 });
 
+const infoSpy = vi.fn();
 const warnSpy = vi.fn();
 const errorSpy = vi.fn();
 vi.mock("../src/lib/logger", async () => {
@@ -154,6 +159,7 @@ vi.mock("../src/lib/logger", async () => {
     ...actual,
     logger: {
       ...actual.logger,
+      info: (event: string, data?: Record<string, unknown>) => infoSpy(event, data),
       warn: (event: string, data?: Record<string, unknown>) => warnSpy(event, data),
       error: (event: string, data?: Record<string, unknown>) => errorSpy(event, data),
     },
@@ -261,6 +267,36 @@ describe("orchestrator tick — feed ingestion precedes the bounded inline geo p
     }
     const call = runAllEnrichmentFeedsSpy.mock.calls.at(-1)!;
     expect(call[2]).toEqual({ deadline: event.scheduledTime + ENRICHMENT_TICK_DEADLINE_MS });
+  });
+
+  it("caps the social feed loop at the same tick deadline, after enrichment", async () => {
+    const { ENRICHMENT_TICK_DEADLINE_MS } = await import("../src/lib/feedRunner");
+    const event = eventAtHour(5);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(event.scheduledTime + 2 * 60_000);
+      const { handleScheduled } = await import("../src/cron/orchestrator");
+      await handleScheduled(event, makeEnv(), ctx);
+    } finally {
+      vi.useRealTimers();
+    }
+    const call = runAllSocialFeedsSpy.mock.calls.at(-1)!;
+    expect(call[2]).toEqual({ deadline: event.scheduledTime + ENRICHMENT_TICK_DEADLINE_MS });
+    expect(callOrder.indexOf("runAllSocialFeeds")).toBeGreaterThan(callOrder.indexOf("runAllEnrichmentFeeds"));
+  });
+
+  it("logs feedsTimedOut / feedsDeferred for the ingest, enrichment and social loops", async () => {
+    const { handleScheduled } = await import("../src/cron/orchestrator");
+    await handleScheduled(eventAtHour(5), makeEnv(), ctx);
+    expect(infoSpy).toHaveBeenCalledWith("threat_feed_scan_feeds", expect.objectContaining({
+      feedsRun: 1, feedsFailed: 2, feedsSkipped: 3, feedsTimedOut: 1, feedsDeferred: 2,
+    }));
+    expect(infoSpy).toHaveBeenCalledWith("threat_feed_scan_enrichment_feeds", expect.objectContaining({
+      feedsRun: 2, feedsFailed: 1, feedsTimedOut: 1, feedsDeferred: 1,
+    }));
+    expect(infoSpy).toHaveBeenCalledWith("threat_feed_scan_social_feeds", expect.objectContaining({
+      feedsRun: 1, feedsFailed: 1, feedsTimedOut: 1, feedsDeferred: 2,
+    }));
   });
 
   it("still gates sentinel on runAllFeeds' totalNew", async () => {

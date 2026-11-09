@@ -1054,7 +1054,7 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   //     whose last_successful_pull is older than 3× its schedule_cron interval.
   //     Catches the broader symptom regardless of cause.
   const { runAllFeeds, runAllEnrichmentFeeds, enrichmentDeadlineForTick } = await import('../lib/feedRunner');
-  let feedResult = { feedsRun: 0, totalNew: 0, feedsFailed: 0, feedsSkipped: 0 };
+  let feedResult = { feedsRun: 0, totalNew: 0, feedsFailed: 0, feedsSkipped: 0, feedsTimedOut: 0, feedsDeferred: 0 };
   try {
     feedResult = await runAllFeeds(env, feedModules);
     logger.info('threat_feed_scan_feeds', {
@@ -1062,6 +1062,8 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
       totalNew: feedResult.totalNew,
       feedsFailed: feedResult.feedsFailed,
       feedsSkipped: feedResult.feedsSkipped,
+      feedsTimedOut: feedResult.feedsTimedOut,
+      feedsDeferred: feedResult.feedsDeferred,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1131,22 +1133,31 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
       totalEnriched: enrichResult.totalEnriched,
       feedsFailed: enrichResult.feedsFailed,
       feedsSkipped: enrichResult.feedsSkipped,
+      feedsTimedOut: enrichResult.feedsTimedOut,
+      feedsDeferred: enrichResult.feedsDeferred,
     });
   } catch (err) {
     console.error('[cron] ENRICHMENT FEEDS FAILED:', err instanceof Error ? err.message : String(err));
     logger.error('enrichment_feeds_error', { error: err instanceof Error ? err.message : String(err) });
   }
 
-  // Social intelligence feeds (Reddit, GitHub) — insert into social_mentions
+  // Social intelligence feeds (Reddit, GitHub) — insert into social_mentions.
+  // Same tick deadline as enrichment: after a slow ingest/enrichment the
+  // social feeds are deferred, so the tail below (enrichment pipeline,
+  // brand match, Sentinel, agent dispatch) always gets a chance to run.
   try {
     const { runAllSocialFeeds } = await import('../lib/feedRunner');
-    const socialResult = await runAllSocialFeeds(env, socialModules);
+    const socialResult = await runAllSocialFeeds(env, socialModules, {
+      deadline: enrichmentDeadlineForTick(scheduledTime.getTime()),
+    });
     console.log(`[cron] Social feeds complete: run=${socialResult.feedsRun} new=${socialResult.totalNew} failed=${socialResult.feedsFailed} skipped=${socialResult.feedsSkipped}`);
     logger.info('threat_feed_scan_social_feeds', {
       feedsRun: socialResult.feedsRun,
       totalNew: socialResult.totalNew,
       feedsFailed: socialResult.feedsFailed,
       feedsSkipped: socialResult.feedsSkipped,
+      feedsTimedOut: socialResult.feedsTimedOut,
+      feedsDeferred: socialResult.feedsDeferred,
     });
 
     // Trigger Watchdog if there are unclassified social mentions

@@ -483,16 +483,28 @@ export const FEED_RUN_TIMEOUT_OVERRIDES_MS: Readonly<Record<string, number>> = {
  * FEED_POOL_MIN_START_MS left (it stays due and runs next tick). The
  * hourly orchestrator invocation has a 15-min wall budget and reaches
  * dispatch ~1-2.5 min in (prod 2026-11-09 first pull starts :08-:09 for
- * the :07 tick), so the pool always returns by ~12.5 min, leaving the
- * rest of the tick (Sentinel, enrichment) a guaranteed slot instead of
- * none. 10 min is the largest override (taxii_otx), so the longest feed
- * still gets its full budget when it starts first — which longest-first
- * dispatch ordering below ensures.
+ * the :07 tick), so the pool always returns by ~12.5 min, and the rest
+ * of the tick (Sentinel, enrichment) always gets a chance to run instead
+ * of none. 10 min is the largest override (taxii_otx), so the longest
+ * feed still gets its full budget when it starts first — which
+ * longest-first dispatch ordering below ensures (and
+ * FEED_TIMEOUT_CLIP_TOLERANCE_MS keeps the milliseconds between computing
+ * the pool deadline and starting that first feed from counting as a clip).
  */
 export const FEED_POOL_BUDGET_MS = 10 * 60_000;
 
 /** A feed is not started with less than this left of its loop's budget. */
 export const FEED_POOL_MIN_START_MS = 30_000;
+
+/**
+ * A feed whose own timeout exceeds the time left in its loop by at most
+ * this much still counts as getting its full allowance (not clipped): its
+ * timeout is the time left, and a timeout is penalized like any other.
+ * Without it, taxii_otx (600s override = FEED_POOL_BUDGET_MS) would be
+ * "clipped" by the few ms the real clock advances between the pool
+ * deadline being computed and its pull starting, and never be penalized.
+ */
+export const FEED_TIMEOUT_CLIP_TOLERANCE_MS = 5_000;
 
 /**
  * Own wall-clock budget of the sequential runAllEnrichmentFeeds loop,
@@ -511,10 +523,24 @@ export const ENRICHMENT_LOOP_BUDGET_MS = 6 * 60_000;
  * enrichment at 12 min from the tick means a slow ingest squeezes
  * enrichment (deferred to the next tick) rather than the rest of the
  * tick: social feeds, the enrichment pipeline and agent dispatch always
- * keep the last ~3 min. On a normal tick (pool done in a few minutes)
- * ENRICHMENT_LOOP_BUDGET_MS is the binding limit.
+ * get a chance to run in the last ~3 min. On a normal tick (pool done in a
+ * few minutes) ENRICHMENT_LOOP_BUDGET_MS is the binding limit.
+ *
+ * runAllSocialFeeds (sequential, right after enrichment) is capped at the
+ * same tick deadline, so after a slow ingest or enrichment the social
+ * feeds are deferred too and the tail of the tick (enrichment pipeline,
+ * brand match, Sentinel and agent dispatch) keeps those ~3 min.
  */
 export const ENRICHMENT_TICK_DEADLINE_MS = 12 * 60_000;
+
+/**
+ * Own wall-clock budget of the sequential runAllSocialFeeds loop, from its
+ * start. 14-day max pulls: github 69s, mastodon 44s, telegram 9s (~2 min
+ * if all three are due on one tick), so 3 min absorbs a slow tick; every
+ * pull is also on the 120s default cap. The orchestrator additionally
+ * caps the loop at the tick deadline (enrichmentDeadlineForTick).
+ */
+export const SOCIAL_LOOP_BUDGET_MS = 3 * 60_000;
 
 /** The cron invocation wall-clock limit the tick deadline is sized against. */
 const CRON_INVOCATION_WALL_MS = 15 * 60_000;
@@ -560,7 +586,26 @@ export function plannedFeedTimeout(
   const remaining = deadline - now;
   if (remaining < FEED_POOL_MIN_START_MS) return null;
   const own = feedRunTimeoutMs(feedName);
-  return own <= remaining ? { timeoutMs: own, clipped: false } : { timeoutMs: remaining, clipped: true };
+  if (own <= remaining) return { timeoutMs: own, clipped: false };
+  // Within the tolerance of its own timeout: a full allowance, not a clip.
+  return { timeoutMs: remaining, clipped: own - remaining > FEED_TIMEOUT_CLIP_TOLERANCE_MS };
+}
+
+/** Every timeout error (clipped or not) ends with this; matched by previousPullTimedOut. */
+const TIMEOUT_ERROR_SUFFIX = "— pull abandoned";
+
+/**
+ * True when the feed's most recent pull before `pullId` was itself
+ * abandoned at a timeout (clipped or not). One indexed row read
+ * (idx_feed_pulls_feed); only called after a clipped timeout.
+ */
+async function previousPullTimedOut(env: Env, feedName: string, pullId: string): Promise<boolean> {
+  const prev = await env.DB.prepare(
+    `SELECT status, error_message FROM feed_pull_history
+      WHERE feed_name = ? AND id <> ?
+      ORDER BY started_at DESC LIMIT 1`,
+  ).bind(feedName, pullId).first<{ status: string; error_message: string | null }>();
+  return prev?.status === "failed" && (prev.error_message ?? "").endsWith(TIMEOUT_ERROR_SUFFIX);
 }
 
 /** Marker so the feed loops can count timeouts separately from failures. */
@@ -588,9 +633,15 @@ export class FeedTimeoutError extends Error {
  *     that late INSERT fails and the pull never starts;
  *   - the breaker gets the same penalty a thrown failure gets
  *     (penalizeFeedFailure), only when this upsert is what finalized the
- *     row and only when the feed's own timeout fired. A cut by a loop
- *     deadline (`clippedBy`) is our scheduling, not the feed's fault: no
- *     penalty.
+ *     row, and when either the feed got its full allowance (its own
+ *     timeout fired, `clippedBy` null) or the cut was clipped by a loop
+ *     deadline but the feed's previous pull also timed out. A single
+ *     clipped cut is our scheduling, not the feed's fault: no penalty. A
+ *     clipped pull's allowance is by construction short of the feed's own
+ *     timeout, so it can never show that the pull hung for its full
+ *     allowance; a second timeout in a row is the evidence used instead,
+ *     so a feed that is clipped on every tick and hangs every time still
+ *     backs off and reaches auto-pause instead of death-looping silently.
  *
  * The abandoned runFeed keeps running in the background (feed modules
  * take no AbortSignal). Its late outcome is harmless: runFeed's success
@@ -639,8 +690,8 @@ async function runFeedWithTimeout(
   abandoned = true;
   const seconds = Math.round(timeoutMs / 1000);
   const errorMsg = clippedBy
-    ? `timed out after ${seconds}s at the ${clippedBy.label} deadline (${Math.round(clippedBy.budgetMs / 1000)}s budget) — pull abandoned`
-    : `timed out after ${seconds}s — pull abandoned`;
+    ? `timed out after ${seconds}s at the ${clippedBy.label} deadline (${Math.round(clippedBy.budgetMs / 1000)}s budget) ${TIMEOUT_ERROR_SUFFIX}`
+    : `timed out after ${seconds}s ${TIMEOUT_ERROR_SUFFIX}`;
   console.error(`[runAllFeeds] ${config.feed_name}: ${errorMsg}`);
 
   try {
@@ -657,8 +708,12 @@ async function runFeedWithTimeout(
          AND feed_pull_history.completed_at IS NULL`,
     ).bind(pullId, config.feed_name, startedAt, Date.now() - start, errorMsg).run();
 
-    if (finalizeApplied(finalize) && !clippedBy) {
-      await penalizeFeedFailure(env, config, errorMsg);
+    if (finalizeApplied(finalize)) {
+      if (!clippedBy) {
+        await penalizeFeedFailure(env, config, errorMsg);
+      } else if (await previousPullTimedOut(env, config.feed_name, pullId)) {
+        await penalizeFeedFailure(env, config, `${errorMsg}; previous pull also timed out`);
+      }
     }
   } catch (e) {
     // Best-effort: if this write fails the row stays partial and the
@@ -896,6 +951,16 @@ async function penalizeFeedFailure(
   const prevStatus = await env.DB.prepare(
     `SELECT health_status, consecutive_failures FROM feed_status WHERE feed_name = ?`
   ).bind(config.feed_name).first<{ health_status: string; consecutive_failures: number | null }>();
+
+  // A feed that has never succeeded has no feed_status row (runFeed only
+  // creates it on success), and the UPDATE below would match nothing: no
+  // backoff, no counter, no auto-pause. Ensure the row, as applyReapPenalty
+  // does. Only when the read found none, so the common path costs no write.
+  if (!prevStatus) {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO feed_status (feed_name, health_status) VALUES (?, 'healthy')",
+    ).bind(config.feed_name).run();
+  }
 
   const newFailureCount = (prevStatus?.consecutive_failures ?? 0) + 1;
 
@@ -1313,7 +1378,7 @@ export async function runAllFeeds(
   //
   // Every pull is wall-clock capped (runFeedWithTimeout) and the pool as a
   // whole by FEED_POOL_BUDGET_MS, so a hung pull frees its slot and
-  // runAllFeeds always returns. Longest-budget feeds start first (stable
+  // runAllFeeds always returns, giving the rest of the tick a chance to run. Longest-budget feeds start first (stable
   // sort) so a long feed is never clipped by the pool deadline merely
   // because it was dispatched late.
   toRun.sort((a, b) => feedRunTimeoutMs(b.config.feed_name) - feedRunTimeoutMs(a.config.feed_name));
@@ -1622,16 +1687,36 @@ export async function runAllEnrichmentFeeds(
 export async function runAllSocialFeeds(
   env: Env,
   socialModules: Record<string, FeedModule>,
+  opts: {
+    /**
+     * Absolute epoch-ms deadline the loop must finish by (the orchestrator
+     * passes enrichmentDeadlineForTick). The loop's effective deadline is
+     * the earlier of this and start + SOCIAL_LOOP_BUDGET_MS.
+     */
+    deadline?: number;
+  } = {},
 ): Promise<{
   feedsRun: number;
   feedsSkipped: number;
   feedsFailed: number;
+  /** Subset of feedsFailed: abandoned at their wall-clock timeout. */
+  feedsTimedOut: number;
+  /** Due feeds not started because the loop budget ran out (also in feedsSkipped). */
+  feedsDeferred: number;
   totalNew: number;
 }> {
   let feedsRun = 0;
   let feedsSkipped = 0;
   let feedsFailed = 0;
+  let feedsTimedOut = 0;
+  let feedsDeferred = 0;
   let totalNew = 0;
+
+  // Same caps as the enrichment loop: every pull on runFeedWithTimeout
+  // (all social feeds are on the 120s default) and the loop as a whole on
+  // `deadline`, so a hung social pull cannot eat the tail of the tick.
+  const loopStart = Date.now();
+  const deadline = Math.min(loopStart + SOCIAL_LOOP_BUDGET_MS, opts.deadline ?? Infinity);
 
   try {
     // Build a map of DB configs keyed by feed_name (empty if query fails)
@@ -1690,15 +1775,27 @@ export async function runAllSocialFeeds(
         continue;
       }
 
+      const plan = plannedFeedTimeout(name, deadline);
+      if (!plan) {
+        console.warn(`[social] ${name}: DEFERRED — social loop budget exhausted, stays due for the next tick`);
+        feedsDeferred++;
+        feedsSkipped++;
+        continue;
+      }
+
       // Run the feed — isolated try/catch so one failure cannot kill others
       feedsRun++;
       try {
-        console.log(`[social] Running: ${name}`);
-        const result = await runFeed(env, config, mod);
+        console.log(`[social] Running: ${name} (timeout ${Math.round(plan.timeoutMs / 1000)}s)`);
+        const result = await runFeedWithTimeout(
+          env, config, mod, plan.timeoutMs,
+          plan.clipped ? { label: "social", budgetMs: deadline - loopStart } : null,
+        );
         totalNew += result.itemsNew;
         console.log(`[social] ${name}: fetched=${result.itemsFetched} new=${result.itemsNew} errors=${result.itemsError}`);
       } catch (err) {
         feedsFailed++;
+        if (err instanceof FeedTimeoutError) feedsTimedOut++;
         console.error(`[social] ${name} FAILED:`, err instanceof Error ? err.message : String(err));
       }
     }
@@ -1707,8 +1804,8 @@ export async function runAllSocialFeeds(
     console.error('[social] FATAL outer error:', outerErr instanceof Error ? outerErr.message : String(outerErr));
   }
 
-  console.log(`[social] Done: ${feedsRun} ran, ${feedsFailed} failed, ${feedsSkipped} skipped, ${totalNew} new`);
-  return { feedsRun, feedsSkipped, feedsFailed, totalNew };
+  console.log(`[social] Done: ${feedsRun} ran, ${feedsFailed} failed (${feedsTimedOut} timed out), ${feedsSkipped} skipped (${feedsDeferred} deferred), ${totalNew} new`);
+  return { feedsRun, feedsSkipped, feedsFailed, feedsTimedOut, feedsDeferred, totalNew };
 }
 
 // ─── Reset daily counters (called at start of day) ───────────────

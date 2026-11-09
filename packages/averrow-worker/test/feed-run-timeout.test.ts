@@ -13,16 +13,26 @@
  *      second time, and is not an unhandled rejection.
  *   5. Per-feed overrides, longest-first dispatch, the pool deadline
  *      (clipped feed: no penalty) and deferral once the budget is spent.
+ *   6. #1934 review follow-ups: penalizing a feed with no feed_status row,
+ *      penalizing a clipped timeout that follows a timeout, the clip
+ *      tolerance (incl. a real advancing clock), and the social loop's
+ *      per-pull cap + deadline.
  *
  * Drives runAllFeeds through a stateful mock D1 that models
  * feed_pull_history rows (incl. the guarded UPDATEs + the timeout upsert)
- * and reports meta.changes like real D1. Fake timers throughout.
+ * and reports meta.changes like real D1. Fake timers throughout, except
+ * the clip-tolerance test that needs a real advancing clock.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   runAllFeeds,
   runAllEnrichmentFeeds,
+  runAllSocialFeeds,
+  plannedFeedTimeout,
+  FEED_TIMEOUT_CLIP_TOLERANCE_MS,
+  FEED_POOL_MIN_START_MS,
+  SOCIAL_LOOP_BUDGET_MS,
   enrichmentDeadlineForTick,
   ENRICHMENT_LOOP_BUDGET_MS,
   ENRICHMENT_TICK_DEADLINE_MS,
@@ -120,6 +130,15 @@ function exec(state: State, sql: string, args: unknown[]): { changes: number } {
     Object.assign(row, { status: "failed", completed_at: "now", error_message: String(args[0]), duration_ms: args[1] as number });
     return { changes: 1 };
   }
+  if (s.startsWith("INSERT OR IGNORE INTO feed_status")) {
+    const feed = String(args[0]);
+    if (state.status.has(feed)) return { changes: 0 };
+    state.status.set(feed, {
+      feed_name: feed, health_status: "healthy", consecutive_failures: 0,
+      next_retry_at: null, last_error: null, last_successful_pull: null,
+    });
+    return { changes: 1 };
+  }
   if (s.startsWith("UPDATE feed_status SET last_failure")) {
     const row = state.status.get(String(args[3]));
     if (!row) return { changes: 0 };
@@ -158,6 +177,15 @@ function query(state: State, sql: string, args: unknown[]): unknown[] {
   if (s.startsWith("SELECT * FROM feed_configs WHERE feed_type = 'enrichment'")) {
     return query(state, "SELECT * FROM feed_configs WHERE enabled = 1", args);
   }
+  if (s.startsWith("SELECT * FROM feed_configs WHERE feed_type = 'social'")) {
+    return query(state, "SELECT * FROM feed_configs WHERE enabled = 1", args);
+  }
+  if (s.startsWith("SELECT status, error_message FROM feed_pull_history WHERE feed_name = ? AND id <> ?")) {
+    // Map insertion order = start order; newest other row of this feed.
+    const rows = [...state.pulls.values()].filter((r) => r.feed_name === args[0] && r.id !== args[1]);
+    const prev = rows.at(-1);
+    return prev ? [{ status: prev.status, error_message: prev.error_message }] : [];
+  }
   if (s.startsWith("SELECT * FROM feed_status")) return [...state.status.values()];
   if (s.startsWith("SELECT health_status, consecutive_failures FROM feed_status")) {
     const row = state.status.get(String(args[0]));
@@ -192,6 +220,17 @@ function controllable(): { mod: FeedModule; resolve: (r: FeedResult) => void; re
   let reject!: (e: Error) => void;
   const p = new Promise<FeedResult>((res, rej) => { resolve = res; reject = rej; });
   return { mod: { ingest: () => p }, resolve, reject };
+}
+
+/** Seed a finished earlier pull of `feed` (e.g. last tick's). */
+function seedPreviousPull(state: State, feed: string, status: PullRow["status"], error: string | null): void {
+  const id = `prev-${feed}-${state.pulls.size}`;
+  state.pulls.set(id, { id, feed_name: feed, status, completed_at: "earlier", error_message: error, duration_ms: 1 });
+}
+
+/** The pulls of `feed` started by the code under test (not seeded). */
+function newPullsOf(state: State, feed: string): PullRow[] {
+  return [...state.pulls.values()].filter((r) => r.feed_name === feed && !r.id.startsWith("prev-"));
 }
 
 function pullOf(state: State, feed: string): PullRow {
@@ -493,5 +532,265 @@ describe("enrichmentDeadlineForTick", () => {
     const now = T + 60 * 60_000;
     expect(enrichmentDeadlineForTick(T, now)).toBe(now + ENRICHMENT_TICK_DEADLINE_MS);
     expect(enrichmentDeadlineForTick(T + 60_000, T)).toBe(T + ENRICHMENT_TICK_DEADLINE_MS);
+  });
+});
+
+// ─── #1934 review follow-ups ─────────────────────────────────────
+
+describe("feed timeout follow-ups (fake timers)", () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-09T21:07:50Z"));
+    createNotificationMock.mockClear();
+    unhandled.length = 0;
+    process.on("unhandledRejection", onUnhandled);
+  });
+
+  afterEach(() => {
+    process.off("unhandledRejection", onUnhandled);
+    vi.useRealTimers();
+  });
+
+  describe("penalizing a feed with no feed_status row", () => {
+    it("creates the row and backs off a feed that times out before it ever succeeded", async () => {
+      const state = makeState(["nrd_hagezi"]);
+      state.status.delete("nrd_hagezi");
+      const run = runAllFeeds(makeEnv(state), { nrd_hagezi: hangingModule() });
+      await vi.advanceTimersByTimeAsync(FEED_RUN_TIMEOUT_MS);
+      expect(await run).toMatchObject({ feedsTimedOut: 1 });
+
+      const st = state.status.get("nrd_hagezi");
+      expect(st).toBeDefined();
+      expect(st!.consecutive_failures).toBe(1);
+      expect(st!.next_retry_at).not.toBeNull();
+      expect(st!.health_status).toBe("degraded");
+      expect(st!.last_error).toBe("timed out after 120s — pull abandoned");
+      expect(unhandled).toEqual([]);
+    });
+
+    it("creates the row and backs off a feed that throws before it ever succeeded", async () => {
+      const state = makeState(["urlhaus"]);
+      state.status.delete("urlhaus");
+      const mod: FeedModule = { ingest: async () => { throw new Error("HTTP 502"); } };
+      expect(await runAllFeeds(makeEnv(state), { urlhaus: mod })).toMatchObject({ feedsFailed: 1, feedsTimedOut: 0 });
+
+      const st = state.status.get("urlhaus")!;
+      expect(st.consecutive_failures).toBe(1);
+      expect(st.next_retry_at).not.toBeNull();
+      expect(st.last_error).toBe("HTTP 502");
+    });
+  });
+
+  describe("clipped timeouts", () => {
+    const CLIPPED_100S = "timed out after 100s at the enrichment deadline (100s budget) — pull abandoned";
+
+    async function clippedSurblTick(state: State): Promise<void> {
+      const run = runAllEnrichmentFeeds(makeEnv(state), { surbl: hangingModule() }, { deadline: Date.now() + 100_000 });
+      await vi.advanceTimersByTimeAsync(100_000);
+      expect(await run).toMatchObject({ feedsTimedOut: 1 });
+    }
+
+    it("are not penalized when the previous pull did not time out", async () => {
+      const state = makeState(["surbl"]);
+      seedPreviousPull(state, "surbl", "success", null);
+      await clippedSurblTick(state);
+      expect(newPullsOf(state, "surbl")[0]!.error_message).toBe(CLIPPED_100S);
+      expect(state.status.get("surbl")!.consecutive_failures).toBe(0);
+      expect(state.status.get("surbl")!.next_retry_at).toBeNull();
+    });
+
+    it("are not penalized when the previous pull failed for another reason", async () => {
+      const state = makeState(["surbl"]);
+      seedPreviousPull(state, "surbl", "failed", "HTTP 502");
+      await clippedSurblTick(state);
+      expect(state.status.get("surbl")!.consecutive_failures).toBe(0);
+    });
+
+    it("are penalized on the second timeout in a row, so an always-clipped hang still backs off", async () => {
+      const state = makeState(["surbl"]);
+      // Tick 1: first clipped timeout — scheduling, not the feed's fault.
+      await clippedSurblTick(state);
+      expect(state.status.get("surbl")!.consecutive_failures).toBe(0);
+      // Tick 2: clipped again after a timeout — penalized.
+      await clippedSurblTick(state);
+      let st = state.status.get("surbl")!;
+      expect(st.consecutive_failures).toBe(1);
+      expect(st.next_retry_at).not.toBeNull();
+      expect(st.last_error).toBe(`${CLIPPED_100S}; previous pull also timed out`);
+      // Tick 3, once the backoff window has passed: keeps climbing toward
+      // auto-pause.
+      vi.setSystemTime(Date.now() + 60 * 60_000);
+      await clippedSurblTick(state);
+      st = state.status.get("surbl")!;
+      expect(st.consecutive_failures).toBe(2);
+      // Every pull row keeps its own (unsuffixed) timeout error.
+      expect(newPullsOf(state, "surbl").map((r) => r.error_message)).toEqual([CLIPPED_100S, CLIPPED_100S, CLIPPED_100S]);
+      expect(unhandled).toEqual([]);
+    });
+
+    it("are penalized after an unclipped timeout too (feed-pool deadline)", async () => {
+      // Same pool layout as the longest-first test: g is clipped to 90s at
+      // the feed-pool deadline and h is deferred. g's previous pull timed
+      // out at its own 120s, so this clipped cut is penalized.
+      const defaults = ["a", "b", "c", "d", "e", "f", "g", "h"];
+      const long = ["c2_intel_feeds", "typosquat_scanner", "sslbl", "taxii_otx"];
+      const state = makeState([...defaults, ...long]);
+      seedPreviousPull(state, "g", "failed", "timed out after 120s — pull abandoned");
+      const modules: Record<string, FeedModule> = {};
+      for (const f of [...defaults, ...long]) modules[f] = hangingModule();
+
+      const run = runAllFeeds(makeEnv(state), modules);
+      await vi.advanceTimersByTimeAsync(FEED_POOL_BUDGET_MS);
+      expect(await run).toMatchObject({ feedsTimedOut: 11, feedsDeferred: 1 });
+
+      const g = newPullsOf(state, "g");
+      expect(g).toHaveLength(1);
+      expect(g[0]!.error_message).toBe("timed out after 90s at the feed-pool deadline (600s budget) — pull abandoned");
+      expect(state.status.get("g")!.consecutive_failures).toBe(1);
+      expect(state.status.get("g")!.last_error).toContain("previous pull also timed out");
+      expect(state.status.get("h")!.consecutive_failures).toBe(0);
+    });
+  });
+
+  describe("clip tolerance", () => {
+    it("treats a shortfall of at most FEED_TIMEOUT_CLIP_TOLERANCE_MS as a full (unclipped) allowance", () => {
+      const deadline = Date.now() + FEED_POOL_BUDGET_MS;
+      const own = feedRunTimeoutMs("taxii_otx");
+      expect(own).toBe(FEED_POOL_BUDGET_MS);
+      // Exactly the budget left → own timeout.
+      expect(plannedFeedTimeout("taxii_otx", deadline, deadline - own)).toEqual({ timeoutMs: own, clipped: false });
+      // Short by exactly the tolerance → still unclipped, capped at the time left.
+      const atTolerance = deadline - own + FEED_TIMEOUT_CLIP_TOLERANCE_MS;
+      expect(plannedFeedTimeout("taxii_otx", deadline, atTolerance))
+        .toEqual({ timeoutMs: own - FEED_TIMEOUT_CLIP_TOLERANCE_MS, clipped: false });
+      // One ms beyond the tolerance → clipped.
+      expect(plannedFeedTimeout("taxii_otx", deadline, atTolerance + 1))
+        .toEqual({ timeoutMs: own - FEED_TIMEOUT_CLIP_TOLERANCE_MS - 1, clipped: true });
+      // The tolerance is far smaller than the minimum start window.
+      expect(FEED_TIMEOUT_CLIP_TOLERANCE_MS).toBeLessThan(FEED_POOL_MIN_START_MS);
+    });
+
+    /** A module that succeeds after `ms` of (fake) wall time. */
+    const slowModule = (ms: number): FeedModule => ({
+      ingest: () => new Promise<FeedResult>((r) => setTimeout(() => r({ ...OK }), ms)),
+    });
+
+    it("penalizes a timeout whose allowance fell short of its own only by the tolerance", async () => {
+      // abuseipdb takes 5s, so spamhaus_dbl (own 120s) starts with 118s of
+      // the 123s deadline left: within the tolerance → a full allowance.
+      const state = makeState(["abuseipdb", "spamhaus_dbl"]);
+      const run = runAllEnrichmentFeeds(
+        makeEnv(state),
+        { abuseipdb: slowModule(5_000), spamhaus_dbl: hangingModule() },
+        { deadline: Date.now() + 123_000 },
+      );
+      await vi.advanceTimersByTimeAsync(123_000);
+      expect(await run).toMatchObject({ feedsRun: 2, feedsTimedOut: 1 });
+      expect(pullOf(state, "spamhaus_dbl").error_message).toBe("timed out after 118s — pull abandoned");
+      expect(state.status.get("spamhaus_dbl")!.consecutive_failures).toBe(1);
+    });
+
+    it("still treats a shortfall beyond the tolerance as a clip (no penalty)", async () => {
+      // Same, but abuseipdb takes 10s → 113s left, 7s short of 120s.
+      const state = makeState(["abuseipdb", "spamhaus_dbl"]);
+      const run = runAllEnrichmentFeeds(
+        makeEnv(state),
+        { abuseipdb: slowModule(10_000), spamhaus_dbl: hangingModule() },
+        { deadline: Date.now() + 123_000 },
+      );
+      await vi.advanceTimersByTimeAsync(123_000);
+      expect(await run).toMatchObject({ feedsRun: 2, feedsTimedOut: 1 });
+      expect(pullOf(state, "spamhaus_dbl").error_message).toBe("timed out after 113s at the enrichment deadline (123s budget) — pull abandoned");
+      expect(state.status.get("spamhaus_dbl")!.consecutive_failures).toBe(0);
+    });
+  });
+
+  describe("runAllSocialFeeds per-pull cap + deadline", () => {
+    it("abandons a hung social pull at the 120s default, penalizes it, and runs the next feed", async () => {
+      const state = makeState(["github", "mastodon"]);
+      let done = false;
+      const run = runAllSocialFeeds(makeEnv(state), {
+        github: hangingModule(),
+        mastodon: fastModule(),
+      }).finally(() => { done = true; });
+
+      await vi.advanceTimersByTimeAsync(FEED_RUN_TIMEOUT_MS - 1);
+      expect(done).toBe(false);
+      expect(state.inserts).toEqual(["github"]);
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await run;
+
+      expect(result).toMatchObject({ feedsRun: 2, feedsFailed: 1, feedsTimedOut: 1, feedsDeferred: 0, totalNew: 2 });
+      expect(pullOf(state, "github").error_message).toBe("timed out after 120s — pull abandoned");
+      expect(state.status.get("github")!.consecutive_failures).toBe(1);
+      expect(state.status.get("github")!.next_retry_at).not.toBeNull();
+      expect(pullOf(state, "mastodon").status).toBe("success");
+      expect(unhandled).toEqual([]);
+    });
+
+    it("returns within its own loop budget: clips the overrunning feed, defers the rest", async () => {
+      // github hangs 0-120s; mastodon starts with 60s of the 180s budget
+      // left → clipped to 60s (no penalty); telegram is deferred.
+      expect(SOCIAL_LOOP_BUDGET_MS).toBe(180_000);
+      const state = makeState(["github", "mastodon", "telegram"]);
+      const telegram = vi.fn(fastModule().ingest);
+      const run = runAllSocialFeeds(makeEnv(state), {
+        github: hangingModule(),
+        mastodon: hangingModule(),
+        telegram: { ingest: telegram },
+      });
+      await vi.advanceTimersByTimeAsync(SOCIAL_LOOP_BUDGET_MS);
+      const result = await run;
+
+      expect(result).toMatchObject({ feedsRun: 2, feedsTimedOut: 2, feedsDeferred: 1, feedsSkipped: 1 });
+      expect(pullOf(state, "mastodon").error_message).toBe("timed out after 60s at the social deadline (180s budget) — pull abandoned");
+      expect(state.status.get("mastodon")!.consecutive_failures).toBe(0);
+      expect(state.status.get("github")!.consecutive_failures).toBe(1);
+      expect(telegram).not.toHaveBeenCalled();
+      expect(unhandled).toEqual([]);
+    });
+
+    it("honours an earlier external (tick) deadline", async () => {
+      const state = makeState(["github", "telegram"]);
+      const run = runAllSocialFeeds(
+        makeEnv(state),
+        { github: hangingModule(), telegram: fastModule() },
+        { deadline: Date.now() + 45_000 },
+      );
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(await run).toMatchObject({ feedsRun: 1, feedsTimedOut: 1, feedsDeferred: 1 });
+      expect(pullOf(state, "github").error_message).toBe("timed out after 45s at the social deadline (45s budget) — pull abandoned");
+      expect(state.status.get("github")!.consecutive_failures).toBe(0);
+    });
+
+    it("defers everything when the tick deadline has already passed", async () => {
+      const state = makeState(["github"]);
+      const github = vi.fn(hangingModule().ingest);
+      const result = await runAllSocialFeeds(makeEnv(state), { github: { ingest: github } }, { deadline: Date.now() - 1 });
+      expect(result).toMatchObject({ feedsRun: 0, feedsDeferred: 1, feedsSkipped: 1 });
+      expect(github).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("clip tolerance with a real advancing clock", () => {
+  it("does not clip taxii_otx when real time passes between the pool deadline and its start", async () => {
+    // Mirrors runAllFeeds: the pool deadline is fixed, then the first
+    // (longest) feed is planned once the clock has actually moved on.
+    const deadline = Date.now() + FEED_POOL_BUDGET_MS;
+    await new Promise((r) => setTimeout(r, 25));
+    const plannedAt = Date.now();
+    expect(plannedAt).toBeGreaterThan(deadline - FEED_POOL_BUDGET_MS);
+
+    const plan = plannedFeedTimeout("taxii_otx", deadline);
+    expect(plan).not.toBeNull();
+    expect(plan!.clipped).toBe(false);
+    expect(plan!.timeoutMs).toBeLessThan(FEED_POOL_BUDGET_MS);
+    expect(plan!.timeoutMs).toBeGreaterThanOrEqual(FEED_POOL_BUDGET_MS - FEED_TIMEOUT_CLIP_TOLERANCE_MS);
+    // The pool still never runs past its deadline.
+    expect(plannedAt + plan!.timeoutMs).toBeLessThanOrEqual(deadline);
   });
 });
