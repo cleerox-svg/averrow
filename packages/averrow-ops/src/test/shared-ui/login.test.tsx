@@ -495,6 +495,116 @@ describe('facelift structure', () => {
   });
 });
 
+describe('fixed failure copy (server / exception text is never rendered)', () => {
+  const EVIL = '<b>pwned</b> internal stack';
+  const supportedAdapter = (signIn: PasskeyLoginAdapter['signIn']): PasskeyLoginAdapter => ({
+    isSupported: () => true,
+    startConditionalUI: vi.fn().mockResolvedValue(undefined),
+    signIn,
+  });
+  const submitLink = async () => {
+    await userEvent.type(screen.getByTestId('login-email'), 'a@b.co');
+    await userEvent.click(screen.getByTestId('login-magic-link-submit'));
+    return screen.findByTestId('login-magic-link-error');
+  };
+
+  it.each([
+    [400, 'Enter a valid email address.'],
+    [429, 'Too many requests. Wait a minute and try again.'],
+    [500, "We couldn't send the link. Try again."],
+    [undefined, "We couldn't send the link. Try again."],
+  ])('magic link envelope status %s shows fixed copy', async (status, copy) => {
+    const post = vi.fn().mockResolvedValue({ success: false, error: EVIL, status });
+    setup({ apiClient: { post } });
+    const alert = await submitLink();
+    expect(alert).toHaveTextContent(copy);
+    expect(document.body.textContent).not.toContain('pwned');
+    expect(document.body.textContent).not.toContain('internal stack');
+    expect(alert.querySelector('b')).toBeNull();
+  });
+
+  it('magic link network failure shows fixed copy, not the exception message', async () => {
+    const post = vi.fn().mockRejectedValue(new Error(EVIL));
+    setup({ apiClient: { post } });
+    const alert = await submitLink();
+    expect(alert).toHaveTextContent("We couldn't send the link. Try again.");
+    expect(document.body.textContent).not.toContain('pwned');
+  });
+
+  it('magic link thrown error carrying a 429 status maps to rate-limit copy', async () => {
+    const post = vi.fn().mockRejectedValue(Object.assign(new Error(EVIL), { status: 429 }));
+    setup({ apiClient: { post } });
+    expect(await submitLink()).toHaveTextContent('Too many requests. Wait a minute and try again.');
+    expect(document.body.textContent).not.toContain('pwned');
+  });
+
+  it('messages prop overrides the fixed copy', async () => {
+    const post = vi.fn().mockResolvedValue({ success: false, error: EVIL, status: 429 });
+    setup({ apiClient: { post }, messages: { rateLimited: 'Slow down.' } });
+    expect(await submitLink()).toHaveTextContent('Slow down.');
+  });
+
+  const fail = async (err: unknown) => {
+    const signIn = vi.fn().mockRejectedValue(err);
+    setup({
+      passkeyAdapter: supportedAdapter(signIn),
+      lastSignInMethod: { read: () => 'passkey', write: vi.fn() },
+    });
+    await userEvent.click(screen.getByTestId('login-passkey'));
+    return screen.findByTestId('login-passkey-error');
+  };
+
+  it.each([
+    ['NotAllowedError', 'Passkey sign-in was cancelled. Try again or use another method.'],
+    ['AbortError', 'Passkey sign-in was cancelled. Try again or use another method.'],
+    ['InvalidStateError', 'This passkey cannot be used here. Try another method.'],
+    ['SecurityError', 'Passkey sign-in is not available on this page. Use another method.'],
+    ['TypeError', 'Passkey sign-in failed. Try again or use another method.'],
+  ])('passkey %s shows fixed copy', async (name, copy) => {
+    const err = Object.assign(new Error(EVIL), { name });
+    const alert = await fail(err);
+    expect(alert).toHaveTextContent(copy);
+    expect(document.body.textContent).not.toContain('pwned');
+  });
+
+  it('passkey wrapper error is classified by its cause', async () => {
+    const err = new Error(EVIL, { cause: Object.assign(new Error('x'), { name: 'NotAllowedError' }) });
+    expect(await fail(err)).toHaveTextContent('Passkey sign-in was cancelled.');
+  });
+
+  it('passkey plain server-style error and non-Error throws show generic copy', async () => {
+    expect(await fail(new Error(EVIL))).toHaveTextContent('Passkey sign-in failed. Try again or use another method.');
+    expect(document.body.textContent).not.toContain('pwned');
+  });
+
+  it('passkey non-Error throw shows generic copy', async () => {
+    expect(await fail(EVIL)).toHaveTextContent('Passkey sign-in failed.');
+    expect(document.body.textContent).not.toContain('pwned');
+  });
+
+  it('adapter returning false (dismissed) shows no error and re-enables the button', async () => {
+    setup({
+      passkeyAdapter: supportedAdapter(vi.fn().mockResolvedValue(false)),
+      lastSignInMethod: { read: () => 'passkey', write: vi.fn() },
+    });
+    await userEvent.click(screen.getByTestId('login-passkey'));
+    await waitFor(() => expect(screen.getByTestId('login-passkey')).not.toBeDisabled());
+    expect(screen.queryByTestId('login-passkey-error')).toBeNull();
+  });
+
+  it('isSupported throwing does not crash; passkey is treated as unsupported', () => {
+    setup({
+      passkeyAdapter: {
+        isSupported: () => { throw new Error(EVIL); },
+        startConditionalUI: vi.fn(),
+        signIn: vi.fn(),
+      },
+    });
+    expect(screen.getByTestId('login-page')).toBeInTheDocument();
+    expect(screen.queryByTestId('login-passkey')).toBeNull();
+  });
+});
+
 describe('LoginPage.tsx source guard (token-only)', () => {
   const src = readFileSync(resolve(__dirname, '../../../../shared/src/login/LoginPage.tsx'), 'utf8');
   it.each([/#[0-9a-fA-F]{3,8}\b/, /rgba?\(/, /linear-gradient/, /backdropFilter/, /backdrop-blur/, /uppercase/, /--amber/, /--text-on-amber/, /font-mono/])(

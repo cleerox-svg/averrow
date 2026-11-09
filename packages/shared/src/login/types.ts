@@ -17,6 +17,9 @@ export interface LoginApiResponse<T> {
   success: boolean;
   data?:   T;
   error?:  string;
+  /** HTTP status of a non-2xx envelope, when the host client reports it.
+   *  Used only to pick fixed copy (400/422, 429); `error` is never shown. */
+  status?: number;
 }
 
 export interface LoginApiClient {
@@ -79,6 +82,19 @@ export interface LoginBranding {
   footerPillars:  string;
 }
 
+/** Fixed sign-in failure messages a host may override. Server or exception
+ *  text is never shown; failures map to one of these. */
+export interface LoginMessages {
+  emailRequired?:       string;
+  emailInvalid?:        string;
+  rateLimited?:         string;
+  magicLinkFailed?:     string;
+  passkeyCancelled?:    string;
+  passkeyInvalidState?: string;
+  passkeySecurity?:     string;
+  passkeyFailed?:       string;
+}
+
 // ─── LoginPage props ─────────────────────────────────────────
 
 export interface LoginPageProps {
@@ -98,6 +114,8 @@ export interface LoginPageProps {
    *  e.g. { invalid_link: "That link is malformed." }. Defaults
    *  shown in components if not provided. */
   errorCopy?:             Record<string, string>;
+  /** Optional overrides for the fixed magic-link / passkey failure copy. */
+  messages?:              LoginMessages;
   /** Replaces the Google button's default `window.location.href =
    *  oauthLoginPath` navigation (e.g. a native Capacitor shell that can't
    *  use web OAuth redirects). While the promise is pending the button is

@@ -19,7 +19,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { Banner, Button, Field, FieldError, Input } from '../ui';
-import type { LoginPageProps, SignInMethod } from './types';
+import type { LoginMessages, LoginPageProps, SignInMethod } from './types';
 import { applyThemePreference, readStoredTheme } from '../theme/useTheme';
 import { APPEARANCE_PICKER_ENABLED } from '../theme/appearanceDefaults';
 import { AUTH_ERROR_COPY } from '../auth-error-codes';
@@ -39,17 +39,75 @@ const DEFAULT_ERROR_COPY: Record<string, string> = AUTH_ERROR_COPY;
 // text (content spoofing via ?error=<sentence>) and gets generic copy.
 const SAFE_ERROR_CODE = /^[a-z0-9_]{1,40}$/;
 
+// Closed set of sign-in failure messages. Server- or exception-supplied text
+// is never rendered (content spoofing, raw technical errors); failures map to
+// one of these by HTTP status / DOMException name. Hosts may override any key
+// through the `messages` prop.
+const DEFAULT_LOGIN_MESSAGES: Required<LoginMessages> = {
+  emailRequired:       'Enter your email first.',
+  emailInvalid:        'Enter a valid email address.',
+  rateLimited:         'Too many requests. Wait a minute and try again.',
+  magicLinkFailed:     "We couldn't send the link. Try again.",
+  passkeyCancelled:    'Passkey sign-in was cancelled. Try again or use another method.',
+  passkeyInvalidState: 'This passkey cannot be used here. Try another method.',
+  passkeySecurity:     'Passkey sign-in is not available on this page. Use another method.',
+  passkeyFailed:       'Passkey sign-in failed. Try again or use another method.',
+};
+
+/** Pull a numeric HTTP status off an API envelope or a thrown ApiError. */
+function httpStatusOf(v: unknown): number | null {
+  if (typeof v === 'object' && v !== null && 'status' in v) {
+    const st = (v as { status?: unknown }).status;
+    if (typeof st === 'number' && Number.isFinite(st)) return st;
+  }
+  return null;
+}
+
+function magicLinkFailureKey(status: number | null): keyof LoginMessages {
+  if (status === 400 || status === 422) return 'emailInvalid';
+  if (status === 429) return 'rateLimited';
+  return 'magicLinkFailed';
+}
+
+/** Map a WebAuthn failure by DOMException name, looking through a wrapper's `cause`. */
+function passkeyFailureKey(err: unknown): keyof LoginMessages {
+  const names: string[] = [];
+  if (typeof err === 'object' && err !== null) {
+    const n = (err as { name?: unknown }).name;
+    if (typeof n === 'string') names.push(n);
+    const c = (err as { cause?: unknown }).cause;
+    if (typeof c === 'object' && c !== null) {
+      const cn = (c as { name?: unknown }).name;
+      if (typeof cn === 'string') names.push(cn);
+    }
+  }
+  if (names.includes('NotAllowedError') || names.includes('AbortError')) return 'passkeyCancelled';
+  if (names.includes('InvalidStateError')) return 'passkeyInvalidState';
+  if (names.includes('SecurityError')) return 'passkeySecurity';
+  return 'passkeyFailed';
+}
+
+function safeIsSupported(adapter: { isSupported: () => boolean }): boolean {
+  try { return adapter.isSupported() === true; } catch { return false; }
+}
+
 export function LoginPage(props: LoginPageProps) {
   const {
     branding, apiClient, passkeyAdapter, lastSignInMethod,
     returnTo,
     oauthLoginPath = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`,
     magicLinkRequestPath = '/api/auth/magic-link/request',
-    errorCopy: errorCopyOverride,
+    errorCopy: errorCopyOverride, messages: messagesOverride,
     onGoogleSignIn, googleErrorCopy, footerLinks, magicLinkSentCopy, magicLinkSentTitle,
   } = props;
 
   const errorCopy = { ...DEFAULT_ERROR_COPY, ...(errorCopyOverride ?? {}) };
+  // Non-empty string overrides only; anything else keeps the fixed default.
+  const msg = { ...DEFAULT_LOGIN_MESSAGES };
+  for (const k of Object.keys(DEFAULT_LOGIN_MESSAGES) as (keyof LoginMessages)[]) {
+    const o = messagesOverride?.[k];
+    if (typeof o === 'string' && o) msg[k] = o;
+  }
 
   // OAuth round-trip errors land here as ?error=foo
   const url = typeof window !== 'undefined' ? new URL(window.location.href) : null;
@@ -73,7 +131,7 @@ export function LoginPage(props: LoginPageProps) {
   // Lazy init so returning-passkey users get the right primary/secondary
   // split on first paint (no post-paint flip of "Send link").
   const [passkeySupported, setPasskeySupported] = useState(
-    () => typeof window !== 'undefined' && passkeyAdapter.isSupported(),
+    () => typeof window !== 'undefined' && safeIsSupported(passkeyAdapter),
   );
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
@@ -168,10 +226,13 @@ export function LoginPage(props: LoginPageProps) {
   // autofill dropdown. Spec-required and silent until interaction.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    setPasskeySupported(passkeyAdapter.isSupported());
-    if (!conditionalStarted.current && passkeyAdapter.isSupported()) {
+    const supported = safeIsSupported(passkeyAdapter);
+    setPasskeySupported(supported);
+    if (!conditionalStarted.current && supported) {
       conditionalStarted.current = true;
-      passkeyAdapter.startConditionalUI(returnTo).catch(() => { /* silent */ });
+      try {
+        passkeyAdapter.startConditionalUI(returnTo).catch(() => { /* silent */ });
+      } catch { /* silent */ }
     }
   }, [passkeyAdapter, returnTo]);
 
@@ -188,7 +249,7 @@ export function LoginPage(props: LoginPageProps) {
       if (!ok) setPasskeyBusy(false);
       // On success, signIn navigates the page; this component unmounts.
     } catch (err) {
-      setPasskeyError(err instanceof Error ? err.message : 'Passkey sign-in failed.');
+      setPasskeyError(msg[passkeyFailureKey(err)]);
       setPasskeyBusy(false);
     }
   };
@@ -226,7 +287,7 @@ export function LoginPage(props: LoginPageProps) {
   const requestLink = async () => {
     const trimmed = email.trim();
     if (!trimmed) {
-      setMagicLink({ kind: 'error', message: 'Enter your email first.' });
+      setMagicLink({ kind: 'error', message: msg.emailRequired });
       return;
     }
     setGoogleError(null);
@@ -238,7 +299,7 @@ export function LoginPage(props: LoginPageProps) {
         { email: trimmed, return_to: returnTo },
       );
       if (res.success === false) {
-        setMagicLink({ kind: 'error', message: res.error || 'Request failed.' });
+        setMagicLink({ kind: 'error', message: msg[magicLinkFailureKey(httpStatusOf(res))] });
         return;
       }
       setMagicLink({
@@ -247,8 +308,7 @@ export function LoginPage(props: LoginPageProps) {
         minutes: res.data?.expires_in_minutes ?? 30,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Network error. Please try again.';
-      setMagicLink({ kind: 'error', message });
+      setMagicLink({ kind: 'error', message: msg[magicLinkFailureKey(httpStatusOf(err))] });
     }
   };
 

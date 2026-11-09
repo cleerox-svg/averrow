@@ -22,6 +22,6 @@ export {
   makeLastSignInMethodAdapter, clearLastSignInMethod,
 } from './lastSignInMethod';
 export type {
-  LoginPageProps, LoginBranding, LoginApiClient, LoginApiResponse,
+  LoginPageProps, LoginMessages, LoginBranding, LoginApiClient, LoginApiResponse,
   PasskeyLoginAdapter, LastSignInMethodAdapter, SignInMethod,
 } from './types';
