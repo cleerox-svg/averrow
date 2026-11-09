@@ -350,14 +350,10 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
     "UPDATE sessions SET refresh_token_hash = ?, previous_token_hash = ?, rotated_at = datetime('now'), expires_at = datetime('now', '+7 days') WHERE id = ?",
   ).bind(newRefreshHash, tokenHash, session.id).run();
 
-  // Look up org membership for refresh
-  const membership = await env.DB.prepare(`
-    SELECT om.org_id, om.role AS org_role
-    FROM org_members om
-    JOIN organizations o ON o.id = om.org_id
-    WHERE om.user_id = ? AND om.status = 'active'
-    LIMIT 1
-  `).bind(session.user_id).first<{ org_id: number; org_role: string }>();
+  // Look up org membership for refresh. The same row feeds the JWT's
+  // org claims (org_id / org_role only) and the `me` payload's
+  // `organization` block, so the refresh needs no second membership read.
+  const membership = await loadActiveMembership(env, session.user_id);
 
   // Resolve scope once and embed in the JWT so the request hot path
   // never has to look it up again (saves 2 D1 queries per request).
@@ -367,6 +363,7 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
   // rotation from the session's recorded auth_method, so a privileged
   // session stays enrollment-scoped until the user signs in with a passkey
   // (and a legacy session with a null auth_method is downgraded until then).
+  const tokenScope = enrollScopeFor(session.role as UserRole, session.auth_method as AuthMethod | null);
   const accessToken = await signJWT(
     {
       sub: session.user_id,
@@ -375,12 +372,25 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
       org_id: membership?.org_id?.toString() ?? undefined,
       org_role: membership?.org_role ?? undefined,
       org_scope: orgScope,
-      scope: enrollScopeFor(session.role as UserRole, session.auth_method as AuthMethod | null),
+      scope: tokenScope,
       sid: session.id,
     },
     env.JWT_SECRET,
     ACCESS_TOKEN_TTL,
   );
+
+  // Page-load perf: carry the full /api/auth/me payload so a cold SPA load
+  // can skip the serial /me round-trip after refresh. Always the COOKIE
+  // session's user (session.user_id) — nothing from the request body.
+  // `passkey_required` mirrors the scope of the token just issued, exactly
+  // what /me would report for it. Best-effort: a failure omits `me` and the
+  // client falls back to GET /api/auth/me; the refresh itself never fails.
+  let me: MePayload | null = null;
+  try {
+    me = await buildMePayload(env, session.user_id, tokenScope === PASSKEY_ENROLL_SCOPE, membership);
+  } catch {
+    me = null;
+  }
 
   const response = json({
     success: true,
@@ -388,6 +398,7 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
       token: accessToken,
       expires_in: ACCESS_TOKEN_TTL,
       user: { id: session.user_id, email: session.email, role: session.role },
+      ...(me ? { me } : {}),
     },
   }, 200, origin);
 
@@ -415,9 +426,45 @@ export async function handleLogout(request: Request, env: Env, userId: string): 
 
 // ─── /api/auth/me ───────────────────────────────────────────────
 
-export async function handleMe(request: Request, env: Env, userId: string, enrollOnly = false): Promise<Response> {
-  const origin = request.headers.get("Origin");
+/** Active org membership row, as /me and the refresh both need it. */
+interface ActiveMembership {
+  org_id: number; org_role: string; slug: string; name: string; plan: string;
+}
 
+async function loadActiveMembership(env: Env, userId: string): Promise<ActiveMembership | null> {
+  return env.DB.prepare(`
+    SELECT om.org_id, om.role AS org_role, o.slug, o.name, o.plan
+    FROM org_members om
+    JOIN organizations o ON o.id = om.org_id
+    WHERE om.user_id = ? AND om.status = 'active'
+    LIMIT 1
+  `).bind(userId).first<ActiveMembership>();
+}
+
+/** The `data` object of GET /api/auth/me (also returned as `data.me` by
+ *  POST /api/auth/refresh). */
+export interface MePayload {
+  id: string; email: string; name: string; role: string; status: string;
+  created_at: string; last_login: string | null; last_active: string | null;
+  display_name: string | null; timezone: string | null;
+  theme_preference: string | null;
+  accent_preference: string | null; base_preference: string | null;
+  passkey_count: number;
+  passkey_required: boolean;
+  organization: { id: number; name: string; slug: string; plan: string; role: string } | null;
+}
+
+/**
+ * Build the /api/auth/me payload for `userId`. Returns null when the user
+ * row does not exist. `membership` may be passed when the caller already
+ * read the active org membership (refresh); `undefined` reads it here.
+ */
+export async function buildMePayload(
+  env: Env,
+  userId: string,
+  enrollOnly: boolean,
+  membership?: ActiveMembership | null,
+): Promise<MePayload | null> {
   // Pulls the new profile-personalization fields (display_name,
   // timezone, theme_preference) added in 0119, the appearance pair
   // (accent_preference, base_preference) added in 0317, plus a derived
@@ -440,40 +487,37 @@ export async function handleMe(request: Request, env: Env, userId: string, enrol
     passkey_count: number;
   }>();
 
-  if (!user) {
+  if (!user) return null;
+
+  const org = membership === undefined ? await loadActiveMembership(env, userId) : membership;
+
+  return {
+    ...user,
+    // Convenient: clients that don't care about the override pick
+    // up display_name first, name as the fallback. Existing callers
+    // of `name` keep working unchanged.
+    name: user.display_name ?? user.name,
+    // H-3: true when this session is restricted to passkey enrollment
+    // (privileged user signed in without a passkey). The SPA renders a
+    // mandatory enrollment gate and blocks the rest of the app.
+    passkey_required: enrollOnly,
+    organization: org ? {
+      id: org.org_id,
+      name: org.name,
+      slug: org.slug,
+      plan: org.plan,
+      role: org.org_role,
+    } : null,
+  };
+}
+
+export async function handleMe(request: Request, env: Env, userId: string, enrollOnly = false): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const me = await buildMePayload(env, userId, enrollOnly);
+  if (!me) {
     return json({ success: false, error: "User not found" }, 404, origin);
   }
-
-  // Look up org membership
-  const membership = await env.DB.prepare(`
-    SELECT om.org_id, om.role AS org_role, o.slug, o.name, o.plan
-    FROM org_members om
-    JOIN organizations o ON o.id = om.org_id
-    WHERE om.user_id = ? AND om.status = 'active'
-    LIMIT 1
-  `).bind(userId).first<{ org_id: number; org_role: string; slug: string; name: string; plan: string }>();
-
-  return json({
-    success: true,
-    data: {
-      ...user,
-      // Convenient: clients that don't care about the override pick
-      // up display_name first, name as the fallback. Existing callers
-      // of `name` keep working unchanged.
-      name: user.display_name ?? user.name,
-      // H-3: true when this session is restricted to passkey enrollment
-      // (privileged user signed in without a passkey). The SPA renders a
-      // mandatory enrollment gate and blocks the rest of the app.
-      passkey_required: enrollOnly,
-      organization: membership ? {
-        id: membership.org_id,
-        name: membership.name,
-        slug: membership.slug,
-        plan: membership.plan,
-        role: membership.org_role,
-      } : null,
-    },
-  }, 200, origin);
+  return json({ success: true, data: me }, 200, origin);
 }
 
 // ─── Internal helpers ───────────────────────────────────────────
