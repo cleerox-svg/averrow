@@ -3,7 +3,6 @@
 
 import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
-import { invalidateAuthUserCache } from "../lib/auth-user-cache";
 import type { Env } from "../types";
 
 // ─── Admin: list active sessions ─────────────────────────────────
@@ -65,7 +64,6 @@ export async function handleForceLogout(
   // Store forced-logout timestamp in KV (TTL = 30 days to cover absolute session limit)
   const now = Math.floor(Date.now() / 1000);
   await env.CACHE.put(`forced_logout:${targetUserId}`, String(now), { expirationTtl: 60 * 60 * 24 * 30 });
-  await invalidateAuthUserCache(env, targetUserId);
 
   // Revoke all active sessions in DB
   await env.DB.prepare(

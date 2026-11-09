@@ -17,7 +17,7 @@ import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import { isPlatformStaff, type AuthContext } from "../../middleware/auth";
-import { ABSOLUTE_SESSION_TTL } from "../../lib/jwt";
+import { writeForcedLogout } from "../../lib/forced-logout";
 import { invalidateAuthUserCache } from "../../lib/auth-user-cache";
 import { PLACEHOLDER_EXEMPT_SQL, USER_HAS_CUSTOMER_MEMBERSHIP_SQL, deactivateUserPlaceholdersStmt } from "../../lib/lead-conversion-placeholder";
 import { classifySaasTechnique } from "../../lib/saas-classifier";
@@ -243,8 +243,9 @@ export async function handleAdminUpdateUser(
 
   // A role change alters what every live token for this user may reach (the
   // JWT embeds role + org_scope), so revoke them: requireAuth and the refresh
-  // path reject tokens/sessions issued at or before this stamp. Same key and
-  // TTL convention as handleForceLogout (sessions.ts) / refresh-reuse.
+  // path reject tokens/sessions issued at or before this stamp. Written via
+  // writeForcedLogout (read-modify-write): it keeps any self-service revoked
+  // sids already listed and never lowers an existing, later `ts`.
   //
   // The stamp must postdate the role write (iat comparison), so it runs after
   // it. A KV failure must not turn a committed role change into a 500 the
@@ -254,11 +255,7 @@ export async function handleAdminUpdateUser(
   let revocationPending = false;
   if (roleChanged || deactivates) {
     try {
-      await env.CACHE.put(
-        `forced_logout:${targetUserId}`,
-        String(Math.floor(Date.now() / 1000)),
-        { expirationTtl: ABSOLUTE_SESSION_TTL },
-      );
+      await writeForcedLogout(env, targetUserId, { ts: Math.floor(Date.now() / 1000) });
     } catch (err) {
       revocationPending = true;
       await audit(env, {
@@ -273,8 +270,11 @@ export async function handleAdminUpdateUser(
     }
   }
 
-  // requireAuth caches each active user's status for <=60s; drop the entry on
-  // every committed change so a status flip (either direction) is read fresh.
+  // requireAuth caches each active user's status (KV <=60s + a 15s
+  // per-isolate memo, lib/auth-user-cache.ts). This is the only in-app
+  // users.status writer: drop the KV entry and this isolate's memo on every
+  // committed change. Other isolates may serve a memo entry for <=15s; a
+  // suspension is cut off sooner by the forced_logout stamp above.
   await invalidateAuthUserCache(env, targetUserId);
 
   await audit(env, {

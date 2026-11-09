@@ -8,7 +8,6 @@ import { buildGoogleAuthURL, exchangeCodeForTokens, fetchGoogleUserInfo, getRedi
 import { audit } from "../lib/audit";
 import { logger } from "../lib/logger";
 import { forcedLogoutKey, isForcedOut, parseForcedLogout } from "../lib/forced-logout";
-import { invalidateAuthUserCache } from "../lib/auth-user-cache";
 import { loadOrgScopeForToken, isPlatformStaff } from "../middleware/auth";
 import { PLACEHOLDER_EXEMPT_SQL, STAFF_ROLE_LIST_SQL, USER_HAS_CUSTOMER_MEMBERSHIP_SQL } from "../lib/lead-conversion-placeholder";
 import {
@@ -306,7 +305,6 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
           String(Math.floor(Date.now() / 1000)),
           { expirationTtl: ABSOLUTE_SESSION_TTL },
         ).catch(() => {});
-        await invalidateAuthUserCache(env, prior.user_id);
         await audit(env, { action: "refresh_token_reuse", userId: prior.user_id, outcome: "denied", request });
         return clearRefreshCookie(
           json({ success: false, error: "Session security check failed. Please log in again." }, 401, origin),
@@ -704,7 +702,6 @@ export async function handleInviteAcceptance(
           String(Math.floor(Date.now() / 1000) - 1),
           { expirationTtl: ABSOLUTE_SESSION_TTL },
         );
-        await invalidateAuthUserCache(env, userId);
       } catch (err) {
         await audit(env, {
           action: "user_role_change_revocation_failed",
@@ -1482,11 +1479,12 @@ export async function handleMintServiceJwt(request: Request, env: Env): Promise<
 // (`<origin>/v2/#token=…` or `/tenant/#token=…`) — the SPA's AuthProvider
 // reads the hash, validates /api/auth/me, and boots.
 //
-// Kill switch (≤60s):
+// Kill switch (≤ about 75s):
 //   UPDATE users SET status='suspended'
 //     WHERE id IN ('claude_ui_staff','claude_ui_tenant');
-//   requireAuth rejects within its 60s auth_user KV cache TTL
-//   (lib/auth-user-cache.ts — a manual SQL change is not invalidated); add a
+//   requireAuth rejects once its status cache lapses — 60s KV trust window +
+//   15s per-isolate memo (lib/auth-user-cache.ts; a manual SQL change is not
+//   invalidated); add a
 //   force-logout of each id for an immediate cut-off. Re-enable with
 //   status='active' (non-active users are never cached, so that is instant).
 // Full removal:
