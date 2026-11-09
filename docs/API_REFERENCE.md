@@ -228,7 +228,7 @@ Same `requireStaff` gate; handler `handlers/observatoryEvents.ts`. Feeds the Int
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/threats` | Staff | List threats (filterable). `q` matches indicator (domain/url/ip/ioc, LIKE) **or** exact threat `id` — lets pivots deep-link a specific threat via `?q=<id>`. |
+| GET | `/api/threats` | Staff | List threats (filterable). `q` matches indicator (domain/url/ip/ioc, LIKE) **or** exact threat `id` — lets pivots deep-link a specific threat via `?q=<id>`. Page cached 5 min in KV (`threats_list:` key over every param). `total`: unfiltered = the shared `count.threats.total` counter (6h, approximate); filtered = an exact `COUNT(*)` cached 5 min per slice (`cachedCount` key `count.threats.list:<filters>:<scope>`), shared across pages and sorts. |
 | GET | `/api/threats/stats` | Staff | Threat statistics |
 | GET | `/api/threats/recent` | Staff | Recent threats |
 | GET | `/api/threats/correlations` | Staff | Threat correlations |
