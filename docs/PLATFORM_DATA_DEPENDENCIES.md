@@ -160,8 +160,16 @@ runThreatFeedScan
   │     ├─ shouldRunNow check (feed_status.next_retry_at — PR-K circuit breaker)
   │     ├─ feedModule.ingest(ctx) — HTTP fetch + parse + insert into threats
   │     ├─ on success: feed_status.consecutive_failures=0, next_retry_at=NULL
-  │     └─ on failure: increment consecutive_failures, stamp next_retry_at
-  │                    (exponential backoff + jitter — PR-K)
+  │     ├─ on failure: increment consecutive_failures, stamp next_retry_at
+  │     │              (exponential backoff + jitter — PR-K)
+  │     └─ on timeout (FEED_RUN_TIMEOUT_MS 120s, per-feed overrides; pool
+  │                    budget FEED_POOL_BUDGET_MS 10 min): slot freed, row
+  │                    failed "timed out after Ns — pull abandoned", same
+  │                    breaker penalty; pool-deadline clip = no penalty
+  │
+  ├─► runAllEnrichmentFeeds (sequential; same per-pull cap via
+  │     runFeedWithTimeout; loop budget ENRICHMENT_LOOP_BUDGET_MS 6 min,
+  │     capped at scheduledTime + 12 min; deferred feeds stay due)
   │
   ├─► sentinel agent (event-driven on feedResult.totalNew > 0)
   │     │

@@ -436,6 +436,244 @@ export async function dispatchEnrichmentFeed(
  */
 const FEED_CONCURRENCY = 4;
 
+// ─── Per-feed wall-clock timeout ─────────────────────────────────
+//
+// runAllFeeds awaits every pull, so before these existed one pull that
+// never settled (2026-11-09: nrd_hagezi + cloudflare_scanner on every tick
+// they ran, urlhaus + surbl at 21:07) held a pool slot — and with it the
+// whole ingest, Sentinel, and the rest of the hourly tick — until the
+// invocation died and Navigator reaped the row 15+ min later.
+//
+// Sized from prod feed_pull_history, successful pulls, 14 days to
+// 2026-11-09: every runAllFeeds feed but six has p95 ≤ 94s and max ≤ 95s
+// (urlhaus max 82s, nrd_hagezi max 66s, dshield / malwarebazaar 95s), so
+// 120s is ~25% above the worst normal pull. The six slower feeds get an
+// override above their 14-day max.
+
+/** Default wall-clock cap for one feed pull inside runAllFeeds. */
+export const FEED_RUN_TIMEOUT_MS = 120_000;
+
+/**
+ * Feeds whose normal successful pulls exceed FEED_RUN_TIMEOUT_MS
+ * (14-day p95 / max in the comments).
+ */
+export const FEED_RUN_TIMEOUT_OVERRIDES_MS: Readonly<Record<string, number>> = {
+  // p95 503s / max 540s; the module's own loop budget is 9 min
+  // (INGEST_BUDGET_MS, feeds/taxii.ts), so 10 min leaves it time to
+  // commit its last page. Its 12-min internal Promise.race stays as-is.
+  taxii_otx: 600_000,
+  sslbl: 480_000,             // p95 / max 443s (p50 162s)
+  typosquat_scanner: 270_000, // p95 172s / max 235s
+  c2_intel_feeds: 240_000,    // p95 / max 187s
+  ct_logs: 180_000,           // p95 31s / max 162s
+  otx_alienvault: 180_000,    // p95 52s / max 160s
+
+  // Enrichment feeds (runAllEnrichmentFeeds, sequential). Same 14-day
+  // data; spamhaus_dbl (max 68s), abuseipdb (max 25s) and circl_pdns
+  // (~0s) stay on the default.
+  surbl: 300_000,                // p95 218s / max 262s
+  virustotal: 270_000,           // p95 153s / max 161s; module's own PULL_BUDGET_MS is 4 min
+  google_safe_browsing: 150_000, // p95 90s / max 120s
+};
+
+/**
+ * Hard wall-clock budget for the whole runAllFeeds pool, measured from
+ * the moment dispatch starts. A feed's timeout is clipped to what is
+ * left of it, and a feed is not started with less than
+ * FEED_POOL_MIN_START_MS left (it stays due and runs next tick). The
+ * hourly orchestrator invocation has a 15-min wall budget and reaches
+ * dispatch ~1-2.5 min in (prod 2026-11-09 first pull starts :08-:09 for
+ * the :07 tick), so the pool always returns by ~12.5 min, leaving the
+ * rest of the tick (Sentinel, enrichment) a guaranteed slot instead of
+ * none. 10 min is the largest override (taxii_otx), so the longest feed
+ * still gets its full budget when it starts first — which longest-first
+ * dispatch ordering below ensures.
+ */
+export const FEED_POOL_BUDGET_MS = 10 * 60_000;
+
+/** A feed is not started with less than this left of its loop's budget. */
+export const FEED_POOL_MIN_START_MS = 30_000;
+
+/**
+ * Own wall-clock budget of the sequential runAllEnrichmentFeeds loop,
+ * from its start. Typical sum of the loop's feeds is ~3 min (14-day
+ * averages: surbl 60s, virustotal 66s, gsb 37s, spamhaus_dbl 19s,
+ * abuseipdb 6s); 6 min absorbs a slow tick, and a feed that no longer
+ * fits stays due for the next tick instead of overrunning it.
+ */
+export const ENRICHMENT_LOOP_BUDGET_MS = 6 * 60_000;
+
+/**
+ * Hard cap for the enrichment loop measured from the hourly tick's
+ * `event.scheduledTime` (enrichmentDeadlineForTick). The `:07`
+ * invocation has a 15-min wall budget; the 10-min feed pool runs first
+ * and, starting ~1-2.5 min in, can end as late as ~12.5 min. Capping
+ * enrichment at 12 min from the tick means a slow ingest squeezes
+ * enrichment (deferred to the next tick) rather than the rest of the
+ * tick: social feeds, the enrichment pipeline and agent dispatch always
+ * keep the last ~3 min. On a normal tick (pool done in a few minutes)
+ * ENRICHMENT_LOOP_BUDGET_MS is the binding limit.
+ */
+export const ENRICHMENT_TICK_DEADLINE_MS = 12 * 60_000;
+
+/** The cron invocation wall-clock limit the tick deadline is sized against. */
+const CRON_INVOCATION_WALL_MS = 15 * 60_000;
+
+/**
+ * Absolute deadline (epoch ms) for runAllEnrichmentFeeds inside the
+ * hourly tick: scheduledTime + ENRICHMENT_TICK_DEADLINE_MS. A
+ * scheduledTime that cannot belong to a live invocation (in the future,
+ * or older than the 15-min wall limit — replays, tests) anchors to now.
+ */
+export function enrichmentDeadlineForTick(scheduledTimeMs: number, nowMs: number = Date.now()): number {
+  const age = nowMs - scheduledTimeMs;
+  const anchor = age >= 0 && age <= CRON_INVOCATION_WALL_MS ? scheduledTimeMs : nowMs;
+  return anchor + ENRICHMENT_TICK_DEADLINE_MS;
+}
+
+/** Effective per-feed timeout before pool-budget clipping. */
+export function feedRunTimeoutMs(feedName: string): number {
+  return FEED_RUN_TIMEOUT_OVERRIDES_MS[feedName] ?? FEED_RUN_TIMEOUT_MS;
+}
+
+/**
+ * Set when a feed's timeout was clipped to a loop deadline (the feed pool
+ * or the enrichment loop) rather than being its own full timeout.
+ */
+interface DeadlineClip {
+  /** Which loop's deadline, for the error text ("feed-pool", "enrichment"). */
+  label: string;
+  /** That loop's whole budget, for the error text. */
+  budgetMs: number;
+}
+
+/**
+ * The timeout to start `feedName` with when its loop must be done by
+ * `deadline` (epoch ms): the feed's own timeout, clipped to the time
+ * left. null = less than FEED_POOL_MIN_START_MS left, don't start it.
+ */
+export function plannedFeedTimeout(
+  feedName: string,
+  deadline: number,
+  now: number = Date.now(),
+): { timeoutMs: number; clipped: boolean } | null {
+  const remaining = deadline - now;
+  if (remaining < FEED_POOL_MIN_START_MS) return null;
+  const own = feedRunTimeoutMs(feedName);
+  return own <= remaining ? { timeoutMs: own, clipped: false } : { timeoutMs: remaining, clipped: true };
+}
+
+/** Marker so the feed loops can count timeouts separately from failures. */
+export class FeedTimeoutError extends Error {
+  constructor(
+    message: string,
+    readonly feedName: string,
+    readonly timeoutMs: number,
+    /** true when a loop deadline, not the feed's own timeout, cut it. */
+    readonly deadlineClipped: boolean,
+  ) {
+    super(message);
+    this.name = "FeedTimeoutError";
+  }
+}
+
+/**
+ * Run one feed with a wall-clock cap. On timeout the slot is released
+ * (this promise rejects with FeedTimeoutError) and the pull is abandoned:
+ *
+ *   - its feed_pull_history row is finalized `failed` with the timeout
+ *     error, by an upsert guarded on the row still being `partial`, so it
+ *     never overwrites a row runFeed (or the reaper) already finalized,
+ *     and — if runFeed's own INSERT has not landed yet — claims the id so
+ *     that late INSERT fails and the pull never starts;
+ *   - the breaker gets the same penalty a thrown failure gets
+ *     (penalizeFeedFailure), only when this upsert is what finalized the
+ *     row and only when the feed's own timeout fired. A cut by a loop
+ *     deadline (`clippedBy`) is our scheduling, not the feed's fault: no
+ *     penalty.
+ *
+ * The abandoned runFeed keeps running in the background (feed modules
+ * take no AbortSignal). Its late outcome is harmless: runFeed's success
+ * and failure finalizes are guarded and skip feed_status when the row is
+ * already failed, and the late rejection is consumed here, so it is
+ * never an unhandled rejection.
+ */
+async function runFeedWithTimeout(
+  env: Env,
+  config: FeedConfigRow,
+  mod: FeedModule,
+  timeoutMs: number,
+  clippedBy: DeadlineClip | null,
+): Promise<FeedResult> {
+  const pullId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
+  const start = Date.now();
+
+  const pull = runFeed(env, config, mod, { pullId });
+  // Consume a late settlement of an abandoned pull. Promise.race below
+  // also subscribes, but only this handler survives the race settling.
+  let abandoned = false;
+  pull.then(
+    () => {
+      if (abandoned) console.warn(`[runAllFeeds] ${config.feed_name}: abandoned pull ${pullId} completed late`);
+    },
+    (err: unknown) => {
+      if (abandoned) {
+        console.warn(`[runAllFeeds] ${config.feed_name}: abandoned pull ${pullId} rejected late — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+
+  try {
+    const winner = await Promise.race([pull, timedOut]);
+    if (winner !== "timeout") return winner;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+
+  abandoned = true;
+  const seconds = Math.round(timeoutMs / 1000);
+  const errorMsg = clippedBy
+    ? `timed out after ${seconds}s at the ${clippedBy.label} deadline (${Math.round(clippedBy.budgetMs / 1000)}s budget) — pull abandoned`
+    : `timed out after ${seconds}s — pull abandoned`;
+  console.error(`[runAllFeeds] ${config.feed_name}: ${errorMsg}`);
+
+  try {
+    const finalize = await env.DB.prepare(
+      `INSERT INTO feed_pull_history
+         (id, feed_name, started_at, completed_at, duration_ms, status, error_message)
+       VALUES (?, ?, ?, datetime('now'), ?, 'failed', ?)
+       ON CONFLICT(id) DO UPDATE SET
+         status = 'failed',
+         error_message = excluded.error_message,
+         duration_ms = excluded.duration_ms,
+         completed_at = excluded.completed_at
+       WHERE feed_pull_history.status = 'partial'
+         AND feed_pull_history.completed_at IS NULL`,
+    ).bind(pullId, config.feed_name, startedAt, Date.now() - start, errorMsg).run();
+
+    if (finalizeApplied(finalize) && !clippedBy) {
+      await penalizeFeedFailure(env, config, errorMsg);
+    }
+  } catch (e) {
+    // Best-effort: if this write fails the row stays partial and the
+    // Navigator reaper finalizes + penalizes it within ~15 min.
+    console.error(`[runAllFeeds] ${config.feed_name}: timeout finalize failed:`, e);
+  }
+
+  throw new FeedTimeoutError(
+    `Feed ${config.feed_name} ${errorMsg}`,
+    config.feed_name,
+    timeoutMs,
+    clippedBy !== null,
+  );
+}
+
 /**
  * Run `worker` over `items` with at most `limit` in flight at a time,
  * returning results in input order with the same shape as
@@ -508,12 +746,30 @@ export function resolveFailureThreshold(
 
 // ─── Feed Execution ──────────────────────────────────────────────
 
+/**
+ * True when a finalize UPDATE changed the row. A D1 result always carries
+ * `meta.changes`; when it is absent (hand-rolled test doubles) we assume
+ * the write applied, which is the pre-guard behaviour.
+ */
+function finalizeApplied(res: { meta?: { changes?: number } } | null | undefined): boolean {
+  return (res?.meta?.changes ?? 1) > 0;
+}
+
+export interface RunFeedOptions {
+  /**
+   * Pre-assigned feed_pull_history id. runAllFeeds passes one so its
+   * per-feed timeout can finalize the row of a pull it abandons.
+   */
+  pullId?: string;
+}
+
 export async function runFeed(
   env: Env,
   config: FeedConfigRow,
   feedModule: FeedModule,
+  opts: RunFeedOptions = {},
 ): Promise<FeedResult> {
-  const pullId = crypto.randomUUID();
+  const pullId = opts.pullId ?? crypto.randomUUID();
   const startedAt = new Date().toISOString();
 
   // Create pull history entry
@@ -542,7 +798,7 @@ export async function runFeed(
           `UPDATE feed_pull_history SET
              status = 'success', records_ingested = ?, records_rejected = ?,
              error_message = ?, duration_ms = ?, completed_at = datetime('now')
-           WHERE id = ?`,
+           WHERE id = ? AND status <> 'failed'`,
         ).bind(
           result.itemsNew,
           result.itemsDuplicate + result.itemsError,
@@ -555,6 +811,16 @@ export async function runFeed(
         ).run(),
       { label: `${config.feed_name} pull-success finalize` },
     );
+
+    // `status <> 'failed'` (not `= 'partial'`, so a withD1Retry re-send of
+    // an already-applied UPDATE still matches): a row already finalized as
+    // failed — abandoned by runAllFeeds' per-feed timeout, or reaped by
+    // Navigator — keeps that outcome. Its breaker penalty has already been
+    // applied, so a late success must not reset feed_status either.
+    if (!finalizeApplied(pullUpdate)) {
+      console.warn(`[runFeed] ${config.feed_name}: pull ${pullId} completed after it was finalized as failed (timed out or reaped) — keeping the failed row`);
+      return result;
+    }
 
     // Ensure feed_status row exists (INSERT OR IGNORE), then update
     await env.DB.prepare(
@@ -588,68 +854,20 @@ export async function runFeed(
     console.error(`[runFeed] ${config.feed_name}: FAILED after ${durationMs}ms — ${errorMsg}`);
     if (err instanceof Error && err.stack) console.error(`[runFeed] ${config.feed_name}: stack:`, err.stack);
 
-    // Log failure in pull history
-    await env.DB.prepare(
+    // Log failure in pull history. Guarded on 'partial': if runAllFeeds'
+    // per-feed timeout (or the Navigator reaper) already finalized this
+    // row, a late rejection must not overwrite its error or penalize the
+    // breaker a second time.
+    const failUpdate = await env.DB.prepare(
       `UPDATE feed_pull_history SET
          status = 'failed', error_message = ?, duration_ms = ?, completed_at = datetime('now')
-       WHERE id = ?`
+       WHERE id = ? AND status = 'partial'`
     ).bind(errorMsg, durationMs, pullId).run();
 
-    // Check previous status for transition notification + grab the current
-    // counter so we can increment locally and avoid an extra round trip.
-    const prevStatus = await env.DB.prepare(
-      `SELECT health_status, consecutive_failures FROM feed_status WHERE feed_name = ?`
-    ).bind(config.feed_name).first<{ health_status: string; consecutive_failures: number | null }>();
-
-    const newFailureCount = (prevStatus?.consecutive_failures ?? 0) + 1;
-
-    // Update feed_status to degraded with error message + incremented counter.
-    // Stamp next_retry_at so the next runAllFeeds tick skips this feed
-    // until the backoff window expires. Exponential schedule with jitter
-    // applied in computeFeedRetryAt() above.
-    const nextRetryAt = computeFeedRetryAt(newFailureCount);
-    await env.DB.prepare(
-      `UPDATE feed_status SET
-         last_failure = datetime('now'),
-         health_status = 'degraded',
-         last_error = ?,
-         consecutive_failures = ?,
-         next_retry_at = ?
-       WHERE feed_name = ?`
-    ).bind(errorMsg.slice(0, 500), newFailureCount, nextRetryAt, config.feed_name).run();
-
-    // Notify only on status CHANGE (healthy → degraded)
-    if (prevStatus?.health_status === 'healthy') {
-      try {
-        await createNotification(env, {
-          // N1: explicit super_admin audience — only the platform operator
-          // can act on feed health. Tenants don't run feeds.
-          audience: 'super_admin',
-          type: 'feed_health',
-          severity: 'high',
-          title: `Feed degraded: ${config.display_name}`,
-          message: `${config.display_name} returned errors. Check Operations → Feeds.`,
-          link: '/admin/operations?tab=feeds',
-          metadata: { feed_name: config.feed_name },
-        });
-      } catch (e) {
-        console.error(`[runFeed] notification error:`, e);
-      }
-    }
-
-    // ── Auto-pause check ──────────────────────────────────────
-    // Resolve the effective threshold (per-feed override or global default)
-    // and flip enabled=0 + set paused_reason if we've crossed it. The
-    // dispatch query in runAllFeeds just stops selecting this feed on the
-    // next tick — no other plumbing needed.
-    try {
-      const globalThreshold = await getGlobalFailureThreshold(env.DB);
-      const threshold = resolveFailureThreshold(config, globalThreshold);
-      if (newFailureCount >= threshold) {
-        await autoPauseFeed(env, config, newFailureCount, threshold, errorMsg);
-      }
-    } catch (e) {
-      console.error(`[runFeed] auto-pause check failed for ${config.feed_name}:`, e);
+    if (finalizeApplied(failUpdate)) {
+      await penalizeFeedFailure(env, config, errorMsg);
+    } else {
+      console.warn(`[runFeed] ${config.feed_name}: pull ${pullId} failed after it was already finalized (timed out or reaped) — not penalizing again`);
     }
 
     // Re-throw so callers (handleTriggerFeed) can distinguish success from failure.
@@ -657,6 +875,77 @@ export async function runFeed(
     const feedError = new Error(`Feed ${config.feed_name} failed: ${errorMsg}`);
     (feedError as Error & { feedResult: FeedResult }).feedResult = { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
     throw feedError;
+  }
+}
+
+/**
+ * The circuit-breaker penalty for a failed pull: increment
+ * consecutive_failures, stamp an exponential-backoff next_retry_at
+ * (computeFeedRetryAt), mark degraded, notify on the healthy → degraded
+ * transition, and auto-pause at the threshold. Shared by runFeed's catch
+ * and runAllFeeds' per-feed timeout so a hung pull backs off exactly like
+ * a thrown one. Moved verbatim out of runFeed's catch.
+ */
+async function penalizeFeedFailure(
+  env: Env,
+  config: FeedConfigRow,
+  errorMsg: string,
+): Promise<void> {
+  // Check previous status for transition notification + grab the current
+  // counter so we can increment locally and avoid an extra round trip.
+  const prevStatus = await env.DB.prepare(
+    `SELECT health_status, consecutive_failures FROM feed_status WHERE feed_name = ?`
+  ).bind(config.feed_name).first<{ health_status: string; consecutive_failures: number | null }>();
+
+  const newFailureCount = (prevStatus?.consecutive_failures ?? 0) + 1;
+
+  // Update feed_status to degraded with error message + incremented counter.
+  // Stamp next_retry_at so the next runAllFeeds tick skips this feed
+  // until the backoff window expires. Exponential schedule with jitter
+  // applied in computeFeedRetryAt() above.
+  const nextRetryAt = computeFeedRetryAt(newFailureCount);
+  await env.DB.prepare(
+    `UPDATE feed_status SET
+       last_failure = datetime('now'),
+       health_status = 'degraded',
+       last_error = ?,
+       consecutive_failures = ?,
+       next_retry_at = ?
+     WHERE feed_name = ?`
+  ).bind(errorMsg.slice(0, 500), newFailureCount, nextRetryAt, config.feed_name).run();
+
+  // Notify only on status CHANGE (healthy → degraded)
+  if (prevStatus?.health_status === 'healthy') {
+    try {
+      await createNotification(env, {
+        // N1: explicit super_admin audience — only the platform operator
+        // can act on feed health. Tenants don't run feeds.
+        audience: 'super_admin',
+        type: 'feed_health',
+        severity: 'high',
+        title: `Feed degraded: ${config.display_name}`,
+        message: `${config.display_name} returned errors. Check Operations → Feeds.`,
+        link: '/admin/operations?tab=feeds',
+        metadata: { feed_name: config.feed_name },
+      });
+    } catch (e) {
+      console.error(`[runFeed] notification error:`, e);
+    }
+  }
+
+  // ── Auto-pause check ──────────────────────────────────────
+  // Resolve the effective threshold (per-feed override or global default)
+  // and flip enabled=0 + set paused_reason if we've crossed it. The
+  // dispatch query in runAllFeeds just stops selecting this feed on the
+  // next tick — no other plumbing needed.
+  try {
+    const globalThreshold = await getGlobalFailureThreshold(env.DB);
+    const threshold = resolveFailureThreshold(config, globalThreshold);
+    if (newFailureCount >= threshold) {
+      await autoPauseFeed(env, config, newFailureCount, threshold, errorMsg);
+    }
+  } catch (e) {
+    console.error(`[runFeed] auto-pause check failed for ${config.feed_name}:`, e);
   }
 }
 
@@ -929,6 +1218,10 @@ export async function runAllFeeds(
   feedsRun: number;
   feedsSkipped: number;
   feedsFailed: number;
+  /** Subset of feedsFailed: abandoned at their wall-clock timeout. */
+  feedsTimedOut: number;
+  /** Due feeds not started because the pool budget ran out (also in feedsSkipped). */
+  feedsDeferred: number;
   totalNew: number;
 }> {
   // Reset the global-threshold cache so a fresh coordinator pass
@@ -1017,24 +1310,49 @@ export async function runAllFeeds(
   // ct_logs, tweetfeed, urlhaus. Cloudflare's documented remedy is to spread
   // the write load. A small pool keeps a few feeds in flight without the
   // thundering-herd write contention.
+  //
+  // Every pull is wall-clock capped (runFeedWithTimeout) and the pool as a
+  // whole by FEED_POOL_BUDGET_MS, so a hung pull frees its slot and
+  // runAllFeeds always returns. Longest-budget feeds start first (stable
+  // sort) so a long feed is never clipped by the pool deadline merely
+  // because it was dispatched late.
+  toRun.sort((a, b) => feedRunTimeoutMs(b.config.feed_name) - feedRunTimeoutMs(a.config.feed_name));
+  const poolDeadline = Date.now() + FEED_POOL_BUDGET_MS;
+  const DEFERRED = Symbol("deferred");
   const results = await runWithConcurrency(
     toRun,
     FEED_CONCURRENCY,
-    ({ config, mod }) => runFeed(env, config, mod),
+    ({ config, mod }): Promise<FeedResult | typeof DEFERRED> => {
+      const plan = plannedFeedTimeout(config.feed_name, poolDeadline);
+      if (!plan) return Promise.resolve(DEFERRED);
+      return runFeedWithTimeout(
+        env, config, mod, plan.timeoutMs,
+        plan.clipped ? { label: "feed-pool", budgetMs: FEED_POOL_BUDGET_MS } : null,
+      );
+    },
   );
 
+  let feedsTimedOut = 0;
+  let feedsDeferred = 0;
   for (const [i, r] of results.entries()) {
     const name = toRun[i]!.config.feed_name;
+    if (r.status === "fulfilled" && r.value === DEFERRED) {
+      feedsDeferred++;
+      feedsSkipped++;
+      console.warn(`[feedRunner] ${name}: DEFERRED — feed-pool budget exhausted, stays due for the next tick`);
+      continue;
+    }
     feedsRun++;
     if (r.status === "fulfilled") {
-      totalNew += r.value.itemsNew;
+      if (r.value !== DEFERRED) totalNew += r.value.itemsNew;
     } else {
       feedsFailed++;
+      if (r.reason instanceof FeedTimeoutError) feedsTimedOut++;
       console.error(`[feedRunner] ${name}: REJECTED — ${r.reason}`);
     }
   }
 
-  return { feedsRun, feedsSkipped, feedsFailed, totalNew };
+  return { feedsRun, feedsSkipped, feedsFailed, feedsTimedOut, feedsDeferred, totalNew };
 }
 
 // ─── Schedule Check ──────────────────────────────────────────────
@@ -1162,16 +1480,36 @@ export function parseCronIntervalMs(cron: string): number {
 export async function runAllEnrichmentFeeds(
   env: Env,
   enrichmentModules: Record<string, FeedModule>,
+  opts: {
+    /**
+     * Absolute epoch-ms deadline the loop must finish by (the orchestrator
+     * passes enrichmentDeadlineForTick). The loop's effective deadline is
+     * the earlier of this and start + ENRICHMENT_LOOP_BUDGET_MS.
+     */
+    deadline?: number;
+  } = {},
 ): Promise<{
   feedsRun: number;
   feedsSkipped: number;
   feedsFailed: number;
+  /** Subset of feedsFailed: abandoned at their wall-clock timeout. */
+  feedsTimedOut: number;
+  /** Due feeds not started because the loop budget ran out (also in feedsSkipped). */
+  feedsDeferred: number;
   totalEnriched: number;
 }> {
   let feedsRun = 0;
   let feedsSkipped = 0;
   let feedsFailed = 0;
+  let feedsTimedOut = 0;
+  let feedsDeferred = 0;
   let totalEnriched = 0;
+
+  // Every pull is wall-clock capped (runFeedWithTimeout) and the loop as a
+  // whole by `deadline`, so one hung pull (surbl, 2026-11-09 21:08) can no
+  // longer hold the rest of the hourly tick behind it.
+  const loopStart = Date.now();
+  const deadline = Math.min(loopStart + ENRICHMENT_LOOP_BUDGET_MS, opts.deadline ?? Infinity);
 
   try {
     // Build a map of DB configs keyed by feed_name (empty if query fails)
@@ -1238,15 +1576,27 @@ export async function runAllEnrichmentFeeds(
         continue;
       }
 
+      const plan = plannedFeedTimeout(name, deadline);
+      if (!plan) {
+        console.warn(`[enrichment] ${name}: DEFERRED — enrichment loop budget exhausted, stays due for the next tick`);
+        feedsDeferred++;
+        feedsSkipped++;
+        continue;
+      }
+
       // Run the feed — isolated try/catch so one failure cannot kill others
       feedsRun++;
       try {
-        console.log(`[enrichment] Running: ${name}`);
-        const result = await runFeed(env, config, mod);
+        console.log(`[enrichment] Running: ${name} (timeout ${Math.round(plan.timeoutMs / 1000)}s)`);
+        const result = await runFeedWithTimeout(
+          env, config, mod, plan.timeoutMs,
+          plan.clipped ? { label: "enrichment", budgetMs: deadline - loopStart } : null,
+        );
         totalEnriched += result.itemsNew;
         console.log(`[enrichment] ${name}: fetched=${result.itemsFetched} enriched=${result.itemsNew} errors=${result.itemsError}`);
       } catch (err) {
         feedsFailed++;
+        if (err instanceof FeedTimeoutError) feedsTimedOut++;
         console.error(`[enrichment] ${name} FAILED:`, err instanceof Error ? err.message : String(err));
       }
     }
@@ -1255,8 +1605,8 @@ export async function runAllEnrichmentFeeds(
     console.error('[enrichment] FATAL outer error:', outerErr instanceof Error ? outerErr.message : String(outerErr));
   }
 
-  console.log(`[enrichment] Done: ${feedsRun} ran, ${feedsFailed} failed, ${feedsSkipped} skipped, ${totalEnriched} enriched`);
-  return { feedsRun, feedsSkipped, feedsFailed, totalEnriched };
+  console.log(`[enrichment] Done: ${feedsRun} ran, ${feedsFailed} failed (${feedsTimedOut} timed out), ${feedsSkipped} skipped (${feedsDeferred} deferred), ${totalEnriched} enriched`);
+  return { feedsRun, feedsSkipped, feedsFailed, feedsTimedOut, feedsDeferred, totalEnriched };
 }
 
 // ─── Run Social Feeds (after enrichment) ────────────────────────
