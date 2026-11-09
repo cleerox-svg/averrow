@@ -1,5 +1,6 @@
 // Averrow — Cloudflare Worker entry point
 import { drainAlertEvents } from "./lib/alert-events";
+import { runWithRequestContext } from "./lib/request-context";
 import { Router } from "itty-router";
 import { handleOptions } from "./lib/cors";
 import { applySecurityHeaders } from "./middleware/security";
@@ -143,7 +144,9 @@ export default {
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      return await handleFetch(request, env, ctx);
+      // Request-scoped ctx so deep helpers (requireAuth's last_active /
+      // auth-cache writes) can use ctx.waitUntil — lib/request-context.ts.
+      return await runWithRequestContext(ctx, () => handleFetch(request, env, ctx));
     } finally {
       ctx.waitUntil(drainAlertEvents());
     }

@@ -5,6 +5,11 @@ import { json } from "../lib/cors";
 import { logger } from "../lib/logger";
 import { roleHasPermission, type StaffPermission } from "../lib/role-permissions";
 import { forcedLogoutKey, isForcedOut, parseForcedLogout } from "../lib/forced-logout";
+import {
+  readAuthUserCache, writeAuthUserCache, lastActiveIsStale, sqliteNow,
+  type AuthUserCacheEntry,
+} from "../lib/auth-user-cache";
+import { runInBackground } from "../lib/request-context";
 import type { Env, JWTPayload, UserRole } from "../types";
 
 export interface AuthContext {
@@ -39,7 +44,10 @@ export interface AuthContext {
 
 /**
  * Validates JWT access token and returns auth context.
- * Checks for forced logout via KV.
+ * Checks for forced logout via KV, then that the user is still `active`
+ * (KV-cached ≤60s per user, lib/auth-user-cache.ts — every in-app status
+ * change and forced logout invalidates the entry; a manual SQL status change
+ * takes effect within 60s). last_active is written at most every 5 minutes.
  *
  * H-3 (AUTH_AUDIT_2026-06): rejects enrollment-scoped tokens
  * (`scope === 'passkey_enroll'`) with a 403 `passkey_enrollment_required`.
@@ -99,22 +107,51 @@ async function requireAuthInternal(
   // Forced-logout gate: one KV read carries both the blanket per-user stamp
   // (iat <= ts) and the per-session revocations (sid listed) — see
   // lib/forced-logout.ts. Tokens without a `sid` claim only face the stamp.
-  const forced = parseForcedLogout(await env.CACHE.get(forcedLogoutKey(payload.sub)));
+  // The auth_user cache (lib/auth-user-cache.ts) is fetched in the same
+  // round trip but only consulted AFTER this gate passes. Both keys are
+  // derived from the verified subject, never from the token. A cache read
+  // failure is a miss (D1 fallback); a forced_logout read failure still
+  // throws, as before (fail closed).
+  const [forcedRaw, cachedUser] = await Promise.all([
+    env.CACHE.get(forcedLogoutKey(payload.sub)),
+    readAuthUserCache(env, payload.sub),
+  ]);
+  const forced = parseForcedLogout(forcedRaw);
   if (isForcedOut(forced, payload.iat, payload.sid)) {
     return json({ success: false, error: "Session invalidated" }, 401, origin);
   }
 
-  // Verify user still active in DB
-  const user = await env.DB.prepare("SELECT status FROM users WHERE id = ?")
-    .bind(payload.sub).first<{ status: string }>();
+  // Verify user still active. Cache hit (active, ≤60s old) skips D1; a miss
+  // reads the row. Non-active users are never cached.
+  let user: AuthUserCacheEntry | null = cachedUser && cachedUser.status === "active" ? cachedUser : null;
+  const fromCache = user !== null;
+  if (!user) {
+    const row = await env.DB.prepare("SELECT status, last_active FROM users WHERE id = ?")
+      .bind(payload.sub).first<{ status: string; last_active: string | null }>();
+    user = row ? { status: row.status, last_active: row.last_active ?? null } : null;
+  }
 
   if (!user || user.status !== "active") {
     return json({ success: false, error: "Account is not active" }, 403, origin);
   }
 
-  // Update last_active timestamp (fire-and-forget)
-  env.DB.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?")
-    .bind(payload.sub).run().catch(() => {});
+  // last_active, throttled to one write per LAST_ACTIVE_THROTTLE_MS. The
+  // UPDATE is also guarded in SQL so a burst of concurrent cache misses
+  // writes the row at most once. Background (ctx.waitUntil when reachable).
+  const userId = payload.sub;
+  if (lastActiveIsStale(user.last_active)) {
+    const entry: AuthUserCacheEntry = { status: "active", last_active: sqliteNow() };
+    runInBackground(async () => {
+      await env.DB.prepare(
+        "UPDATE users SET last_active = datetime('now') WHERE id = ? " +
+        "AND (last_active IS NULL OR last_active < datetime('now', '-5 minutes'))",
+      ).bind(userId).run();
+      await writeAuthUserCache(env, userId, entry);
+    });
+  } else if (!fromCache) {
+    const entry = user;
+    runInBackground(() => writeAuthUserCache(env, userId, entry));
+  }
 
   return {
     userId: payload.sub,

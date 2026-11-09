@@ -21,6 +21,7 @@
 // covers them.
 
 import { ACCESS_TOKEN_TTL, ABSOLUTE_SESSION_TTL } from "./jwt";
+import { invalidateAuthUserCache } from "./auth-user-cache";
 import type { Env } from "../types";
 
 export interface ForcedLogoutState {
@@ -120,4 +121,5 @@ export async function writeForcedLogout(
 
   const value: ForcedLogoutState = { ts, sids };
   await env.CACHE.put(key, JSON.stringify(value), { expirationTtl: ttl });
+  await invalidateAuthUserCache(env, userId);
 }

@@ -81,7 +81,7 @@ function makeEnv(sqls: Captured[], audits: Captured[], opts: FakeOpts = {}): Env
           sqls.push({ sql, binds });
           return {
             async first<T>(): Promise<T | null> {
-              if (/SELECT status FROM users/.test(sql)) return { status: "active" } as T;
+              if (/SELECT status(, last_active)? FROM users/.test(sql)) return { status: "active" } as T;
               if (/SELECT webhook_secret FROM organizations/.test(sql)) {
                 return { webhook_secret: opts.existingSecret ?? null } as T;
               }
