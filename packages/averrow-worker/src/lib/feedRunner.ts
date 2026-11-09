@@ -671,9 +671,12 @@ export class FeedTimeoutError extends Error {
  *     not hung. A clipped pull's allowance is by construction short of the
  *     feed's own timeout, so it can never show that the pull hung for its
  *     full allowance; two meaningful timeouts in a row are the evidence
- *     used instead, so a feed that is clipped on every tick and hangs every
- *     time still backs off and reaches auto-pause instead of
- *     death-looping silently.
+ *     used instead, so an override feed (own timeout > 125s) that is
+ *     clipped on every tick and hangs every time still backs off and
+ *     reaches auto-pause instead of death-looping silently. A default-cap
+ *     feed's clipped allowance is always below the 120s floor (it is only
+ *     clipped when > FEED_TIMEOUT_CLIP_TOLERANCE_MS short of its own 120s),
+ *     so only its unclipped timeouts penalize.
  *
  * The abandoned runFeed keeps running in the background (feed modules
  * take no AbortSignal). Its late outcome is harmless: runFeed's success
