@@ -666,7 +666,11 @@ daily_briefing: 13 13 * * * (once daily at 13:13 UTC — generates the 12-sectio
                              exhausted the tick's budget before the INSERT could land —
                              zero `cron:daily` rows for days. Dedicated cron gives it a
                              fresh budget; hour===13 inside the orchestrator now only runs
-                             the lighter notification_narrator digest. Handler:
+                             the lighter notification_narrator digest. Since 2026-11 its
+                             ~30 section reads run one at a time (`runSequential`, each
+                             with its own fallback) instead of one Promise.all burst, and
+                             the threat total reads the shared `count.threats.total`
+                             counter (can lag ≤6h) instead of a full COUNT(*). Handler:
                              `handlers/briefing.ts` `generateAndEmailBriefing`, wrapped by
                              `withBriefingRun` — writes `agent_runs` (agent_id
                              'daily_briefing') + a telemetry `agent_events` row

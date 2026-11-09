@@ -5,6 +5,8 @@ import { createAgentRun, finalizeAgentRun } from "../db/agent-runs";
 import { logger } from "../lib/logger";
 import { fetchMarketingVisibility } from "../lib/marketing-analytics";
 import type { MarketingVisibility } from "../lib/marketing-analytics";
+import { runSequential } from "../lib/run-sequential";
+import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 import type { Env } from "../types";
 
 // ─── Agent-run contract wrapper ─────────────────────────────────
@@ -259,7 +261,21 @@ export async function fetchComprehensiveBriefing(
   const db = env.DB;
   const now = new Date().toISOString();
 
-  // Run all queries in parallel
+  // Platform-wide threat total: the shared `count.threats.total` counter
+  // (also read by the Threats list and dashboard) instead of a full COUNT(*)
+  // over threats. It can lag the live table by up to THREATS_TOTAL_TTL_S —
+  // fine for a daily report headline.
+  const totalThreats = await cachedCount(env, "count.threats.total", THREATS_TOTAL_TTL_S, async () => {
+    const r = await db.prepare("SELECT COUNT(*) AS n FROM threats").first<{ n: number }>();
+    return r?.n ?? 0;
+  }).catch(() => 0);
+
+  // One query at a time (lib/run-sequential.ts), not one ~30-way
+  // Promise.all: D1 serialises a database's queries anyway, and a burst this
+  // size inside one 10 s window is what trips `D1 DB is overloaded` for
+  // every other request (logins included). This runs once a day on its own
+  // cron, so not overloading D1 matters more than wall-clock speed. Each
+  // read keeps its own fallback (safeFirst / safeQuery).
   const [
     // A) Platform Overview
     overview,
@@ -304,36 +320,34 @@ export async function fetchComprehensiveBriefing(
     brandCoverage,
     // N) Geopolitical Campaigns
     geopoliticalCampaigns,
-  ] = await Promise.all([
+  ] = await runSequential([
     // A) Platform Overview
-    safeFirst(
+    () => safeFirst(
       db,
+      // The 24h window is counted once: avg_per_hour and the day-over-day
+      // today_count are derived from last_24h below (they were the same
+      // range count, run three times).
       `SELECT
-        (SELECT COUNT(*) FROM threats) as total_threats,
         (SELECT COUNT(*) FROM threats WHERE first_seen >= datetime('now', '-24 hours')) as last_24h,
         (SELECT COUNT(*) FROM threats WHERE first_seen >= datetime('now', '-12 hours')) as last_12h,
-        (SELECT ROUND(COUNT(*) * 1.0 / 24, 0) FROM threats WHERE first_seen >= datetime('now', '-24 hours')) as avg_per_hour,
         (SELECT COUNT(*) FROM monitored_brands WHERE status = 'active') as brands_monitored,
         (SELECT COUNT(*) FROM brands WHERE sector IS NOT NULL) as brands_classified`,
       {
-        total_threats: 0,
         last_24h: 0,
         last_12h: 0,
-        avg_per_hour: 0,
         brands_monitored: 0,
         brands_classified: 0,
       },
     ),
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT
-        (SELECT COUNT(*) FROM threats WHERE first_seen >= datetime('now', '-24 hours')) as today_count,
         (SELECT COUNT(*) FROM threats WHERE first_seen >= datetime('now', '-48 hours') AND first_seen < datetime('now', '-24 hours')) as yesterday_count`,
-      { today_count: 0, yesterday_count: 0 },
+      { yesterday_count: 0 },
     ),
 
     // B) Feed Production (12h)
-    safeQuery<Array<{ feed_name: string; runs: number; ingested: number }>>(
+    () => safeQuery<Array<{ feed_name: string; runs: number; ingested: number }>>(
       db,
       `SELECT feed_name, COUNT(*) as runs, SUM(records_ingested) as ingested
        FROM feed_pull_history
@@ -343,7 +357,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // C) Feed Health
-    safeQuery<
+    () => safeQuery<
       Array<{
         feed_name: string;
         health_status: string;
@@ -357,7 +371,7 @@ export async function fetchComprehensiveBriefing(
        ORDER BY health_status DESC, feed_name`,
       [],
     ),
-    safeQuery<Array<{ health_status: string; count: number }>>(
+    () => safeQuery<Array<{ health_status: string; count: number }>>(
       db,
       `SELECT health_status, COUNT(*) as count FROM feed_status
        WHERE health_status != 'disabled' GROUP BY health_status`,
@@ -365,7 +379,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // D) Enrichment Pipeline
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT
         SUM(surbl_checked) as surbl_checked, SUM(surbl_listed) as surbl_hits,
@@ -393,7 +407,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // E) Flight Controller
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT summary, created_at FROM agent_outputs
        WHERE agent_id = 'flight_control' AND type = 'diagnostic'
@@ -402,7 +416,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // F) Agent Activity (12h)
-    safeQuery<Array<{ agent_id: string; runs: number; last_run: string }>>(
+    () => safeQuery<Array<{ agent_id: string; runs: number; last_run: string }>>(
       db,
       `SELECT agent_id, COUNT(*) as runs, MAX(started_at) as last_run
        FROM agent_runs WHERE started_at >= datetime('now', '-12 hours')
@@ -412,7 +426,7 @@ export async function fetchComprehensiveBriefing(
 
     // G) New Capabilities — legacy counts stay in their own query so a missing
     //    app_store_listings / dark_web_mentions table can't zero them out.
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT
         (SELECT COUNT(*) FROM threats WHERE source_feed = 'typosquat_scanner') as typosquat_total,
@@ -430,7 +444,7 @@ export async function fetchComprehensiveBriefing(
     ),
     // G2) App-store + dark-web capability counts — isolated so table drift
     //     can't knock out the legacy capability section above.
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT
         (SELECT COUNT(*) FROM app_store_listings WHERE status = 'active' AND classification IN ('impersonation','suspicious')) as appstore_total,
@@ -446,20 +460,20 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // H) Spam Trap
-    safeFirst(db, `SELECT COUNT(*) as total_seeds FROM seed_addresses`, {
+    () => safeFirst(db, `SELECT COUNT(*) as total_seeds FROM seed_addresses`, {
       total_seeds: 0,
     }),
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT COUNT(*) as total_captures FROM spam_trap_captures`,
       { total_captures: 0 },
     ),
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT COUNT(*) as captures_12h FROM spam_trap_captures WHERE captured_at >= datetime('now', '-12 hours')`,
       { captures_12h: 0 },
     ),
-    safeQuery<
+    () => safeQuery<
       Array<{
         trap_address: string;
         from_address: string;
@@ -474,7 +488,7 @@ export async function fetchComprehensiveBriefing(
        FROM spam_trap_captures ORDER BY captured_at DESC LIMIT 5`,
       [],
     ),
-    safeQuery<
+    () => safeQuery<
       Array<{ seeded_location: string; seeds: number; catches: number }>
     >(
       db,
@@ -485,7 +499,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // I) Honeypot
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT COUNT(*) as total_visits,
         SUM(is_bot) as bot_visits,
@@ -493,24 +507,24 @@ export async function fetchComprehensiveBriefing(
        FROM honeypot_visits`,
       { total_visits: 0, bot_visits: 0, human_visits: 0 },
     ),
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT COUNT(*) as visits_12h FROM honeypot_visits
        WHERE visited_at >= datetime('now', '-12 hours')`,
       { visits_12h: 0 },
     ),
-    safeQuery<Array<{ page: string; visits: number; bots: number }>>(
+    () => safeQuery<Array<{ page: string; visits: number; bots: number }>>(
       db,
       `SELECT page, COUNT(*) as visits, SUM(is_bot) as bots
        FROM honeypot_visits GROUP BY page ORDER BY visits DESC LIMIT 20`,
       [],
     ),
-    safeFirst(
+    () => safeFirst(
       db,
       `SELECT COUNT(DISTINCT page) AS distinct_pages FROM honeypot_visits`,
       { distinct_pages: 0 },
     ),
-    safeQuery<
+    () => safeQuery<
       Array<{
         page: string;
         bot_name: string;
@@ -533,7 +547,7 @@ export async function fetchComprehensiveBriefing(
     //   - 'probe' → recon paths the lrxradar router logs verbatim before
     //               falling through to renderHome (e.g. lrxradar:/.env,
     //               lrxradar:/wp-admin, lrxradar:/phpmyadmin)
-    safeQuery<
+    () => safeQuery<
       Array<{
         page: string;
         country: string;
@@ -566,7 +580,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // J) New Threats (12h)
-    safeQuery<Array<{ severity: string; count: number }>>(
+    () => safeQuery<Array<{ severity: string; count: number }>>(
       db,
       `SELECT severity, COUNT(*) as count
        FROM threats WHERE first_seen >= datetime('now', '-12 hours')
@@ -575,14 +589,14 @@ export async function fetchComprehensiveBriefing(
          WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END`,
       [],
     ),
-    safeQuery<Array<{ source_feed: string; count: number }>>(
+    () => safeQuery<Array<{ source_feed: string; count: number }>>(
       db,
       `SELECT source_feed, COUNT(*) as count
        FROM threats WHERE first_seen >= datetime('now', '-12 hours')
        GROUP BY source_feed ORDER BY count DESC LIMIT 10`,
       [],
     ),
-    safeQuery<
+    () => safeQuery<
       Array<{
         malicious_domain: string;
         type: string;
@@ -607,7 +621,7 @@ export async function fetchComprehensiveBriefing(
     // (migration 0312) and PK-probes brands. The old
     // `target_brand_id IS NOT NULL` term was implied by the inner join.
     // Plan pinned in test/d1-read-spend-2026-11.test.ts.
-    safeQuery<Array<{ name: string; threats_24h: number }>>(
+    () => safeQuery<Array<{ name: string; threats_24h: number }>>(
       db,
       `SELECT b.name, COUNT(*) as threats_24h
        FROM threats t JOIN brands b ON b.id = +t.target_brand_id
@@ -617,7 +631,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // L) Anomalies
-    safeQuery<
+    () => safeQuery<
       Array<{ feed_name: string; last_successful_pull: string | null }>
     >(
       db,
@@ -626,7 +640,7 @@ export async function fetchComprehensiveBriefing(
        AND (last_successful_pull IS NULL OR last_successful_pull < datetime('now', '-6 hours'))`,
       [],
     ),
-    safeQuery<Array<{ feed_name: string; last_error: string | null }>>(
+    () => safeQuery<Array<{ feed_name: string; last_error: string | null }>>(
       db,
       `SELECT feed_name, last_error FROM feed_status
        WHERE health_status IN ('degraded', 'failed') AND last_error IS NOT NULL`,
@@ -634,7 +648,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // M) Brand Coverage
-    safeQuery<Array<{ sector: string; brands: number }>>(
+    () => safeQuery<Array<{ sector: string; brands: number }>>(
       db,
       `SELECT sector, COUNT(*) as brands FROM brands
        WHERE sector IS NOT NULL GROUP BY sector ORDER BY brands DESC LIMIT 10`,
@@ -642,7 +656,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // N) Geopolitical Campaigns
-    safeQuery<Array<{
+    () => safeQuery<Array<{
       name: string; status: string; conflict: string;
       start_date: string; briefing_priority: string;
       total_threats: number; new_24h: number; brands_hit: number;
@@ -682,19 +696,23 @@ export async function fetchComprehensiveBriefing(
   const hasDegraded =
     failedCount > 0 || unhealthyCount / totalFeeds > 0.5;
 
+  const last24h = Number(overview.last_24h) || 0;
+
   // Marketing & AI visibility — internally safe (per-query fallback),
   // won't throw out of here even if the table is missing.
   const marketingVisibility = await fetchMarketingVisibility(env, 24);
 
   return {
     platformOverview: {
-      totalThreats: Number(overview.total_threats) || 0,
-      last24h: Number(overview.last_24h) || 0,
+      totalThreats: Number(totalThreats) || 0,
+      last24h: last24h,
       last12h: Number(overview.last_12h) || 0,
-      avgPerHour: Number(overview.avg_per_hour) || 0,
+      // Same value as the former ROUND(COUNT(*) * 1.0 / 24, 0) (counts are
+      // non-negative, so Math.round matches SQLite's half-away-from-zero).
+      avgPerHour: Math.round(last24h / 24),
       brandsMonitored: Number(overview.brands_monitored) || 0,
       brandsClassified: Number(overview.brands_classified) || 0,
-      todayCount: Number(dayOverDay.today_count) || 0,
+      todayCount: last24h,
       yesterdayCount: Number(dayOverDay.yesterday_count) || 0,
     },
     newThreats: {
