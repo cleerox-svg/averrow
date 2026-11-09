@@ -19,8 +19,10 @@
 // reflect the analyst's current slice. Wrapped in cachedValue (30min;
 // 3h + single-flight refill for the unfiltered, unscoped slice).
 // Fail-soft per section (softSection): a failed read empties only its
-// section and is listed in `degraded_sections`; a degraded result is cached
-// for THREAT_AGGREGATE_DEGRADED_TTL_S (60s). Throws only if every read failed.
+// section and is listed in `degraded_sections`. A degraded refill never
+// replaces a complete cached entry: the complete one is kept and re-stamped
+// for THREAT_AGGREGATE_DEGRADED_TTL_S (60s back-off); with none (cold key) the
+// degraded result is cached for 60s. Throws only if every read failed.
 
 import type { Env } from '../types';
 import type { OrgScope } from '../middleware/auth';
@@ -234,8 +236,8 @@ export async function threatAggregate(
   return cachedValue<ThreatAggregate>(env, cacheKey, ttl, async () => {
     // Fail-soft (2026-11-09): every read is a softSection. A failed read
     // (e.g. `D1 DB is overloaded`) degrades only its section to an
-    // empty/zero fallback and is listed in `degraded_sections`; the result
-    // is then cached for THREAT_AGGREGATE_DEGRADED_TTL_S, not the slice TTL.
+    // empty/zero fallback and is listed in `degraded_sections` (see the
+    // keepExistingWhen / ttlFor options below for how it is cached).
     // Only when EVERY attempted read failed does compute throw (→ 500, and
     // nothing is cached).
     const sectionErrors: SectionErrors = {};
@@ -522,6 +524,21 @@ export async function threatAggregate(
     };
   }, {
     singleFlight,
+    // Never replace a complete entry (fresh or expired: entries stay in KV for
+    // 2x their TTL, i.e. up to 6h unfiltered / 1h per slice) with a degraded
+    // refill. The older complete numbers are returned and re-stamped fresh for
+    // THREAT_AGGREGATE_DEGRADED_TTL_S, so during an overload the next refill
+    // backs off 60s instead of re-running every read on the next request. The
+    // re-stamp keeps the original write time, so the entry still expires 2x
+    // TTL after it was computed. A degraded body is written only when there is
+    // no complete entry to fall back to (cold key). Consequence: a filtered
+    // slice (no singleFlight) can serve numbers up to 2x its TTL old (1h)
+    // while its refills keep degrading.
+    keepExistingWhen: (v) => (v.degraded_sections?.length ?? 0) > 0,
+    // A degraded result that IS written (cold key) is pre-aged to read as
+    // expired after THREAT_AGGREGATE_DEGRADED_TTL_S, with expirationTtl 2x
+    // that (120s): single-flight's stale serving can show it for ~120s at
+    // most, never the slice TTL. Also the back-off length above.
     ttlFor: (v) => (v.degraded_sections?.length ? THREAT_AGGREGATE_DEGRADED_TTL_S : ttl),
   });
 }

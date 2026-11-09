@@ -140,7 +140,9 @@ describe.skipIf(!hasSqlite())("threatAggregate unfiltered slice — pre-computed
 // reads rejected the whole compute, so nothing was cached and every page
 // view / Retry re-ran the full ~15-read refill. Now each read is a
 // softSection: one failure degrades that section only, is listed in
-// `degraded_sections`, and the result is cached for the short degraded TTL.
+// `degraded_sections`. A degraded result never replaces a complete cached
+// entry (that one is kept and re-stamped for the 60s back-off); with no
+// complete entry (cold key) the degraded result is cached for that short TTL.
 
 /** A D1 whose prepare() throws for any SQL matching `fail`. */
 function failingDb(base: D1Database, fail: (sql: string) => boolean): D1Database {
@@ -230,20 +232,52 @@ describe.skipIf(!hasSqlite())("threatAggregate fail-soft sections", () => {
     }
   });
 
-  it("unfiltered: a degraded refill keeps a 4h-old good entry in KV and serves it", async () => {
+  it("unfiltered: a degraded refill keeps a 4h-old good entry and backs off 60s (next request is a cache hit)", async () => {
     const kv = fakeKv();
     const good = await threatAggregate({ DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env, {});
     expect(good.degraded_sections).toEqual([]);
     const [key, raw] = [...kv.store.entries()].find(([k]) => k.startsWith("cv:threat-agg:"))!;
-    const aged = JSON.stringify({ ...JSON.parse(raw), t: Date.now() - 4 * 3600 * 1000 });
-    kv.store.set(key, aged);
+    const writtenAt = Date.now() - 4 * 3600 * 1000;
+    kv.store.set(key, JSON.stringify({ ...JSON.parse(raw), t: writtenAt }));
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     try {
-      const env = { DB: failingDb(d1FromSqlite(seed()), isByType), CACHE: kv } as unknown as Env;
+      let prepares = 0;
+      const counting = failingDb(d1FromSqlite(seed()), (sql) => { prepares++; return isByType(sql); });
+      const env = { DB: counting, CACHE: kv } as unknown as Env;
       const agg = await threatAggregate(env, {});
       expect(agg.degraded_sections).toEqual([]);
       expect(agg.by_type).toEqual(good.by_type);
-      expect(kv.store.get(key)).toBe(aged);
+      expect(prepares).toBeGreaterThan(0);
+      // Kept value re-stamped fresh for the degraded back-off; original write time in `w`.
+      const kept = JSON.parse(kv.store.get(key)!) as { v: { by_type: unknown }; t: number; w: number };
+      expect(kept.v.by_type).toEqual(good.by_type);
+      expect(kept.w).toBe(writtenAt);
+      const age = (Date.now() - kept.t) / 1000;
+      expect(age).toBeGreaterThanOrEqual(THREAT_AGGREGATE_UNFILTERED_TTL_S - THREAT_AGGREGATE_DEGRADED_TTL_S - 1);
+      expect(age).toBeLessThan(THREAT_AGGREGATE_UNFILTERED_TTL_S - THREAT_AGGREGATE_DEGRADED_TTL_S + 5);
+      // The next request inside the back-off is served from KV: zero D1 reads.
+      prepares = 0;
+      const again = await threatAggregate(env, {});
+      expect(again.by_type).toEqual(good.by_type);
+      expect(prepares).toBe(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("filtered slice: a degraded refill keeps an expired good entry instead of caching zeros", async () => {
+    const kv = fakeKv();
+    const filters = { status: "active" };
+    const good = await threatAggregate({ DB: d1FromSqlite(seed()), CACHE: kv } as unknown as Env, filters);
+    const [key, raw] = [...kv.store.entries()].find(([k]) => k.startsWith("cv:threat-agg:"))!;
+    kv.store.set(key, JSON.stringify({ ...JSON.parse(raw), t: Date.now() - 45 * 60 * 1000 })); // past the 30 min TTL
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const env = { DB: failingDb(d1FromSqlite(seed()), isByType), CACHE: kv } as unknown as Env;
+      const agg = await threatAggregate(env, filters);
+      expect(agg.degraded_sections).toEqual([]);
+      expect(agg.by_type).toEqual(good.by_type);
+      expect((JSON.parse(kv.store.get(key)!) as { v: { degraded_sections: string[] } }).v.degraded_sections).toEqual([]);
     } finally {
       warn.mockRestore();
     }
