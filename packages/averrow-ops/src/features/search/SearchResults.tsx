@@ -23,7 +23,7 @@ function ResultRow({ result, to }: { result: SearchResult; to: string }) {
       <DataRow className="px-3 py-2.5 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div
-            className="font-mono text-[13px] font-bold truncate"
+            className="text-[13px] font-medium truncate"
             style={{ color: 'var(--text-primary)' }}
           >
             {result.label}
@@ -147,7 +147,7 @@ export function SearchResults() {
                   </div>
                   <Link
                     to={group.viewAllTo(q)}
-                    className="text-[12px] font-semibold"
+                    className="ds-focusable text-[12px] font-semibold"
                     style={{ color: 'var(--link)' }}
                   >
                     View all in {group.heading.toLowerCase()} →

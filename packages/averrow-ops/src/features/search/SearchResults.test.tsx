@@ -151,4 +151,15 @@ describe('SearchResults — facelift typography', () => {
     expect(src).not.toMatch(/uppercase|tracking-widest/);
     expect(src).not.toMatch(/text-\[(?:9|10|11)px\]/);
   });
+
+  it('result labels are sans font-medium (mono only for the sublabel fact) and "view all" links take the focus ring', () => {
+    navigateTo('/search?q=ac');
+    mocks.useGlobalSearch.mockReturnValue(POPULATED_RESULTS);
+    renderWithProviders(<SearchResults />);
+    const label = screen.getByText('Acme Corp');
+    expect(label).toHaveClass('font-medium');
+    expect(label).not.toHaveClass('font-mono');
+    expect(screen.getByText('acme.com')).toHaveClass('font-mono');
+    for (const a of screen.getAllByText(/^View all in /)) expect(a).toHaveClass('ds-focusable');
+  });
 });

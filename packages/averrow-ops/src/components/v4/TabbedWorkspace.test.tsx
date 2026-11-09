@@ -107,5 +107,7 @@ describe('TabbedWorkspace', () => {
     expect(src).not.toMatch(/console-live|console-tabs|variant="primary"/);
     const css = readFileSync(resolve(__dirname, '../../features/console/console.css'), 'utf8');
     expect(css).not.toMatch(/console-live|console-ping|\.console-tabs\b/);
+    // no KPI row between the title and the tab bar: keep a gap
+    expect(css).toMatch(/\.console-head \+ \.console-tabbar \{ margin-top: 12px; \}/);
   });
 });

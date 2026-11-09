@@ -148,7 +148,7 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
           scrollbarWidth: 'none',
           // Tabs align to the start edge when a scroll settles nearby (proximity: arrow/centre scrolls are not fought).
           scrollSnapType: 'x proximity',
-          scrollPaddingInline: 4,
+          scrollPaddingInline: FADE + 2,
           maskImage: fadeMask,
           WebkitMaskImage: fadeMask,
         }}

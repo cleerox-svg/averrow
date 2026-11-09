@@ -26,6 +26,7 @@
 
 /* Kit Tabs bar shared by the Console and TabbedWorkspace (admin workspaces). */
 .console-tabbar { margin-bottom: 14px; border-bottom: 1px solid var(--border-base); }
+.console-head + .console-tabbar { margin-top: 12px; }
 .console-def {
   color: var(--text-secondary);
   font-size: var(--type-body-size, 14px);

@@ -146,6 +146,8 @@ describe('LensStrip paging chevrons', () => {
   it('scroller snaps tabs to their start edge so none is left hard-clipped mid-tab', () => {
     render(<LensStrip lens="threats" onChange={() => {}} />);
     expect(screen.getByRole('tablist').style.scrollSnapType).toBe('x proximity');
+    // a snapped / focused tab clears the 14px edge fade
+    expect(screen.getByRole('tablist').style.scrollPaddingInline).toBe('16px');
     for (const t of screen.getAllByRole('tab')) expect(t.className).toMatch(/\bsnap-start\b/);
   });
   it('the source has no absolutely positioned chevron', () => {
