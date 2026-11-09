@@ -126,10 +126,10 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
   // Stacked-area inflow chart on the Threats page. Reads the
   // threat_cube_status cube (no raw threats COUNTs) so it stays cheap
   // at 113K+ threats. Accepts ?window=24h|7d.
-  router.get("/api/threats/inflow", async (request: Request, env: Env) => {
+  router.get("/api/threats/inflow", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleThreatInflow(request, env);
+    return handleThreatInflow(request, env, execCtx);
   });
   router.get("/api/threats", async (request: Request, env: Env) => {
     const ctx = await requireStaff(request, env);
@@ -364,10 +364,10 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
   // Powers the red "Critical Intelligence" banner on Home — replaces
   // the bare alertStats.critical count with a prioritized event list
   // (provider surges, bursts, mass-impersonation IPs, new campaigns).
-  router.get("/api/intel/critical-banner", async (request: Request, env: Env) => {
+  router.get("/api/intel/critical-banner", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleIntelCriticalBanner(request, env);
+    return handleIntelCriticalBanner(request, env, execCtx);
   });
 
   // ─── Trust Score History ──────────────────────────────────────────

@@ -14,6 +14,7 @@
 // row-per-(bucket,type) shape so the client doesn't pivot in JS.
 
 import { json } from "../lib/cors";
+import { swrCache } from "../lib/swr-cache";
 import type { Env } from "../types";
 
 type Window = "24h" | "7d";
@@ -29,23 +30,53 @@ interface InflowResponse {
   generated_at: string;
 }
 
-const CACHE_TTL_SECONDS = 300; // 5 min — cube refreshes every 5 min anyway.
+/** Live freshness — the cube refreshes every 5 min anyway. */
+export const THREAT_INFLOW_FRESH_S = 300;
+/**
+ * KV lifetime: outlives Navigator's 15-min Phase B warm (both windows are
+ * warmed), so the Home tempo band / Threats chart's first load finds an
+ * entry; an entry older than THREAT_INFLOW_FRESH_S is served and refreshed
+ * in the background (lib/swr-cache.ts).
+ */
+export const THREAT_INFLOW_TTL_S = 1200;
 
-export async function handleThreatInflow(request: Request, env: Env): Promise<Response> {
+/** KV key for a window. Any `window` other than `7d` is the 24h key. */
+export function threatInflowCacheKey(request: Request): string {
+  const windowParam = new URL(request.url).searchParams.get("window") === "7d" ? "7d" : "24h";
+  // v3: swrCache envelope (v2 fixed stale empty payloads from the
+  // SQLite modifier bug below; v1 cached them).
+  return `threat_inflow:v3:${windowParam}`;
+}
+
+export async function handleThreatInflow(
+  request: Request,
+  env: Env,
+  execCtx?: Pick<ExecutionContext, "waitUntil">,
+): Promise<Response> {
   const origin = request.headers.get("Origin");
   const url = new URL(request.url);
-  const windowParam = url.searchParams.get("window") === "7d" ? "7d" : "24h";
+  const windowParam: Window = url.searchParams.get("window") === "7d" ? "7d" : "24h";
 
-  // v2 cache prefix — invalidates stale empty payloads cached under
-  // v1 while the SQLite modifier bug below was returning 0 rows.
-  const cacheKey = `threat_inflow:v2:${windowParam}`;
   try {
-    const cached = await env.CACHE.get(cacheKey);
-    if (cached) return json(JSON.parse(cached), 200, origin);
-  } catch {
-    // KV transient error — fall through to live compute.
+    const { value } = await swrCache<InflowResponse>(
+      request,
+      env.CACHE,
+      threatInflowCacheKey(request),
+      {
+        ttlSeconds: THREAT_INFLOW_TTL_S,
+        freshSeconds: THREAT_INFLOW_FRESH_S,
+        waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
+      },
+      () => computeThreatInflow(env, windowParam),
+    );
+    return json(value, 200, origin);
+  } catch (err) {
+    console.error('[threat_inflow]', windowParam, err instanceof Error ? err.message : String(err));
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
+}
 
+async function computeThreatInflow(env: Env, windowParam: Window): Promise<InflowResponse> {
   // Bucket math:
   //   24h →  24 buckets, anchored to the current hour.
   //   7d  → 168 buckets.
@@ -65,73 +96,62 @@ export async function handleThreatInflow(request: Request, env: Env): Promise<Re
   // strftime to the same shape stored in threat_cube_status.hour_bucket
   // ('YYYY-MM-DD HH:00:00')
 
-  try {
-    const rows = await env.DB.prepare(`
-      SELECT hour_bucket, threat_type, SUM(threat_count) AS count
-        FROM threat_cube_status
-       WHERE hour_bucket >= strftime('%Y-%m-%d %H:00:00', ${earliest})
-       GROUP BY hour_bucket, threat_type
-       ORDER BY hour_bucket ASC
-    `).all<{ hour_bucket: string; threat_type: string; count: number }>();
+  const rows = await env.DB.prepare(`
+    SELECT hour_bucket, threat_type, SUM(threat_count) AS count
+      FROM threat_cube_status
+     WHERE hour_bucket >= strftime('%Y-%m-%d %H:00:00', ${earliest})
+     GROUP BY hour_bucket, threat_type
+     ORDER BY hour_bucket ASC
+  `).all<{ hour_bucket: string; threat_type: string; count: number }>();
 
-    // Build the bucket axis client-side: every hour from (now - N) to
-    // now, padded with zeros for any (bucket, type) combination missing
-    // from the cube. This keeps the chart visually continuous even
-    // during low-activity windows.
-    const buckets: string[] = [];
-    const cursor = new Date();
-    cursor.setUTCMinutes(0, 0, 0);
-    cursor.setUTCHours(cursor.getUTCHours() - (bucketCount - 1));
-    for (let i = 0; i < bucketCount; i++) {
-      const yyyy = cursor.getUTCFullYear();
-      const mm = String(cursor.getUTCMonth() + 1).padStart(2, "0");
-      const dd = String(cursor.getUTCDate()).padStart(2, "0");
-      const hh = String(cursor.getUTCHours()).padStart(2, "0");
-      buckets.push(`${yyyy}-${mm}-${dd} ${hh}:00:00`);
-      cursor.setUTCHours(cursor.getUTCHours() + 1);
-    }
-    const bucketIdx = new Map(buckets.map((b, i) => [b, i]));
-
-    // Pivot rows into per-threat-type count arrays.
-    const byType = new Map<string, number[]>();
-    for (const r of rows.results) {
-      const idx = bucketIdx.get(r.hour_bucket);
-      if (idx === undefined) continue; // older than window, ignore
-      let counts = byType.get(r.threat_type);
-      if (!counts) {
-        counts = new Array<number>(bucketCount).fill(0);
-        byType.set(r.threat_type, counts);
-      }
-      counts[idx] = (counts[idx] ?? 0) + r.count;
-    }
-
-    // Sort series by total desc — the chart layers from largest to
-    // smallest so the dominant type sits flat on the baseline. Stable
-    // ordering also keeps the legend consistent across pages.
-    const series = Array.from(byType.entries())
-      .map(([threat_type, counts]) => {
-        const total = counts.reduce((s, n) => s + n, 0);
-        return { threat_type, counts, total };
-      })
-      .sort((a, b) => b.total - a.total);
-
-    const total = series.reduce((s, t) => s + t.total, 0);
-
-    const body: InflowResponse = {
-      window: windowParam,
-      buckets,
-      series,
-      total,
-      generated_at: new Date().toISOString(),
-    };
-
-    try {
-      await env.CACHE.put(cacheKey, JSON.stringify(body), { expirationTtl: CACHE_TTL_SECONDS });
-    } catch { /* non-fatal */ }
-
-    return json(body, 200, origin);
-  } catch (err) {
-    console.error('[threat_inflow]', windowParam, err instanceof Error ? err.message : String(err));
-    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  // Build the bucket axis client-side: every hour from (now - N) to
+  // now, padded with zeros for any (bucket, type) combination missing
+  // from the cube. This keeps the chart visually continuous even
+  // during low-activity windows.
+  const buckets: string[] = [];
+  const cursor = new Date();
+  cursor.setUTCMinutes(0, 0, 0);
+  cursor.setUTCHours(cursor.getUTCHours() - (bucketCount - 1));
+  for (let i = 0; i < bucketCount; i++) {
+    const yyyy = cursor.getUTCFullYear();
+    const mm = String(cursor.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(cursor.getUTCDate()).padStart(2, "0");
+    const hh = String(cursor.getUTCHours()).padStart(2, "0");
+    buckets.push(`${yyyy}-${mm}-${dd} ${hh}:00:00`);
+    cursor.setUTCHours(cursor.getUTCHours() + 1);
   }
+  const bucketIdx = new Map(buckets.map((b, i) => [b, i]));
+
+  // Pivot rows into per-threat-type count arrays.
+  const byType = new Map<string, number[]>();
+  for (const r of rows.results) {
+    const idx = bucketIdx.get(r.hour_bucket);
+    if (idx === undefined) continue; // older than window, ignore
+    let counts = byType.get(r.threat_type);
+    if (!counts) {
+      counts = new Array<number>(bucketCount).fill(0);
+      byType.set(r.threat_type, counts);
+    }
+    counts[idx] = (counts[idx] ?? 0) + r.count;
+  }
+
+  // Sort series by total desc — the chart layers from largest to
+  // smallest so the dominant type sits flat on the baseline. Stable
+  // ordering also keeps the legend consistent across pages.
+  const series = Array.from(byType.entries())
+    .map(([threat_type, counts]) => {
+      const total = counts.reduce((s, n) => s + n, 0);
+      return { threat_type, counts, total };
+    })
+    .sort((a, b) => b.total - a.total);
+
+  const total = series.reduce((s, t) => s + t.total, 0);
+
+  return {
+    window: windowParam,
+    buckets,
+    series,
+    total,
+    generated_at: new Date().toISOString(),
+  };
 }

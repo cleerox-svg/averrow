@@ -30,7 +30,13 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { NAVIGATOR_WARM_TARGETS, warmRequest } from "../src/cron/navigator";
-import { isCacheRefresh } from "../src/lib/cache-refresh";
+import { isCacheRefresh, refreshAfterSeconds } from "../src/lib/cache-refresh";
+import { DASHBOARD_SNAPSHOT_TTL_S } from "../src/handlers/admin/dashboard";
+import { THREAT_INFLOW_TTL_S, handleThreatInflow } from "../src/handlers/threat-inflow";
+import { CRITICAL_BANNER_TTL_S } from "../src/handlers/intel";
+import { BRAND_STATS_TTL_S, BRAND_MOVERS_TTL_S } from "../src/handlers/brands";
+import { BRAND_AGGREGATE_TTL_S } from "../src/lib/brand-aggregates";
+import { EMAIL_POSTURE_ROLLUP_TTL_S } from "../src/lib/email-posture-rollup";
 import {
   handleObservatoryNodes,
   handleObservatoryArcs,
@@ -141,12 +147,64 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
       "B /api/v1/operations/stats",
       "B /api/feeds/aggregate-stats",
       "B /api/admin/dashboard",
+      "B /api/threats/inflow?window=24h",
+      "B /api/threats/inflow?window=7d",
+      "B /api/intel/critical-banner",
       "C /api/brands?view=top&limit=8&offset=0&range=7d",
       "C /api/brands/stats",
       "C /api/threat-actors?status=active",
       "C /api/threat-actors/stats",
+      "C /api/brands/movers",
+      "C /api/brands/aggregate/email-security",
+      "C /api/brands/aggregate/pressure",
+      "C /api/brands/aggregate/composition",
+      "C /api/brands/aggregate/posture",
     ]);
   });
+
+  it("the documented warm count matches the list (CLAUDE.md §6/§8, docs/ARCHITECTURE.md)", () => {
+    expect(NAVIGATOR_WARM_TARGETS).toHaveLength(31);
+  });
+
+  it("every page-load warm added in perf PR 3 reads a KV key before touching D1", async () => {
+    const paths = [
+      "/api/threats/inflow?window=24h",
+      "/api/threats/inflow?window=7d",
+      "/api/intel/critical-banner",
+      "/api/brands/movers",
+      "/api/brands/aggregate/email-security",
+      "/api/brands/aggregate/pressure",
+      "/api/brands/aggregate/composition",
+      "/api/brands/aggregate/posture",
+    ];
+    const keys = new Set<string>();
+    for (const p of paths) {
+      const t = NAVIGATOR_WARM_TARGETS.find((w) => w.path === p)!;
+      keys.add(await firstCacheKey(t.handler, p));
+    }
+    // One distinct key per warm (the two inflow windows never share one).
+    expect(keys.size).toBe(paths.length);
+  });
+
+  // Each warmed key must outlive its phase interval AND be recomputed by
+  // the warm before it lapses: entry age at a warm ≈ the interval, and a
+  // refresh-marked warm recomputes once age ≥ refreshAfterSeconds(ttl).
+  const PHASE_INTERVAL_S = { B: 900, C: 1800 } as const;
+  const TTLS: Array<{ name: string; phase: keyof typeof PHASE_INTERVAL_S; ttl: number }> = [
+    { name: "admin dashboard", phase: "B", ttl: DASHBOARD_SNAPSHOT_TTL_S },
+    { name: "threat inflow", phase: "B", ttl: THREAT_INFLOW_TTL_S },
+    { name: "critical banner", phase: "B", ttl: CRITICAL_BANNER_TTL_S },
+    { name: "brand stats", phase: "C", ttl: BRAND_STATS_TTL_S },
+    { name: "brand movers", phase: "C", ttl: BRAND_MOVERS_TTL_S },
+    { name: "pressure / composition aggregates", phase: "C", ttl: BRAND_AGGREGATE_TTL_S },
+    { name: "email-security aggregate (shared rollup)", phase: "C", ttl: EMAIL_POSTURE_ROLLUP_TTL_S },
+  ];
+  for (const { name, phase, ttl } of TTLS) {
+    it(`${name}: TTL ${ttl}s outlives the Phase ${phase} warm and each warm refreshes it`, () => {
+      expect(ttl).toBeGreaterThan(PHASE_INTERVAL_S[phase]);
+      expect(refreshAfterSeconds(ttl)).toBeLessThan(PHASE_INTERVAL_S[phase]);
+    });
+  }
 
   it("never warms a retired target", () => {
     const paths = NAVIGATOR_WARM_TARGETS.map((t) => t.path);
@@ -285,6 +343,11 @@ const CLIENT_REQUESTS: Array<{ warm: string; client: string; source: string; han
   { warm: "/api/brands?view=top&limit=8&offset=0&range=7d", client: "/api/brands?view=top&limit=8&offset=0&range=7d", source: "averrow-ops/src/features/observatory-v3/components/SidePanel.tsx:235 + hooks/useBrands.ts:95-97", handler: (r, e) => handleListBrands(r, e, null) },
   // ThreatActors default: status=active, no country/q, no limit.
   { warm: "/api/threat-actors?status=active", client: "/api/threat-actors?status=active", source: "averrow-ops/src/features/threat-actors/ThreatActors.tsx:353-357 + hooks/useThreatActors.ts:91-98", handler: handleListThreatActors },
+  // useThreatInflow: `/api/threats/inflow?window=${window}`; TempoBand asks for
+  // both windows. Any other `window` value is the 24h key (handler default).
+  { warm: "/api/threats/inflow?window=24h", client: "/api/threats/inflow?window=24h", source: "averrow-ops/src/features/threats/useThreatInflow.ts + features/home/TempoBand.tsx", handler: handleThreatInflow },
+  { warm: "/api/threats/inflow?window=7d", client: "/api/threats/inflow?window=7d", source: "averrow-ops/src/features/threats/useThreatInflow.ts + features/home/TempoBand.tsx", handler: handleThreatInflow },
+  { warm: "/api/threats/inflow?window=24h", client: "/api/threats/inflow", source: "inflow key canonicalisation, absent window", handler: handleThreatInflow },
   // MCP smoke probe (service JWT, auditor → scope null).
   { warm: "/api/dashboard/overview", client: "/api/dashboard/overview", source: "averrow-mcp/src/index.ts:354", handler: (r, e) => handleDashboardOverview(r, e, null) },
   // Observatory intel-feed default — what the ops client
@@ -480,6 +543,20 @@ const SOURCE_CHECKS: Record<string, SourceCheck[]> = {
   "/api/v1/operations/stats": [{ file: USE_OPS, present: [closedLiteral("/api/v1/operations/stats")] }],
   "/api/feeds/aggregate-stats": [{ file: `${OPS}/hooks/useFeeds.ts`, present: [closedLiteral("/api/feeds/aggregate-stats")] }],
   "/api/admin/dashboard": [{ file: `${OPS}/hooks/useDashboardSnapshot.ts`, present: [closedLiteral("/api/admin/dashboard")] }],
+  ...Object.fromEntries((["24h", "7d"] as const).map((w) => [
+    `/api/threats/inflow?window=${w}`,
+    [
+      {
+        file: `${OPS}/features/threats/useThreatInflow.ts`,
+        present: [
+          /['"`]\/api\/threats\/inflow\?window=\$\{\s*window\s*\}['"`]/,
+          /\bInflowWindow\s*=\s*['"]24h['"]\s*\|\s*['"]7d['"]/,
+        ],
+      },
+      { file: `${OPS}/features/home/TempoBand.tsx`, present: [new RegExp(`useThreatInflow\\(\\s*['"]${w}['"]\\s*\\)`)] },
+    ],
+  ])),
+  "/api/intel/critical-banner": [{ file: `${OPS}/hooks/useCriticalBanner.ts`, present: [closedLiteral("/api/intel/critical-banner")] }],
   // Phase C.
   "/api/brands?view=top&limit=8&offset=0&range=7d": [
     {
@@ -523,6 +600,11 @@ const SOURCE_CHECKS: Record<string, SourceCheck[]> = {
     },
   ],
   "/api/threat-actors/stats": [{ file: USE_TA, present: [closedLiteral("/api/threat-actors/stats")] }],
+  "/api/brands/movers": [{ file: `${OPS}/hooks/useBrandMovers.ts`, present: [closedLiteral("/api/brands/movers")] }],
+  ...Object.fromEntries((["email-security", "pressure", "composition", "posture"] as const).map((agg) => [
+    `/api/brands/aggregate/${agg}`,
+    [{ file: `${OPS}/hooks/useBrandAggregates.ts`, present: [closedLiteral(`/api/brands/aggregate/${agg}`)] }],
+  ])),
   // Phase A — Intel Feed (headline bar + event rail). The default request is
   // exactly `period=1h&limit=40` with `kinds` dropped when there is no filter.
   "/api/observatory/events?period=1h&limit=40": [

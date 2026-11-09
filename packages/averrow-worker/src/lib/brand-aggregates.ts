@@ -1,7 +1,7 @@
 // Catalog-level aggregate queries for the Brands Intel page.
 //
 // Per PR13: each aggregate is a single GROUP BY (or small JOIN) over
-// the catalog. Wrapped in cachedValue (5min TTL; posture 1h; email-security derives from
+// the catalog. Wrapped in cachedValue (1h TTL + Navigator refresh-ahead; email-security derives from
 // the shared 1h email-posture rollup in lib/email-posture-rollup.ts) so the Intel page
 // stays cheap even when the catalog grows to 100K+ brands. Per
 // CLAUDE.md: bare COUNT(*) FROM threats is a code-review red flag —
@@ -20,6 +20,26 @@ import {
   emailPostureRollup, emailPostureTotals, gradeDistribution, dmarcDistribution,
   type EmailPostureRollupRow,
 } from './email-posture-rollup';
+
+/**
+ * `refresh` = the call comes from a Navigator warm (Phase C, every 30 min):
+ * cachedValue then recomputes once the entry is refreshAfterSeconds(ttl)
+ * old, so the key never lapses between warms. Live handlers pass
+ * `isCacheRefresh(request)`, which is false for every HTTP request.
+ */
+export interface AggregateOpts {
+  refresh?: boolean;
+}
+
+/**
+ * TTL of the pressure + composition aggregates. Was 300s, which no
+ * 30-min warm could keep warm — the Explore → Brands tab computed them
+ * cold on most visits (prod: composition/posture 500'd after ~3s cold,
+ * then 200 on retry). 1h + refresh-ahead: Phase C recomputes each key on
+ * every warm (threshold 1740s), so data is ≤ ~30 min old and the key never
+ * lapses. Both are catalog-level distributions that move slowly.
+ */
+export const BRAND_AGGREGATE_TTL_S = 3600;
 
 // ── Email Security ─────────────────────────────────────────────
 
@@ -44,8 +64,8 @@ const BRAND_AGG_GRADE_RANK: Record<string, number> = {
  * rollup is already cached (1h), so a second wrapper would only stack
  * staleness for the same single KV read.
  */
-export async function emailSecurityAggregate(env: Env): Promise<EmailSecurityAggregate> {
-  return deriveEmailSecurityAggregate(await emailPostureRollup(env));
+export async function emailSecurityAggregate(env: Env, opts: AggregateOpts = {}): Promise<EmailSecurityAggregate> {
+  return deriveEmailSecurityAggregate(await emailPostureRollup(env, opts));
 }
 
 export function deriveEmailSecurityAggregate(rows: EmailPostureRollupRow[]): EmailSecurityAggregate {
@@ -95,9 +115,9 @@ export interface PressureAggregate {
   top_dark_web:          Array<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>;
 }
 
-export async function pressureAggregate(env: Env): Promise<PressureAggregate> {
+export async function pressureAggregate(env: Env, opts: AggregateOpts = {}): Promise<PressureAggregate> {
   return cachedValue<PressureAggregate>(
-    env, 'brand-aggregate.pressure', 300,
+    env, 'brand-aggregate.pressure', BRAND_AGGREGATE_TTL_S,
     async () => {
       const baseSelect = (joinTable: string, where: string) => `
         SELECT b.id AS brand_id, b.name AS brand_name, b.canonical_domain, b.logo_url, COUNT(*) AS count
@@ -154,6 +174,7 @@ export async function pressureAggregate(env: Env): Promise<PressureAggregate> {
         top_dark_web:    dark.results,
       };
     },
+    { refresh: opts.refresh },
   );
 }
 
@@ -167,9 +188,9 @@ export interface CompositionAggregate {
   total:         number;
 }
 
-export async function compositionAggregate(env: Env): Promise<CompositionAggregate> {
+export async function compositionAggregate(env: Env, opts: AggregateOpts = {}): Promise<CompositionAggregate> {
   return cachedValue<CompositionAggregate>(
-    env, 'brand-aggregate.composition', 300,
+    env, 'brand-aggregate.composition', BRAND_AGGREGATE_TTL_S,
     async () => {
       const [tier, source, tranco, geo] = await Promise.all([
         env.DB.prepare(`
@@ -224,6 +245,7 @@ export async function compositionAggregate(env: Env): Promise<CompositionAggrega
         total,
       };
     },
+    { refresh: opts.refresh },
   );
 }
 
@@ -285,7 +307,7 @@ export interface PostureAggregate {
   total_scored:              number;
 }
 
-export async function postureAggregate(env: Env): Promise<PostureAggregate> {
+export async function postureAggregate(env: Env, opts: AggregateOpts = {}): Promise<PostureAggregate> {
   return cachedValue<PostureAggregate>(
     // 1h: snapshots are written once a day (16 0 * * * brand_scores cron).
     env, 'brand-aggregate.posture', 3600,
@@ -440,5 +462,6 @@ export async function postureAggregate(env: Env): Promise<PostureAggregate> {
         total_scored:              total?.n ?? 0,
       };
     },
+    { refresh: opts.refresh },
   );
 }

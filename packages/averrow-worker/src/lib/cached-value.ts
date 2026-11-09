@@ -36,6 +36,7 @@
 // pattern and migration story.
 
 import type { Env } from "../types";
+import { refreshAfterSeconds } from "./cache-refresh";
 
 const CACHE_PREFIX = "cv:"; // distinct namespace from cc: (counter cache)
 const STATS_KEY = "cc:_stats"; // shared stats ring with cached-count.ts
@@ -91,13 +92,19 @@ interface CachedEntry<T> {
  *                     lock held waits — at most `waitMs` (≤10s) — then computes.
  *                     Fails open on KV errors. This option is the one case
  *                     where the helper can return data older than `ttlSeconds`.
+ * @param opts.refresh Refresh-ahead for a Navigator warm (pass
+ *                     `isCacheRefresh(request)`): the entry is treated as
+ *                     expired once it is `refreshAfterSeconds(ttlSeconds)` old
+ *                     (lib/cache-refresh.ts), so a warm on a cadence ≤ the TTL
+ *                     recomputes the key before live readers see it lapse.
+ *                     Live callers leave it unset.
  */
 export async function cachedValue<T>(
   env: Env,
   key: string,
   ttlSeconds: number,
   compute: () => Promise<T>,
-  opts: { ttlFor?: (value: T) => number; singleFlight?: SingleFlightOptions } = {},
+  opts: { ttlFor?: (value: T) => number; singleFlight?: SingleFlightOptions; refresh?: boolean } = {},
 ): Promise<T> {
   if (ttlSeconds <= 0) {
     const value = await compute();
@@ -106,6 +113,9 @@ export async function cachedValue<T>(
   }
 
   const cacheKey = CACHE_PREFIX + key;
+  // Refresh-ahead (Navigator warm): an entry counts as fresh only until
+  // refreshAfterSeconds(ttl), so the warm recomputes it before it expires.
+  const freshFor = opts.refresh ? refreshAfterSeconds(ttlSeconds) : ttlSeconds;
 
   /** The stored entry (fresh or expired-but-still-in-KV), or null. */
   const readEntry = async (): Promise<{ entry: CachedEntry<T>; fresh: boolean } | null> => {
@@ -114,7 +124,7 @@ export async function cachedValue<T>(
       if (raw) {
         const parsed = JSON.parse(raw) as CachedEntry<T>;
         const ageSeconds = (Date.now() - parsed.t) / 1000;
-        return { entry: parsed, fresh: ageSeconds < ttlSeconds };
+        return { entry: parsed, fresh: ageSeconds < freshFor };
       }
     } catch {
       // KV transient — fall through to compute.

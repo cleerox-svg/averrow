@@ -85,10 +85,12 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   // Tier 2a P5 — single KV-cached composite the /admin landing reads
   // instead of fanning out to ~6 endpoints. Slices are independently
   // nullable (partial failure → missing slice, never a 500).
-  router.get("/api/admin/dashboard", async (request: Request, env: Env) => {
+  // execCtx: a stale snapshot is served at once and refreshed under
+  // waitUntil (lib/swr-cache.ts).
+  router.get("/api/admin/dashboard", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleAdminDashboard(request, env, ctx);
+    return handleAdminDashboard(request, env, ctx, execCtx);
   });
   // Pipeline drill-down detail — must be defined after the bare
   // /api/admin/pipeline-status above so itty-router doesn't

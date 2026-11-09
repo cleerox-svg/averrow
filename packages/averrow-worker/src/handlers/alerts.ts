@@ -35,8 +35,9 @@ import { json } from "../lib/cors";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { audit } from "../lib/audit";
 import { scopeCacheSegment, GLOBAL_SCOPE_SEGMENT } from "../lib/scope-cache-key";
+import { cachedValue } from "../lib/cached-value";
 import { isPlatformStaff } from "../middleware/auth";
-import type { AlertStatus, Severity } from "../lib/alerts";
+import type { AlertStatus } from "../lib/alerts";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
@@ -131,21 +132,21 @@ const ALERT_CACHE_TTL_SECONDS = 60;
 /**
  * Drop the cached triage summary + stats for the caller's scope and for the
  * `global` segment (the one every staff caller reads), so the bell count and
- * stat tiles drop right after an ops mutation instead of up to 60s later.
+ * stat tiles drop right after an ops mutation instead of up to 60s later,
+ * and bump the list-cache generation so every cached `GET /api/alerts` page
+ * (any scope, any filters) is bypassed from the next request on.
  * Other alert writers (tenant actions, auto-triage, fan-out) don't call
- * this — the 60s TTL bounds staleness for those.
+ * this — the 60s / 30s TTLs bound staleness for those.
  */
-async function invalidateAlertCaches(env: Env, scope?: OrgScope | null): Promise<void> {
+export async function invalidateAlertCaches(env: Env, scope?: OrgScope | null): Promise<void> {
   const segments = new Set<string>([GLOBAL_SCOPE_SEGMENT, await scopeCacheSegment(scope)]);
-  const deletes: Promise<void>[] = [];
+  const writes: Promise<void>[] = [bumpAlertListGeneration(env)];
   for (const seg of segments) {
-    deletes.push(env.CACHE.delete(TRIAGE_CACHE_PREFIX + seg), env.CACHE.delete(STATS_CACHE_PREFIX + seg));
+    writes.push(env.CACHE.delete(TRIAGE_CACHE_PREFIX + seg), env.CACHE.delete(STATS_CACHE_PREFIX + seg));
   }
-  try {
-    await Promise.all(deletes);
-  } catch {
-    /* KV failure: the 60s TTL still bounds staleness */
-  }
+  // allSettled: one failed KV op must not skip the others (the list
+  // generation bump matters most — its keys have no delete fallback).
+  await Promise.allSettled(writes);
 }
 
 type AlertIdsParse =
@@ -181,18 +182,101 @@ function parseBulkTarget(body: { alert_ids?: unknown; brand_id?: unknown }):
   return { ok: true, brandId: null, alertIds: parsed.ids };
 }
 
+/** Effective (normalised) list query. Every field the SQL depends on. */
+export interface AlertListQuery {
+  status: string | null;
+  severity: string | null;
+  alertType: string | null;
+  brandId: string | null;
+  search: string | null;
+  /** The LIMIT actually bound (min(200, ?limit), default 100). */
+  limit: number;
+  offset: number;
+}
+
+/**
+ * Parse `/api/alerts` query params into the values the SQL actually uses.
+ * An empty filter (`?status=`) applies no filter, exactly like an absent
+ * one, so both normalise to null; `limit` is clamped the way it is bound.
+ */
+export function parseAlertListQuery(url: URL): AlertListQuery {
+  const p = url.searchParams;
+  const opt = (k: string): string | null => p.get(k) || null;
+  return {
+    status: opt("status"),
+    severity: opt("severity"),
+    alertType: opt("alert_type"),
+    brandId: opt("brand_id"),
+    search: opt("search"),
+    limit: Math.min(200, parseInt(p.get("limit") ?? "100", 10)),
+    offset: parseInt(p.get("offset") ?? "0", 10),
+  };
+}
+
+/**
+ * Generation counter for the list cache. KV has no prefix delete, so every
+ * list key embeds the current generation; an ops mutation writes a new one
+ * (`bumpAlertListGeneration`) and every older key becomes unreachable at
+ * once — for every scope and filter combination — and ages out on its own.
+ */
+export const ALERTS_LIST_GEN_KEY = "alerts_list_gen";
+
+/**
+ * List cache freshness. Short: the list is a triage queue. cachedValue
+ * stamps entries, so the 30s freshness holds even though KV's minimum
+ * expirationTtl is 60s.
+ */
+export const ALERTS_LIST_TTL_SECONDS = 30;
+
+/** Keys longer than this (a very long `search`) are not cached — KV's key limit is 512 bytes. */
+const ALERTS_LIST_MAX_KEY_LENGTH = 400;
+
+/**
+ * KV key (cachedValue adds `cv:`) for one list request: generation + scope
+ * segment + every effective query field, in a fixed order, URL-encoded.
+ */
+export function alertListCacheKey(gen: string, scopeSegment: string, q: AlertListQuery): string {
+  const fields = new URLSearchParams();
+  fields.set("status", q.status ?? "");
+  fields.set("severity", q.severity ?? "");
+  fields.set("alert_type", q.alertType ?? "");
+  fields.set("brand_id", q.brandId ?? "");
+  fields.set("search", q.search ?? "");
+  fields.set("limit", String(q.limit));
+  fields.set("offset", String(q.offset));
+  return `alerts_list:v1:${gen}:${scopeSegment}:${fields.toString()}`;
+}
+
+/** Current list-cache generation; null when KV can't be read (→ don't cache). */
+async function readAlertListGeneration(env: Env): Promise<string | null> {
+  try {
+    return (await env.CACHE.get(ALERTS_LIST_GEN_KEY)) ?? "0";
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Invalidate every cached list page. The new value is unique per call, so
+ * two concurrent mutations can't write the same generation back. Expiry
+ * (1 day) only cleans the key up: if it lapses, readers fall back to "0",
+ * whose entries expired long before (KV life of a list entry is 60s).
+ */
+async function bumpAlertListGeneration(env: Env): Promise<void> {
+  const gen = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  await env.CACHE.put(ALERTS_LIST_GEN_KEY, gen, { expirationTtl: 86_400 });
+}
+
 // GET /api/alerts
+//
+// KV-cached 30s (cachedValue) per generation + scope segment + every
+// effective query param — see alertListCacheKey. Ops mutations bump the
+// generation (invalidateAlertCaches), so the triager's own change shows on
+// the next load; other alert writers rely on the 30s freshness.
 export async function handleListAlerts(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const url = new URL(request.url);
-    const status = url.searchParams.get("status") as AlertStatus | null;
-    const severity = url.searchParams.get("severity") as Severity | null;
-    const alertType = url.searchParams.get("alert_type");
-    const brandId = url.searchParams.get("brand_id");
-    const search = url.searchParams.get("search");
-    const limit = parseInt(url.searchParams.get("limit") ?? "100", 10);
-    const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+    const q = parseAlertListQuery(new URL(request.url));
 
     // Build WHERE clause — platform-wide for staff (PR-C); org-scope filter
     // only when a scope is present.
@@ -200,63 +284,79 @@ export async function handleListAlerts(request: Request, env: Env, scope?: OrgSc
     if (!scopeFilter) {
       return json({ success: true, data: [], total: 0 }, 200, origin);
     }
-    let where = `WHERE ${scopeFilter.where}`;
-    const params: unknown[] = [...scopeFilter.params];
 
-    if (status) {
-      where += ` AND a.status = ?`;
-      params.push(status);
-    }
-    if (severity) {
-      where += ` AND a.severity = ?`;
-      params.push(severity);
-    }
-    if (alertType) {
-      where += ` AND a.alert_type = ?`;
-      params.push(alertType);
-    }
-    if (brandId) {
-      where += ` AND a.brand_id = ?`;
-      params.push(brandId);
-    }
-    if (search) {
-      where += ` AND (a.title LIKE ? OR a.summary LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
-    }
-
-    const tally = newTally();
-
-    // Count
-    const countRow = await env.DB.prepare(
-      `SELECT COUNT(*) as c FROM alerts a ${where}`
-    ).bind(...params).first<{ c: number }>();
-    const total = countRow?.c ?? 0;
-    // .first() doesn't expose meta — count the query without rows.
-    tally.queries += 1;
-
-    // Paginated rows with brand + assignee joins + SaaS technique (joined via
-    // threat). Falls back without the SaaS join if that migration is absent.
-    const tail = `${where}
-         ORDER BY
-           ${SEVERITY_RANK_SQL},
-           a.created_at DESC
-         LIMIT ? OFFSET ?`;
-    let rows: D1Result;
-    try {
-      rows = await env.DB.prepare(`${staffAlertSelect(true)} ${tail}`)
-        .bind(...params, Math.min(200, limit), offset).all();
-    } catch {
-      rows = await env.DB.prepare(`${staffAlertSelect(false)} ${tail}`)
-        .bind(...params, Math.min(200, limit), offset).all();
-    }
-    addToTally(tally, rows.meta);
-
-    recordD1Reads(env, "alerts_list", tally);
-    return json({ success: true, data: rows.results, total }, 200, origin);
+    const gen = await readAlertListGeneration(env);
+    const key = gen === null ? null : alertListCacheKey(gen, await scopeCacheSegment(scope), q);
+    const compute = () => computeAlertList(env, scopeFilter, q);
+    const body = key !== null && key.length <= ALERTS_LIST_MAX_KEY_LENGTH
+      ? await cachedValue(env, key, ALERTS_LIST_TTL_SECONDS, compute)
+      : await compute();
+    return json(body, 200, origin);
   } catch (err) {
     console.error('[alerts]', err instanceof Error ? err.message : String(err));
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
+}
+
+async function computeAlertList(
+  env: Env,
+  scopeFilter: { where: string; params: unknown[] },
+  q: AlertListQuery,
+): Promise<{ success: true; data: Record<string, unknown>[]; total: number }> {
+  const { status, severity, alertType, brandId, search, limit, offset } = q;
+  let where = `WHERE ${scopeFilter.where}`;
+  const params: unknown[] = [...scopeFilter.params];
+
+  if (status) {
+    where += ` AND a.status = ?`;
+    params.push(status);
+  }
+  if (severity) {
+    where += ` AND a.severity = ?`;
+    params.push(severity);
+  }
+  if (alertType) {
+    where += ` AND a.alert_type = ?`;
+    params.push(alertType);
+  }
+  if (brandId) {
+    where += ` AND a.brand_id = ?`;
+    params.push(brandId);
+  }
+  if (search) {
+    where += ` AND (a.title LIKE ? OR a.summary LIKE ?)`;
+    params.push(`%${search}%`, `%${search}%`);
+  }
+
+  const tally = newTally();
+
+  // Count
+  const countRow = await env.DB.prepare(
+    `SELECT COUNT(*) as c FROM alerts a ${where}`
+  ).bind(...params).first<{ c: number }>();
+  const total = countRow?.c ?? 0;
+  // .first() doesn't expose meta — count the query without rows.
+  tally.queries += 1;
+
+  // Paginated rows with brand + assignee joins + SaaS technique (joined via
+  // threat). Falls back without the SaaS join if that migration is absent.
+  const tail = `${where}
+       ORDER BY
+         ${SEVERITY_RANK_SQL},
+         a.created_at DESC
+       LIMIT ? OFFSET ?`;
+  let rows: D1Result<Record<string, unknown>>;
+  try {
+    rows = await env.DB.prepare(`${staffAlertSelect(true)} ${tail}`)
+      .bind(...params, limit, offset).all<Record<string, unknown>>();
+  } catch {
+    rows = await env.DB.prepare(`${staffAlertSelect(false)} ${tail}`)
+      .bind(...params, limit, offset).all<Record<string, unknown>>();
+  }
+  addToTally(tally, rows.meta);
+
+  recordD1Reads(env, "alerts_list", tally);
+  return { success: true, data: rows.results, total };
 }
 
 // GET /api/alerts/:id — same columns + joins as the list, so a deep-linked

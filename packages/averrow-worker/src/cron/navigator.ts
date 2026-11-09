@@ -55,7 +55,17 @@ import { handleAdminDashboard } from '../handlers/admin';
 import type { AuthContext } from '../middleware/auth';
 import { handleListOperations, handleOperationsStats } from '../handlers/operations';
 import { handleFeedsAggregateStats } from '../handlers/feeds';
-import { handleListBrands, handleBrandStats } from '../handlers/brands';
+import {
+  handleListBrands,
+  handleBrandStats,
+  handleBrandMovers,
+  handleBrandsAggregateEmailSecurity,
+  handleBrandsAggregatePressure,
+  handleBrandsAggregateComposition,
+  handleBrandsAggregatePosture,
+} from '../handlers/brands';
+import { handleThreatInflow } from '../handlers/threat-inflow';
+import { handleIntelCriticalBanner } from '../handlers/intel';
 import { handleListThreatActors, handleThreatActorStats } from '../handlers/threatActors';
 import { getBudgetState, shouldSkipNonEssentialWarms, recordNavigatorSkip, DAILY_BUDGET, WARN_THRESHOLD } from '../lib/d1-budget';
 
@@ -82,8 +92,10 @@ export const NAVIGATOR_LEGACY_AGENT_ID = 'fast_tick';
 // Phases (cadence + budget gating live in runNavigatorImpl, unchanged):
 //   A  — every 10 min (Observatory landing: globe 7d + desktop side panel)
 //   A2 — every 15 min (Observatory 24h/30d period toggles + 7d HEATMAP mode)
-//   B  — every 15 min (Campaigns, Agents, Feeds, admin dashboard, MCP probe)
-//   C  — every 30 min (Brands + Threat Actors pages)
+//   B  — every 15 min (Campaigns, Agents, Feeds, admin dashboard, MCP probe,
+//        Home tempo band + critical banner)
+//   C  — every 30 min (Brands + Threat Actors pages, Brand movers, Explore →
+//        Brands aggregates)
 
 export type NavigatorWarmPhase = 'A' | 'A2' | 'B' | 'C';
 
@@ -153,11 +165,17 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   { phase: 'B', path: '/api/v1/operations?limit=12&offset=0', consumer: 'ops Campaigns default list (useOperations)', handler: handleListOperations },
   { phase: 'B', path: '/api/v1/operations/stats', consumer: 'ops Campaigns (useOperationsStats); MCP smoke probe', handler: handleOperationsStats },
   { phase: 'B', path: '/api/feeds/aggregate-stats', consumer: 'ops Feeds (useFeedStats)', handler: handleFeedsAggregateStats },
-  // Warm the super_admin variant — it's the fuller snapshot (its
-  // threat_health slice is the more expensive one to compute) and a
-  // super_admin visit hits it warm. A plain admin reads a separate
-  // role-scoped key and just repopulates cheaply on a cold visit.
-  { phase: 'B', path: '/api/admin/dashboard', consumer: 'ops admin dashboard (useDashboardSnapshot), super_admin variant', handler: (req, env) => handleAdminDashboard(req, env, DASHBOARD_WARM_CTX) },
+  // Warmed as super_admin: a super_admin compute also writes the plain-admin
+  // key (same snapshot minus the super_admin-only threat_health slice), so
+  // this one warm keeps BOTH role variants warm. swrCache (1200s KV life,
+  // refreshed on every Phase B tick); live reads accept ≤75s, older entries
+  // are served and refreshed in the background.
+  { phase: 'B', path: '/api/admin/dashboard', consumer: 'ops admin dashboard (useDashboardSnapshot), super_admin + admin variants', handler: (req, env) => handleAdminDashboard(req, env, DASHBOARD_WARM_CTX) },
+  // Home TempoBand reads both windows on first paint; /threats reads one.
+  // requireStaff, unscoped — one key per window for every staff role.
+  { phase: 'B', path: '/api/threats/inflow?window=24h', consumer: 'ops Home TempoBand + Threats ThreatInflowChart (useThreatInflow)', handler: handleThreatInflow },
+  { phase: 'B', path: '/api/threats/inflow?window=7d', consumer: 'ops Home TempoBand + Threats ThreatInflowChart (useThreatInflow)', handler: handleThreatInflow },
+  { phase: 'B', path: '/api/intel/critical-banner', consumer: 'ops Home queue critical-intel row (useHomeQueue → useCriticalBanner)', handler: handleIntelCriticalBanner },
 
   // ── Phase C — Brands + Threat Actors ──
   // handleListBrands keys on tab/sort/limit only (view + range are not
@@ -166,6 +184,14 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   { phase: 'C', path: '/api/brands/stats', consumer: 'ops Brands (useBrandStats)', handler: handleBrandStats },
   { phase: 'C', path: '/api/threat-actors?status=active', consumer: 'ops ThreatActors default active-only list (useThreatActors)', handler: handleListThreatActors },
   { phase: 'C', path: '/api/threat-actors/stats', consumer: 'ops ThreatActors (useThreatActorStats)', handler: handleThreatActorStats },
+  // Brand movers + the four catalog aggregates the Explore → Brands tab
+  // loads together (Brands.tsx). All requireStaff + unscoped (one global
+  // key). 1h TTLs refreshed ahead on every Phase C warm (threshold 1740s).
+  { phase: 'C', path: '/api/brands/movers', consumer: 'ops Explore → Brands movers (useBrandMovers; Home digest reads the same React Query entry)', handler: handleBrandMovers },
+  { phase: 'C', path: '/api/brands/aggregate/email-security', consumer: 'ops Explore → Brands (useEmailSecurityAggregate)', handler: handleBrandsAggregateEmailSecurity },
+  { phase: 'C', path: '/api/brands/aggregate/pressure', consumer: 'ops Explore → Brands (usePressureAggregate)', handler: handleBrandsAggregatePressure },
+  { phase: 'C', path: '/api/brands/aggregate/composition', consumer: 'ops Explore → Brands (useCompositionAggregate)', handler: handleBrandsAggregateComposition },
+  { phase: 'C', path: '/api/brands/aggregate/posture', consumer: 'ops Explore → Brands (usePostureAggregate)', handler: handleBrandsAggregatePosture },
 ];
 
 /**
@@ -649,18 +675,20 @@ async function runNavigatorImpl(
   //
   //   Phase A   — every 10 min (Observatory 7d + side-panel live/operations)
   //   Phase A2  — every 15 min (Observatory 24h/30d alt periods + 7d heatmap)
-  //   Phase B   — every 15 min (Dashboard + agents + operations + feeds)
-  //   Phase C   — every 30 min (Brands + Threat Actors)
+  //   Phase B   — every 15 min (Dashboard + agents + operations + feeds +
+  //               Home inflow 24h/7d + critical banner)
+  //   Phase C   — every 30 min (Brands + Threat Actors + brand movers +
+  //               the four Explore → Brands aggregates)
   //
   // The exact targets (and the consumer each serves) are the module-level
-  // NAVIGATOR_WARM_TARGETS table — 23 warms across the four phases.
+  // NAVIGATOR_WARM_TARGETS table — 31 warms across the four phases.
   //
   // Warm CALLS over a 30-day month if Navigator runs clean (*/5 cron =
   // 8,640 ticks; the minute gates below pick the subset each phase runs on):
   //   A:  6 warms × 4,320 ticks (minute % 10) = 25,920
   //   A2: 7 warms × 2,880 ticks (minute % 15) = 20,160
-  //   B:  6 warms × 2,880 ticks (minute % 15) = 17,280
-  //   C:  4 warms × 1,440 ticks (minute % 30) =  5,760
+  //   B:  9 warms × 2,880 ticks (minute % 15) = 25,920
+  //   C:  9 warms × 1,440 ticks (minute % 30) = 12,960
   // A warm call is not a D1 recompute. A refresh-marked Observatory warm
   // recomputes only once the key's age ≥ refreshAfterSeconds(ttl):
   //   - nodes/stats 7d (1800s TTL, Phase A every 600s): threshold 840s —
@@ -684,6 +712,14 @@ async function runNavigatorImpl(
   //     30d/90d): threshold 12540s, recompute at age 12600s (one per 3.5h,
   //     ~7/day per key, was 96/day for nodes/stats), with one spare A2 slot
   //     (13500s) before the key could lapse.
+  //   - B admin dashboard / inflow / critical banner (swrCache, 1200s KV
+  //     life): threshold 540s, so every B warm (age ≈900s) recomputes
+  //     (4/h per key; the admin dashboard's super_admin compute also writes
+  //     the plain-admin key). Live reads accept 75s / 300s / 60s old entries
+  //     and refresh older ones in the background — the same compute rate
+  //     the old short TTLs had, minus the cold first paint;
+  //   - C brand stats / movers / aggregates (3600s TTL): threshold 1740s,
+  //     so every C warm (age ≈1800s) recomputes (2/h per key).
   // The operations list warms are plain fill-on-miss (1800s TTL).
   // Over the D1 soft-cap, A2/B/C drop out entirely and Phase A runs
   // unmarked (fill-on-miss), so no warm forces a recompute.
@@ -752,10 +788,9 @@ async function runNavigatorImpl(
       }
 
       // Phase B: Dashboard + agents + operations — every 15 min
-      // Includes the Tier 2a admin dashboard snapshot (P7). With a ~75s
-      // snapshot TTL the 15-min warm won't cover every TTL gap, but a cold
-      // visit just repopulates it — the composite's own miss path is cheap
-      // since its sub-slices are independently cached.
+      // Includes the Tier 2a admin dashboard snapshot (P7): 1200s KV life
+      // (swrCache) so the 15-min warm covers the gap; live reads keep the
+      // 75s freshness by refreshing older entries in the background.
       if (runPhaseB && !isOverCap() && !skipNonEssential) {
         cacheWarmed += await warmPhase('B');
       }

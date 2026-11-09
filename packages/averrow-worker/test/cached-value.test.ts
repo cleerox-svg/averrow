@@ -45,6 +45,20 @@ describe("cachedValue", () => {
     expect(parsed.v).toEqual({ items: [1, 2, 3], total: 3 });
   });
 
+  it("refresh (Navigator warm): recomputes once the entry is refreshAfterSeconds(ttl) old; live reads keep the full ttl", async () => {
+    // 3600s TTL → refresh threshold 3600 − 1800 − 60 = 1740s.
+    const seedAged = (ageS: number) =>
+      kv.store.set("cv:test.refresh", JSON.stringify({ v: "old", t: Date.now() - ageS * 1000 }));
+    const compute = vi.fn().mockResolvedValue("new");
+
+    seedAged(1700);
+    expect(await cachedValue(env, "test.refresh", 3600, compute, { refresh: true })).toBe("old");
+    seedAged(1800);
+    expect(await cachedValue(env, "test.refresh", 3600, compute)).toBe("old"); // live: still fresh
+    expect(await cachedValue(env, "test.refresh", 3600, compute, { refresh: true })).toBe("new");
+    expect(compute).toHaveBeenCalledOnce();
+  });
+
   it("returns cached value on warm cache without computing", async () => {
     const compute = vi.fn().mockResolvedValue([{ a: 1 }, { a: 2 }]);
     await cachedValue(env, "test.warm", 60, compute);

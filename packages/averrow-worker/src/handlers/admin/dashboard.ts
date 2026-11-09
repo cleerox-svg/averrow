@@ -34,6 +34,7 @@ import {
 import { handleSystemHealth } from "./health";
 import { handlePipelineStatus } from "./pipeline";
 import { handleMetricsFeedFailures } from "./metrics";
+import { swrCache, writeSwrEntry } from "../../lib/swr-cache";
 
 
 // ─── Admin Dashboard Snapshot (P5 — Tier 2a) ─────────────────────
@@ -159,15 +160,32 @@ export interface DashboardSnapshot {
  *  (`:sa` for super_admin, `:admin` for plain admin). Exported so
  *  mutation handlers that invalidate the snapshot (e.g. budget config
  *  patch in handlers/budget.ts) reference the SAME string instead of
- *  re-typing it. See `dashboardSnapshotCacheKeys()`. */
-export const DASHBOARD_SNAPSHOT_CACHE_KEY = "admin:dashboard_snapshot:v1";
+ *  re-typing it. See `dashboardSnapshotCacheKeys()`.
+ *  v2 (2026-11): entries are lib/swr-cache.ts envelopes `{ v, t }`. */
+export const DASHBOARD_SNAPSHOT_CACHE_KEY = "admin:dashboard_snapshot:v2";
 
 /** Both role-scoped snapshot cache keys — the complete set a writer must
  *  bust to fully invalidate the composite for every audience. */
 export function dashboardSnapshotCacheKeys(): [string, string] {
   return [`${DASHBOARD_SNAPSHOT_CACHE_KEY}:sa`, `${DASHBOARD_SNAPSHOT_CACHE_KEY}:admin`];
 }
-const DASHBOARD_SNAPSHOT_TTL = 75; // ~60-90s window per spec
+
+/**
+ * Freshness the dashboard promises: the ops client polls every 75s
+ * (useDashboardSnapshot staleTime/refetchInterval), so a live request
+ * serves an entry up to 75s old as-is. An older entry is still served —
+ * then refreshed in the background (swrCache), so the next poll is fresh.
+ */
+export const DASHBOARD_SNAPSHOT_FRESH_S = 75;
+
+/**
+ * KV lifetime of a snapshot entry: longer than Navigator's 15-min Phase B
+ * warm, so the first visit after a warm finds an entry instead of a cold
+ * key (at the old 75s TTL ~92% of first visits computed the composite
+ * inline). Warms refresh it once it is refreshAfterSeconds(1200) = 540s
+ * old, i.e. on every Phase B tick.
+ */
+export const DASHBOARD_SNAPSHOT_TTL_S = 1200;
 
 /** Parse a sub-handler's `{ success?, data }` body into its `data`,
  *  degrading any non-ok / `success:false` / parse failure to null. */
@@ -199,6 +217,7 @@ export async function handleAdminDashboard(
   request: Request,
   env: Env,
   ctx: AuthContext,
+  execCtx?: Pick<ExecutionContext, "waitUntil">,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
 
@@ -215,13 +234,41 @@ export async function handleAdminDashboard(
   // Cache is keyed by whether threat_health is present so a super_admin's
   // populated slice never leaks to a plain admin via the shared cache (and
   // vice versa).
-  const cacheKey = includeThreatHealth
-    ? `${DASHBOARD_SNAPSHOT_CACHE_KEY}:sa`
-    : `${DASHBOARD_SNAPSHOT_CACHE_KEY}:admin`;
+  const [saKey, adminKey] = dashboardSnapshotCacheKeys();
+  const cacheKey = includeThreatHealth ? saKey : adminKey;
 
-  const cached = await env.CACHE.get(cacheKey);
-  if (cached) return json(JSON.parse(cached), 200, origin);
+  const { value: body } = await swrCache<{ success: true; data: DashboardSnapshot }>(
+    request,
+    env.CACHE,
+    cacheKey,
+    {
+      ttlSeconds: DASHBOARD_SNAPSHOT_TTL_S,
+      freshSeconds: DASHBOARD_SNAPSHOT_FRESH_S,
+      waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
+    },
+    async () => {
+      const snapshot = await computeDashboardSnapshot(env, includeThreatHealth);
+      if (includeThreatHealth) {
+        // The plain-admin variant is exactly this snapshot minus the
+        // super_admin-only threat_health slice (every other slice is a
+        // role-independent global aggregate), so write it too: one compute
+        // — including Navigator's super_admin warm — keeps BOTH keys warm.
+        // Never the reverse: an admin compute has no threat_health.
+        await writeSwrEntry(
+          env.CACHE,
+          adminKey,
+          { success: true, data: { ...snapshot, threat_health: null } },
+          DASHBOARD_SNAPSHOT_TTL_S,
+        );
+      }
+      return { success: true, data: snapshot };
+    },
+  );
+  return json(body, 200, origin);
+}
 
+/** Build the composite snapshot. `includeThreatHealth` is the super_admin gate. */
+async function computeDashboardSnapshot(env: Env, includeThreatHealth: boolean): Promise<DashboardSnapshot> {
   // Synthetic request for the sub-handlers — they only read query params
   // and route replica context off the URL, never auth (this endpoint is
   // already requireAdmin-gated at the route layer).
@@ -419,9 +466,5 @@ export async function handleAdminDashboard(
     generated_at: new Date().toISOString(),
   };
 
-  const body = { success: true, data: snapshot };
-  await env.CACHE.put(cacheKey, JSON.stringify(body), {
-    expirationTtl: DASHBOARD_SNAPSHOT_TTL,
-  });
-  return json(body, 200, origin);
+  return snapshot;
 }
