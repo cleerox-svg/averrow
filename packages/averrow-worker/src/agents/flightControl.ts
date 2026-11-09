@@ -141,6 +141,11 @@ export interface AgentHealth {
   avg_duration_ms: number;
   is_stalled: boolean;
   circuit_state: 'closed' | 'tripped';
+  // agent_configs.enabled !== 0 (no config row = enabled). Unlike
+  // circuit_state, false for ANY pause — auto trip or manual. executeAgent
+  // returns before writing agent_runs for a disabled agent, so stall
+  // recovery must not dispatch it.
+  enabled: boolean;
   consecutive_failures: number;
   paused_reason: string | null;
   paused_after_n_failures: number | null;
@@ -2875,6 +2880,7 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
       avg_duration_ms: Math.round(avgMap.get(agentId) ?? 0),
       is_stalled: isStalled,
       circuit_state: isTripped ? 'tripped' as const : 'closed' as const,
+      enabled: config?.enabled !== 0,
       consecutive_failures: config?.consecutive_failures ?? 0,
       paused_reason: config?.paused_reason ?? null,
       paused_after_n_failures: config?.paused_after_n_failures ?? null,
@@ -3203,13 +3209,17 @@ export function stallRecoveryCooldownMs(attempt: number): number {
 export type StallRecoveryDecision =
   | 'dispatch'
   | 'skip_schedule_owned'
+  | 'skip_disabled'
   | 'skip_orphan_only'
   | 'skip_cooldown'
   | 'defer_budget';
 
 /** Pure re-dispatch decision for ONE stalled agent (the caller has already
  *  applied the manual/api and nexus skips and the orphan force-fail clear).
- *  Gate order: schedule-owned → orphan-only → per-tick budget → cooldown.
+ *  Gate order: schedule-owned → disabled → orphan-only → per-tick budget →
+ *  cooldown. `disabled` = agent_configs.enabled = 0 (any paused_reason):
+ *  executeAgent would return before writing agent_runs, so a dispatch would
+ *  do nothing except take the slot and leave the agent stalled.
  *  The budget gate precedes the cooldown gate so the caller only pays the
  *  KV read for an agent that could actually be dispatched: call once with
  *  inCooldown=false and, on 'dispatch', read the cooldown and call again. */
@@ -3219,15 +3229,18 @@ export function decideStallRecovery(opts: {
   thresholdMs: number;
   inCooldown: boolean;
   dispatchedThisTick: number;
+  disabled?: boolean;
   maxPerTick?: number;
   scheduleOwned?: ReadonlySet<string>;
 }): StallRecoveryDecision {
   const {
     agentId, lastRunAgeMs, thresholdMs, inCooldown, dispatchedThisTick,
+    disabled = false,
     maxPerTick = MAX_STALL_RECOVERIES_PER_TICK,
     scheduleOwned = SCHEDULE_OWNED_AGENTS,
   } = opts;
   if (scheduleOwned.has(agentId)) return 'skip_schedule_owned';
+  if (disabled) return 'skip_disabled';
   // Stalled only via computeIsStalled's 45-min partial-orphan clause: the
   // agent is not overdue on its own schedule, so clearing the orphan is
   // enough. `!(a > b)` so a NaN age is treated as not overdue.
@@ -3255,23 +3268,28 @@ export function parseStallRecoveryRecord(raw: string | null): StallRecoveryRecor
 }
 
 /** Pure backoff reset. A recovery record only means "the last recovery did
- *  not work" while the agent's latest run is NOT a finished run. Once the
- *  latest run finished (completed_at set, status success — or partial, which
- *  with completed_at set is a finished degraded / awaiting-approval run) the
- *  previous recovery led somewhere, so the record is treated as reset: no
- *  cooldown, and the next recovery starts again at attempt 1. Uses only the
- *  health snapshot FC already read — no extra D1 or KV traffic. An agent that
- *  is not stalled never reaches this path; when it next stalls, its latest
- *  run decides. A failed / orphaned latest run keeps the record, so the
- *  backoff escalates. */
+ *  not work" while no run has finished SINCE that recovery. The record is
+ *  treated as reset (no cooldown; the next recovery is attempt 1) only when
+ *  the latest run (a) finished — completed_at set, status success, or partial,
+ *  which with completed_at set is a finished degraded / awaiting-approval
+ *  run — AND (b) started after the recovery was dispatched (record.last_at).
+ *  (b) matters: executeAgent can return without writing an agent_runs row
+ *  (circuit open / enabled=0, the approval gate, or the worker killed before
+ *  the INSERT). Then the latest row is still the PRE-recovery success, and
+ *  without (b) it would clear the cooldown every tick. Uses only the health
+ *  snapshot FC already read — no extra D1 or KV traffic. A failed / orphaned
+ *  / older latest run keeps the record, so the backoff escalates. */
 export function effectiveStallRecoveryRecord(
   record: StallRecoveryRecord | null,
-  latest: { status: string | null; completedAt: string | null },
+  latest: { status: string | null; completedAt: string | null; startedAt: string | null },
 ): StallRecoveryRecord | null {
   if (!record) return null;
   const finished = latest.completedAt != null &&
     (latest.status === 'success' || latest.status === 'partial');
-  return finished ? null : record;
+  if (!finished || !latest.startedAt) return record;
+  // `>` is false for NaN, so an unparseable started_at keeps the record.
+  const startedAfterRecovery = parseRunTimestampMs(latest.startedAt) > record.last_at;
+  return startedAfterRecovery ? null : record;
 }
 
 /** Pure: is the agent still inside the cooldown its last recovery set? */
@@ -3374,6 +3392,7 @@ export async function planStallRecoveries(
       // Only dispatches count against the slot — a cooldown skip or any
       // other skip never uses it up.
       dispatchedThisTick: toRecover.length,
+      disabled: !agent.enabled,
       maxPerTick,
       scheduleOwned,
     };
@@ -3387,6 +3406,7 @@ export async function planStallRecoveries(
       record = effectiveStallRecoveryRecord(record, {
         status: agent.last_run_status,
         completedAt: agent.last_run_completed_at,
+        startedAt: agent.last_run_at,
       });
       if (isStallRecoveryCoolingDown(record, nowMs)) {
         decision = decideStallRecovery({ ...decisionInput, inCooldown: true });
@@ -3424,6 +3444,7 @@ export async function planStallRecoveries(
     } else {
       const reason =
         decision === 'skip_schedule_owned' ? 'its own schedule re-runs it' :
+        decision === 'skip_disabled' ? `agent disabled in agent_configs (${agent.paused_reason ?? 'no reason'}); executeAgent would not run it` :
         decision === 'skip_orphan_only' ? 'orphaned run cleared; not overdue on its own stall threshold' :
         decision === 'skip_cooldown' ? 'recovered recently; in backoff' :
         `per-tick recovery budget (${maxPerTick ?? MAX_STALL_RECOVERIES_PER_TICK}) used`;

@@ -765,12 +765,15 @@ these hold (`decideStallRecovery` / `planStallRecoveries`,
 - the agent is not in `SCHEDULE_OWNED_AGENTS` (hourly-mesh and
   dedicated-cron agents, plus FC's own curator/watchdog paths; their schedule
   re-runs them within hours);
+- the agent is enabled (`agent_configs.enabled != 0`, whatever the
+  `paused_reason`; `executeAgent` would return without running it);
 - its last run is older than its own `stallThresholdMinutes` (an orphan-only
   stall is only cleared);
 - fewer than `MAX_STALL_RECOVERIES_PER_TICK` (1) recoveries have been
   dispatched this tick (skips never use the slot);
 - it is outside its KV backoff (`fc:stall_recovery:<id>`, 2h doubling to a
-  24h cap; reset once the agent's latest run has finished).
+  24h cap; reset only once a run that started after the last recovery has
+  finished).
 
 The agents FC can re-dispatch today are exactly the six daily/weekly
 hour-gated mesh agents, which have no other catch-up path when their one

@@ -473,21 +473,51 @@ describe("stall recovery cooldown / backoff", () => {
   });
 });
 
-describe("effectiveStallRecoveryRecord — backoff resets after a finished run", () => {
-  const rec = { attempts: 3, last_at: 1_700_000_000_000 };
+describe("effectiveStallRecoveryRecord — backoff resets only after a run newer than the recovery", () => {
+  const recoveredAt = Date.UTC(2026, 10, 9, 10, 7, 40); // 2026-11-09 10:07:40Z
+  const rec = { attempts: 3, last_at: recoveredAt };
+  const AFTER = '2026-11-09 10:30:00';
+  const BEFORE = '2026-11-08 06:00:00';
+
   it("no record → null", () => {
-    expect(effectiveStallRecoveryRecord(null, { status: 'failed', completedAt: 'x' })).toBeNull();
+    expect(effectiveStallRecoveryRecord(null, { status: 'failed', completedAt: 'x', startedAt: AFTER })).toBeNull();
   });
-  it("latest run finished successfully → reset", () => {
-    expect(effectiveStallRecoveryRecord(rec, { status: 'success', completedAt: '2026-11-09 01:00:00' })).toBeNull();
+  it("newer finished success → reset", () => {
+    expect(effectiveStallRecoveryRecord(rec, { status: 'success', completedAt: '2026-11-09 10:35:00', startedAt: AFTER })).toBeNull();
   });
-  it("latest run finished partial (completed_at set) → reset", () => {
-    expect(effectiveStallRecoveryRecord(rec, { status: 'partial', completedAt: '2026-11-09 01:00:00' })).toBeNull();
+  it("newer finished partial (completed_at set) → reset", () => {
+    expect(effectiveStallRecoveryRecord(rec, { status: 'partial', completedAt: '2026-11-09 10:35:00', startedAt: AFTER })).toBeNull();
+  });
+  it("ISO started_at is parsed too", () => {
+    expect(effectiveStallRecoveryRecord(rec, { status: 'success', completedAt: 'x', startedAt: '2026-11-09T10:30:00Z' })).toBeNull();
+  });
+  it("finished success OLDER than the recovery keeps the cooldown (dispatch wrote no agent_runs row)", () => {
+    // executeAgent returns before its INSERT on circuit-open / enabled=0,
+    // the approval gate, or a worker kill — the latest row is then still the
+    // pre-recovery success and must not clear the backoff.
+    expect(effectiveStallRecoveryRecord(rec, { status: 'success', completedAt: '2026-11-08 06:10:00', startedAt: BEFORE })).toEqual(rec);
+    expect(isStallRecoveryCoolingDown(
+      effectiveStallRecoveryRecord(rec, { status: 'success', completedAt: '2026-11-08 06:10:00', startedAt: BEFORE }),
+      recoveredAt + 3 * HOUR_MS,
+    )).toBe(true);
+  });
+  it("missing or unparseable started_at keeps the record", () => {
+    expect(effectiveStallRecoveryRecord(rec, { status: 'success', completedAt: 'x', startedAt: null })).toEqual(rec);
+    expect(effectiveStallRecoveryRecord(rec, { status: 'success', completedAt: 'x', startedAt: 'garbage' })).toEqual(rec);
   });
   it("latest run is an orphan or failed → record kept (backoff escalates)", () => {
-    expect(effectiveStallRecoveryRecord(rec, { status: 'partial', completedAt: null })).toEqual(rec);
-    expect(effectiveStallRecoveryRecord(rec, { status: 'running', completedAt: null })).toEqual(rec);
-    expect(effectiveStallRecoveryRecord(rec, { status: 'failed', completedAt: '2026-11-09 01:00:00' })).toEqual(rec);
+    expect(effectiveStallRecoveryRecord(rec, { status: 'partial', completedAt: null, startedAt: AFTER })).toEqual(rec);
+    expect(effectiveStallRecoveryRecord(rec, { status: 'running', completedAt: null, startedAt: AFTER })).toEqual(rec);
+    expect(effectiveStallRecoveryRecord(rec, { status: 'failed', completedAt: '2026-11-09 10:35:00', startedAt: AFTER })).toEqual(rec);
+  });
+});
+
+describe("decideStallRecovery — disabled agents", () => {
+  it("enabled=0 and overdue → skip_disabled (before budget/cooldown)", () => {
+    expect(decideStallRecovery({
+      agentId: 'x', lastRunAgeMs: 30 * HOUR_MS, thresholdMs: HOUR_MS,
+      inCooldown: false, dispatchedThisTick: 0, disabled: true, scheduleOwned: NOT_OWNED,
+    })).toBe('skip_disabled');
   });
 });
 
@@ -534,6 +564,7 @@ function stalled(agent_id: string, hoursAgo: number, status: string | null = 'pa
     avg_duration_ms: 0,
     is_stalled: true,
     circuit_state: 'closed',
+    enabled: true,
     consecutive_failures: 0,
     paused_reason: null,
     paused_after_n_failures: null,
@@ -621,15 +652,41 @@ describe("planStallRecoveries", () => {
     expect(puts[0]!.ttl).toBe((2 * stallRecoveryCooldownMs(2)) / 1000);
   });
 
-  it("attempts resets to 1 when the latest run finished (previous recovery worked)", async () => {
+  it("attempts resets to 1 when a run newer than the last recovery finished", async () => {
     const { kv, puts } = fakeKv({
-      [STALL_RECOVERY_KV_PREFIX + 'observer']: JSON.stringify({ attempts: 4, last_at: NOW - HOUR_MS }),
+      // Recovered 30h ago at attempt 5 (24h cap → no longer cooling down).
+      [STALL_RECOVERY_KV_PREFIX + 'observer']: JSON.stringify({ attempts: 5, last_at: NOW - 30 * HOUR_MS }),
     });
-    // In cooldown by the record, but the latest run is a completed success
-    // → record reset → no cooldown, attempt 1.
-    const r = await plan([stalled('observer', 26, 'success', startedAt(25.9))], kv);
+    // That recovery's run (started 29.9h ago) finished — so this new stall
+    // starts the backoff from attempt 1, not 6.
+    const r = await plan([stalled('observer', 29.9, 'success', startedAt(29.8))], kv);
     expect(r.decisions[0]).toEqual({ agentId: 'observer', decision: 'dispatch', attempt: 1 });
     expect(JSON.parse(puts[0]!.value).attempts).toBe(1);
+  });
+
+  it("a pre-recovery success does NOT reset the cooldown (dispatch that wrote no run)", async () => {
+    const { kv, puts } = fakeKv({
+      [STALL_RECOVERY_KV_PREFIX + 'observer']: JSON.stringify({ attempts: 1, last_at: NOW - HOUR_MS }),
+    });
+    // Latest row is the success from 26h ago — older than the recovery 1h ago.
+    const r = await plan([stalled('observer', 26, 'success', startedAt(25.9)), stalled('narrator', 30)], kv);
+    expect(decisionOf(r, 'observer')).toBe('skip_cooldown');
+    expect(r.toRecover.map((x) => x.agentId)).toEqual(['narrator']);
+    expect(puts.map((p) => p.key)).toEqual([STALL_RECOVERY_KV_PREFIX + 'narrator']);
+  });
+
+  it("an enabled=0 overdue agent is not dispatched and does not take the slot", async () => {
+    const paused = { ...stalled('observer', 30), enabled: false, paused_reason: 'manual: operator hold' };
+    const { kv, puts } = fakeKv();
+    const r = await plan([paused, stalled('narrator', 30)], kv);
+    expect(decisionOf(r, 'observer')).toBe('skip_disabled');
+    expect(r.toRecover.map((x) => x.agentId)).toEqual(['narrator']);
+    // No cooldown record written for the paused agent; orphan still cleared.
+    expect(puts.map((p) => p.key)).toEqual([STALL_RECOVERY_KV_PREFIX + 'narrator']);
+    const updates = r.stmts.filter((s) => s.sql.includes('UPDATE agent_runs'));
+    expect(updates.map((u) => u.args[1])).toEqual(['observer', 'narrator']);
+    const log = r.stmts.find((s) => s.sql.includes('agent_activity_log') && s.args[1] === 'flight_control' && String(s.args[3]).includes('observer'));
+    expect(log?.args[2]).toBe('recovery_skipped');
   });
 
   it("KV errors are best-effort: no throw, dispatch proceeds", async () => {
