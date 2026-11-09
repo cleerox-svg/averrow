@@ -57,7 +57,7 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
   };
 
   return (
-    <header className="h-14 shrink-0 flex items-center justify-between gap-2 px-4 md:px-6 border-b border-[var(--border-base)] bg-bg-page/80 backdrop-blur">
+    <header className="relative z-30 h-14 shrink-0 flex items-center justify-between gap-2 px-4 md:px-6 border-b border-[var(--border-base)] bg-bg-page/80 backdrop-blur">
       {onOpenNav && (
         // Only ever opens: while the drawer is open this button sits inside
         // the inert page content, so closing goes through the drawer.
@@ -116,7 +116,7 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
               </div>
               {user?.organization && (
                 <div className="text-[12px] font-medium text-primary-text mt-1.5">
-                  {sentenceCase(user.organization.role)} · {sentenceCase(user.organization.plan)}
+                  {[user.organization.role, user.organization.plan].filter(Boolean).map(sentenceCase).join(' · ')}
                 </div>
               )}
             </div>

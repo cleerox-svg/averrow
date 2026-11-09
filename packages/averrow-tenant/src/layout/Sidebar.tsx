@@ -87,7 +87,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
           onClick={cycleTheme}
           aria-label={themeLabelFor(theme)}
           title={themeLabelFor(theme)}
-          className="inline-flex h-11 w-11 md:h-auto md:w-auto md:p-1.5 items-center justify-center rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] transition-colors ds-focusable"
+          className="inline-flex h-11 w-11 md:h-auto md:w-auto md:p-1.5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 items-center justify-center rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] transition-colors ds-focusable"
         >
           <ThemeIcon size={14} />
         </button>
@@ -155,9 +155,9 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
                 className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}
               >
                 <Icon size={16} />
-                <span className="min-w-0 flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
+                <span className="min-w-0 flex-1 truncate" title={MODULE_LABELS[m.module_key]}>{MODULE_LABELS[m.module_key]}</span>
                 {m.status === 'trial' && (
-                  <Badge status="running" size="sm" font="sans" label="Trial" className="shrink-0" />
+                  <Badge status="running" size="xs" font="sans" label="Trial" className="shrink-0 !py-0 leading-5" />
                 )}
               </NavLink>
             );
@@ -175,7 +175,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
                   className={cn(NAV_BASE, 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]')}
                 >
                   <Icon size={16} className="opacity-50" />
-                  <span className="min-w-0 flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
+                  <span className="min-w-0 flex-1 truncate" title={MODULE_LABELS[m.module_key]}>{MODULE_LABELS[m.module_key]}</span>
                   <span className="shrink-0 text-[12px] font-medium text-[var(--text-tertiary)]">Upgrade</span>
                 </NavLink>
               );

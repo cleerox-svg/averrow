@@ -61,6 +61,10 @@ describe('tenant shell facelift', () => {
     for (const l of monoLines) expect(l).not.toMatch(/Organization|Upgrade|Trial|Loading/);
   });
 
+  it('header establishes the stacking order so the user menu covers <main>', () => {
+    expect(src('TopBar.tsx')).toMatch(/<header className="relative z-30 /);
+  });
+
   it('renders sentence-case labels', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
