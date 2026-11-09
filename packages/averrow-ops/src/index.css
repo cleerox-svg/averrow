@@ -629,6 +629,28 @@
   border-left-color: var(--sev-info-border) !important;
 }
 
+/* Facelift (any appearance): the token row hover of AVERROW_UI_STANDARD "Table row standard". No glow gradient and no
+   primary/amber left rail; the hover darkens (dark: --bg-page, light: 6% text), and severity rows keep only their
+   severity-token left border. FACELIFT=false has no [data-accent], so the legacy rules above stay as they were. */
+:root[data-accent] .data-row {
+  transition: background-color var(--motion-fast, 120ms) var(--ease-standard, ease), border-color var(--motion-fast, 120ms) var(--ease-standard, ease);
+}
+:root[data-accent] .data-row:hover {
+  background: var(--bg-page);
+  border-left-color: transparent !important;
+}
+:root[data-accent][data-theme="light"] .data-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+:root[data-accent] .data-row--critical:hover, :root[data-accent] .data-row[data-severity="critical"]:hover { border-left-color: var(--sev-critical-border) !important; }
+:root[data-accent] .data-row--high:hover,     :root[data-accent] .data-row[data-severity="high"]:hover     { border-left-color: var(--sev-high-border) !important; }
+:root[data-accent] .data-row--medium:hover,   :root[data-accent] .data-row[data-severity="medium"]:hover   { border-left-color: var(--sev-medium-border) !important; }
+:root[data-accent] .data-row--low:hover,      :root[data-accent] .data-row[data-severity="low"]:hover      { border-left-color: var(--sev-low-border) !important; }
+:root[data-accent] .data-row--info:hover                                                                    { border-left-color: var(--sev-info-border) !important; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-accent] .data-row { transition: none; }
+}
+
 /* ── GAUGE PULSE ANIMATIONS ───────────────────── */
 .gauge-critical {
   position: relative;

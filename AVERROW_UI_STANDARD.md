@@ -938,8 +938,10 @@ amber**, and never lightens the surface (Phase 6, screen 3a):
 ```
 
 First adopter: the Alerts tab (`features/alerts/alerts.css`, scoped under
-`.alerts-v4`). The global `.data-row` rules in `index.css` still carry the
-legacy primary-glow hover and migrate screen by screen.
+`.alerts-v4`). The global `.data-row` rules in ops `index.css` apply the same
+token hover under `:root[data-accent]` (no glow gradient, no primary/amber left
+rail; severity rows keep only their `--sev-*-border`); the legacy primary-glow
+rules remain only for `FACELIFT = false`.
 
 **Console chrome and Alerts (Phase 6, screen 3a).** The Console crumb is a
 sentence-case `--type-label-*` label, the title uses `--type-display-*`, there
