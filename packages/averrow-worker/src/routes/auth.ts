@@ -114,10 +114,10 @@ export function registerAuthRoutes(router: RouterType<IRequest>): void {
   // POST /api/auth/magic-link/verify  — form body { token }; consumes the
   //   single-use token, mints a session and 302s to the SPA exactly like
   //   the OAuth callback does. Failures 302 to /v2/login?error=<code>.
-  router.post("/api/auth/magic-link/request", async (request: Request, env: Env) => {
+  router.post("/api/auth/magic-link/request", async (request: Request, env: Env, ctx: ExecutionContext) => {
     const limited = await rateLimit(request, env, "auth");
     if (limited) return limited;
-    return handleMagicLinkRequest(request, env);
+    return handleMagicLinkRequest(request, env, ctx);
   });
 
   router.post("/api/auth/magic-link/verify", async (request: Request, env: Env) => {

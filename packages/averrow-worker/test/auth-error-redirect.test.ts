@@ -12,7 +12,7 @@ import { AUTH_ERROR_CODES, AUTH_ERROR_COPY, isAuthErrorCode } from "@averrow/sha
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
 import {
   handleOAuthCallback, handleOAuthLogin, handleInviteAcceptance,
-  handleMagicLinkLanding, handleMagicLinkVerify,
+  handleMagicLinkLanding, handleMagicLinkVerify, handleMagicLinkRequest,
   redirectToLoginWithError, validateReturnTo, resolveReturnTo, isSameOriginPost,
 } from "../src/handlers/auth";
 import { maskEmail } from "../src/templates/magic-link-confirm";
@@ -247,6 +247,123 @@ describe.skipIf(!hasSqlite())("invite acceptance failures → login codes", () =
     const t = await seed("i4", "newclient@acme.co", 3_600_000, "client");
     const res = await accept(t, "newclient@acme.co", "g-newclient");
     expect(loc(res)).toMatch(/^https:\/\/averrow\.com\/tenant\/#token=/);
+  });
+});
+
+// ─── Magic link request: no account-dependent timing ──────────────────
+//
+// The response must not wait on anything that differs between an existing
+// and a missing account (lookup, token row, Resend round trip, audit) —
+// otherwise response time enumerates accounts. All of it runs in waitUntil.
+
+describe.skipIf(!hasSqlite())("magic link request defers account-dependent work", () => {
+  let rig: Rig;
+  let waited: Array<Promise<unknown>>;
+  const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); } };
+
+  beforeEach(() => {
+    rig = makeRig();
+    (rig.env as unknown as { RESEND_API_KEY: string }).RESEND_API_KEY = "re_test";
+    waited = [];
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const request = (body: unknown) =>
+    handleMagicLinkRequest(new Request(`${ORIGIN}/api/auth/magic-link/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: ORIGIN },
+      body: JSON.stringify(body),
+    }), rig.env, ctx);
+  const tokenRows = () =>
+    (rig.raw.prepare("SELECT email, return_to FROM magic_link_tokens").all() as Array<{ email: string; return_to: string | null }>);
+  /** A Resend call that never settles — awaiting it would hang the handler. */
+  const stubHangingResend = () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  };
+
+  it("existing account: 200 without awaiting the email send; send happens in waitUntil", async () => {
+    const fetchMock = stubHangingResend();
+    const res = await request({ email: "Alice@Acme.co", return_to: "/tenant/alerts" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      success: true,
+      message: "If an account exists for that email, a sign-in link has been sent.",
+      expires_in_minutes: 30,
+    });
+    expect(waited).toHaveLength(1);
+    // The deferred job reaches Resend (and stays pending there).
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(String((fetchMock.mock.calls[0] as unknown as [string])[0])).toBe("https://api.resend.com/emails");
+    expect(tokenRows()).toEqual([{ email: "alice@acme.co", return_to: "/tenant/alerts" }]);
+    expect(rig.audits).not.toContain("magic_link_request_sent");
+  });
+
+  it("missing / inactive account: same 200 body, audit deferred to waitUntil, nothing sent", async () => {
+    const fetchMock = stubHangingResend();
+    const existing = await (await request({ email: "alice@acme.co" })).json();
+    for (const email of ["nobody@acme.co", "gone@acme.co"]) {
+      waited = [];
+      rig.audits.length = 0;
+      const res = await request({ email });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(existing);
+      expect(waited).toHaveLength(1);
+      await waited[0];
+      expect(rig.audits).toEqual(["magic_link_request_no_account"]);
+    }
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1)); // alice only
+    expect(tokenRows().map((r) => r.email)).toEqual(["alice@acme.co"]);
+  });
+
+  it("audits the send result once the deferred job finishes", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ id: "rs_1" }), { status: 200 })));
+    await request({ email: "alice@acme.co" });
+    await waited[0];
+    expect(rig.audits).toEqual(["magic_link_request_sent"]);
+  });
+
+  it("deferred failures are caught and audited — the waitUntil promise never rejects", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("resend down"); }));
+    const res = await request({ email: "alice@acme.co" });
+    expect(res.status).toBe(200);
+    await expect(waited[0]).resolves.toBeUndefined();
+    expect(rig.audits).toEqual(["magic_link_request_error"]);
+
+    // A DB failure in the lookup is caught the same way.
+    waited = [];
+    rig.audits.length = 0;
+    (rig.env as unknown as { DB: unknown }).DB = {
+      prepare() { throw new Error("D1 overloaded"); },
+    };
+    const res2 = await request({ email: "nobody@acme.co" });
+    expect(res2.status).toBe(200);
+    await expect(waited[0]).resolves.toBeUndefined();
+    expect(rig.audits).toEqual(["magic_link_request_error"]);
+  });
+
+  it("400 (bad format) and 429 (rate limit) still return before any deferred work", async () => {
+    stubHangingResend();
+    const bad = await request({ email: "not-an-email" });
+    expect(bad.status).toBe(400);
+    expect(waited).toHaveLength(0);
+
+    for (let i = 0; i < 3; i++) expect((await request({ email: "nobody@acme.co" })).status).toBe(200);
+    waited = [];
+    const limited = await request({ email: "nobody@acme.co" });
+    expect(limited.status).toBe(429);
+    expect(waited).toHaveLength(0);
+  });
+
+  it("no Resend key: generic 200, nothing deferred", async () => {
+    (rig.env as unknown as { RESEND_API_KEY?: string }).RESEND_API_KEY = undefined;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await request({ email: "alice@acme.co" });
+    expect(res.status).toBe(200);
+    expect(waited).toHaveLength(0);
+    errSpy.mockRestore();
   });
 });
 

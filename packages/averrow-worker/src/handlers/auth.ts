@@ -991,7 +991,27 @@ const GENERIC_REQUEST_RESPONSE = {
   expires_in_minutes: 30,
 };
 
-export async function handleMagicLinkRequest(request: Request, env: Env): Promise<Response> {
+/** The slice of ExecutionContext the magic-link request needs (testable). */
+export type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
+
+/**
+ * POST /api/auth/magic-link/request
+ *
+ * Anti-enumeration: the 200 body is identical for every address AND the
+ * work awaited before responding is identical too — body validation and
+ * the per-email rate limit only, neither of which depends on whether the
+ * account exists. The account lookup, token row, Resend send and every
+ * audit row run in `ctx.waitUntil` after the response is returned.
+ * (Before this, the existing-account path awaited the Resend round trip
+ * and the missing-account path did not, so response time revealed which
+ * addresses have accounts. The per-email rate limit does NOT prevent
+ * that — one probe per address is enough.)
+ */
+export async function handleMagicLinkRequest(
+  request: Request,
+  env: Env,
+  ctx: WaitUntilContext,
+): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const body = (await request.json().catch(() => ({}))) as MagicLinkRequestBody;
@@ -1000,15 +1020,19 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
       return json({ success: false, error: "A valid email is required." }, 400, origin);
     }
 
-    if (!env.RESEND_API_KEY) {
+    const resendApiKey = env.RESEND_API_KEY;
+    if (!resendApiKey) {
       // Log loudly so the operator notices the env gap; user gets the
-      // generic envelope so they don't see the misconfiguration.
+      // generic envelope so they don't see the misconfiguration. Platform-
+      // wide config, so it can't distinguish one address from another.
       console.error("[magic-link] RESEND_API_KEY not configured — request dropped");
       return json(GENERIC_REQUEST_RESPONSE, 200, origin);
     }
 
-    // Rate-limit by email regardless of whether the account exists, so
-    // brute-force address enumeration via timing isn't possible.
+    // Per-email rate limit, applied before (and independent of) any account
+    // lookup so a 429 says nothing about account existence. It bounds email
+    // volume; it is NOT the timing defence — deferring every
+    // account-dependent step (below) is.
     const retryAfter = await checkRateLimit(env, rawEmail);
     if (retryAfter !== null) {
       return json({
@@ -1017,21 +1041,51 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
       }, 429, origin);
     }
 
-    // Look up the user. If they don't exist, return the SAME generic
-    // success envelope as if they did — never leak existence.
+    // Everything account-dependent runs after the response is sent.
+    ctx.waitUntil(deliverMagicLink(env, request, {
+      email: rawEmail,
+      resendApiKey,
+      returnTo: sanitizeReturnTo(body.return_to),
+      siteOrigin: new URL(request.url).origin,
+    }));
+
+    // Always the generic envelope — same body whether or not the account
+    // exists, and whether or not the deferred send later succeeds.
+    return json(GENERIC_REQUEST_RESPONSE, 200, origin);
+  } catch (err) {
+    console.error("[magic-link] request error:", err);
+    return json(GENERIC_REQUEST_RESPONSE, 200, origin);
+  }
+}
+
+interface DeferredMagicLink {
+  email: string;
+  resendApiKey: string;
+  returnTo: string | null;
+  siteOrigin: string;
+}
+
+/**
+ * The deferred half of a magic-link request (runs in `ctx.waitUntil`):
+ * account lookup → token row → Resend send → audit. Never rejects — every
+ * failure is logged and audited, so the waitUntil promise can't surface as
+ * an unhandled rejection.
+ */
+export async function deliverMagicLink(env: Env, request: Request, job: DeferredMagicLink): Promise<void> {
+  try {
     const user = await env.DB.prepare(
       "SELECT id, status FROM users WHERE LOWER(email) = ?",
-    ).bind(rawEmail).first<{ id: string; status: string }>();
+    ).bind(job.email).first<{ id: string; status: string }>();
 
     if (!user || user.status !== "active") {
-      // Pretend we sent the email. Audit so a real human can investigate
+      // Nothing is sent. Audit so a real human can investigate
       // suspicious patterns later.
       await audit(env, {
         action: "magic_link_request_no_account",
-        details: { email: rawEmail },
+        details: { email: job.email },
         request,
       }).catch(() => {});
-      return json(GENERIC_REQUEST_RESPONSE, 200, origin);
+      return;
     }
 
     // Generate the token, hash it, persist the row, send the email.
@@ -1040,21 +1094,19 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
     // L2: CF-Connecting-IP only — X-Forwarded-For is client-spoofable.
     const ip = request.headers.get("CF-Connecting-IP") ?? null;
     const ua = request.headers.get("User-Agent") ?? null;
-    const returnTo = sanitizeReturnTo(body.return_to);
 
     await persistMagicLinkRow(env, {
-      email: rawEmail,
+      email: job.email,
       tokenHash,
       ip,
       userAgent: ua,
-      returnTo,
+      returnTo: job.returnTo,
     });
 
-    const siteOrigin = new URL(request.url).origin;
-    const signInUrl = `${siteOrigin}/api/auth/magic-link/${encodeURIComponent(token)}`;
+    const signInUrl = `${job.siteOrigin}/api/auth/magic-link/${encodeURIComponent(token)}`;
 
-    const sendResult = await sendMagicLinkEmail(env.RESEND_API_KEY, {
-      recipientEmail: rawEmail,
+    const sendResult = await sendMagicLinkEmail(job.resendApiKey, {
+      recipientEmail: job.email,
       signInUrl,
       ipAddress: ip,
       userAgent: ua,
@@ -1063,16 +1115,18 @@ export async function handleMagicLinkRequest(request: Request, env: Env): Promis
     await audit(env, {
       action: sendResult.ok ? "magic_link_request_sent" : "magic_link_request_send_failed",
       userId: user.id,
-      details: { email: rawEmail, error: sendResult.error },
+      details: { email: job.email, error: sendResult.error },
       request,
     }).catch(() => {});
-
-    // Always return the generic envelope — even on Resend failure, so we
-    // don't leak transient infra errors back to the caller.
-    return json(GENERIC_REQUEST_RESPONSE, 200, origin);
   } catch (err) {
-    console.error("[magic-link] request error:", err);
-    return json(GENERIC_REQUEST_RESPONSE, 200, origin);
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error("magic_link_request_deferred_error", { error });
+    await audit(env, {
+      action: "magic_link_request_error",
+      outcome: "failure",
+      details: { email: job.email, error },
+      request,
+    }).catch(() => {});
   }
 }
 
