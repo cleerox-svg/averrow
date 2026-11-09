@@ -63,6 +63,11 @@ export interface BadgeProps {
   size?: BadgeSize;
   /** Pulsing dot before the label (only for configs that define a dot). */
   pulse?: boolean;
+  /**
+   * Show the tone's dot when `pulse` is set. Default `true` (current
+   * behaviour); pass `false` for a label-only chip.
+   */
+  dot?: boolean;
   label?: string;
   /**
    * `mono` (default) = uppercase mono, for data/codes. `sans` = sentence-case
@@ -154,6 +159,9 @@ const LEGACY_MAP: Partial<Record<LegacyVariant, Severity>> = {
   success: 'info', info: 'info',
 };
 
+// Legacy sizes (xs/sm 9px mono, 10px sans; md 11px mono, 12px sans). Under the
+// facelift (`:root[data-accent]`, tokens.css) every size is floored at 12px by
+// the `--ds-badge-min-fs` min() in the inline style, so these values are legacy only.
 const SIZE: Record<BadgeSize, { fontSize: number; padding: string; radius: number }> = {
   xs: { fontSize: 9,  padding: '2px 6px',  radius: 6 },
   sm: { fontSize: 9,  padding: '3px 8px',  radius: 99 },
@@ -191,10 +199,10 @@ function resolve(p: BadgeProps): { tone: Tone; fallbackText: string } {
 }
 
 export function Badge(props: BadgeProps) {
-  const { size = 'sm', pulse = false, label, children, className, font = 'mono' } = props;
+  const { size = 'sm', pulse = false, dot = true, label, children, className, font = 'mono' } = props;
   const z = SIZE[size];
   const { tone, fallbackText } = resolve(props);
-  const showDot = pulse && !!tone.dot;
+  const showDot = pulse && dot && !!tone.dot;
 
   // Caller label/children win; then the tone's pretty-cased label; then raw.
   // Classifications have no tone label (except `confirmed`), so they keep their
@@ -204,13 +212,14 @@ export function Badge(props: BadgeProps) {
   return (
     <span
       className={cn(
-        'inline-flex items-center whitespace-nowrap',
+        'ds-badge inline-flex items-center whitespace-nowrap',
         font === 'sans' ? 'font-sans font-semibold normal-case tracking-[0.01em]' : 'font-mono font-extrabold uppercase tracking-[0.12em]',
         className,
       )}
       style={{
         gap: showDot ? 5 : 0,
-        fontSize: font === 'sans' ? z.fontSize + 1 : z.fontSize,
+        // Facelift floors text at 12px via `--ds-badge-min-fs` (tokens.css); legacy has no floor.
+        fontSize: `max(var(--ds-badge-min-fs, 0px), ${font === 'sans' ? z.fontSize + 1 : z.fontSize}px)`,
         padding: z.padding,
         borderRadius: z.radius,
         background: tone.bg,
@@ -218,8 +227,10 @@ export function Badge(props: BadgeProps) {
         color: tone.text,
         // color-mix handles both var() and hex dot colours; plain string
         // concatenation (`${dot}30`) is invalid CSS for var().
+        // The outer glow reads `--ds-badge-glow`, which the facelift
+        // (`:root[data-accent]`) zeroes; the legacy look keeps the fallback.
         boxShadow: tone.dot
-          ? `inset 0 1px 0 color-mix(in srgb, ${tone.dot} 19%, transparent), 0 2px 8px color-mix(in srgb, ${tone.dot} 12%, transparent)`
+          ? `inset 0 1px 0 color-mix(in srgb, ${tone.dot} 19%, transparent), var(--ds-badge-glow, 0 2px 8px color-mix(in srgb, ${tone.dot} 12%, transparent))`
           : 'none',
       }}
     >

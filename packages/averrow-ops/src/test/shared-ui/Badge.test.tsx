@@ -3,6 +3,26 @@ import { render, screen } from '@testing-library/react';
 import { Badge } from '@averrow/shared/ui';
 
 const styleAttr = (el: HTMLElement) => el.getAttribute('style') ?? '';
+// The inline size is `max(var(--ds-badge-min-fs, 0px), Npx)`: the legacy size N,
+// with the facelift floor supplied by the custom property (0px in the legacy look).
+const legacyPx = (el: HTMLElement) => parseFloat(/font-size:[^;]*,\s*([\d.]+)px\)/.exec(el.getAttribute('style') ?? '')?.[1] ?? 'NaN');
+
+describe('shared Badge facelift hooks', () => {
+  it('dot={false} suppresses the pulse dot', () => {
+    const { container } = render(<Badge status="active" pulse dot={false} label="Live" />);
+    expect(container.querySelectorAll('[aria-hidden="true"]').length).toBe(0);
+  });
+  it('floors text via --ds-badge-min-fs without !important', () => {
+    render(<Badge severity="high" size="sm" />);
+    expect(screen.getByText('High').style.fontSize).toContain('var(--ds-badge-min-fs, 0px)');
+  });
+  it('carries the ds-badge hook and reads the glow property with a legacy fallback', () => {
+    render(<Badge severity="high" size="sm" font="sans" />);
+    const el = screen.getByText('High');
+    expect(el).toHaveClass('ds-badge');
+    expect(styleAttr(el)).toContain('var(--ds-badge-glow');
+  });
+});
 
 describe('shared Badge', () => {
   it.each([
@@ -197,15 +217,16 @@ describe('shared Badge', () => {
 
     it('md size text is 11px (account-surface legibility floor); sm stays 9px', () => {
       const { unmount } = render(<Badge severity="high" size="md" />);
-      expect(styleOf('High').style.fontSize).toBe('11px');
+      expect(legacyPx(styleOf('High'))).toBe(11);
       unmount();
       render(<Badge severity="high" size="sm" />);
-      expect(styleOf('High').style.fontSize).toBe('9px');
+      expect(legacyPx(styleOf('High'))).toBe(9);
     });
 
     it('xs size is at least 9px', () => {
       render(<Badge severity="high" size="xs" />);
-      expect(parseFloat(styleOf('High').style.fontSize)).toBeGreaterThanOrEqual(9);
+      // Legacy value only; the facelift's 12px floor comes from --ds-badge-min-fs (tokens.css).
+      expect(legacyPx(styleOf('High'))).toBeGreaterThanOrEqual(9);
     });
 
     it('NEXUS and STABLE derive from --cyan-text, never the reserved teal', () => {

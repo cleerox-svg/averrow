@@ -112,11 +112,12 @@
    (no shrink) depends on title length, so the severity / status slots line
    up whatever chips a row carries. Time stays pinned right. The basis fits
    the common row (sev + status + score + one chip + time) while leaving the
-   title most of the width; a row with every chip wraps its extra chips to a
+   title most of the width (12px facelift badges need the wider basis so the
+   busiest row, incl. the overdue time, stays on one line at desktop); a row with every chip wraps its extra chips to a
    second line instead of squeezing the title. */
 .alerts-v4 .al-row-meta {
-  display: flex; align-items: center; justify-content: flex-start; gap: 12px;
-  flex: 0 0 min(28rem, 55%); min-width: 0; flex-wrap: wrap; row-gap: 6px;
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px;
+  flex: 0 0 min(34rem, 60%); min-width: 0; flex-wrap: wrap; row-gap: 6px;
 }
 .alerts-v4 .al-row-meta .al-time { margin-left: auto; }
 /* Fixed slots so severity / status align down the list. */
