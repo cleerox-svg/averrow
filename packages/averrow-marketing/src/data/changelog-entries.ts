@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.10.0",
+    publishedAt: "2026-11-09",
+    kind: "Improvement",
+    title: "The refreshed look reaches your everyday screens",
+    description:
+      "The refreshed look now reaches the screens you use every day: the navigation and overview, the alerts and threats views, the customer dashboard, the sign-in page, and the controls and panels of the global threat map. Text is clearer and calmer, with sentence case throughout and a larger minimum text size, and amber is kept for warnings only. Layouts are steadier, with columns that line up and numbers that no longer jump around, and there is no count-up or looping animation. Keyboard and screen-reader support is better, touch targets are larger on phones, and sign-in errors now appear above the sign-in buttons where you will see them. The customer 7-day trend always shows seven days, and threat-type names are spelled the same way everywhere.",
+  },
+  {
     version: "v4.9.1",
     publishedAt: "2026-11-08",
     kind: "Improvement",

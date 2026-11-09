@@ -4,6 +4,55 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.10.0] — 2026-11-09
+
+Facelift Phase 6 (per-screen redesign): the indigo-on-graphite identity now
+reaches every day-to-day screen in ops, tenant, sign-in and the Observatory.
+MINOR bump (broad user-facing visual/UX release). Rolls up #1909, #1911 to #1915
+and #1917 to #1919. Tag `v4.10.0` is created by `tag-release.yml` on merge.
+
+Common to all screens: sentence-case labels, a larger minimum text size, amber
+reserved for warning/medium status (never CTA or active state), tabular figures
+and aligned columns, token-based hover/active/focus states, a11y groups and
+labels, 44px touch targets on phones, and no count-up or looping animation.
+
+### Screens
+- **Shell (#1909, screen 1)** — shipped in v4.9.1 (sentence case, token
+  hover/active, Offline indicator replacing the LIVE pulse, flat canvas,
+  command palette and nav a11y groups, theme button). Listed here because it is
+  Phase 6 screen 1.
+- **Overview (#1911, screen 2)** — ops Overview facelift.
+- **Global flat cards (#1912)** — shell card tokens reset so every page under
+  the facelift renders flat cards, not only the migrated screens.
+- **SOC console + Alerts (#1913, screen 3a)** — Console chrome and Alerts tab.
+- **Threats + shared threats table (#1914, screen 3b)** — Threats tab and the
+  shared threats table. Threat-type names go through one spelling so the same
+  type reads identically everywhere.
+- **Tenant workspace overview (#1915, screen 4)** — the customer 7-day trend
+  now always renders seven days (zero-filled gaps).
+- **Sign-in (#1917, screen 5)** — sentence-case login copy and the R3 mark;
+  magic-link/passkey/OAuth errors render above the buttons. Includes the
+  review-fix commit and the docs note recording the login copy.
+- **Observatory controls (#1918, screen 6a)** — map controls.
+- **Observatory panels (#1919, screen 6b)** — map side panels.
+
+### Known follow-ups (not blocking)
+- Kit `Badge`: the glow applies to dotted tones, and there is no
+  `dot={false}` opt-out.
+- Kit `Badge` size `sm` in the sans face renders at 10px, below the new minimum.
+- `StatTile` label is 11.5px below 640px.
+- `Avatar` fallback initials render at about 9px.
+- The Observatory lens strip hard-clips partially visible tabs instead of
+  fading or scrolling them.
+- The tenant shell (`TopBar` / `Sidebar`) still uses mono caps; not yet
+  facelifted.
+- Suspended modules render as "Locked". Owner decision pending on the wording
+  and treatment.
+- Magic-link and passkey sign-in errors echo the server's message text. This is
+  pre-existing behaviour, only repositioned by #1917.
+
+---
+
 ## [v4.9.1] — 2026-11-08
 
 Patch release: sign-in hardening, a lighter load on D1, an overload-safe
