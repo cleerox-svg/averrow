@@ -19,6 +19,8 @@
 
 import { describe, it, expect } from "vitest";
 import { handleAdminDashboard } from "../src/handlers/admin";
+import { DASHBOARD_SNAPSHOT_FRESH_S, DASHBOARD_SNAPSHOT_TTL_S } from "../src/handlers/admin/dashboard";
+import { markCacheRefresh } from "../src/lib/cache-refresh";
 import type { Env, UserRole } from "../src/types";
 import type { AuthContext } from "../src/middleware/auth";
 
@@ -143,28 +145,79 @@ describe("handleAdminDashboard — partial failure degrades to null, never 500",
     const kv = new MockKV();
     const env = makeThrowingEnv(kv);
     await handleAdminDashboard(req(), env, superAdminCtx());
-    expect(kv.store.has("admin:dashboard_snapshot:v1:sa")).toBe(true);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:sa")).toBe(true);
   });
 
   it("serves the cached composite on a warm hit without touching D1", async () => {
     const kv = new MockKV();
-    const canned = {
-      success: true,
-      data: {
-        threat_health: null,
-        budget: null,
-        feeds: null,
-        pipeline: null,
-        email_security: null,
-        generated_at: "2026-07-11T00:00:00.000Z",
-      },
-    };
-    kv.store.set("admin:dashboard_snapshot:v1:sa", JSON.stringify(canned));
+    // cachedValue envelope, written 10s ago — inside the 75s freshness.
+    kv.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, 10));
     const env = makeThrowingEnv(kv); // DB throws if ever touched
 
     const res = await handleAdminDashboard(req(), env, superAdminCtx());
     const body = await bodyOf(res);
     expect(body.data.generated_at).toBe("2026-07-11T00:00:00.000Z");
+  });
+});
+
+/** A snapshot body with a recognisable generated_at. */
+const CANNED = {
+  success: true,
+  data: {
+    threat_health: null,
+    budget: null,
+    feeds: null,
+    pipeline: null,
+    email_security: null,
+    generated_at: "2026-07-11T00:00:00.000Z",
+  },
+};
+
+/** cachedValue envelope (`{ v, t }`) for `value`, written `ageS` seconds ago. */
+function envelope(value: unknown, ageS: number): string {
+  return JSON.stringify({ v: value, t: Date.now() - ageS * 1000 });
+}
+
+describe("handleAdminDashboard — long-lived entry, 75s live freshness (cachedValue staleWhileRevalidate)", () => {
+  it("a stale entry (> 75s, < KV life) is served at once and refreshed under waitUntil", async () => {
+    const kv = new MockKV();
+    kv.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, DASHBOARD_SNAPSHOT_FRESH_S + 60));
+    const env = makeThrowingEnv(kv);
+    const pending: Promise<unknown>[] = [];
+
+    const res = await handleAdminDashboard(req(), env, superAdminCtx(), { waitUntil: (p) => { pending.push(p); } });
+    // First paint: the cached snapshot, not a cold compute.
+    expect((await bodyOf(res)).data.generated_at).toBe("2026-07-11T00:00:00.000Z");
+    expect(pending).toHaveLength(1);
+    await Promise.all(pending);
+
+    // The background refresh rewrote the key — the next poll is fresh.
+    const refreshed = JSON.parse(kv.store.get("cv:admin:dashboard_snapshot:v3:sa")!) as { v: SnapshotBody };
+    expect(refreshed.v.data.generated_at).not.toBe("2026-07-11T00:00:00.000Z");
+  });
+
+  it("without an ExecutionContext a stale entry is recomputed inline (old TTL semantics)", async () => {
+    const kv = new MockKV();
+    kv.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, DASHBOARD_SNAPSHOT_FRESH_S + 1));
+    const res = await handleAdminDashboard(req(), makeThrowingEnv(kv), superAdminCtx());
+    expect((await bodyOf(res)).data.generated_at).not.toBe("2026-07-11T00:00:00.000Z");
+  });
+
+  it("the KV entry outlives Navigator's 15-min Phase B warm", () => {
+    expect(DASHBOARD_SNAPSHOT_TTL_S).toBeGreaterThanOrEqual(900);
+    expect(DASHBOARD_SNAPSHOT_FRESH_S).toBe(75);
+  });
+
+  it("a Navigator warm (refresh-marked) recomputes an entry older than refreshAfterSeconds(TTL), not a younger one", async () => {
+    const young = new MockKV();
+    young.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, 300));
+    const warm1 = await handleAdminDashboard(markCacheRefresh(req()), makeThrowingEnv(young), superAdminCtx());
+    expect((await bodyOf(warm1)).data.generated_at).toBe("2026-07-11T00:00:00.000Z");
+
+    const old = new MockKV();
+    old.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, 900));
+    const warm2 = await handleAdminDashboard(markCacheRefresh(req()), makeThrowingEnv(old), superAdminCtx());
+    expect((await bodyOf(warm2)).data.generated_at).not.toBe("2026-07-11T00:00:00.000Z");
   });
 });
 
@@ -343,8 +396,8 @@ describe("handleBudgetConfigPatch — busts both dashboard snapshot cache keys",
     const { handleBudgetConfigPatch } = await import("../src/handlers/budget");
     const kv = new MockKV();
     // Seed both role-scoped snapshots as if warmed by prior loads.
-    kv.store.set("admin:dashboard_snapshot:v1:sa", JSON.stringify({ success: true, data: {} }));
-    kv.store.set("admin:dashboard_snapshot:v1:admin", JSON.stringify({ success: true, data: {} }));
+    kv.store.set("cv:admin:dashboard_snapshot:v3:sa", JSON.stringify({ success: true, data: {} }));
+    kv.store.set("cv:admin:dashboard_snapshot:v3:admin", JSON.stringify({ success: true, data: {} }));
 
     // Minimal DB stub: budget config UPDATE .run() succeeds, config SELECT
     // .first() returns a row. Only updateConfig's statements are exercised.
@@ -368,8 +421,8 @@ describe("handleBudgetConfigPatch — busts both dashboard snapshot cache keys",
     const res = await handleBudgetConfigPatch(patchReq, env);
     expect(res.status).toBe(200);
     // Both snapshot keys must be gone so the next dashboard load recomputes.
-    expect(kv.store.has("admin:dashboard_snapshot:v1:sa")).toBe(false);
-    expect(kv.store.has("admin:dashboard_snapshot:v1:admin")).toBe(false);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:sa")).toBe(false);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:admin")).toBe(false);
   });
 });
 
@@ -435,8 +488,22 @@ describe("handleAdminDashboard — RBAC: threat_health is super_admin-only", () 
     expect(body.data.feeds).not.toBeNull();
     expect(body.data.pipeline).not.toBeNull();
 
-    expect(kv.store.has("admin:dashboard_snapshot:v1:sa")).toBe(true);
-    expect(kv.store.has("admin:dashboard_snapshot:v1:admin")).toBe(false);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:sa")).toBe(true);
+    // One super_admin compute (e.g. Navigator's warm) also writes the
+    // plain-admin variant — the same snapshot with threat_health stripped.
+    const adminEntry = JSON.parse(kv.store.get("cv:admin:dashboard_snapshot:v3:admin")!) as { v: SnapshotBody };
+    expect(adminEntry.v.data.threat_health).toBeNull();
+    expect(adminEntry.v.data.feeds).toEqual(body.data.feeds);
+    expect(adminEntry.v.data.pipeline).toEqual(body.data.pipeline);
+    expect(adminEntry.v.data.generated_at).toBe(body.data.generated_at);
+  });
+
+  it("a plain admin served from the super_admin-written variant never sees threat_health", async () => {
+    const kv = new MockKV();
+    warmSlices(kv);
+    await handleAdminDashboard(req(), makeThrowingEnv(kv), superAdminCtx());
+    const res = await handleAdminDashboard(req(), makeThrowingEnv(kv), adminCtx());
+    expect((await bodyOf(res)).data.threat_health).toBeNull();
   });
 
   it("plain admin: threat_health is null even with a warm system_health cache; other slices still populate", async () => {
@@ -459,8 +526,8 @@ describe("handleAdminDashboard — RBAC: threat_health is super_admin-only", () 
     expect(body.data.pipeline!.total_pipelines).toBe(1);
 
     // Admins cache under a distinct key — no cross-role leakage.
-    expect(kv.store.has("admin:dashboard_snapshot:v1:admin")).toBe(true);
-    expect(kv.store.has("admin:dashboard_snapshot:v1:sa")).toBe(false);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:admin")).toBe(true);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:sa")).toBe(false);
   });
 
   it("cache isolation: a super_admin-warmed cache is never served to a plain admin", async () => {
@@ -468,15 +535,15 @@ describe("handleAdminDashboard — RBAC: threat_health is super_admin-only", () 
     // Simulate a super_admin having already populated the snapshot with a
     // threat_health slice under the :sa key.
     kv.store.set(
-      "admin:dashboard_snapshot:v1:sa",
-      JSON.stringify({
+      "cv:admin:dashboard_snapshot:v3:sa",
+      envelope({
         success: true,
         data: {
           threat_health: { threats: { total: 1, today: 1, week: 1 }, agents_24h: { total: 0, successes: 0, errors: 0 }, feeds_24h: { pulls: 0, ingested: 0 }, active_sessions: 0, trend_14d: [] },
           budget: null, feeds: null, pipeline: null, email_security: null,
           generated_at: "2026-07-11T00:00:00.000Z",
         },
-      }),
+      }, 5),
     );
     const env = makeThrowingEnv(kv);
 

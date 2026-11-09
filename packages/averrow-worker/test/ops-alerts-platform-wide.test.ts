@@ -17,7 +17,7 @@ import type { RouterType, IRequest } from "itty-router";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { registerDashboardRoutes } from "../src/routes/dashboard";
-import { dailyAlertDayKeys } from "../src/handlers/alerts";
+import { dailyAlertDayKeys, alertListCacheKey, parseAlertListQuery, ALERTS_LIST_GEN_KEY } from "../src/handlers/alerts";
 import { handleTenantAlerts, handleTenantAlertDetail, AVERROW_SOC_LABEL } from "../src/handlers/tenantData";
 import type { AuthContext } from "../src/middleware/auth";
 import { deriveSchema, splitStatements } from "./migration-schema";
@@ -340,6 +340,90 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
     const after = await (await call("admin", "/api/alerts/triage-summary")).json<{ data: { new_count: number; top: { id: string } } }>();
     expect(after.data.new_count).toBe(NEW_COUNT - 1);
     expect(after.data.top.id).toBe("a_crit_new_old");
+  });
+
+  // ─── GET /api/alerts list cache (perf PR 3) ─────────────────────────
+
+  describe("list cache: keyed by generation + scope + every param, dropped by every ops mutation", () => {
+    type ListBody = { data: Array<{ id: string; status: string }>; total: number };
+    const listKeys = () => [...kv.store.keys()].filter((k) => k.startsWith("cv:alerts_list:"));
+    const list = async (path = "/api/alerts?status=new&limit=50") =>
+      (await call("analyst", path)).json<ListBody>();
+
+    it("a repeat read is served from KV (an out-of-band DB change is invisible until the TTL / a mutation)", async () => {
+      const first = await list();
+      expect(first.total).toBe(NEW_COUNT);
+      expect(listKeys()).toHaveLength(1);
+      // Not an ops mutation → no invalidation; the cached page is served.
+      raw.prepare("UPDATE alerts SET status = 'resolved' WHERE id = 'a_low_new'").run();
+      expect((await list()).total).toBe(NEW_COUNT);
+    });
+
+    it("the key carries the global scope segment and every effective param", async () => {
+      await list("/api/alerts?status=new&severity=critical&alert_type=phishing_detected&brand_id=b1&search=Alert&limit=5&offset=1");
+      const [key] = listKeys();
+      expect(key).toBe(
+        "cv:alerts_list:v1:0:global:status=new&severity=critical&alert_type=phishing_detected&brand_id=b1&search=Alert&limit=5&offset=1",
+      );
+    });
+
+    it("different params → different keys; equivalent spellings share one", async () => {
+      await list("/api/alerts?status=new&limit=50");
+      await list("/api/alerts?limit=50&status=new");            // reordered → same key
+      await list("/api/alerts?status=new&limit=50&severity=");  // empty filter = no filter → same key
+      expect(listKeys()).toHaveLength(1);
+      await list("/api/alerts?status=new&limit=50&offset=50");
+      await list("/api/alerts?status=acknowledged&limit=50");
+      await list("/api/alerts?status=new&limit=999");           // clamped to 200 — its own key
+      await list("/api/alerts?status=new&limit=200");           // same bound LIMIT → same key as 999
+      expect(listKeys()).toHaveLength(4);
+    });
+
+    it("alertListCacheKey / parseAlertListQuery: normalised, ordered, encoded", () => {
+      const q = parseAlertListQuery(new URL("https://x/api/alerts?search=a%26b%3Dc&limit=500&status="));
+      expect(q).toEqual({ status: null, severity: null, alertType: null, brandId: null, search: "a&b=c", limit: 200, offset: 0 });
+      // limit clamped to [1, 200] (100 on NaN), offset >= 0 (0 on NaN): `?limit=-1`
+      // (SQLite LIMIT -1 = no limit) can't return or cache the whole table.
+      const parse = (qs: string) => parseAlertListQuery(new URL(`https://x/api/alerts?${qs}`));
+      expect(parse("limit=-1")).toMatchObject({ limit: 1, offset: 0 });
+      expect(parse("limit=0&offset=-5")).toMatchObject({ limit: 1, offset: 0 });
+      expect(parse("limit=abc&offset=xyz")).toMatchObject({ limit: 100, offset: 0 });
+      expect(parse("")).toMatchObject({ limit: 100, offset: 0 });
+      expect(alertListCacheKey("g1", "org:7:abc", q)).toBe(
+        "alerts_list:v1:g1:org:7:abc:status=&severity=&alert_type=&brand_id=&search=a%26b%3Dc&limit=200&offset=0",
+      );
+    });
+
+    it("?limit=-1 returns one row, not the whole table", async () => {
+      const body = await list("/api/alerts?limit=-1");
+      expect(body.data).toHaveLength(1);
+      expect(body.total).toBe(ALERTS.length);
+    });
+
+    const MUTATIONS: Array<{ name: string; run: () => Promise<Response>; changed: number }> = [
+      { name: "PATCH /api/alerts/:id", run: () => call("analyst", "/api/alerts/a_high_new", "PATCH", { status: "acknowledged" }), changed: 1 },
+      { name: "bulk-acknowledge", run: () => call("analyst", "/api/alerts/bulk-acknowledge", "POST", { alert_ids: ["a_low_new", "a_high_new"] }), changed: 2 },
+      { name: "bulk-takedown", run: () => call("analyst", "/api/alerts/bulk-takedown", "POST", { alert_ids: ["a_crit_new_old"] }), changed: 1 },
+    ];
+    for (const m of MUTATIONS) {
+      it(`${m.name} bumps the list generation, so the next list read reflects the change`, async () => {
+        expect((await list()).total).toBe(NEW_COUNT);
+        const genBefore = kv.store.get(ALERTS_LIST_GEN_KEY) ?? "0";
+        const res = await m.run();
+        expect(res.status).toBe(200);
+        expect(kv.store.get(ALERTS_LIST_GEN_KEY)).toBeDefined();
+        expect(kv.store.get(ALERTS_LIST_GEN_KEY)).not.toBe(genBefore);
+        expect((await list()).total).toBe(NEW_COUNT - m.changed);
+        // The pre-mutation page is still in KV but unreachable (old generation).
+        expect(listKeys()).toHaveLength(2);
+      });
+    }
+
+    it("a mutation that changes nothing (bulk-acknowledge on non-new ids) does not invalidate", async () => {
+      await list();
+      await call("analyst", "/api/alerts/bulk-acknowledge", "POST", { alert_ids: ["a_med_ack"] });
+      expect(kv.store.has(ALERTS_LIST_GEN_KEY)).toBe(false);
+    });
   });
 
   // ─── PR-C review fixes ──────────────────────────────────────────────

@@ -49,14 +49,21 @@ export const EMAIL_POSTURE_ROLLUP_SQL = `
   GROUP BY email_security_grade, email_security_dmarc_policy, scored
 `;
 
-/** One full scan of `brands`, shared by every email-posture surface. */
-export async function emailPostureRollup(env: Env): Promise<EmailPostureRollupRow[]> {
+/**
+ * One full scan of `brands`, shared by every email-posture surface.
+ * `refresh` = a Navigator warm (refresh-ahead, see cachedValue).
+ */
+export async function emailPostureRollup(
+  env: Env,
+  opts: { refresh?: boolean } = {},
+): Promise<EmailPostureRollupRow[]> {
   return cachedValue<EmailPostureRollupRow[]>(
     env, EMAIL_POSTURE_ROLLUP_KEY, EMAIL_POSTURE_ROLLUP_TTL_S,
     async () => {
       const r = await env.DB.prepare(EMAIL_POSTURE_ROLLUP_SQL).all<EmailPostureRollupRow>();
       return r.results;
     },
+    { refresh: opts.refresh },
   );
 }
 

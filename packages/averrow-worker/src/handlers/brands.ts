@@ -18,6 +18,8 @@ import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedCount } from "../lib/cached-count";
 import { scopeCacheSegment } from "../lib/scope-cache-key";
+import { isCacheRefresh, readRefreshableCache, writeRefreshableCache } from "../lib/cache-refresh";
+import { cachedValue } from "../lib/cached-value";
 import { countExposureLookalikes } from "../lib/lookalike-exposure";
 import { persistSocialAssessment } from "../lib/social-assessment-persist";
 import type { Env } from "../types";
@@ -44,88 +46,118 @@ import type { OrgScope } from "../middleware/auth";
 // so SUM(threat_count) over a window IS the inflow over that window.
 //
 // Cube + brands JOIN is one round-trip; the two windows are split
-// from the same SUM with conditional aggregation. Cached in KV for
-// 5 min.
-export async function handleBrandMovers(request: Request, env: Env): Promise<Response> {
+// from the same SUM with conditional aggregation.
+//
+// Cached via cachedValue staleWhileRevalidate: live requests take an entry
+// up to 5 min old as-is (older → served, refreshed in the background by the
+// refill-lock holder); entries are servable for 1h so Navigator's 30-min
+// sequential Phase D warm keeps the Brands page's first load warm.
+export const BRAND_MOVERS_FRESH_S = 300;
+export const BRAND_MOVERS_TTL_S = 3600;
+// v5: cachedValue entry under `cv:`. v3 invalidated v1/v2 payloads built
+// against daily_snapshots.active_threats (which never decreases, so Cooling
+// Down was always empty regardless of the anchor logic).
+export const BRAND_MOVERS_CACHE_KEY = "brand_movers:v5";
+
+export async function handleBrandMovers(
+  request: Request,
+  env: Env,
+  execCtx?: Pick<ExecutionContext, "waitUntil">,
+): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   try {
-    // v3 cache prefix — invalidates v1/v2 payloads built against
-    // daily_snapshots.active_threats (which never decreases, so
-    // Cooling Down was always empty regardless of the anchor logic).
-    const cacheKey = "brand_movers:v3";
-    const cached = await env.CACHE.get(cacheKey);
-    if (cached) {
-      recordD1Reads(env, "brand_movers", newTally());
-      return attachBookmark(json(JSON.parse(cached), 200, origin), session);
-    }
-
-    const tally = newTally();
-
-    const rows = await session.prepare(`
-      WITH inflow AS (
-        SELECT
-          target_brand_id AS brand_id,
-          SUM(CASE WHEN hour_bucket >= datetime('now','-7 days')
-                   THEN threat_count ELSE 0 END) AS this_week,
-          SUM(CASE WHEN hour_bucket >= datetime('now','-14 days')
-                    AND hour_bucket <  datetime('now','-7 days')
-                   THEN threat_count ELSE 0 END) AS last_week
-        FROM threat_cube_brand
-        WHERE hour_bucket >= datetime('now','-14 days')
-        GROUP BY target_brand_id
-      )
-      SELECT
-        b.id, b.name, b.canonical_domain, b.logo_url, b.email_security_grade,
-        b.threat_count,
-        i.this_week AS today_count,
-        i.last_week AS week_ago_count,
-        i.this_week - i.last_week AS delta_7d
-      FROM inflow i
-      JOIN brands b ON b.id = i.brand_id
-      WHERE i.this_week + i.last_week > 0
-    `).all<{
-      id: string; name: string; canonical_domain: string;
-      logo_url: string | null; email_security_grade: string | null;
-      threat_count: number;
-      today_count: number; week_ago_count: number; delta_7d: number;
-    }>();
-    tally.queries += 1;
-
-    const all = rows.results ?? [];
-    const rising = all
-      .filter(r => r.delta_7d > 0)
-      .sort((a, b) => b.delta_7d - a.delta_7d)
-      .slice(0, 5);
-    const falling = all
-      .filter(r => r.delta_7d < 0)
-      .sort((a, b) => a.delta_7d - b.delta_7d)
-      .slice(0, 5);
-
-    const data = {
-      success: true,
-      data: { rising, falling },
-    };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
-    recordD1Reads(env, "brand_movers", tally);
-    return attachBookmark(json(data, 200, origin), session);
+    // computeBrandMovers records its own D1 tally; cache hits record none.
+    const value = await cachedValue(
+      env,
+      BRAND_MOVERS_CACHE_KEY,
+      BRAND_MOVERS_TTL_S,
+      () => computeBrandMovers(env, session),
+      {
+        refresh: isCacheRefresh(request),
+        staleWhileRevalidate: {
+          freshSeconds: BRAND_MOVERS_FRESH_S,
+          waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
+        },
+      },
+    );
+    return attachBookmark(json(value, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
   }
 }
 
+type BrandMoverRow = {
+  id: string; name: string; canonical_domain: string;
+  logo_url: string | null; email_security_grade: string | null;
+  threat_count: number;
+  today_count: number; week_ago_count: number; delta_7d: number;
+};
+
+async function computeBrandMovers(
+  env: Env,
+  session: ReturnType<typeof getReadSession>,
+): Promise<{ success: true; data: { rising: BrandMoverRow[]; falling: BrandMoverRow[] } }> {
+  const tally = newTally();
+
+  const rows = await session.prepare(`
+    WITH inflow AS (
+      SELECT
+        target_brand_id AS brand_id,
+        SUM(CASE WHEN hour_bucket >= datetime('now','-7 days')
+                 THEN threat_count ELSE 0 END) AS this_week,
+        SUM(CASE WHEN hour_bucket >= datetime('now','-14 days')
+                  AND hour_bucket <  datetime('now','-7 days')
+                 THEN threat_count ELSE 0 END) AS last_week
+      FROM threat_cube_brand
+      WHERE hour_bucket >= datetime('now','-14 days')
+      GROUP BY target_brand_id
+    )
+    SELECT
+      b.id, b.name, b.canonical_domain, b.logo_url, b.email_security_grade,
+      b.threat_count,
+      i.this_week AS today_count,
+      i.last_week AS week_ago_count,
+      i.this_week - i.last_week AS delta_7d
+    FROM inflow i
+    JOIN brands b ON b.id = i.brand_id
+    WHERE i.this_week + i.last_week > 0
+  `).all<BrandMoverRow>();
+  tally.queries += 1;
+
+  const all = rows.results ?? [];
+  const rising = all
+    .filter(r => r.delta_7d > 0)
+    .sort((a, b) => b.delta_7d - a.delta_7d)
+    .slice(0, 5);
+  const falling = all
+    .filter(r => r.delta_7d < 0)
+    .sort((a, b) => a.delta_7d - b.delta_7d)
+    .slice(0, 5);
+
+  recordD1Reads(env, "brand_movers", tally);
+  return { success: true, data: { rising, falling } };
+}
+
 // GET /api/brands/stats
+export const BRAND_STATS_TTL_S = 3600;
+
 export async function handleBrandStats(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   try {
-    // KV cache: brand stats rarely change — cache for 30 minutes so the
-    // TTL outlives Navigator's Phase C warm cadence (every 30 min); at a
-    // shorter TTL the cache would be cold for ~half of each cycle.
+    // KV cache: brand stats rarely change. Refresh-ahead (Observatory
+    // pattern, lib/cache-refresh.ts): the 1h TTL outlives Navigator's
+    // 30-min sequential Phase D warm, which recomputes the key once it is
+    // refreshAfterSeconds(3600) = 1740s old — i.e. on every warm — so
+    // live reads see data ≤ ~30 min old and the key never lapses. (The
+    // old plain 1800s TTL equalled the warm interval: a warm landing a
+    // moment before expiry read a hit, refreshed nothing, and the key
+    // then sat cold until the next warm.)
     const cacheKey = "brand_stats";
-    const cached = await env.CACHE.get(cacheKey);
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, BRAND_STATS_TTL_S);
     if (cached) {
       recordD1Reads(env, "brand_stats", newTally());
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
@@ -229,10 +261,8 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
         sector_breakdown: sectorBreakdown.results ?? [],
       },
     };
-    // 1800s (30-min) TTL outlives Navigator's 30-min Phase C warm
-    // cadence so real loads hit warm cache (was 300s → expired ~83%
-    // between warms; 900s still left a ~50% cold gap under Phase C).
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 1800 });
+    // Stamped write (cachedAt metadata) so the refresh-marked warm can age it.
+    await writeRefreshableCache(env.CACHE, cacheKey, data, BRAND_STATS_TTL_S);
     // 5 sequential queries — meta isn't exposed for .first(), tally
     // the breakdown queries' .all() rows from their meta.
     tally.queries += 5;
@@ -867,7 +897,7 @@ export async function handleBrandFirmographics(request: Request, env: Env, brand
 // ── Catalog-level aggregates ────────────────────────────────
 // 4 read-only endpoints powering the Brands Intel page sections
 // (Defense / Pressure / Composition / Posture). All wrapped via
-// cachedValue (5min TTL) inside lib/brand-aggregates.ts. Hot-path
+// cachedValue (1h TTL, composition/posture 2h; refresh-ahead on Navigator sequential Phase D warms) inside lib/brand-aggregates.ts. Hot-path
 // safe at 100K+ catalog size.
 
 export async function handleBrandsAggregateEmailSecurity(request: Request, env: Env): Promise<Response> {
@@ -876,7 +906,7 @@ export async function handleBrandsAggregateEmailSecurity(request: Request, env: 
   const session = getReadSession(env, ctx);
   try {
     const { emailSecurityAggregate } = await import('../lib/brand-aggregates');
-    const data = await emailSecurityAggregate(env);
+    const data = await emailSecurityAggregate(env, { refresh: isCacheRefresh(request) });
     return attachBookmark(json({ success: true, data }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
@@ -889,7 +919,7 @@ export async function handleBrandsAggregatePressure(request: Request, env: Env):
   const session = getReadSession(env, ctx);
   try {
     const { pressureAggregate } = await import('../lib/brand-aggregates');
-    const data = await pressureAggregate(env);
+    const data = await pressureAggregate(env, { refresh: isCacheRefresh(request) });
     return attachBookmark(json({ success: true, data }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
@@ -902,7 +932,7 @@ export async function handleBrandsAggregateComposition(request: Request, env: En
   const session = getReadSession(env, ctx);
   try {
     const { compositionAggregate } = await import('../lib/brand-aggregates');
-    const data = await compositionAggregate(env);
+    const data = await compositionAggregate(env, { refresh: isCacheRefresh(request) });
     return attachBookmark(json({ success: true, data }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
@@ -915,7 +945,7 @@ export async function handleBrandsAggregatePosture(request: Request, env: Env): 
   const session = getReadSession(env, ctx);
   try {
     const { postureAggregate } = await import('../lib/brand-aggregates');
-    const data = await postureAggregate(env);
+    const data = await postureAggregate(env, { refresh: isCacheRefresh(request) });
     return attachBookmark(json({ success: true, data }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);

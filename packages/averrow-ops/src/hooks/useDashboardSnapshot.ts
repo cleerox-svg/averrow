@@ -2,11 +2,13 @@
 // fanning out to ~6 independently-cached endpoints (system-health, budget
 // status+breakdown, feed-failures, pipeline-status, email-security stats).
 //
-// Backend contract: packages/averrow-worker/src/handlers/admin.ts
+// Backend contract: packages/averrow-worker/src/handlers/admin/dashboard.ts
 // (`handleAdminDashboard`), routed at GET /api/admin/dashboard
-// (requireAdmin), documented in docs/API_REFERENCE.md. Backend cache TTL
-// is ~75s (`DASHBOARD_SNAPSHOT_TTL`) — staleTime/refetchInterval below
-// match that cadence so this poller doesn't out-run the KV cache.
+// (requireAdmin), documented in docs/API_REFERENCE.md. The backend serves a
+// snapshot up to 75s old as-is (`DASHBOARD_SNAPSHOT_FRESH_S`); an older one
+// (still servable for `DASHBOARD_SNAPSHOT_TTL_S` = 1200s) is returned at once
+// and refreshed in the background, so the next poll is fresh.
+// staleTime/refetchInterval below match the 75s freshness.
 //
 // Every slice is INDEPENDENTLY NULLABLE — a failed/absent slice is `null`,
 // never a 500. `threat_health` is null for non-super_admin by design (it
@@ -123,9 +125,9 @@ export function useDashboardSnapshot(opts: { enabled?: boolean } = {}) {
       return res.data ?? null;
     },
     enabled: opts.enabled !== false,
-    // Backend KV cache TTL is ~75s (DASHBOARD_SNAPSHOT_TTL) — match cadence
-    // so this poller stays roughly in step with the cache window instead of
-    // either hammering a warm cache or sitting stale behind it.
+    // Backend live freshness is 75s (DASHBOARD_SNAPSHOT_FRESH_S; older entries
+    // are served and refreshed in the background) — polling at that cadence
+    // means each poll lands on a refreshed snapshot without hammering KV.
     staleTime: 75_000,
     refetchInterval: 75_000,
   });

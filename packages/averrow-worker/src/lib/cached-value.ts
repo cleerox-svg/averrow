@@ -36,6 +36,7 @@
 // pattern and migration story.
 
 import type { Env } from "../types";
+import { refreshAfterSeconds } from "./cache-refresh";
 
 const CACHE_PREFIX = "cv:"; // distinct namespace from cc: (counter cache)
 const STATS_KEY = "cc:_stats"; // shared stats ring with cached-count.ts
@@ -44,6 +45,26 @@ const LOCK_PREFIX = "cvlock:"; // single-flight refill locks
 
 /** Upper bound on a single-flight wait — far under the ~100s edge timeout. */
 export const SINGLE_FLIGHT_MAX_WAIT_MS = 10_000;
+
+/**
+ * Opt-in stale-while-revalidate for `cachedValue` (see its doc): `ttlSeconds`
+ * becomes how long an entry may be SERVED, `freshSeconds` how long it is
+ * served without a refresh.
+ */
+export interface StaleWhileRevalidateOptions {
+  /** Max entry age (s) served without a refresh — the endpoint's freshness promise. */
+  freshSeconds: number;
+  /**
+   * `ExecutionContext.waitUntil`. With it, an entry older than
+   * `freshSeconds` (but younger than `ttlSeconds`) is returned at once and
+   * ONE caller — the holder of the `cvlock:` refill lock — recomputes it in
+   * the background. Without it (no ExecutionContext) the entry is
+   * recomputed inline, i.e. plain `freshSeconds` TTL semantics.
+   */
+  waitUntil?: (promise: Promise<unknown>) => void;
+  /** KV TTL of the background-refill lock (KV minimum 60s). Default 60. */
+  lockTtlSeconds?: number;
+}
 
 /** Opt-in single-flight refill for `cachedValue` (see its doc). */
 export interface SingleFlightOptions {
@@ -91,13 +112,29 @@ interface CachedEntry<T> {
  *                     lock held waits — at most `waitMs` (≤10s) — then computes.
  *                     Fails open on KV errors. This option is the one case
  *                     where the helper can return data older than `ttlSeconds`.
+ * @param opts.staleWhileRevalidate Serve-stale-then-refresh: see
+ *                     StaleWhileRevalidateOptions. `ttlSeconds` is then the
+ *                     max servable age (keep it >= the warm interval) and
+ *                     `freshSeconds` the live freshness. Ignored on a
+ *                     `refresh` (warm) call.
+ * @param opts.refresh Refresh-ahead for a Navigator warm (pass
+ *                     `isCacheRefresh(request)`): the entry is treated as
+ *                     expired once it is `refreshAfterSeconds(ttlSeconds)` old
+ *                     (lib/cache-refresh.ts), so a warm on a cadence ≤ the TTL
+ *                     recomputes the key before live readers see it lapse.
+ *                     Live callers leave it unset.
  */
 export async function cachedValue<T>(
   env: Env,
   key: string,
   ttlSeconds: number,
   compute: () => Promise<T>,
-  opts: { ttlFor?: (value: T) => number; singleFlight?: SingleFlightOptions } = {},
+  opts: {
+    ttlFor?: (value: T) => number;
+    singleFlight?: SingleFlightOptions;
+    refresh?: boolean;
+    staleWhileRevalidate?: StaleWhileRevalidateOptions;
+  } = {},
 ): Promise<T> {
   if (ttlSeconds <= 0) {
     const value = await compute();
@@ -106,15 +143,25 @@ export async function cachedValue<T>(
   }
 
   const cacheKey = CACHE_PREFIX + key;
+  // Refresh-ahead (Navigator warm): an entry counts as fresh only until
+  // refreshAfterSeconds(ttl), so the warm recomputes it before it expires.
+  // Stale-while-revalidate: a live read is fresh only for `freshSeconds`
+  // (a warm keeps the refresh-ahead rule on the full TTL).
+  const swr = opts.refresh ? undefined : opts.staleWhileRevalidate;
+  const freshFor = opts.refresh
+    ? refreshAfterSeconds(ttlSeconds)
+    : swr
+      ? Math.min(swr.freshSeconds, ttlSeconds)
+      : ttlSeconds;
 
   /** The stored entry (fresh or expired-but-still-in-KV), or null. */
-  const readEntry = async (): Promise<{ entry: CachedEntry<T>; fresh: boolean } | null> => {
+  const readEntry = async (): Promise<{ entry: CachedEntry<T>; fresh: boolean; servable: boolean } | null> => {
     try {
       const raw = await env.CACHE.get(cacheKey);
       if (raw) {
         const parsed = JSON.parse(raw) as CachedEntry<T>;
         const ageSeconds = (Date.now() - parsed.t) / 1000;
-        return { entry: parsed, fresh: ageSeconds < ttlSeconds };
+        return { entry: parsed, fresh: ageSeconds < freshFor, servable: ageSeconds < ttlSeconds };
       }
     } catch {
       // KV transient — fall through to compute.
@@ -146,6 +193,45 @@ export async function cachedValue<T>(
     return value;
   };
 
+  const lockKey = LOCK_PREFIX + key;
+
+  // Stale-while-revalidate (opt-in): serve a stale-but-servable entry now;
+  // the caller that takes the refill lock recomputes it under waitUntil,
+  // everyone else just serves the stale value. Best-effort like singleFlight
+  // (KV is not transactional) and fail-open.
+  if (swr?.waitUntil && first?.servable) {
+    let held = false;
+    try {
+      held = (await env.CACHE.get(lockKey)) !== null;
+    } catch {
+      held = false;
+    }
+    if (!held) {
+      let locked = false;
+      try {
+        await env.CACHE.put(lockKey, String(Date.now()), {
+          expirationTtl: Math.max(swr.lockTtlSeconds ?? 60, 60),
+        });
+        locked = true;
+      } catch {
+        // Fail open — refill without the lock.
+      }
+      swr.waitUntil((async () => {
+        try {
+          await computeAndStore();
+        } catch {
+          // Background refill failed: the stale entry keeps serving until ttlSeconds.
+        } finally {
+          if (locked) {
+            try { await env.CACHE.delete(lockKey); } catch { /* expires on its TTL */ }
+          }
+        }
+      })());
+    }
+    void recordStat(env, "hit");
+    return first.entry.v;
+  }
+
   // Single-flight (opt-in), stale-while-revalidate: only one caller
   // refills an expensive key while the rest keep serving the expired entry.
   // KV is not transactional, so this is best-effort — it collapses the
@@ -153,7 +239,6 @@ export async function cachedValue<T>(
   // open: a KV error, or a cold key whose lock holder hasn't written within
   // `waitMs`, falls through to computing here.
   let ownLock = false;
-  const lockKey = LOCK_PREFIX + key;
   if (opts.singleFlight) {
     const sf = opts.singleFlight;
     let held = false;
@@ -212,6 +297,11 @@ export async function cachedValue<T>(
       }
     }
   }
+}
+
+/** The KV key `cachedValue(env, key, …)` stores under — for callers that delete it. */
+export function cachedValueKvKey(key: string): string {
+  return CACHE_PREFIX + key;
 }
 
 /**
