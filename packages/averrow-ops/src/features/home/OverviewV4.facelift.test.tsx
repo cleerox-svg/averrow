@@ -207,11 +207,11 @@ describe('Overview review fixes', () => {
     for (const el of sev) {
       expect(el.className).toMatch(/font-sans/);
       expect(el.className).not.toMatch(/uppercase|font-mono/);
-      expect(el.style.fontSize).toBe('12px');
+      expect(el.style.fontSize).toContain('12px');
     }
     const observer = container.querySelector('[data-briefing-source] header')!.querySelector('span.font-sans') as HTMLElement;
     expect(observer).toHaveTextContent('Observer');
-    expect(observer.style.fontSize).toBe('12px');
+    expect(observer.style.fontSize).toContain('12px');
   });
 
   it('the flat Card reads --card-flat-bg (default unchanged) and the Overview points it at --bg-card', () => {

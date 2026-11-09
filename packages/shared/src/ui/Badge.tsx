@@ -161,7 +161,7 @@ const LEGACY_MAP: Partial<Record<LegacyVariant, Severity>> = {
 
 // Legacy sizes (xs/sm 9px mono, 10px sans; md 11px mono, 12px sans). Under the
 // facelift (`:root[data-accent]`, tokens.css) every size is floored at 12px by
-// `.ds-badge { font-size: 12px !important }`, so these inline values are legacy only.
+// the `--ds-badge-min-fs` min() in the inline style, so these values are legacy only.
 const SIZE: Record<BadgeSize, { fontSize: number; padding: string; radius: number }> = {
   xs: { fontSize: 9,  padding: '2px 6px',  radius: 6 },
   sm: { fontSize: 9,  padding: '3px 8px',  radius: 99 },
@@ -218,7 +218,8 @@ export function Badge(props: BadgeProps) {
       )}
       style={{
         gap: showDot ? 5 : 0,
-        fontSize: font === 'sans' ? z.fontSize + 1 : z.fontSize,
+        // Facelift floors text at 12px via `--ds-badge-min-fs` (tokens.css); legacy has no floor.
+        fontSize: `max(var(--ds-badge-min-fs, 0px), ${font === 'sans' ? z.fontSize + 1 : z.fontSize}px)`,
         padding: z.padding,
         borderRadius: z.radius,
         background: tone.bg,

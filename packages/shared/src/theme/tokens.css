@@ -1408,10 +1408,10 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 
 /* Facelift kit floors (polish): Badge text >= 12px (every size/font) with no
    outer glow, Avatar initials >= 12px. Badge/Avatar set sizes inline, so the
-   floor is !important / a custom property with legacy fallbacks; with
+   floor is a custom property (a min() in the inline size) with legacy fallbacks; with
    FACELIFT=false (no data-accent) nothing here applies. */
-:root[data-accent] .ds-badge { font-size: 12px !important; }
 :root[data-accent] {
   --ds-badge-glow: 0 0 0 transparent;
+  --ds-badge-min-fs: 12px;
   --ds-avatar-min-fs: 12px;
 }
