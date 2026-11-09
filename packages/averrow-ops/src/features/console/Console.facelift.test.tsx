@@ -40,8 +40,9 @@ describe('Console chrome', () => {
 
   it('console.css no longer loops the Console chrome and holds no colour literals', () => {
     const css = readFileSync(resolve(__dirname, 'console.css'), 'utf8');
-    // `.console-live` stays only for TabbedWorkspace (admin pages), not Console.
+    // `.console-live` / its keyframes are gone everywhere (TabbedWorkspace moved to the kit Tabs too).
     expect(readFileSync(resolve(__dirname, 'Console.tsx'), 'utf8')).not.toMatch(/console-live|console-ping/);
+    expect(css).not.toMatch(/console-live|console-ping/);
     expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
   });
 

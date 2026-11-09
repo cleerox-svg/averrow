@@ -2,7 +2,8 @@ import { useEffect } from 'react';
 import { describe, it, expect } from 'vitest';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import { MemoryRouter, useNavigate, useLocation } from 'react-router-dom';
-import { Shield } from 'lucide-react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { PageHeader } from '@averrow/shared/ui';
 import { TabbedWorkspace, type WorkspaceTab } from './TabbedWorkspace';
 
@@ -10,8 +11,8 @@ const A = () => <div>pane-a</div>;
 const B = () => <div>pane-b</div>;
 const WithHeader = () => <PageHeader title="Pane title" subtitle="pane sub" actions={<button>act</button>} />;
 const TABS: WorkspaceTab[] = [
-  { id: 'a', label: 'A', icon: Shield, Component: A },
-  { id: 'b', label: 'B', icon: Shield, Component: B },
+  { id: 'a', label: 'A', Component: A },
+  { id: 'b', label: 'B', Component: B },
 ];
 
 let go: (to: string) => void = () => {};
@@ -42,15 +43,15 @@ describe('TabbedWorkspace', () => {
         <Loc />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole('button', { name: /B/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'B' }));
     expect(screen.getByTestId('loc').textContent).toBe('/w?tab=b');
-    fireEvent.click(screen.getByRole('button', { name: /A/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'A' }));
     expect(screen.getByTestId('loc').textContent).toBe('/w');
   });
 
   it('remounts the active pane when ?q= changes', async () => {
     mounts = 0;
-    const tabs: WorkspaceTab[] = [{ id: 'c', label: 'C', icon: Shield, Component: Counter }];
+    const tabs: WorkspaceTab[] = [{ id: 'c', label: 'C', Component: Counter }];
     render(
       <MemoryRouter initialEntries={['/w?q=one']}>
         <Nav />
@@ -64,7 +65,7 @@ describe('TabbedWorkspace', () => {
   });
 
   it('embedded tab renders exactly one h1 and keeps page actions', async () => {
-    const tabs: WorkspaceTab[] = [{ id: 'h', label: 'H', icon: Shield, Component: WithHeader }];
+    const tabs: WorkspaceTab[] = [{ id: 'h', label: 'H', Component: WithHeader }];
     render(
       <MemoryRouter initialEntries={['/w']}>
         <TabbedWorkspace crumb="X" title="Workspace" tabs={tabs} />
@@ -85,5 +86,26 @@ describe('TabbedWorkspace', () => {
     );
     expect(screen.getByText('Platform')).toHaveClass('console-crumb');
     expect(screen.queryByText('PLATFORM')).not.toBeInTheDocument();
+  });
+
+  it('uses the kit Tabs (real tablist, arrow keys), with no looping LIVE indicator', () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/w?tab=b']}>
+        <TabbedWorkspace crumb="Platform" title="Workspace" tabs={TABS} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('tablist', { name: 'Workspace sections' })).toBeInTheDocument();
+    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['A', 'B']);
+    expect(screen.getByRole('tab', { name: 'B' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'A' })).toHaveAttribute('aria-selected', 'false');
+    expect(container.querySelector('.console-live, .console-tabs')).toBeNull();
+    expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
+  });
+
+  it('source and stylesheet carry no looping dot or button-row tabs', () => {
+    const src = readFileSync(resolve(__dirname, 'TabbedWorkspace.tsx'), 'utf8');
+    expect(src).not.toMatch(/console-live|console-tabs|variant="primary"/);
+    const css = readFileSync(resolve(__dirname, '../../features/console/console.css'), 'utf8');
+    expect(css).not.toMatch(/console-live|console-ping|\.console-tabs\b/);
   });
 });

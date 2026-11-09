@@ -10,7 +10,6 @@
 
 import { lazy } from 'react';
 import { Navigate } from 'react-router-dom';
-import { ClipboardList, DollarSign, Bell, Users } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import { TabbedWorkspace, type WorkspaceTab } from '@/components/v4/TabbedWorkspace';
@@ -26,23 +25,23 @@ export function GovernanceWorkspace() {
 
   const tabs: WorkspaceTab[] = [
     ...(roleHasPermission(user?.role, 'view_audit')
-      ? [{ id: 'audit', label: 'Audit Log', icon: ClipboardList, Component: AdminAudit,
+      ? [{ id: 'audit', label: 'Audit log', Component: AdminAudit,
           def: 'The compliance audit trail — every privileged action on the platform, filterable by outcome, window, and action type.' } as WorkspaceTab]
       : []),
     ...(isAdmin
-      ? [{ id: 'users', label: 'Users', icon: Users, Component: PlatformUsers,
+      ? [{ id: 'users', label: 'Users', Component: PlatformUsers,
           def: 'Platform accounts — roles, access status, sessions, force sign-out, and staff invitations.' } as WorkspaceTab]
       : []),
     ...(roleHasPermission(user?.role, 'view_billing')
-      ? [{ id: 'pricing', label: 'Pricing', icon: DollarSign, Component: PricingConfig,
+      ? [{ id: 'pricing', label: 'Pricing', Component: PricingConfig,
           def: 'Global baseline prices for plans and modules. Per-customer overrides live on the Customers page.' } as WorkspaceTab]
       : []),
     ...(isSuperAdmin
-      ? [{ id: 'notifications', label: 'Platform Notifications', icon: Bell, Component: NotificationCenter,
+      ? [{ id: 'notifications', label: 'Platform notifications', Component: NotificationCenter,
           def: 'Platform-wide notification volume and system mutes — silence a noisy notification type for everyone.' } as WorkspaceTab]
       : []),
   ];
 
   if (tabs.length === 0) return <Navigate to="/admin" replace />;
-  return <TabbedWorkspace crumb="PLATFORM" title="Governance" tabs={tabs} />;
+  return <TabbedWorkspace crumb="Platform" title="Governance" tabs={tabs} />;
 }
