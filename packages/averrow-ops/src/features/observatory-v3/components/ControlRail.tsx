@@ -107,7 +107,7 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
           style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-base)', color: 'var(--text-primary)', boxShadow: 'var(--card-shadow-elevated)' }}
         >
           <span className="flex items-center gap-2">
-            <span>{item.label}</span>
+            <span>{item.visible ?? item.label}</span>
             {item.key && (
               <kbd className={cn('rounded px-1', FACT)} style={{ border: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}>{item.key}</kbd>
             )}

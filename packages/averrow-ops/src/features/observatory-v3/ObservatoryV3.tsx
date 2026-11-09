@@ -110,7 +110,7 @@ const FAST_LAYERS = noLayers();
 const Z_CHROME = 10;   // rail, stats bar, headline bar, legend chip, replay bar
 const Z_PANEL = 20;    // intel panel / drill drawer (their own z-20) and the mobile Intel FAB
 const Z_TOOLBAR = 22;  // toolbar row: ABOVE the panel / drawer, so its filters + search popovers open over them
-const Z_TOGGLE = 30;   // desktop panel toggle + load-error banner
+const Z_TOGGLE = 30;   // load-error banner (the desktop panel toggle sits at Z_PANEL + 1, under the toolbar)
 
 type SheetKey = 'drill' | 'panel';
 
@@ -1098,7 +1098,7 @@ export function ObservatoryV3() {
         <>
           <div className="absolute top-2 left-3 right-3 flex items-center gap-2" style={{ zIndex: Z_TOOLBAR, height: 44 }} data-toolbar>
             <LensStrip lens={lens} onChange={setLens} controls={mapRegionId} className="flex-1" />
-            {searchEl({ collapsed: layout.searchCollapsed, className: layout.searchCollapsed ? 'shrink-0' : 'w-[190px] shrink-0' })}
+            {searchEl({ collapsed: layout.searchCollapsed, className: layout.searchCollapsed ? 'shrink-0' : 'w-[160px] shrink-0' })}
             {layout.filtersInPopover ? (
               <FiltersPopover period={period} source={source}>
                 {filtersBody}
@@ -1325,7 +1325,7 @@ export function ObservatoryV3() {
             padding: '12px 6px',
             color: 'var(--text-tertiary)',
             cursor: 'pointer',
-            zIndex: Z_TOGGLE,
+            zIndex: Z_PANEL + 1, // above the panel it sits on, below the toolbar row so the filters popover opens over it
           }}
         >
           {panelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}

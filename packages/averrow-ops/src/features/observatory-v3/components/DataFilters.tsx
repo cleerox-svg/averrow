@@ -39,7 +39,7 @@ export function TypeMultiSelect({ types, onChange, touch = false }: { types: rea
           return (
             <label
               key={t.id}
-              className={cn('ds-focusable flex items-center gap-2 rounded-md px-1.5 cursor-pointer', BODY)}
+              className={cn('ds-focusable flex min-w-0 items-center gap-2 rounded-md px-1.5 cursor-pointer', BODY)}
               style={{ minHeight: touch ? 44 : 28, color: on ? 'var(--text-primary)' : 'var(--text-secondary)' }}
             >
               <input
@@ -50,7 +50,7 @@ export function TypeMultiSelect({ types, onChange, touch = false }: { types: rea
                 style={{ accentColor: 'var(--primary)', width: 14, height: 14 }}
               />
               <span aria-hidden className="shrink-0 rounded-full" style={{ width: 8, height: 8, background: rgbCss(THREAT_TYPE_COLORS[t.id] ?? [120, 130, 145, 255]) }} />
-              <span className="min-w-0 break-words">{t.label}</span>
+              <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{t.label}</span>
             </label>
           );
         })}
@@ -127,9 +127,16 @@ export function DataFiltersPopover({ count, children, touch = false, className }
     if (!open) return;
     const onDown = (e: MouseEvent | TouchEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        // Focus inside the dialog goes back to the trigger rather than to <body> when it closes.
-        if (dialogRef.current?.contains(document.activeElement)) btnRef.current?.focus({ preventScroll: true });
+        // Closing must not strand focus on <body>: once the press has settled, if nothing took focus (a click on a
+        // non-focusable area), it goes back to the trigger. A focusable target (the map, another control) keeps it.
+        const hadFocusInside = !!dialogRef.current?.contains(document.activeElement);
         setOpen(false);
+        if (hadFocusInside) {
+          setTimeout(() => {
+            const a = document.activeElement;
+            if (!a || a === document.body || dialogRef.current?.contains(a)) btnRef.current?.focus({ preventScroll: true });
+          }, 0);
+        }
       }
     };
     const onKey = (e: KeyboardEvent) => {

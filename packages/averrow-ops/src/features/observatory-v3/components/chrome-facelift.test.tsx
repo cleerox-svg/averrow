@@ -3,8 +3,10 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { LensStrip } from './LensStrip';
+import { ControlRail } from './ControlRail';
+import { lensPreset } from '../lib/lenses';
 import userEvent from '@testing-library/user-event';
 import { DataFiltersPopover } from './DataFilters';
 import { FiltersPopover } from './ToolbarControls';
@@ -119,6 +121,42 @@ describe('LensStrip active state is flat', () => {
   });
 });
 
+describe('LensStrip paging chevrons', () => {
+  it('are flex siblings of the scroller, not laid over it, so no tab text can sit beneath one', () => {
+    const proto = HTMLElement.prototype;
+    const saved = ['offsetWidth', 'offsetLeft', 'clientWidth', 'scrollWidth'].map(k => [k, Object.getOwnPropertyDescriptor(proto, k)] as const);
+    const isTab = (el: HTMLElement) => el.getAttribute('role') === 'tab';
+    Object.defineProperty(proto, 'offsetWidth', { configurable: true, get(this: HTMLElement) { return isTab(this) ? 100 : 300; } });
+    Object.defineProperty(proto, 'offsetLeft', { configurable: true, get(this: HTMLElement) { return isTab(this) ? Array.from(this.parentElement!.children).indexOf(this) * 103 : 0; } });
+    Object.defineProperty(proto, 'clientWidth', { configurable: true, get(this: HTMLElement) { return this.getAttribute('role') === 'tablist' ? 252 : 300; } });
+    Object.defineProperty(proto, 'scrollWidth', { configurable: true, get(this: HTMLElement) { return this.getAttribute('role') === 'tablist' ? 721 : 300; } });
+    try {
+      render(<LensStrip lens="threats" onChange={() => {}} />);
+      const strip = screen.getByRole('tablist');
+      const chevron = document.querySelector('button[aria-hidden="true"]') as HTMLElement;
+      expect(chevron).not.toBeNull();
+      expect(chevron.className).not.toMatch(/\babsolute\b/);
+      expect(strip.contains(chevron)).toBe(false);
+      expect(strip.parentElement!.contains(chevron)).toBe(true);
+    } finally {
+      for (const [k, d] of saved) { if (d) Object.defineProperty(proto, k, d); else delete (proto as unknown as Record<string, unknown>)[k]; }
+    }
+  });
+  it('the source has no absolutely positioned chevron', () => {
+    expect(read(resolve(HERE, 'LensStrip.tsx'))).not.toMatch(/absolute top-0 bottom-0/);
+  });
+});
+
+describe('ControlRail severity items', () => {
+  it('show only the severity word, in the button and in the rail tooltip; the aria-label keeps the prefix', () => {
+    render(<ControlRail lens="threats" layers={lensPreset('threats')} view="points" measure="index" colorBy="severity" reducedMotion={false}
+      onLayers={() => {}} onView={() => {}} onMeasure={() => {}} onColorBy={() => {}} sev={[]} onSev={() => {}} />);
+    const b = screen.getByRole('button', { name: 'Severity: Critical' });
+    expect(b.parentElement!.textContent).not.toContain('Severity:');
+    expect(b.parentElement!.textContent).toContain('Critical');
+  });
+});
+
 describe('FiltersPopover focus', () => {
   it('moves focus into the dialog on open and Escape returns it to the trigger', async () => {
     render(<FiltersPopover period="7d" source="all"><button type="button">First</button></FiltersPopover>);
@@ -137,7 +175,14 @@ describe('DataFiltersPopover focus', () => {
     await userEvent.click(trigger);
     expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
     fireEvent.mouseDown(screen.getByRole('button', { name: 'outside' }));
-    expect(trigger).toHaveFocus();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+  it('a press on a focusable target keeps the focus it moved there', async () => {
+    render(<div><button type="button">outside</button><DataFiltersPopover count={0}><button type="button">First</button></DataFiltersPopover></div>);
+    await userEvent.click(screen.getByRole('button', { name: 'Data filters' }));
+    await userEvent.click(screen.getByRole('button', { name: 'outside' }));
+    await new Promise(r => setTimeout(r, 10));
+    expect(screen.getByRole('button', { name: 'outside' })).toHaveFocus();
   });
   it('Escape returns focus to the trigger', async () => {
     render(<DataFiltersPopover count={2}><button type="button">First</button></DataFiltersPopover>);

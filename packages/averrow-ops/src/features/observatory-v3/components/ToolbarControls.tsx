@@ -126,9 +126,16 @@ export function FiltersPopover({
     if (!open) return;
     const onDown = (e: MouseEvent | TouchEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        // Focus inside the dialog goes back to the trigger rather than to <body> when it closes.
-        if (dialogRef.current?.contains(document.activeElement)) btnRef.current?.focus({ preventScroll: true });
+        // Closing must not strand focus on <body>: once the press has settled, if nothing took focus (a click on a
+        // non-focusable area), it goes back to the trigger. A focusable target (the map, another control) keeps it.
+        const hadFocusInside = !!dialogRef.current?.contains(document.activeElement);
         setOpen(false);
+        if (hadFocusInside) {
+          setTimeout(() => {
+            const a = document.activeElement;
+            if (!a || a === document.body || dialogRef.current?.contains(a)) btnRef.current?.focus({ preventScroll: true });
+          }, 0);
+        }
       }
     };
     const onKey = (e: KeyboardEvent) => {

@@ -28,23 +28,30 @@ export interface LensStripProps {
   className?: string;
 }
 
-const EDGE = 28;
-
 export function LensStrip({ lens, onChange, touch = false, controls, className }: LensStripProps) {
+  const outerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef(new Map<LensId, HTMLButtonElement>());
   const reduced = usePrefersReducedMotion();
-  const [edges, setEdges] = useState({ left: false, right: false });
+  const [edges, setEdges] = useState({ overflowing: false, left: false, right: false });
   // Roving tab stop: arrow keys move it without selecting.
   const [rove, setRove] = useState<LensId | null>(null);
   const stop = rove ?? lens;
 
   const measure = useCallback(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    const outer = outerRef.current;
+    if (!el || !outer) return;
+    // Does the row of tabs fit the strip? Measured from the tabs themselves and the strip's OUTER width, never from the
+    // scroller (whose width changes when the chevron slots appear), so showing the slots cannot flip the answer back.
+    const ids = LENS_IDS.map(id => tabRefs.current.get(id)).filter((t): t is HTMLButtonElement => !!t);
+    const first = ids[0];
+    const last = ids[ids.length - 1];
+    const contentW = first && last ? last.offsetLeft + last.offsetWidth - first.offsetLeft + 8 : 0;
+    const overflowing = outer.clientWidth > 0 && contentW > outer.clientWidth - 2;
     const max = el.scrollWidth - el.clientWidth;
-    const next = { left: el.scrollLeft > 1, right: max > 1 && el.scrollLeft < max - 1 };
-    setEdges(prev => (prev.left === next.left && prev.right === next.right ? prev : next));
+    const next = { overflowing, left: overflowing && el.scrollLeft > 1, right: overflowing && max > 1 && el.scrollLeft < max - 1 };
+    setEdges(prev => (prev.overflowing === next.overflowing && prev.left === next.left && prev.right === next.right ? prev : next));
   }, []);
 
   useLayoutEffect(() => {
@@ -54,6 +61,7 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
     el.addEventListener('scroll', measure, { passive: true });
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
     ro?.observe(el);
+    if (outerRef.current) ro?.observe(outerRef.current);
     return () => { el.removeEventListener('scroll', measure); ro?.disconnect(); };
   }, [measure]);
 
@@ -88,12 +96,29 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
     tabRefs.current.get(id)?.focus();
   };
 
-  // Only the alpha channel of a mask matters: `black` / `transparent` are the mask's on / off, not colours on screen.
   const chevron = touch ? 28 : 24;
-  const mask = `linear-gradient(90deg, ${edges.left ? 'transparent 0, black ' + EDGE + 'px' : 'black 0'}, ${edges.right ? 'black calc(100% - ' + EDGE + 'px), transparent 100%' : 'black 100%'})`;
+  // When the tabs do not fit, both paging slots are reserved (the chevron inside shows only while that side has more to
+  // scroll to). The slots are flex siblings of the scroller, never laid over it, so tab text can not sit under a chevron.
+  const slot = (side: 'left' | 'right') => edges.overflowing && (
+    <span key={side} className="shrink-0 inline-flex items-center justify-center" style={{ width: chevron }}>
+      {edges[side] && (
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden
+          onClick={() => page(side === 'left' ? -1 : 1)}
+          className="inline-flex items-center justify-center w-full h-full"
+          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+        >
+          {side === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+        </button>
+      )}
+    </span>
+  );
 
   return (
     <div
+      ref={outerRef}
       className={cn('relative min-w-0 flex items-center rounded-xl', className)}
       style={{
         background: 'var(--bg-card)',
@@ -104,15 +129,15 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
         height: touch ? 48 : 40,
       }}
     >
+      {slot('left')}
       <div
         ref={scrollRef}
         role="tablist"
         aria-label="Observatory lens"
         aria-orientation="horizontal"
         onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRove(null); }}
-        className="flex items-center gap-[3px] px-1 overflow-x-auto min-w-0 h-full"
-        // Room for the paging chevrons, so a tab is never drawn under one.
-        style={{ scrollbarWidth: 'none', WebkitMaskImage: mask, maskImage: mask, paddingLeft: edges.left ? chevron : undefined, paddingRight: edges.right ? chevron : undefined }}
+        className="flex items-center gap-[3px] px-1 overflow-x-auto min-w-0 flex-1 h-full"
+        style={{ scrollbarWidth: 'none' }}
       >
         {LENS_IDS.map((id, i) => {
           const active = id === lens;
@@ -148,19 +173,7 @@ export function LensStrip({ lens, onChange, touch = false, controls, className }
           );
         })}
       </div>
-      {(['left', 'right'] as const).map(side => edges[side] && (
-        <button
-          key={side}
-          type="button"
-          tabIndex={-1}
-          aria-hidden
-          onClick={() => page(side === 'left' ? -1 : 1)}
-          className={cn('absolute top-0 bottom-0 inline-flex items-center justify-center', side === 'left' ? 'left-0 rounded-l-xl' : 'right-0 rounded-r-xl')}
-          style={{ width: chevron, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-        >
-          {side === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-        </button>
-      ))}
+      {slot('right')}
       <span className="sr-only" aria-live="polite">{LENS_DEFS[lens].question}</span>
     </div>
   );
