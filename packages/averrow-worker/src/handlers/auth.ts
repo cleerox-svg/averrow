@@ -1479,10 +1479,14 @@ export async function handleMintServiceJwt(request: Request, env: Env): Promise<
 // (`<origin>/v2/#token=…` or `/tenant/#token=…`) — the SPA's AuthProvider
 // reads the hash, validates /api/auth/me, and boots.
 //
-// Kill switch (instant):
+// Kill switch (≤ about 75s):
 //   UPDATE users SET status='suspended'
 //     WHERE id IN ('claude_ui_staff','claude_ui_tenant');
-//   requireAuth rejects on the next request; re-enable with status='active'.
+//   requireAuth rejects once its status cache lapses — 60s KV trust window +
+//   15s per-isolate memo (lib/auth-user-cache.ts; a manual SQL change is not
+//   invalidated); add a
+//   force-logout of each id for an immediate cut-off. Re-enable with
+//   status='active' (non-active users are never cached, so that is instant).
 // Full removal:
 //   DELETE FROM org_members WHERE user_id='claude_ui_tenant';
 //   DELETE FROM users WHERE id IN ('claude_ui_staff','claude_ui_tenant');
