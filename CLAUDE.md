@@ -609,7 +609,7 @@ while every agent reported `success`. Rules that came out of it:
 
 ### Cron schedule (wrangler.toml):
 ```
-navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV cache warming of 23 page-load requests)
+navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV cache warming of 31 page-load requests)
                               (UTC hour 3, hour-only gate: `runDnsDrainableRecount` as a waitUntil tail —
                                the once-a-day threats-side DNS candidate count,
                                `countDnsCandidatesInThreats`, `lib/dns-drainable.ts`; best-effort KV claim
@@ -1370,14 +1370,16 @@ behind a feature flag.
 ### KV Cache on page-load endpoints
 - Check `env.CACHE.get(cacheKey)` before querying D1 on any page-load GET endpoint
 - Store results with `env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 })` — 5-min TTL standard
-- Navigator pre-warms 23 page-load requests across 4 minute-gated phases. The
+- Navigator pre-warms 31 page-load requests across 5 minute-gated phases (`navigatorWarmPhases`). The
   list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts` (each entry names its
   consumer; pinned by `test/navigator-warm-targets.test.ts`):
   - **A** (every 10 min): Observatory 7d nodes/arcs/stats + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`) + the Intel Feed events (`/api/observatory/events?period=1h&limit=40`, the headline bar + event rail default; 600s TTL = the Phase A interval, key has no `limit`)
   - **A2** (every 15 min): Observatory 24h/30d nodes/arcs/stats + 7d heatmap
-  - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot
-  - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`status=active`) + stats
-  - A2/B/C are skipped when the D1 read budget is over the soft-cap
+  - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot (one super_admin warm writes both role keys), Threats inflow (`window=24h` and `window=7d`), critical banner
+  - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`), Threat Actors (`status=active`) + stats
+  - **D** (every 30 min at :05/:35, SEQUENTIAL — one target at a time, `NAVIGATOR_SEQUENTIAL_PHASES`): brand stats, brand movers, `/api/brands/aggregate/{email-security,pressure,composition,posture}` (heavy catalog scans; never fired concurrently)
+  - A2/B/C/D are skipped when the D1 read budget is over the soft-cap
+  - Short-freshness page-load caches use `cachedValue`'s `staleWhileRevalidate` option (TTL ≥ warm interval, live `freshSeconds`, background refill only by the `cvlock:` holder).
   - The brands-list and dashboard-overview warms write the `global` scope key, which every staff role reads (`getOrgScope` returns null for `isPlatformStaff`, PR-F); only `client` callers (which never reach these `requireStaff` routes) would read org-scoped keys.
 - **A warm must hit the exact KV key the live client request produces.** Warm
   the client's literal query string, and normalise "no filter" spellings in the
