@@ -12,7 +12,7 @@
 // Exposure columns, sort improvements) ships in follow-up PRs once
 // PR3's scoring populates and PR5's candidates accumulate.
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, type ReactNode } from 'react';
 import { accentText } from '@/lib/accent-text';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RTooltip } from 'recharts';
@@ -36,9 +36,8 @@ import {
   type BrandCandidate,
 } from '@/hooks/useBrandCandidates';
 import { BrandsGrid } from './components/BrandsGrid';
-import { Card, Badge, PageHeader, PageState, pageStateKind } from '@/design-system/components';
+import { Card, Badge, PageHeader, PageState, Tabs, pageStateKind } from '@/design-system/components';
 import { Button } from '@/components/ui/Button';
-import { SectionLabel } from '@/components/ui/SectionLabel';
 import { timeAgo } from '@/lib/time';
 
 // /api/admin/brand-candidates is requireAdmin, so the CT prospects surface is
@@ -47,11 +46,14 @@ const PROSPECT_ROLES = new Set(['super_admin', 'admin']);
 
 const V3_TABS = [
   { id: 'intel',     label: 'Intel',      hint: "What's happening across the catalog",      adminOnly: false },
-  { id: 'all',       label: 'All Brands', hint: 'Search the full brand catalog',            adminOnly: false },
+  { id: 'all',       label: 'All brands', hint: 'Search the full brand catalog',            adminOnly: false },
   { id: 'prospects', label: 'Prospects',  hint: 'CT-driven candidates for sales review',   adminOnly: true  },
 ] as const;
 
 type V3Tab = typeof V3_TABS[number]['id'];
+function isV3Tab(v: string): v is V3Tab {
+  return V3_TABS.some(t => t.id === v);
+}
 
 export function BrandsV3() {
   const { user } = useAuth();
@@ -74,28 +76,16 @@ export function BrandsV3() {
           Explorer workspace the h1 is dropped (the workspace owns it). */}
       <PageHeader title="Brands" className="mb-0" />
 
-      {/* Sticky tab strip */}
-      <div className="sticky top-0 z-10 bg-[var(--bg-page)] backdrop-blur-lg border-b border-white/[0.06] -mx-[var(--v4-gutter-x,24px)] px-[var(--v4-gutter-x,24px)]">
-        <div className="flex gap-1 overflow-x-auto scrollbar-none">
-          {V3_TABS.filter(t => !t.adminOnly || canReview).map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex-shrink-0 px-4 py-3 text-xs font-bold transition-all border-b-2 ${
-                activeTab === tab.id ? 'border-amber-500 text-amber-400 ops-accent-tab' : 'border-transparent text-white/55 hover:text-white/70'
-              }`}
-              style={activeTab === tab.id ? { textShadow: '0 0 10px color-mix(in srgb, var(--primary) 60%, transparent)' } : undefined}
-              title={tab.hint}
-            >
-              {tab.label}
-              {tab.adminOnly && (
-                <span className="ml-2 inline-block px-1.5 py-0.5 text-[8px] uppercase tracking-wider rounded bg-white/10 text-[var(--text-muted)]">
-                  Admin
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
+      {/* Sticky tab strip: the kit Tabs (underline), same as the Console and the admin workspaces */}
+      <div className="sticky top-0 z-10 bg-[var(--bg-page)] border-b border-[var(--border-base)] -mx-[var(--v4-gutter-x,24px)] px-[var(--v4-gutter-x,24px)]">
+        <Tabs
+          variant="underline"
+          size="md"
+          aria-label="Brands views"
+          tabs={V3_TABS.filter(t => !t.adminOnly || canReview).map(t => ({ id: t.id, label: t.label }))}
+          activeTab={activeTab}
+          onChange={id => { if (isV3Tab(id)) setActiveTab(id); }}
+        />
       </div>
 
       {activeTab === 'intel' && <IntelTab canReview={canReview} onViewProspects={() => setActiveTab('prospects')} />}
@@ -271,17 +261,22 @@ function IntelTab({ canReview, onViewProspects }: { canReview: boolean; onViewPr
   );
 }
 
+// Card heading: sentence case, sans, the --type-label-* scale (>= 12px). Replaces the old all-caps mono section label here.
+function CardTitle({ children }: { children: ReactNode }) {
+  return <div className="text-type-label font-semibold text-[var(--text-secondary)]">{children}</div>;
+}
+
 // ── PanelHeader ────────────────────────────────────────────────
 function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="pt-2">
       <div className="flex items-baseline gap-3">
-        <h2 className="text-sm font-mono font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">
+        <h2 className="text-type-h2 text-[var(--text-primary)]">
           {title}
         </h2>
-        <span className="text-[11px] text-[var(--text-muted)]">{subtitle}</span>
+        <span className="text-type-label text-[var(--text-tertiary)]">{subtitle}</span>
       </div>
-      <div className="mt-1 h-px bg-gradient-to-r from-white/[0.10] via-white/[0.04] to-transparent" />
+      <div className="mt-1 h-px bg-[var(--border-base)]" />
     </div>
   );
 }
@@ -321,45 +316,28 @@ function HeroStrip({ stats, loading, failed }: { stats: any; loading: boolean; f
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       {tiles.map((t, i) => (
-        <Card key={t.label} variant="active" accent={t.accent}
+        <Card key={t.label}
           role={failed ? 'group' : undefined} aria-label={failed ? `${t.label}: couldn't load` : undefined}
-          style={{ padding: '18px 20px', position: 'relative', overflow: 'hidden', minHeight: 110 }}>
-          <div style={{
-            position: 'absolute', top: 12, left: 16,
-            width: 4, height: 4, borderRadius: '50%',
-            background: t.accent, boxShadow: `0 0 8px ${t.accent}`,
-          }} />
-          <div style={{
-            position: 'absolute', right: -20, bottom: -20,
-            width: 110, height: 110, borderRadius: '50%',
-            background: `radial-gradient(circle, color-mix(in srgb, ${t.accent} 19%, transparent), transparent 70%)`,
-            pointerEvents: 'none',
-          }} />
-          <div style={{ position: 'relative', marginTop: 4 }}>
-            <div style={{
-              fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.20em',
-              color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 8,
-            }}>
-              {t.label}
-            </div>
-            <div style={{
-              fontSize: i === 3 ? 22 : 30,
-              fontWeight: 800,
-              color: accentText(t.accent),
-              textShadow: `0 0 12px color-mix(in srgb, ${t.accent} 33%, transparent)`,
-              textTransform: i === 3 ? 'capitalize' : 'none',
-              lineHeight: 1.05,
-            }}>
-              {loading ? '…' : t.value}
-            </div>
-            {failed ? (
-              <div className="mt-1 text-[11px] font-mono text-[var(--text-secondary)] truncate">Couldn't load</div>
-            ) : t.sub && (
-              <div className="mt-1 text-[11px] font-mono text-[var(--text-tertiary)] truncate">
-                {t.sub}
-              </div>
-            )}
+          style={{ padding: '18px 20px', minHeight: 110 }}>
+          <div className="text-type-label text-[var(--text-tertiary)] mb-2">
+            {t.label}
           </div>
+          <div style={{
+            fontSize: i === 3 ? 22 : 30,
+            fontWeight: 700,
+            color: accentText(t.accent),
+            textTransform: i === 3 ? 'capitalize' : 'none',
+            lineHeight: 1.05,
+          }}>
+            {loading ? '…' : t.value}
+          </div>
+          {failed ? (
+            <div className="mt-1 text-type-label text-[var(--text-secondary)] truncate">Couldn't load</div>
+          ) : t.sub && (
+            <div className="mt-1 text-type-label text-[var(--text-tertiary)] truncate">
+              {t.sub}
+            </div>
+          )}
         </Card>
       ))}
     </div>
@@ -389,7 +367,7 @@ function SectorDonut({ breakdown, totalTracked, status }: {
   if (data.length === 0) {
     return (
       <Card style={{ minHeight: 220 }}>
-        <SectionLabel>Sector mix</SectionLabel>
+        <CardTitle>Sector mix</CardTitle>
         <div className="mt-3 flex items-center justify-center" style={{ height: 160 }}>
           <span className="text-xs text-[var(--text-tertiary)]">
             {Number(totalTracked) > 0 ? `Sector classification pending for ${formatNumber(totalTracked)} brands` : 'No sector data yet'}
@@ -402,8 +380,8 @@ function SectorDonut({ breakdown, totalTracked, status }: {
   return (
     <Card>
       <div className="flex items-center justify-between">
-        <SectionLabel>Sector mix</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <CardTitle>Sector mix</CardTitle>
+        <span className="text-type-label text-[var(--text-muted)]">
           {formatNumber(sumClassified)} classified
         </span>
       </div>
@@ -420,7 +398,7 @@ function SectorDonut({ breakdown, totalTracked, status }: {
               <RTooltip
                 contentStyle={{
                   background: 'var(--bg-card)', border: '1px solid var(--border-base)',
-                  borderRadius: 6, fontSize: 11, fontFamily: 'var(--font-mono)',
+                  borderRadius: 6, fontSize: 12, fontFamily: 'var(--font-mono)',
                 }}
               />
             </PieChart>
@@ -428,14 +406,14 @@ function SectorDonut({ breakdown, totalTracked, status }: {
         </div>
         <div className="space-y-1">
           {data.map((s, i) => (
-            <div key={s.sector} className="flex items-center justify-between text-[11px]">
+            <div key={s.sector} className="flex items-center justify-between text-type-label">
               <div className="flex items-center gap-2 min-w-0">
                 <span style={{
                   width: 8, height: 8, borderRadius: 2,
                   background: SECTOR_COLORS[i % SECTOR_COLORS.length],
                   flexShrink: 0,
                 }} />
-                <span className="font-mono text-[var(--text-secondary)] truncate capitalize">
+                <span className="text-[var(--text-secondary)] truncate capitalize">
                   {s.sector}
                 </span>
               </div>
@@ -445,8 +423,8 @@ function SectorDonut({ breakdown, totalTracked, status }: {
             </div>
           ))}
           {unclassified > 0 && (
-            <div className="flex items-center justify-between text-[11px] mt-2 pt-2 border-t border-white/[0.04]">
-              <span className="font-mono text-[var(--text-muted)]">Unclassified</span>
+            <div className="flex items-center justify-between text-type-label mt-2 pt-2 border-t border-[var(--border-base)]">
+              <span className="text-[var(--text-muted)]">Unclassified</span>
               <span className="font-mono text-[var(--text-muted)]">
                 {formatNumber(unclassified)}
               </span>
@@ -481,7 +459,7 @@ function ThreatTypeBreakdown({ stats, status }: { stats: any; status: AggStatus 
   if (data.length === 0) {
     return (
       <Card style={{ minHeight: 220 }}>
-        <SectionLabel>Attack types</SectionLabel>
+        <CardTitle>Attack types</CardTitle>
         <div className="mt-3 flex items-center justify-center" style={{ height: 160 }}>
           <span className="text-xs text-[var(--text-tertiary)]">
             No threat type data yet
@@ -494,8 +472,8 @@ function ThreatTypeBreakdown({ stats, status }: { stats: any; status: AggStatus 
   return (
     <Card>
       <div className="flex items-center justify-between">
-        <SectionLabel>Attack types</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <CardTitle>Attack types</CardTitle>
+        <span className="text-type-label text-[var(--text-muted)]">
           {formatNumber(total)} signals
         </span>
       </div>
@@ -516,7 +494,7 @@ function ThreatTypeBreakdown({ stats, status }: { stats: any; status: AggStatus 
                 ]}
                 contentStyle={{
                   background: 'var(--bg-card)', border: '1px solid var(--border-base)',
-                  borderRadius: 6, fontSize: 11, fontFamily: 'var(--font-mono)',
+                  borderRadius: 6, fontSize: 12, fontFamily: 'var(--font-mono)',
                 }}
               />
             </PieChart>
@@ -524,14 +502,14 @@ function ThreatTypeBreakdown({ stats, status }: { stats: any; status: AggStatus 
         </div>
         <div className="space-y-1">
           {data.map((t, i) => (
-            <div key={t.threat_type} className="flex items-center justify-between text-[11px]">
+            <div key={t.threat_type} className="flex items-center justify-between text-type-label">
               <div className="flex items-center gap-2 min-w-0">
                 <span style={{
                   width: 8, height: 8, borderRadius: 2,
                   background: THREAT_TYPE_COLORS[i % THREAT_TYPE_COLORS.length],
                   flexShrink: 0,
                 }} />
-                <span className="font-mono text-[var(--text-secondary)] truncate capitalize">
+                <span className="text-[var(--text-secondary)] truncate capitalize">
                   {humanizeThreatType(t.threat_type)}
                 </span>
               </div>
@@ -559,15 +537,14 @@ function CatalogStatusCard({ stats }: { stats: any }) {
   ];
   return (
     <Card>
-      <SectionLabel>Catalog automation</SectionLabel>
+      <CardTitle>Catalog automation</CardTitle>
       <div className="mt-3 space-y-2">
         {items.map(it => (
-          <div key={it.label} className="flex items-center justify-between text-[11px] font-mono">
+          <div key={it.label} className="flex items-center justify-between text-type-label">
             <span className="flex items-center gap-2">
               <span style={{
                 width: 6, height: 6, borderRadius: '50%',
                 background: 'var(--green)',
-                boxShadow: '0 0 6px var(--green)',
               }} />
               <span className="text-[var(--text-secondary)]">{it.label}</span>
             </span>
@@ -576,7 +553,7 @@ function CatalogStatusCard({ stats }: { stats: any }) {
         ))}
       </div>
       {stats?.total_tracked != null && (
-        <div className="mt-3 pt-2 border-t border-white/[0.04] text-[10px] font-mono text-[var(--text-muted)]">
+        <div className="mt-3 pt-2 border-t border-[var(--border-base)] text-type-label text-[var(--text-muted)]">
           Auto-sweeps {formatNumber(stats.total_tracked)} brands continuously
         </div>
       )}
@@ -589,7 +566,7 @@ function CatalogStatusCard({ stats }: { stats: any }) {
 // Keeps the user oriented without an admin button.
 function CatalogStatusFooter() {
   return (
-    <div className="text-[10px] font-mono text-[var(--text-muted)] text-center pt-2">
+    <div className="text-type-label text-[var(--text-muted)] text-center pt-2">
       Catalog data refreshes hourly; brand-health + exposure snapshots run nightly.
       Tranco rank refreshes daily.
     </div>
@@ -618,9 +595,9 @@ function MoversCard({ title, rows: rawRows, tone, emptyMsg, loading, status }: {
   return (
     <Card>
       <div className="flex items-center justify-between">
-        <SectionLabel>{title}</SectionLabel>
+        <CardTitle>{title}</CardTitle>
         {rows.length > 0 && (
-          <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          <span className="text-type-label text-[var(--text-muted)]">
             top {Math.min(5, rows.length)} of {rows.length}
           </span>
         )}
@@ -638,7 +615,7 @@ function MoversCard({ title, rows: rawRows, tone, emptyMsg, loading, status }: {
             <div
               key={b.id}
               onClick={() => navigate(`/brands/${b.id}`)}
-              className="cursor-pointer hover:bg-white/[0.03] transition-colors group"
+              className="cursor-pointer hover:bg-[var(--bg-page)] transition-colors group"
               style={{
                 padding: '10px 12px', borderRadius: 6,
                 border: '1px solid var(--border-base)', background: 'var(--bg-input)',
@@ -663,13 +640,13 @@ function MoversCard({ title, rows: rawRows, tone, emptyMsg, loading, status }: {
                   <div className="text-sm font-semibold text-[var(--text-primary)] truncate group-hover:text-[var(--primary-text)] transition-colors">
                     {b.name}
                   </div>
-                  <div className="text-[11px] font-mono text-[var(--text-tertiary)] truncate">{b.canonical_domain}</div>
+                  <div className="text-type-label font-mono text-[var(--text-tertiary)] truncate">{b.canonical_domain}</div>
                 </div>
                 <div className="text-right flex-shrink-0" style={{ minWidth: 76 }}>
-                  <div className="text-sm font-bold" style={{ color: accentText(accent), textShadow: `0 0 6px ${accent}55` }}>
+                  <div className="text-sm font-bold" style={{ color: accentText(accent) }}>
                     {b.delta_7d >= 0 ? '+' : ''}{b.delta_7d}
                   </div>
-                  <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                  <div className="text-type-label text-[var(--text-muted)]">
                     {b.today_count} active
                   </div>
                 </div>
@@ -750,7 +727,7 @@ function HotProspectsTeaser({ onViewAll }: { onViewAll: () => void }) {
   return (
     <Card>
       <div className="flex items-center justify-between gap-2 mb-3">
-        <SectionLabel>Hot prospects from CT</SectionLabel>
+        <CardTitle>Hot prospects from CT</CardTitle>
         <Badge variant="info">Admin</Badge>
       </div>
       <div className="space-y-2">
@@ -763,7 +740,7 @@ function HotProspectsTeaser({ onViewAll }: { onViewAll: () => void }) {
             <BrandFavicon name={c.apex_domain} domain={c.apex_domain} size={24} />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-mono text-[var(--text-primary)] truncate">{c.apex_domain}</div>
-              <div className="text-[11px] text-[var(--text-tertiary)]">
+              <div className="text-type-label text-[var(--text-tertiary)]">
                 {c.cert_count} certs · {c.distinct_issuers} issuers · seen {timeAgo(c.first_seen)}
               </div>
             </div>
@@ -771,7 +748,7 @@ function HotProspectsTeaser({ onViewAll }: { onViewAll: () => void }) {
         ))}
         <button
           onClick={onViewAll}
-          className="w-full mt-1 text-[11px] font-mono text-[var(--primary-text)] hover:underline"
+          className="w-full mt-1 text-type-label text-[var(--primary-text)] hover:underline"
         >
           View {data?.total ?? 0} pending candidates →
         </button>
@@ -825,24 +802,14 @@ function ProspectsTab() {
   return (
     <div className="space-y-4">
       {/* Status sub-tabs with live counts */}
-      <div className="flex gap-1 border-b border-white/[0.06]">
-        {(['pending', 'promoted', 'rejected'] as const).map(s => (
-          <button
-            key={s}
-            onClick={() => setStatus(s)}
-            className={`px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${
-              status === s ? 'border-amber-500 text-amber-400 ops-accent-tab' : 'border-transparent text-white/55 hover:text-white/70'
-            }`}
-          >
-            <span>{s}</span>
-            <span className={`px-1.5 py-0.5 rounded text-[9px] ${
-              status === s ? 'bg-amber-500/20 text-amber-400 ops-accent-count' : 'bg-white/[0.05] text-white/55'
-            }`}>
-              {counts[s]}
-            </span>
-          </button>
-        ))}
-      </div>
+      <Tabs
+        variant="underline"
+        size="md"
+        aria-label="Prospect status"
+        tabs={(['pending', 'promoted', 'rejected'] as const).map(st => ({ id: st, label: st.charAt(0).toUpperCase() + st.slice(1), count: counts[st] }))}
+        activeTab={status}
+        onChange={id => { if (id === 'pending' || id === 'promoted' || id === 'rejected') setStatus(id); }}
+      />
 
       {isError && data && (
         <PageState kind="error" layout="inline" title="Couldn't refresh prospects" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
@@ -887,8 +854,8 @@ function ProspectsTab() {
       {!isLoading && all.length > 0 && status === 'promoted' && (
         <Card>
           <div className="flex items-center justify-between mb-3">
-            <SectionLabel>Promoted into the brand catalog</SectionLabel>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]">{all.length} promoted</span>
+            <CardTitle>Promoted into the brand catalog</CardTitle>
+            <span className="text-type-label text-[var(--text-muted)]">{all.length} promoted</span>
           </div>
           <div className="space-y-2">
             {all.map(c => (
@@ -901,8 +868,8 @@ function ProspectsTab() {
       {!isLoading && all.length > 0 && status === 'rejected' && (
         <Card>
           <div className="flex items-center justify-between mb-3">
-            <SectionLabel>Rejected (negative examples)</SectionLabel>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]">{all.length} rejected</span>
+            <CardTitle>Rejected (negative examples)</CardTitle>
+            <span className="text-type-label text-[var(--text-muted)]">{all.length} rejected</span>
           </div>
           <div className="space-y-2">
             {all.map(c => <ReviewedRow key={c.id} c={c} />)}
@@ -929,9 +896,9 @@ function ProspectGroup({ label, emoji, rows, tone = 'info', onPromote, onReject,
   return (
     <Card {...wrapperProps}>
       <div className="flex items-center justify-between mb-3">
-        <SectionLabel>{emoji} {label}</SectionLabel>
-        <span className="text-[11px] font-mono px-2 py-0.5 rounded"
-          style={{ background: tone === 'crit' ? 'rgba(200,60,60,0.15)' : 'rgba(255,255,255,0.04)',
+        <CardTitle>{emoji} {label}</CardTitle>
+        <span className="text-type-label font-mono px-2 py-0.5 rounded"
+          style={{ background: tone === 'crit' ? 'rgba(200,60,60,0.15)' : 'var(--bg-input)',
                    color: tone === 'crit' ? 'var(--sev-critical)' : 'var(--text-tertiary)' }}>
           {rows.length} pending
         </span>
@@ -952,16 +919,16 @@ function ProspectGroup({ label, emoji, rows, tone = 'info', onPromote, onReject,
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-mono font-semibold text-[var(--text-primary)] truncate flex items-center gap-2">
                     {c.apex_domain}
-                    {isRecent && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-[var(--primary-tint-strong)] text-[var(--primary-text)] uppercase tracking-wider">New</span>}
+                    {isRecent && <span className="text-type-label px-1 py-0.5 rounded bg-[var(--primary-tint-strong)] text-[var(--primary-text)]">New</span>}
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] font-mono">
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-type-label font-mono">
                     <span style={{ padding: '1px 6px', borderRadius: 3, background: 'var(--primary-tint)', color: 'var(--primary-text)' }}>
                       {c.cert_count} certs
                     </span>
                     <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(10,138,181,0.10)', color: 'var(--blue-text)' }}>
                       {c.distinct_issuers} issuers
                     </span>
-                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.04)', color: 'var(--text-tertiary)' }}>
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'var(--bg-input)', color: 'var(--text-tertiary)' }}>
                       seen {timeAgo(c.first_seen)}
                     </span>
                   </div>
@@ -992,13 +959,13 @@ function ReviewedRow({ c, onJumpBrand }: { c: BrandCandidate; onJumpBrand?: (bra
     }}>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-mono text-[var(--text-primary)] truncate">{c.apex_domain}</div>
-        <div className="mt-0.5 text-[10px] font-mono text-[var(--text-muted)]">
+        <div className="mt-0.5 text-type-label text-[var(--text-muted)]">
           {c.cert_count} certs · {c.distinct_issuers} issuers
           {c.reviewed_at && <> · {c.status} {timeAgo(c.reviewed_at)}</>}
           {c.reviewed_by && <> by {c.reviewed_by}</>}
         </div>
         {c.notes && (
-          <div className="mt-1 text-[10px] text-[var(--text-tertiary)] italic">"{c.notes}"</div>
+          <div className="mt-1 text-type-label text-[var(--text-tertiary)] italic">"{c.notes}"</div>
         )}
       </div>
       {c.status === 'promoted' && c.promoted_brand_id && onJumpBrand && (
@@ -1033,8 +1000,8 @@ function EmailGradeCard({ data: raw, status }: { data: EmailSecurityAggregate | 
   return (
     <Card>
       <div className="flex items-center justify-between">
-        <SectionLabel>Email security grade</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <CardTitle>Email security grade</CardTitle>
+        <span className="text-type-label text-[var(--text-muted)]">
           {formatNumber(total)} graded
           {Number(data.ungraded) > 0 && ` · ${formatNumber(data.ungraded)} pending`}
         </span>
@@ -1049,13 +1016,13 @@ function EmailGradeCard({ data: raw, status }: { data: EmailSecurityAggregate | 
           const accent = GRADE_TONE[row.grade] ?? '#78A0C8';
           return (
             <div key={row.grade}>
-              <div className="flex items-center justify-between text-[11px] font-mono">
+              <div className="flex items-center justify-between text-type-label font-mono">
                 <span className="font-bold" style={{ color: accentText(accent) }}>{row.grade}</span>
                 <span className="text-[var(--text-tertiary)]">
                   {formatNumber(row.count)} <span className="text-[var(--text-muted)]">({pct.toFixed(1)}%)</span>
                 </span>
               </div>
-              <div className="mt-1 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <div className="mt-1 h-1.5 rounded-full" style={{ background: 'var(--bg-input)' }}>
                 <div className="h-full rounded-full"
                   style={{ width: `${barW}%`, background: `linear-gradient(90deg, ${accent}, ${accent}80)` }} />
               </div>
@@ -1081,16 +1048,16 @@ function DmarcEnforcementCard({ data: raw, status }: { data: EmailSecurityAggreg
   return (
     <Card>
       <div className="flex items-center justify-between">
-        <SectionLabel>DMARC enforcement</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <CardTitle>DMARC enforcement</CardTitle>
+        <span className="text-type-label text-[var(--text-muted)]">
           {formatNumber(total)} scanned
         </span>
       </div>
       <div className="mt-3">
-        <div className="text-2xl font-bold" style={{ color: 'var(--green-text)', textShadow: '0 0 8px rgba(60,184,120,0.55)' }}>
+        <div className="text-2xl font-bold" style={{ color: 'var(--green-text)' }}>
           {enforcePct.toFixed(0)}%
         </div>
-        <div className="text-[11px] font-mono text-[var(--text-tertiary)]">
+        <div className="text-type-label font-mono text-[var(--text-tertiary)]">
           {formatNumber(data.dmarc_enforcing)} enforcing (quarantine + reject)
         </div>
       </div>
@@ -1099,7 +1066,7 @@ function DmarcEnforcementCard({ data: raw, status }: { data: EmailSecurityAggreg
           const pct = total > 0 ? (row.count / total) * 100 : 0;
           const accent = POLICY_COLORS[row.policy] ?? '#78A0C8';
           return (
-            <div key={row.policy} className="flex items-center justify-between text-[11px] font-mono">
+            <div key={row.policy} className="flex items-center justify-between text-type-label font-mono">
               <div className="flex items-center gap-2">
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: accent }} />
                 <span className="text-[var(--text-secondary)] capitalize">{row.policy}</span>
@@ -1136,8 +1103,8 @@ function PressureLeaderboard({ title, rows: rawRows, accent, subtitle, status }:
 
   return (
     <Card style={{ minHeight: 200 }}>
-      <SectionLabel>{title}</SectionLabel>
-      <div className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5">{subtitle}</div>
+      <CardTitle>{title}</CardTitle>
+      <div className="text-type-label text-[var(--text-muted)] mt-0.5">{subtitle}</div>
       <div className="mt-3 space-y-1.5">
         {top5.length === 0 && (
           <div className="text-xs text-[var(--text-tertiary)] py-3 text-center">No signal yet</div>
@@ -1147,7 +1114,7 @@ function PressureLeaderboard({ title, rows: rawRows, accent, subtitle, status }:
           return (
             <div key={b.brand_id}
               onClick={() => navigate(`/brands/${b.brand_id}`)}
-              className="cursor-pointer hover:bg-white/[0.03] transition-colors"
+              className="cursor-pointer hover:bg-[var(--bg-page)] transition-colors"
               style={{
                 padding: '6px 8px', borderRadius: 5,
                 position: 'relative', overflow: 'hidden',
@@ -1190,24 +1157,24 @@ function CompositionMixCard({ data: raw, status }: { data: CompositionAggregate 
   return (
     <Card>
       <div className="flex items-center justify-between">
-        <SectionLabel>Catalog composition</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <CardTitle>Catalog composition</CardTitle>
+        <span className="text-type-label text-[var(--text-muted)]">
           {formatNumber(total)} total
         </span>
       </div>
 
       <div className="mt-3">
-        <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tier</div>
+        <div className="text-type-label text-[var(--text-muted)]">Tier</div>
         <StackedBar data={tierMix.map(t => ({ key: t.tier, value: t.count, color: TIER_COLORS[t.tier] ?? '#78A0C8' }))} total={total} />
       </div>
 
       <div className="mt-4">
-        <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tranco rank</div>
+        <div className="text-type-label text-[var(--text-muted)]">Tranco rank</div>
         <div className="mt-1 space-y-1">
           {trancoBuckets.map(b => {
             const pct = total > 0 ? (b.count / total) * 100 : 0;
             return (
-              <div key={b.bucket} className="flex items-center justify-between text-[11px] font-mono">
+              <div key={b.bucket} className="flex items-center justify-between text-type-label font-mono">
                 <span className="text-[var(--text-secondary)]">{b.bucket}</span>
                 <span className="text-[var(--text-tertiary)]">
                   {formatNumber(b.count)} <span className="text-[var(--text-muted)]">({pct.toFixed(0)}%)</span>
@@ -1219,13 +1186,13 @@ function CompositionMixCard({ data: raw, status }: { data: CompositionAggregate 
       </div>
 
       <div className="mt-4">
-        <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Source</div>
+        <div className="text-type-label text-[var(--text-muted)]">Source</div>
         <div className="mt-1 flex flex-wrap gap-1.5">
           {sourceMix.slice(0, 6).map(s => (
             <span key={s.source} style={{
               padding: '2px 8px', borderRadius: 3,
-              background: 'rgba(255,255,255,0.04)',
-              fontSize: 10, fontFamily: 'var(--font-mono)',
+              background: 'var(--bg-input)',
+              fontSize: 12, fontFamily: 'var(--font-mono)',
               color: 'var(--text-tertiary)',
             }}>
               {s.source.replace(/_/g, ' ')} <span className="text-[var(--text-muted)]">{formatNumber(s.count)}</span>
@@ -1244,7 +1211,7 @@ function StackedBar({ data, total }: {
   if (total === 0) return null;
   return (
     <div className="mt-1">
-      <div className="flex h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+      <div className="flex h-3 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
         {data.map(d => {
           const pct = (d.value / total) * 100;
           if (pct < 0.1) return null;
@@ -1254,7 +1221,7 @@ function StackedBar({ data, total }: {
           );
         })}
       </div>
-      <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] font-mono">
+      <div className="mt-1.5 flex flex-wrap gap-2 text-type-label font-mono">
         {data.map(d => (
           <span key={d.key} className="flex items-center gap-1.5 text-[var(--text-tertiary)]">
             <span style={{ width: 8, height: 8, borderRadius: 2, background: d.color }} />
@@ -1279,8 +1246,8 @@ function GeoDistributionCard({ data: raw, status }: { data: CompositionAggregate
   return (
     <Card>
       <div className="flex items-center justify-between">
-        <SectionLabel>Geographic distribution</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <CardTitle>Geographic distribution</CardTitle>
+        <span className="text-type-label text-[var(--text-muted)]">
           top 10 of {countries.length}{unknown > 0 ? ` · ${formatNumber(unknown)} unknown` : ''}
         </span>
       </div>
@@ -1293,13 +1260,13 @@ function GeoDistributionCard({ data: raw, status }: { data: CompositionAggregate
           const pct = totalGeo > 0 ? (c.count / totalGeo) * 100 : 0;
           return (
             <div key={c.country}>
-              <div className="flex items-center justify-between text-[11px] font-mono">
+              <div className="flex items-center justify-between text-type-label font-mono">
                 <span className="text-[var(--text-secondary)]">{c.country}</span>
                 <span className="text-[var(--text-tertiary)]">
                   {formatNumber(c.count)} <span className="text-[var(--text-muted)]">({pct.toFixed(1)}%)</span>
                 </span>
               </div>
-              <div className="mt-1 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <div className="mt-1 h-1 rounded-full" style={{ background: 'var(--bg-input)' }}>
                 <div className="h-full rounded-full"
                   style={{ width: `${barW}%`, background: 'linear-gradient(90deg, var(--blue), var(--blue-dim))' }} />
               </div>
@@ -1326,7 +1293,7 @@ function ScoreBucketCard({ title, data: rawData, tone, subtitle, status }: {
   if (!data && (status.failed || status.loading)) return <AggCardState status={status} title={title.toLowerCase()} />;
   if (!data) {
     return (
-      <Card><SectionLabel>{title}</SectionLabel>
+      <Card><CardTitle>{title}</CardTitle>
         <div className="mt-3 text-xs text-[var(--text-tertiary)]">Awaiting daily snapshot</div>
       </Card>
     );
@@ -1340,12 +1307,12 @@ function ScoreBucketCard({ title, data: rawData, tone, subtitle, status }: {
   return (
     <Card>
       <div className="flex items-center justify-between">
-        <SectionLabel>{title}</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <CardTitle>{title}</CardTitle>
+        <span className="text-type-label text-[var(--text-muted)]">
           {formatNumber(total)} scored
         </span>
       </div>
-      <div className="mt-1 text-[10px] font-mono text-[var(--text-muted)]">{subtitle}</div>
+      <div className="mt-1 text-type-label text-[var(--text-muted)]">{subtitle}</div>
       <div className="mt-3 space-y-1.5">
         {data.map((row, i) => {
           if (row.bucket === 'unscored') return null;
@@ -1353,18 +1320,18 @@ function ScoreBucketCard({ title, data: rawData, tone, subtitle, status }: {
           const color = palette[i % palette.length];
           return (
             <div key={row.bucket}>
-              <div className="flex items-center justify-between text-[11px] font-mono">
+              <div className="flex items-center justify-between text-type-label font-mono">
                 <span style={{ color: accentText(color) }}>{row.bucket}</span>
                 <span className="text-[var(--text-tertiary)]">{formatNumber(row.count)}</span>
               </div>
-              <div className="mt-0.5 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <div className="mt-0.5 h-1.5 rounded-full" style={{ background: 'var(--bg-input)' }}>
                 <div className="h-full rounded-full" style={{ width: `${barW}%`, background: `linear-gradient(90deg, ${color}, ${color}80)` }} />
               </div>
             </div>
           );
         })}
         {data.find(r => r.bucket === 'unscored') && (
-          <div className="text-[10px] font-mono text-[var(--text-muted)] pt-1 border-t border-white/[0.04]">
+          <div className="text-type-label text-[var(--text-muted)] pt-1 border-t border-[var(--border-base)]">
             {formatNumber(data.find(r => r.bucket === 'unscored')!.count)} not yet scored
           </div>
         )}
@@ -1389,8 +1356,8 @@ function PostureMoversCard({ title, rows: rawRows, tone, emptyMsg, status }: {
 
   return (
     <Card>
-      <SectionLabel>{title}</SectionLabel>
-      <div className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5">
+      <CardTitle>{title}</CardTitle>
+      <div className="text-type-label text-[var(--text-muted)] mt-0.5">
         Brand-Health Δ vs 7 days ago
       </div>
       <div className="mt-3 space-y-1.5">
@@ -1400,7 +1367,7 @@ function PostureMoversCard({ title, rows: rawRows, tone, emptyMsg, status }: {
         {list.map(b => (
           <div key={b.brand_id}
             onClick={() => navigate(`/brands/${b.brand_id}`)}
-            className="cursor-pointer hover:bg-white/[0.03] transition-colors"
+            className="cursor-pointer hover:bg-[var(--bg-page)] transition-colors"
             style={{
               padding: '8px 10px', borderRadius: 6,
               border: '1px solid var(--border-base)', background: 'var(--bg-input)',
@@ -1409,7 +1376,7 @@ function PostureMoversCard({ title, rows: rawRows, tone, emptyMsg, status }: {
               <BrandFavicon name={b.brand_name} domain={b.canonical_domain} logoUrl={b.logo_url} size={22} />
               <div className="min-w-0 flex-1">
                 <div className="text-xs font-semibold text-[var(--text-primary)] truncate">{b.brand_name}</div>
-                <div className="text-[10px] font-mono text-[var(--text-tertiary)]">latest {b.latest}</div>
+                <div className="text-type-label font-mono text-[var(--text-tertiary)]">latest {b.latest}</div>
               </div>
               <span className="text-sm font-bold flex-shrink-0" style={{ color: accentText(accent) }}>
                 {b.delta > 0 ? '+' : ''}{b.delta}
