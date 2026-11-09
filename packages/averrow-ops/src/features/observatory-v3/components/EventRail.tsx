@@ -25,7 +25,7 @@ import { RefreshCw, X } from 'lucide-react';
 import { useObservatoryEvents } from '@/hooks/useObservatoryEvents';
 import { useNow } from '../lib/use-now';
 import {
-  EVENT_KINDS, EVENT_PERIODS, KIND_CHIP_LABEL, SEVERITY_DOT, SEVERITY_LABEL, chipCountText, eventAge, eventAgeSpoken, emptyFeedCopy,
+  EVENT_KINDS, EVENT_PERIODS, KIND_CHIP_LABEL, KIND_LABEL, SEVERITY_DOT, SEVERITY_LABEL, chipCountText, eventAge, eventAgeSpoken, emptyFeedCopy,
   groupByAge, railLimit, viaLine, visibleKinds,
   type EventKind, type EventPeriod, type ObservatoryEvent,
 } from '../lib/events';
@@ -135,27 +135,32 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
   const loading = q.isLoading && !q.data;
   const hasError = !!q.error && !q.data;
   const phoneSheet = placement === 'sheet';
+  /** Nothing to show (failed or quiet): the live dot greys out. */
+  const idle = hasError || (!loading && events.length === 0);
 
   return (
     <div role={phoneSheet ? 'group' : undefined} aria-label={phoneSheet ? 'Event rail' : undefined} className="flex w-full flex-col">
-      <div className="flex items-center justify-between gap-2 px-3 pt-2">
-        <h2 className={`m-0 flex items-center gap-2 ${LABEL}`} style={{ color: 'var(--text-secondary)' }}>
-          <span className="ev-live-dot" aria-hidden="true" />
-          Events · {period.toUpperCase()}
-        </h2>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close events, back to Intel"
-          title="Back to Intel"
-          className={`ds-focusable inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11`}
-          style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
-        >
-          <X size={14} aria-hidden="true" />
-        </button>
-      </div>
+      {/* The phone sheet's tab strip already names the view and is the way back, so the in-rail heading and ✕ are panel-only. */}
+      {!phoneSheet && (
+        <div className="flex items-center justify-between gap-2 px-3 pt-2">
+          <h2 className={`m-0 flex items-center gap-2 ${LABEL}`} style={{ color: 'var(--text-secondary)' }}>
+            <span className={idle ? 'ev-live-dot ev-live-dot--idle' : 'ev-live-dot'} aria-hidden="true" />
+            Events · {period.toUpperCase()}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close events, back to Intel"
+            title="Back to Intel"
+            className={`ds-focusable inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11`}
+            style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
-      <div className="px-3 pt-1 pb-2">
+      <div className={phoneSheet ? 'px-3 pt-2 pb-2' : 'px-3 pt-1 pb-2'}>
         <div role="radiogroup" aria-label="Event period" className={`flex items-center gap-0.5 rounded-md p-0.5 [@media(pointer:coarse)]:gap-2`} style={{ border: '1px solid var(--border-base)' }}>
           {EVENT_PERIODS.map((p, i) => (
             <button
@@ -250,12 +255,12 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
                       >
                         <span className="mt-1.5 h-1.5 w-1.5 rounded-full" style={{ background: SEVERITY_DOT[e.severity] }} aria-hidden="true" />
                         <span className="min-w-0">
-                          <span className="block text-[13px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                          <span className="block text-type-body leading-snug" style={{ color: 'var(--text-primary)' }}>
                             <EventTitle title={e.title} name={e.entity.name} />
                           </span>
                           <span className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 ${BODY}`} style={{ color: 'var(--text-secondary)' }}>
                             <EventChip kind={e.kind} />
-                            <span>{SEVERITY_LABEL[e.severity]} · {viaLine(e)}</span>
+                            <span>{SEVERITY_LABEL[e.severity] === KIND_LABEL[e.kind] ? viaLine(e) : `${SEVERITY_LABEL[e.severity]} · ${viaLine(e)}`}</span>
                           </span>
                         </span>
                         <span className={`whitespace-nowrap ${FACT} tabular-nums`} style={{ color: 'var(--text-secondary)' }} title={eventAgeSpoken(e.occurred_at, now)}>
@@ -275,7 +280,7 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
 }
 
 const chipClass = (on: boolean) =>
-  `ds-focusable rounded-full px-2.5 ${BODY} min-h-[28px] [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-3.5 ${on ? '!font-semibold' : ''}`;
+  `ds-focusable rounded-full px-2.5 ${on ? LABEL : BODY} min-h-[28px] [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-3.5`;
 const chipStyle = (on: boolean) => ({
   color: on ? 'var(--primary-text)' : 'var(--text-secondary)',
   background: on ? 'var(--primary-glow)' : 'transparent',

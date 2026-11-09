@@ -68,7 +68,7 @@ describe('buildOperationsModel', () => {
   });
   it('labels an arc by its lead operation\'s evidence, and says how many operations share it', () => {
     const e = allEdges.find(e => e.id === 'MD-NL')!;
-    expect(e.label).toBe('same ASN · AS1 AS2 +1 · 2 operations');
+    expect(e.label).toBe('Same ASN · AS1 AS2 +1 · 2 operations');
     expect(e.distances).toHaveLength(e.path.length);
     expect(e.distances[0]).toBe(0);
   });
@@ -125,13 +125,13 @@ describe('flat arcs stay on the map, once', () => {
 
 describe('evidence labels (the backend\'s tier fields are optional)', () => {
   it('prefers the tier, falls back to the kind, and flags shared infrastructure', () => {
-    expect(operationEvidence({ kind: 'asn' })).toBe('same ASN');
-    expect(operationEvidence({ kind: 'asn', evidence_tier: 'cert' })).toBe('shared cert');
+    expect(operationEvidence({ kind: 'asn' })).toBe('Same ASN');
+    expect(operationEvidence({ kind: 'asn', evidence_tier: 'cert' })).toBe('Shared cert');
     // the server's tier names are 'ip' and 'residue' ('per_ip' is only a cluster KIND)
-    expect(operationEvidence({ kind: 'asn', evidence_tier: 'ip', shared_infra: true })).toBe('shared IP · shared infrastructure');
-    expect(operationEvidence({ kind: 'per_ip', evidence_tier: 'residue' })).toBe('weak evidence');
-    expect(operationEvidence({ kind: 'asn', evidence_tier: 'brand_new_tier' })).toBe('brand new tier');
-    expect(operationEvidence({ kind: 'asn', evidence_tier: null, shared_infra: false })).toBe('same ASN');
+    expect(operationEvidence({ kind: 'asn', evidence_tier: 'ip', shared_infra: true })).toBe('Shared IP · shared infrastructure');
+    expect(operationEvidence({ kind: 'per_ip', evidence_tier: 'residue' })).toBe('Weak evidence');
+    expect(operationEvidence({ kind: 'asn', evidence_tier: 'brand_new_tier' })).toBe('Brand new tier');
+    expect(operationEvidence({ kind: 'asn', evidence_tier: null, shared_infra: false })).toBe('Same ASN');
   });
 });
 
@@ -182,9 +182,9 @@ describe('a realistic day: 50 operations x ~15 countries with heavy overlap', ()
 });
 
 describe('edges with an unresolved kind', () => {
-  it('label falls back to "linked" and the model still builds', () => {
-    expect(edgeLabel(null, [])).toBe('linked');
-    expect(edgeLabel(null, ['AS9'])).toBe('linked'); // ASNs are listed for ASN evidence only
+  it('label falls back to "Linked" and the model still builds', () => {
+    expect(edgeLabel(null, [])).toBe('Linked');
+    expect(edgeLabel(null, ['AS9'])).toBe('Linked'); // ASNs are listed for ASN evidence only
     const m = buildOperationsModel([op({ id: 'a', countries: ['NL'] }), op({ id: 'b', countries: ['US'] })], []);
     expect(aggregateEdges(m, ['a', 'b'])).toEqual([]); // single-country operations have nothing to link
   });
@@ -198,8 +198,8 @@ describe('helpers', () => {
     expect(normalizeConfidence(250)).toBe(1);
   });
   it('labels known and unknown kinds', () => {
-    expect(kindLabel('cert_serial')).toBe('shared cert serial');
-    expect(kindLabel('some_new_kind')).toBe('some new kind');
+    expect(kindLabel('cert_serial')).toBe('Shared cert serial');
+    expect(kindLabel('some_new_kind')).toBe('Some new kind');
   });
 });
 
@@ -264,13 +264,13 @@ describe('ASN evidence only lists ASNs when the pair\'s evidence is the ASN', ()
     expect(edgeShortLabel('asn', ['AS1', 'AS2'])).toBe('▲ 2 ASNs');
     expect(edgeShortLabel('asn', ['AS1'])).toBe('▲ ASN');
     expect(edgeShortLabel('ip', ['AS1', 'AS2'])).toBe('● IP');
-    expect(edgeLabel('ip', ['AS1', 'AS2'])).toBe('shared IP');
-    expect(edgeLabel('cert', ['AS1'])).toBe('shared cert');
-    expect(edgeLabel('asn', ['AS1', 'AS2'])).toBe('same ASN · AS1 AS2');
+    expect(edgeLabel('ip', ['AS1', 'AS2'])).toBe('Shared IP');
+    expect(edgeLabel('cert', ['AS1'])).toBe('Shared cert');
+    expect(edgeLabel('asn', ['AS1', 'AS2'])).toBe('Same ASN · AS1 AS2');
     const m = buildOperationsModel([op({ id: 'i', kind: 'per_ip', evidence_tier: 'ip', asns: ['AS1', 'AS2'], countries: ['US', 'DE'] })], []);
     const [e] = aggregateEdges(m, ['i']);
     expect(e!.sharedAsns).toEqual([]);
-    expect(e!.label).toBe('shared IP');
+    expect(e!.label).toBe('Shared IP');
   });
   it('maps the server\'s tier names (ip, residue) to glyphs and short words', () => {
     expect(edgeShortLabel('ip', [])).toBe('● IP');

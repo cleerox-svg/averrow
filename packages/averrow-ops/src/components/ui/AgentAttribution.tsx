@@ -10,8 +10,8 @@ export function AgentAttribution({ agent, lastRun, outputCount }: AgentAttributi
   const timeLabel = lastRun ? relativeTime(lastRun) : null;
 
   return (
-    <div className="flex items-center gap-1.5 text-white/55 text-[10px] font-mono">
-      <span className="w-1 h-1 rounded-full bg-amber-500/40 ops-accent-dot-40" />
+    <div className="flex items-center gap-1.5 text-type-label font-normal" style={{ color: 'var(--text-tertiary)' }}>
+      <span aria-hidden="true" className="h-1 w-1 shrink-0 rounded-full" style={{ background: 'var(--text-muted)' }} />
       <span>
         Powered by {agent}
         {timeLabel && ` · ${timeLabel}`}

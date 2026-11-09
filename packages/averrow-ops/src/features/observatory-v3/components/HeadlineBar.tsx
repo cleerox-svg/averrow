@@ -146,7 +146,7 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
     // Just the dot (decoration, hidden from assistive tech): the shell's top bar owns the LIVE badge (a test pins that the
     // Observatory renders no second one).
     <span className="flex shrink-0 items-center" title="Live feed" aria-hidden="true">
-      <span className="ev-live-dot" />
+      <span className={current || loading ? 'ev-live-dot' : 'ev-live-dot ev-live-dot--idle'} />
     </span>
   );
 
@@ -241,7 +241,7 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
         >
           <EventChip kind={current.kind} className={phone ? 'self-start' : ''} />
           {/* A phone has two lines of room: the sentence is never cut mid-thought there. */}
-          <span className={`min-w-0 flex-1 ${phone ? 'line-clamp-2 text-[12px] leading-[15px]' : 'truncate text-[13px]'}`} data-testid="headline-title">
+          <span className={`min-w-0 flex-1 ${phone ? 'line-clamp-2 text-type-label leading-[15px]' : 'truncate text-type-body'}`} data-testid="headline-title">
             <EventTitle title={current.title} name={current.entity.name} />
           </span>
         </button>

@@ -68,7 +68,7 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
         {error && section.rows.length === 0 ? (
           <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1.5 rounded" style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}>
             <span className={BODY} style={{ color: 'var(--sev-critical-text)' }}>Failed to load</span>
-            <button type="button" onClick={onRetry} className={`ds-focusable inline-flex items-center px-1 ${LABEL} ${COARSE_TARGET}`} style={{ background: 'none', border: 'none', color: 'var(--sev-critical-text)', cursor: 'pointer', padding: 0 }}>Retry</button>
+            <button type="button" onClick={onRetry} className={`ds-focusable inline-flex items-center ${LABEL} ${COARSE_TARGET}`} style={{ background: 'none', border: 'none', color: 'var(--sev-critical-text)', cursor: 'pointer', padding: 0 }}>Retry</button>
           </div>
         ) : loading && section.rows.length === 0 ? (
           <div role="status" className={`${BODY} py-2`} style={{ color: 'var(--text-muted)' }}>Loading…</div>
@@ -84,7 +84,7 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
                       {row.linked && <LinkedGlyph />}
                       <span className="block text-xs font-medium truncate min-w-0" style={{ color: 'var(--text-primary)' }}>{row.primary}</span>
                       {/* The tier badge never truncates: the NAME gives way, so the evidence stays readable. */}
-                      {row.badge && <span className="shrink-0"><Badge context="nexus" size="md" font="sans" label={row.badge} /></span>}
+                      {row.badge && <span className="shrink-0"><Badge verdict="stable" size="md" font="sans" label={row.badge} /></span>}
                     </span>
                     {row.secondary && <span className={`block ${BODY} truncate mt-0.5`} style={{ color: 'var(--text-muted)' }}>{row.secondary}</span>}
                   </span>

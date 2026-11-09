@@ -33,7 +33,7 @@ const mount = (target: React.ComponentProps<typeof DrillDrawer>['target'], extra
 describe('DrillDrawer', () => {
   it('shows arc details incl. the approximate-target note and theme-aware severity text', () => {
     mount({ kind: 'arc', arc });
-    expect(screen.getByRole('heading', { name: 'credential harvesting' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Credential harvesting' })).toBeInTheDocument();
     expect(screen.getByText('PayPal')).toBeInTheDocument();
     expect(screen.getByText(/approximate/i)).toBeInTheDocument();
     expect(screen.getAllByText('Critical').some(el => el.style.color === 'var(--sev-critical-text)')).toBe(true);
@@ -46,7 +46,7 @@ describe('DrillDrawer', () => {
     expect(within(hero).getByText('Threats')).toBeInTheDocument();
     expect(within(hero).getByText('Confidence')).toBeInTheDocument();
     expect(within(hero).getByText('82%')).toBeInTheDocument();
-    expect(within(hero).getByText('active')).toBeInTheDocument();
+    expect(within(hero).getByText('Active')).toBeInTheDocument();
     const cta = within(hero).getByRole('link', { name: 'Open operation →' });
     expect(cta).toHaveAttribute('href', '/campaigns/x');
   });

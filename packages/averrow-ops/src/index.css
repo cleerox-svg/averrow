@@ -473,6 +473,8 @@
   width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
   background: var(--green);
 }
+/* The feed failed or is quiet: nothing is live, so the dot greys out. */
+.ev-live-dot--idle { background: var(--text-muted); }
 @keyframes ev-hl-in {
   from { transform: translateY(70%); opacity: 0; }
   to   { transform: translateY(0);   opacity: 1; }

@@ -79,7 +79,8 @@ describe('groups and rows', () => {
     renderRail();
     const row = (await screen.findByText('Title c1')).closest('button')!;
     expect(within(row).getByText('Critical')).toBeInTheDocument(); // the shared EventChip, not a raw lowercase token
-    expect(row).toHaveTextContent('Critical · via Sentinel');
+    expect(row).toHaveTextContent('via Sentinel');
+    expect(row).not.toHaveTextContent('Critical · via'); // the kind chip already says it
     expect(row).toHaveTextContent('5m');
     const op = screen.getByText('Title o1').closest('button')!;
     expect(within(op).getByText('Operation')).toBeInTheDocument();

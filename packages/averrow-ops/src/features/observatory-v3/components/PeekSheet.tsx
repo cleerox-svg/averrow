@@ -148,7 +148,7 @@ export function PeekSheet({ open, onClose, label, onHeight, initialSnap = 0, res
         height: `${Math.round(frac * 1000) / 10}%`,
         zIndex: 25,
         background: 'var(--bg-elevated-solid, var(--bg-elevated))',
-        borderTop: '1px solid var(--border-base)',
+        borderTop: '1px solid var(--border-strong)',
         boxShadow: 'var(--card-shadow-elevated)',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         transition: drag === null ? 'height 200ms cubic-bezier(0.22, 0.9, 0.3, 1)' : 'none',
@@ -167,7 +167,7 @@ export function PeekSheet({ open, onClose, label, onHeight, initialSnap = 0, res
           if (e.key === 'ArrowUp') { e.preventDefault(); setSnap(s => Math.min(2, s + 1) as SnapIndex); }
           else if (e.key === 'ArrowDown') { e.preventDefault(); setSnap(s => Math.max(0, s - 1) as SnapIndex); }
         }}
-        className="ds-focusable shrink-0 flex justify-center items-center w-full min-h-[28px] bg-transparent border-0 cursor-grab active:cursor-grabbing"
+        className="ds-focusable shrink-0 flex justify-center items-center w-full min-h-[28px] [@media(pointer:coarse)]:min-h-[44px] bg-transparent border-0 cursor-grab active:cursor-grabbing"
         style={{ touchAction: 'none' }}
       >
         <span aria-hidden className="block w-10 h-1 rounded-full" style={{ background: 'var(--border-strong)' }} />

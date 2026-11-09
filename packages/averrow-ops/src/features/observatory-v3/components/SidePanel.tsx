@@ -38,6 +38,8 @@ import { relativeTime } from '@/lib/time';
 import { parseStringArray } from '@/lib/safe-json';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
 import { topOrigins } from '../lib/origins';
+import { typeDisplayLabel } from '../lib/map-colors';
+import { sentenceCase } from '@/lib/sentence-case';
 import { BODY, COARSE_TARGET, FACT, FACT_STRONG, LABEL } from '../lib/chrome-classes';
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -95,7 +97,7 @@ function InlineError({ message, onRetry }: { message: string; onRetry: () => voi
       <button
         type="button"
         onClick={onRetry}
-        className={`ds-focusable inline-flex items-center px-1 shrink-0 ${LABEL} ${COARSE_TARGET}`}
+        className={`ds-focusable inline-flex items-center shrink-0 ${LABEL} ${COARSE_TARGET}`}
         style={{ color: 'var(--sev-critical-text)', background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', padding: 0 }}
       >
         Retry
@@ -250,13 +252,13 @@ const TopOriginsWidget = memo(function TopOriginsWidget({
               type="button"
               onClick={() => onSelectNode(node)}
               aria-label={`${code}: ${count.toLocaleString()} threats. Show busiest node on map`}
-              className={`${ROW_LINK} flex items-center gap-2.5 py-1 w-full text-left min-h-[24px]`}
+              className={`${ROW_LINK} flex items-center gap-2.5 py-1.5 w-full text-left min-h-[28px] [@media(pointer:coarse)]:min-h-[44px]`}
               style={{ background: 'none', border: 'none', cursor: 'pointer' }}
             >
               {row}
             </button>
           ) : (
-            <div key={code} className="flex items-center gap-2.5 py-1">{row}</div>
+            <div key={code} className="flex items-center gap-2.5 py-1.5">{row}</div>
           );
         })}
       </WidgetBody>
@@ -319,7 +321,6 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
               dimColor="var(--primary-pressed)"
               faviconUrl={brand.canonical_domain ? `https://www.google.com/s2/favicons?domain=${brand.canonical_domain}&sz=32` : undefined}
               size={24}
-              glow
             />
             <div className="min-w-0 flex-1">
               <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{brand.name}</div>
@@ -407,9 +408,9 @@ const OperationsWidget = memo(function OperationsWidget() {
             <Link key={op.id} to={`/campaigns/${encodeURIComponent(String(op.id))}`} className={`${ROW_LINK} py-2`}>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                  {op.cluster_name || 'Unnamed Cluster'}
+                  {op.cluster_name || 'Unnamed cluster'}
                 </span>
-                {isAccelerating && <span className="shrink-0 ml-2"><Badge severity="high" label="Accelerating" size="md" font="sans" /></span>}
+                {isAccelerating && <span className="shrink-0 ml-2"><Badge status="warning" label="Accelerating" size="md" font="sans" /></span>}
               </div>
               <div className={`flex items-center gap-3 ${BODY}`} style={{ color: 'var(--text-tertiary)' }}>
                 <span>{op.threat_count.toLocaleString()} threats</span>
@@ -470,7 +471,7 @@ const GeoCampaignsWidget = memo(function GeoCampaignsWidget() {
               className={`${ROW_LINK} py-2`}
             >
               <div className="flex items-center gap-2 mb-1">
-                <Badge status="active" label={c.status} size="md" font="sans" />
+                <Badge status="success" label={sentenceCase(c.status)} size="md" font="sans" />
                 <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                   {c.name}
                 </span>
@@ -516,7 +517,7 @@ const AgentIntelWidget = memo(function AgentIntelWidget() {
             {recentOutputs.map(agent => (
               <div key={agent.agent_id} className="flex items-center gap-2 py-0.5">
                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: agent.color }} />
-                <span className={`${LABEL} truncate flex-1`} style={{ color: agent.color }}>
+                <span className={`${LABEL} truncate flex-1`} style={{ color: 'var(--text-primary)' }}>
                   {agent.display_name}
                 </span>
                 <span className={`${FACT} shrink-0`} style={{ color: 'var(--text-tertiary)' }}>
@@ -565,7 +566,7 @@ const LiveFeedWidget = memo(function LiveFeedWidget({ source }: { source: string
                 title={entry.severity ?? undefined}
               />
               <span className={`${BODY} truncate flex-1`} style={{ color: 'var(--text-primary)' }}>
-                {entry.threat_type?.replace(/_/g, ' ')}
+                {typeDisplayLabel(entry.threat_type)}
               </span>
               {entry.country_code && (
                 <span className={`${FACT} shrink-0`} style={{ color: 'var(--text-secondary)' }}>{entry.country_code}</span>
@@ -633,7 +634,7 @@ export function SidePanel({ period, source = 'all', visible, mapFilters = NO_FIL
         )}
       </div>
 
-      <Card variant="active" padding="16px">
+      <Card variant="base" padding="16px">
         <SummaryHeader period={period} source={source} />
       </Card>
 

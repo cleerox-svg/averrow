@@ -26,8 +26,9 @@ import { trendView, type DrillTrend } from '../lib/trend';
 import { Badge, StatTile, statFitEm, KitButton } from '@/design-system/components';
 import { cn } from '@/lib/cn';
 import { relativeTime } from '@/lib/time';
-import { sevText, typeDisplayLabel, typeLabel } from '../lib/map-colors';
-import { BODY, COARSE_TARGET, FACT, LABEL } from '../lib/chrome-classes';
+import { sentenceCase } from '@/lib/sentence-case';
+import { sevText, typeDisplayLabel } from '../lib/map-colors';
+import { BODY, COARSE_TARGET, LABEL } from '../lib/chrome-classes';
 import { countryName } from '../lib/country-name';
 import {
   countryFacts, drillEyebrow, drillKey, drillTitle, isPending, type DrillData, type DrillTarget,
@@ -246,13 +247,11 @@ function ConfidenceTag({ value }: { value: number | null }) {
   const band = confidenceBand(value);
   return (
     <span className={cn('shrink-0', BODY)} style={{ color: BAND_COLOR[band] }}>
-      {value === null ? 'Unrated' : `${cap(band)} ${Math.round(value * 100)}%`}
+      {value === null ? 'Unrated' : `${sentenceCase(band)} ${Math.round(value * 100)}%`}
     </span>
   );
 }
 
-/** First letter up: a stored lowercase word shown as a sentence-case value. */
-const cap = (w: string): string => w.charAt(0).toUpperCase() + w.slice(1);
 const fmtDate = (v: string | null): string => (v ? relativeTime(v) : '—');
 const num = (n: number): string => n.toLocaleString();
 
@@ -265,7 +264,8 @@ function Hero({ tiles, badges, cta }: { tiles: [HeroTile, HeroTile]; badges?: Re
   const fitEm = Math.max(...tiles.map(t => (t.value === null ? 0 : statFitEm(t.value))));
   return (
     <div className="flex flex-col gap-2.5" data-hero>
-      <div className="grid grid-cols-2 gap-2">
+      {/* The kit shrinks the stat label to 11.5px under 640px; the chrome floor is 12px. */}
+      <div className="grid grid-cols-2 gap-2 [&_.ds-stat-label]:!text-[12px]">
         {tiles.map(t => <StatTile key={t.label} label={t.label} value={t.value} sub={t.sub} tone={t.tone ?? 'neutral'} compact fitEm={fitEm} />)}
       </div>
       {badges && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
@@ -276,7 +276,8 @@ function Hero({ tiles, badges, cta }: { tiles: [HeroTile, HeroTile]; badges?: Re
   );
 }
 
-const OP_STATUS = { active: 'active', inactive: 'inactive', dormant: 'inactive', resolved: 'inactive', monitoring: 'pending' } as const;
+// `success` (green, no status dot): the kit's dotted tones draw a glow, and chrome badges are flat.
+const OP_STATUS = { active: 'success', inactive: 'inactive', dormant: 'inactive', resolved: 'inactive', monitoring: 'pending' } as const;
 
 // ─── Bodies ─────────────────────────────────────────────────
 
@@ -288,21 +289,20 @@ function NodeBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'node' }>; 
       <Hero
         tiles={[
           { label: 'Threats', value: n.threat_count, tone: 'amber' },
-          { label: 'Top severity', value: cap(n.top_severity ?? 'unknown'), tone: n.top_severity === 'critical' ? 'red' : 'neutral' },
+          { label: 'Top severity', value: sentenceCase(n.top_severity ?? 'unknown'), tone: n.top_severity === 'critical' ? 'red' : 'neutral' },
         ]}
         badges={<Badge severity={n.top_severity ?? 'info'} size="md" font="sans" label={typeDisplayLabel(n.top_threat_type) || 'Mixed'} />}
         cta={cc ? { label: `Open ${countryName(cc)}`, onClick: () => onSelect({ kind: 'country', code: cc }) } : null}
       />
       <Section>
         {cc && <KV k="Country">{countryName(cc)}</KV>}
-        <KV k="Type">{typeLabel(n.top_threat_type) || 'Mixed'}</KV>
+        <KV k="Type">{typeDisplayLabel(n.top_threat_type) || 'Mixed'}</KV>
       </Section>
       <Section title="Severity mix">
-        <div className={cn('flex gap-3', FACT)}>
-          <span style={{ color: sevText('critical') }}>C {n.critical}</span>
-          <span style={{ color: sevText('high') }}>H {n.high}</span>
-          <span style={{ color: sevText('medium') }}>M {n.medium}</span>
-          <span style={{ color: sevText('low') }}>L {n.low}</span>
+        <div className={cn('flex flex-wrap gap-x-3 gap-y-0.5', BODY)}>
+          {(['critical', 'high', 'medium', 'low'] as const).map(k => (
+            <span key={k} style={{ color: sevText(k) }}>{sentenceCase(k)} <span className="font-mono">{n[k]}</span></span>
+          ))}
         </div>
       </Section>
     </>
@@ -317,7 +317,7 @@ function ArcBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'arc' }>; on
       <Hero
         tiles={[
           { label: 'Threats', value: a.volume, tone: 'amber' },
-          { label: 'Severity', value: cap(a.severity), tone: a.severity === 'critical' ? 'red' : 'neutral' },
+          { label: 'Severity', value: sentenceCase(a.severity), tone: a.severity === 'critical' ? 'red' : 'neutral' },
         ]}
         badges={<Badge severity={a.severity} size="md" font="sans" label={typeDisplayLabel(a.threat_type) || 'Corridor'} />}
         cta={cc ? { label: `Open ${countryName(cc)}`, onClick: () => onSelect({ kind: 'country', code: cc }) } : null}
@@ -325,7 +325,7 @@ function ArcBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'arc' }>; on
       <Section>
         {a.brand_name && <KV k="Target"><span style={{ color: 'var(--primary-text)' }}>{a.brand_name}</span></KV>}
         <KV fact k="From">{a.source_region || 'unknown'}</KV>
-        <KV k="Severity"><span style={{ color: sevText(a.severity) }}>{cap(a.severity)}</span></KV>
+        <KV k="Severity"><span style={{ color: sevText(a.severity) }}>{sentenceCase(a.severity)}</span></KV>
       </Section>
       {a.target_precision === 'country' && <Note>Target position is approximate (country level).</Note>}
     </>
@@ -384,7 +384,7 @@ function CountryBody({ t, data, onSelect, canSeeTakedowns }: { t: Extract<DrillT
           { label: 'Active threats', value: f.threats, tone: 'amber', sub: f.threats === null ? 'loads with Nodes' : undefined },
           { label: 'vs Radar', value: f.overindex && f.overindex.ratio !== null ? formatRatio(f.overindex.ratio).replace(' Radar', '') : 'n/a', sub: f.overindex ? undefined : 'no baseline' },
         ]}
-        badges={f.operations.length > 0 ? <Badge context="nexus" size="md" font="sans" label={`${f.operations.length} operation${f.operations.length === 1 ? '' : 's'}`} /> : undefined}
+        badges={f.operations.length > 0 ? <Badge verdict="stable" size="md" font="sans" label={`${f.operations.length} operation${f.operations.length === 1 ? '' : 's'}`} /> : undefined}
       />
       {sev && total > 0 && (
         <Section title="Severity mix">
@@ -461,8 +461,8 @@ function OperationBody({ t, data, onSelect }: { t: Extract<DrillTarget, { kind: 
         ]}
         badges={(
           <>
-            {op.status && <Badge status={OP_STATUS[status as keyof typeof OP_STATUS] ?? 'pending'} size="md" font="sans" label={op.status} />}
-            <Badge context="nexus" size="md" font="sans" label={operationEvidence(op)} />
+            {op.status && <Badge status={OP_STATUS[status as keyof typeof OP_STATUS] ?? 'pending'} size="md" font="sans" label={sentenceCase(op.status)} />}
+            <Badge verdict="stable" size="md" font="sans" label={operationEvidence(op)} />
           </>
         )}
         cta={{ label: 'Open operation →', to: `/campaigns/${encodeURIComponent(op.id)}` }}
@@ -516,8 +516,9 @@ function ProviderBody({ t, data, onSelect, canSeeTakedowns }: { t: Extract<Drill
         ]}
         badges={(
           <>
-            {trend === 'rising' && <Badge context="worsening" size="md" font="sans" />}
-            {trend === 'falling' && <Badge context="improving" size="md" font="sans" />}
+            {/* Non-dotted tones (no kit glow): critical-toned "confirmed" for worsening, green "success" for improving. */}
+            {trend === 'rising' && <Badge classification="confirmed" size="md" font="sans" label="Worsening" />}
+            {trend === 'falling' && <Badge status="success" size="md" font="sans" label="Improving" />}
             {p.is_bulletproof && <Badge severity="high" size="md" font="sans" label="Bulletproof" />}
           </>
         )}
@@ -590,7 +591,7 @@ function ActorBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'actor' }>
           { label: 'Clusters', value: clusters.length, tone: 'amber' },
           { label: 'ASNs', value: infrastructure.length, tone: 'neutral' },
         ]}
-        badges={actor.attribution_confidence ? <Badge severity={null} size="md" font="sans" label={`${actor.attribution_confidence} attribution`} /> : undefined}
+        badges={actor.attribution_confidence ? <Badge severity={null} size="md" font="sans" label={`${sentenceCase(actor.attribution_confidence)} attribution`} /> : undefined}
       />
       <Section>
         {actor.aliases.length > 0 && <KV k="Also known as">{actor.aliases.slice(0, 3).join(', ')}</KV>}
@@ -643,7 +644,7 @@ function ActorBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'actor' }>
       )}
       {attributed > 0 && (
         <Section title="Attributions">
-          {Object.entries(attributions.by_confidence).map(([k, v]) => <KV fact key={k} k={k}>{num(v)}</KV>)}
+          {Object.entries(attributions.by_confidence).map(([k, v]) => <KV fact key={k} k={sentenceCase(k)}>{num(v)}</KV>)}
         </Section>
       )}
     </>
@@ -669,7 +670,7 @@ function CampaignBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'campai
           { label: 'Adversaries', value: c.adversary_countries.length, tone: 'red' },
           { label: 'Targets', value: c.target_countries.length, tone: 'amber' },
         ]}
-        badges={c.status ? <Badge status={status === 'active' ? 'active' : 'inactive'} size="md" font="sans" label={c.status} /> : undefined}
+        badges={c.status ? <Badge status={status === 'active' ? 'success' : 'inactive'} size="md" font="sans" label={sentenceCase(c.status)} /> : undefined}
         cta={{ label: 'Open campaign →', to: `/campaigns/geo/${encodeURIComponent(c.slug)}` }}
       />
       <Note>Curated by analysts: adversary and target are an assessment, not observed traffic.</Note>
@@ -785,7 +786,7 @@ export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTa
     <div className={cn('flex items-start justify-between gap-2', variant !== 'sheet' && 'mb-3')}>
       <div className="min-w-0">
         <div className={BODY} style={{ color: 'var(--text-tertiary)' }}>{drillEyebrow(target)}</div>
-        <h2 className="text-sm font-semibold m-0 mt-0.5 capitalize break-words" style={{ color: 'var(--text-primary)' }} aria-busy={isPending(target)}>
+        <h2 className="text-sm font-semibold m-0 mt-0.5 break-words" style={{ color: 'var(--text-primary)' }} aria-busy={isPending(target)}>
           {title}
         </h2>
       </div>

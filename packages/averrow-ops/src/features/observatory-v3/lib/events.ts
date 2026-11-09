@@ -148,15 +148,17 @@ export const emptyFeedCopy = (period: EventPeriod, kinds: readonly EventKind[] =
     ? `No ${kinds.map(k => KIND_CHIP_LABEL[k].toLowerCase()).join(' or ')} events in ${PERIOD_PHRASE[period]}`
     : `No new threat events in ${PERIOD_PHRASE[period]}`;
 
-/** Chip colours per kind. Theme tokens only, so both themes get an AA text colour. */
+const NEUTRAL_BG = 'color-mix(in srgb, var(--text-primary) 8%, transparent)';
+
+/** Chip colours per kind. Theme tokens only, so both themes get an AA text colour. Only Critical wears a severity tone: a kind is not a severity. */
 export const KIND_TONE: Record<EventKind, { fg: string; bg: string }> = {
   critical: { fg: 'var(--sev-critical-text)', bg: 'var(--sev-critical-bg)' },
   operation: { fg: 'var(--cyan-text)', bg: 'color-mix(in srgb, var(--cyan-text) 14%, transparent)' },
-  fast: { fg: 'var(--sev-high-text)', bg: 'var(--sev-high-bg)' },
-  lookalike: { fg: 'var(--sev-medium-text)', bg: 'var(--sev-medium-bg)' },
-  takedown: { fg: 'var(--sev-info-text)', bg: 'var(--sev-info-bg)' },
+  fast: { fg: 'var(--primary-text)', bg: 'var(--primary-tint)' },
+  lookalike: { fg: 'var(--text-secondary)', bg: NEUTRAL_BG },
+  takedown: { fg: 'var(--green-text)', bg: 'color-mix(in srgb, var(--green-text) 14%, transparent)' },
   actor: { fg: 'var(--violet-text)', bg: 'color-mix(in srgb, var(--violet-text) 14%, transparent)' },
-  spike: { fg: 'var(--sev-low-text)', bg: 'var(--sev-low-bg)' },
+  spike: { fg: 'var(--text-secondary)', bg: NEUTRAL_BG },
 };
 
 /** Severity dot colour. */

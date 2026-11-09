@@ -26,7 +26,7 @@ describe('lens-aware panel rows', () => {
     const op = (id: string, n: number): OperationGeo => ({ id, name: id, component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: n, actor: { id: 'a', name: 'APT' }, countries: ['NL', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null });
     const s = operationRows([op('small', 1), op('big', 99)]);
     expect(s.rows.map(r => r.key)).toEqual(['big', 'small']);
-    expect(s.rows[0]).toMatchObject({ badge: 'same ASN', secondary: '2 countries · 80% conf · APT' });
+    expect(s.rows[0]).toMatchObject({ badge: 'Same ASN', secondary: '2 countries · 80% conf · APT' });
     expect(operationRows(undefined).rows).toEqual([]);
   });
   it('Operations with include_shared: low-evidence rows (hub tier ip, shared, scanning) sit after every kept row and do not displace the top 12', () => {
@@ -42,7 +42,7 @@ describe('lens-aware panel rows', () => {
     const mk = (id: string, tier: string, n: number): OperationGeo => ({ id, name: id, component_id: null, kind: 'asn', evidence_tier: tier, status: 'active', confidence_score: 80, threat_count: n, actor: null, countries: ['NL', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null });
     const s = operationRows([mk('weak-huge', 'residue', 9999), mk('cert-small', 'cert', 3), mk('asn-big', 'asn', 500), ...Array.from({ length: 12 }, (_, i) => mk(`p${i}`, 'asn', 400 - i))], new Set(['cert-small']));
     expect(s.rows.slice(0, 3).map(r => r.key)).toEqual(['cert-small', 'asn-big', 'p0']);
-    expect(s.rows[0]).toMatchObject({ linked: true, badge: 'shared cert' });
+    expect(s.rows[0]).toMatchObject({ linked: true, badge: 'Shared cert' });
     expect(s.rows[1]!.linked).toBe(false);
     expect(s.rows).toHaveLength(PANEL_ROWS);
     expect(s.more).toBe(15 - PANEL_ROWS);

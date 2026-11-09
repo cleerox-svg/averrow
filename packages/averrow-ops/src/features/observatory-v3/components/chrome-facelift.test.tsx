@@ -32,21 +32,9 @@ const PANEL_FILES = [
   'PanelDock.tsx', 'PanelTabs.tsx', 'PanelErrorBoundary.tsx', 'ReplayTimeline.tsx', 'WallOverlay.tsx',
 ].map(f => resolve(HERE, f));
 
-/** The stats bar, loading pill and panel toggles in ObservatoryV3.tsx are in scope; the rest of that file is not. */
-function statsBarAndPill(): string {
-  const src = read(resolve(V3, 'ObservatoryV3.tsx'));
-  const a = src.indexOf('Subtle loading / updating pill');
-  const b = src.indexOf('Bot share: loading / error / empty states');
-  const c = src.indexOf('{/* ─── Stats bar');
-  const d = src.indexOf('{/* ─── Headline bar');
-  if (!(a >= 0 && a < b && b < c && c < d)) throw new Error('ObservatoryV3.tsx section markers moved: update statsBarAndPill()');
-  return src.slice(a, b) + src.slice(c, d);
-}
-
 describe('chrome source guards (6a + 6b)', () => {
   const sources: Array<[string, string]> = [
     ...SCOPE_FILES.map(f => [f.split('/').pop()!, read(f)] as [string, string]),
-    ['ObservatoryV3.tsx (stats bar + pill)', statsBarAndPill()],
     ...PANEL_FILES.map(f => [f.split('/').pop()!, read(f)] as [string, string]),
     ['ObservatoryV3.tsx (whole file)', read(resolve(V3, 'ObservatoryV3.tsx'))],
   ];
@@ -69,9 +57,9 @@ describe('chrome source guards (6a + 6b)', () => {
         expect(joined).not.toMatch(/text-\[1[01]px\]/);
         expect(joined).not.toMatch(/fontSize:\s*1[01]\b/);
       });
-      it('has no uppercase class or letter-spaced capitals', () => {
+      it('has no uppercase / capitalize class or letter-spaced capitals', () => {
         const joined = code.join('\n');
-        expect(joined).not.toMatch(/(^|[\s"'`])uppercase\b/);
+        expect(joined).not.toMatch(/(^|[\s"'`])(uppercase|capitalize)\b/);
         expect(joined).not.toMatch(/tracking-\[0\.2em\]|tracking-wider|tracking-wide\b/);
       });
       it('has no primary-glow box-shadow', () => {
