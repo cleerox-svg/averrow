@@ -168,7 +168,9 @@ export function Avatar({
             aria-hidden="true"
             className="font-black"
             style={{
-              fontSize: fs,
+              // Facelift floors initials at 12px (`--ds-avatar-min-fs`, tokens.css);
+              // the legacy look has no floor (0px).
+              fontSize: `max(var(--ds-avatar-min-fs, 0px), ${fs}px)`,
               lineHeight: 1,
               color: self ? 'var(--primary-ink)' : neutral ? 'var(--text-secondary)' : '#fff',
               fontWeight: self ? 800 : undefined,

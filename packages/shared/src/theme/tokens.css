@@ -1345,6 +1345,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   .ds-stat { padding: 10px 14px; border-radius: var(--radius-md); }
   .ds-stat--interactive { padding-bottom: 10px; }
   .ds-stat-label { font-size: 11.5px; }
+  :root[data-accent] .ds-stat-label { font-size: 12px; } /* facelift: 12px floor */
   .ds-stat-value { margin-top: 2px; font-size: 26px; }
   .ds-stat-value--fit { font-size: clamp(16px, calc(100cqi / var(--ds-stat-em, 3.1)), 26px); }
   .ds-stat-sub { margin-top: 4px; }
@@ -1403,4 +1404,14 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
    (see --primary-rim above); under an accent it follows the accent. */
 :root[data-accent] {
   --primary-rim: var(--primary-border);
+}
+
+/* Facelift kit floors (polish): Badge text >= 12px (every size/font) with no
+   outer glow, Avatar initials >= 12px. Badge/Avatar set sizes inline, so the
+   floor is !important / a custom property with legacy fallbacks; with
+   FACELIFT=false (no data-accent) nothing here applies. */
+:root[data-accent] .ds-badge { font-size: 12px !important; }
+:root[data-accent] {
+  --ds-badge-glow: 0 0 0 transparent;
+  --ds-avatar-min-fs: 12px;
 }

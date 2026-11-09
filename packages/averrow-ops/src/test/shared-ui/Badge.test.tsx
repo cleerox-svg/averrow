@@ -4,6 +4,19 @@ import { Badge } from '@averrow/shared/ui';
 
 const styleAttr = (el: HTMLElement) => el.getAttribute('style') ?? '';
 
+describe('shared Badge facelift hooks', () => {
+  it('dot={false} suppresses the pulse dot', () => {
+    const { container } = render(<Badge status="active" pulse dot={false} label="Live" />);
+    expect(container.querySelectorAll('[aria-hidden="true"]').length).toBe(0);
+  });
+  it('carries the ds-badge hook and reads the glow property with a legacy fallback', () => {
+    render(<Badge severity="high" size="sm" font="sans" />);
+    const el = screen.getByText('High');
+    expect(el).toHaveClass('ds-badge');
+    expect(styleAttr(el)).toContain('var(--ds-badge-glow');
+  });
+});
+
 describe('shared Badge', () => {
   it.each([
     ['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low'], ['info', 'Info'],

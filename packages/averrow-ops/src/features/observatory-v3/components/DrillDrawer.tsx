@@ -264,8 +264,7 @@ function Hero({ tiles, badges, cta }: { tiles: [HeroTile, HeroTile]; badges?: Re
   const fitEm = Math.max(...tiles.map(t => (t.value === null ? 0 : statFitEm(t.value))));
   return (
     <div className="flex flex-col gap-2.5" data-hero>
-      {/* The kit shrinks the stat label to 11.5px under 640px; the chrome floor is 12px. */}
-      <div className="grid grid-cols-2 gap-2 [&_.ds-stat-label]:!text-[12px]">
+      <div className="grid grid-cols-2 gap-2">
         {tiles.map(t => <StatTile key={t.label} label={t.label} value={t.value} sub={t.sub} tone={t.tone ?? 'neutral'} compact fitEm={fitEm} />)}
       </div>
       {badges && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
