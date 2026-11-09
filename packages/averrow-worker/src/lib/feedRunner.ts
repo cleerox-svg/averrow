@@ -591,21 +591,48 @@ export function plannedFeedTimeout(
   return { timeoutMs: remaining, clipped: own - remaining > FEED_TIMEOUT_CLIP_TOLERANCE_MS };
 }
 
-/** Every timeout error (clipped or not) ends with this; matched by previousPullTimedOut. */
+/** Every timeout error (clipped or not) ends with this; matched by previousPullTimedOutAsHang. */
 const TIMEOUT_ERROR_SUFFIX = "— pull abandoned";
 
 /**
- * True when the feed's most recent pull before `pullId` was itself
- * abandoned at a timeout (clipped or not). One indexed row read
- * (idx_feed_pulls_feed); only called after a clipped timeout.
+ * The smallest timeout allowance that counts as evidence of a hang:
+ * min(the feed's own timeout, FEED_RUN_TIMEOUT_MS). 120s is above every
+ * default-cap feed's 14-day max pull (≤ 95s) and is the cap a feed on the
+ * default always gets, so a pull that did not settle in that long is
+ * hanging rather than merely slow — except for the override feeds, whose
+ * normal pulls can run past 120s, but for those a clipped timeout only
+ * penalizes on a repeat (see runFeedWithTimeout). A shorter clipped
+ * allowance (e.g. surbl squeezed to 60s by the tick deadline after a slow
+ * ingest) is just a squeeze and never counts, however often it repeats.
  */
-async function previousPullTimedOut(env: Env, feedName: string, pullId: string): Promise<boolean> {
+export function hangEvidenceMinMs(feedName: string): number {
+  return Math.min(feedRunTimeoutMs(feedName), FEED_RUN_TIMEOUT_MS);
+}
+
+/** Allowance (ms) of a timeout error ("timed out after Ns …"), or null. */
+function timeoutAllowanceMs(errorMessage: string | null): number | null {
+  if (!errorMessage || !errorMessage.endsWith(TIMEOUT_ERROR_SUFFIX)) return null;
+  const m = /^timed out after (\d+)s\b/.exec(errorMessage);
+  return m ? Number(m[1]) * 1000 : null;
+}
+
+/**
+ * True when the feed's most recent pull before `pullId` was itself
+ * abandoned at a timeout whose allowance was hang evidence
+ * (≥ hangEvidenceMinMs) — clipped or not. The allowance is read back from
+ * the "timed out after Ns" error text the timeout path writes (whole
+ * seconds, so it needs no new column). One indexed row read
+ * (idx_feed_pulls_feed); only called after a qualifying clipped timeout.
+ */
+async function previousPullTimedOutAsHang(env: Env, feedName: string, pullId: string): Promise<boolean> {
   const prev = await env.DB.prepare(
     `SELECT status, error_message FROM feed_pull_history
       WHERE feed_name = ? AND id <> ?
       ORDER BY started_at DESC LIMIT 1`,
   ).bind(feedName, pullId).first<{ status: string; error_message: string | null }>();
-  return prev?.status === "failed" && (prev.error_message ?? "").endsWith(TIMEOUT_ERROR_SUFFIX);
+  if (prev?.status !== "failed") return false;
+  const allowance = timeoutAllowanceMs(prev.error_message);
+  return allowance !== null && allowance >= hangEvidenceMinMs(feedName);
 }
 
 /** Marker so the feed loops can count timeouts separately from failures. */
@@ -635,13 +662,18 @@ export class FeedTimeoutError extends Error {
  *     (penalizeFeedFailure), only when this upsert is what finalized the
  *     row, and when either the feed got its full allowance (its own
  *     timeout fired, `clippedBy` null) or the cut was clipped by a loop
- *     deadline but the feed's previous pull also timed out. A single
- *     clipped cut is our scheduling, not the feed's fault: no penalty. A
- *     clipped pull's allowance is by construction short of the feed's own
- *     timeout, so it can never show that the pull hung for its full
- *     allowance; a second timeout in a row is the evidence used instead,
- *     so a feed that is clipped on every tick and hangs every time still
- *     backs off and reaches auto-pause instead of death-looping silently.
+ *     deadline with an allowance that is hang evidence (≥
+ *     hangEvidenceMinMs: 120s, or the feed's own timeout if smaller) AND
+ *     the feed's previous pull also timed out with such an allowance. A
+ *     single clipped cut is our scheduling, not the feed's fault: no
+ *     penalty. A short squeeze (surbl clipped to 60s after a slow ingest)
+ *     never penalizes, however often it repeats — that feed is slow-ticked,
+ *     not hung. A clipped pull's allowance is by construction short of the
+ *     feed's own timeout, so it can never show that the pull hung for its
+ *     full allowance; two meaningful timeouts in a row are the evidence
+ *     used instead, so a feed that is clipped on every tick and hangs every
+ *     time still backs off and reaches auto-pause instead of
+ *     death-looping silently.
  *
  * The abandoned runFeed keeps running in the background (feed modules
  * take no AbortSignal). Its late outcome is harmless: runFeed's success
@@ -711,7 +743,10 @@ async function runFeedWithTimeout(
     if (finalizeApplied(finalize)) {
       if (!clippedBy) {
         await penalizeFeedFailure(env, config, errorMsg);
-      } else if (await previousPullTimedOut(env, config.feed_name, pullId)) {
+      } else if (
+        timeoutMs >= hangEvidenceMinMs(config.feed_name)
+        && await previousPullTimedOutAsHang(env, config.feed_name, pullId)
+      ) {
         await penalizeFeedFailure(env, config, `${errorMsg}; previous pull also timed out`);
       }
     }
@@ -948,7 +983,7 @@ async function penalizeFeedFailure(
 ): Promise<void> {
   // Check previous status for transition notification + grab the current
   // counter so we can increment locally and avoid an extra round trip.
-  const prevStatus = await env.DB.prepare(
+  let prevStatus = await env.DB.prepare(
     `SELECT health_status, consecutive_failures FROM feed_status WHERE feed_name = ?`
   ).bind(config.feed_name).first<{ health_status: string; consecutive_failures: number | null }>();
 
@@ -956,10 +991,13 @@ async function penalizeFeedFailure(
   // creates it on success), and the UPDATE below would match nothing: no
   // backoff, no counter, no auto-pause. Ensure the row, as applyReapPenalty
   // does. Only when the read found none, so the common path costs no write.
+  // The row is born 'healthy', so this first failure IS a healthy →
+  // degraded transition and notifies like any other.
   if (!prevStatus) {
     await env.DB.prepare(
       "INSERT OR IGNORE INTO feed_status (feed_name, health_status) VALUES (?, 'healthy')",
     ).bind(config.feed_name).run();
+    prevStatus = { health_status: 'healthy', consecutive_failures: 0 };
   }
 
   const newFailureCount = (prevStatus?.consecutive_failures ?? 0) + 1;

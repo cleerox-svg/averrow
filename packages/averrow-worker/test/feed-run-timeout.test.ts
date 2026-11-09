@@ -30,6 +30,7 @@ import {
   runAllEnrichmentFeeds,
   runAllSocialFeeds,
   plannedFeedTimeout,
+  hangEvidenceMinMs,
   FEED_TIMEOUT_CLIP_TOLERANCE_MS,
   FEED_POOL_MIN_START_MS,
   SOCIAL_LOOP_BUDGET_MS,
@@ -568,6 +569,12 @@ describe("feed timeout follow-ups (fake timers)", () => {
       expect(st!.next_retry_at).not.toBeNull();
       expect(st!.health_status).toBe("degraded");
       expect(st!.last_error).toBe("timed out after 120s — pull abandoned");
+      // Born 'healthy', so the first failure is a healthy → degraded
+      // transition and notifies.
+      expect(createNotificationMock).toHaveBeenCalledTimes(1);
+      expect(createNotificationMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        type: "feed_health", title: "Feed degraded: nrd_hagezi",
+      }));
       expect(unhandled).toEqual([]);
     });
 
@@ -581,60 +588,108 @@ describe("feed timeout follow-ups (fake timers)", () => {
       expect(st.consecutive_failures).toBe(1);
       expect(st.next_retry_at).not.toBeNull();
       expect(st.last_error).toBe("HTTP 502");
+      expect(createNotificationMock).toHaveBeenCalledTimes(1);
+      expect(createNotificationMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        type: "feed_health", title: "Feed degraded: urlhaus",
+      }));
+    });
+
+    it("does not notify again for a feed whose existing row is already degraded", async () => {
+      const state = makeState(["urlhaus"]); // rows seeded 'degraded'
+      const mod: FeedModule = { ingest: async () => { throw new Error("HTTP 502"); } };
+      await runAllFeeds(makeEnv(state), { urlhaus: mod });
+      expect(createNotificationMock).not.toHaveBeenCalled();
     });
   });
 
   describe("clipped timeouts", () => {
-    const CLIPPED_100S = "timed out after 100s at the enrichment deadline (100s budget) — pull abandoned";
+    const clippedMsg = (sec: number) =>
+      `timed out after ${sec}s at the enrichment deadline (${sec}s budget) — pull abandoned`;
 
-    async function clippedSurblTick(state: State): Promise<void> {
-      const run = runAllEnrichmentFeeds(makeEnv(state), { surbl: hangingModule() }, { deadline: Date.now() + 100_000 });
-      await vi.advanceTimersByTimeAsync(100_000);
+    /** One enrichment tick in which surbl (own 300s) hangs and is clipped to `ms`. */
+    async function clippedSurblTick(state: State, ms: number): Promise<void> {
+      const run = runAllEnrichmentFeeds(makeEnv(state), { surbl: hangingModule() }, { deadline: Date.now() + ms });
+      await vi.advanceTimersByTimeAsync(ms);
       expect(await run).toMatchObject({ feedsTimedOut: 1 });
     }
 
-    it("are not penalized when the previous pull did not time out", async () => {
+    it("hang evidence starts at min(own timeout, 120s)", () => {
+      expect(hangEvidenceMinMs("surbl")).toBe(FEED_RUN_TIMEOUT_MS);      // own 300s
+      expect(hangEvidenceMinMs("taxii_otx")).toBe(FEED_RUN_TIMEOUT_MS);  // own 600s
+      expect(hangEvidenceMinMs("urlhaus")).toBe(FEED_RUN_TIMEOUT_MS);    // default 120s
+    });
+
+    it("never penalizes a short squeeze, however often it repeats (surbl at 60s, 3 ticks)", async () => {
+      // Slow-ingest ticks: taxii_otx eats ~9 min, the 12-min tick deadline
+      // leaves surbl ~60s of its normal ≤300s. Slow-ticked, not hung.
+      const state = makeState(["surbl"]);
+      for (let tick = 0; tick < 3; tick++) {
+        await clippedSurblTick(state, 60_000);
+        vi.setSystemTime(Date.now() + 60 * 60_000);
+      }
+      expect(newPullsOf(state, "surbl").map((r) => r.error_message)).toEqual([clippedMsg(60), clippedMsg(60), clippedMsg(60)]);
+      const st = state.status.get("surbl")!;
+      expect(st.consecutive_failures).toBe(0);
+      expect(st.next_retry_at).toBeNull();
+      expect(unhandled).toEqual([]);
+    });
+
+    it("does not penalize a meaningful clip that follows a short squeeze", async () => {
+      const state = makeState(["surbl"]);
+      seedPreviousPull(state, "surbl", "failed", clippedMsg(60));
+      await clippedSurblTick(state, 150_000);
+      expect(state.status.get("surbl")!.consecutive_failures).toBe(0);
+    });
+
+    it("is not penalized when the previous pull did not time out", async () => {
       const state = makeState(["surbl"]);
       seedPreviousPull(state, "surbl", "success", null);
-      await clippedSurblTick(state);
-      expect(newPullsOf(state, "surbl")[0]!.error_message).toBe(CLIPPED_100S);
+      await clippedSurblTick(state, 150_000);
+      expect(newPullsOf(state, "surbl")[0]!.error_message).toBe(clippedMsg(150));
       expect(state.status.get("surbl")!.consecutive_failures).toBe(0);
       expect(state.status.get("surbl")!.next_retry_at).toBeNull();
     });
 
-    it("are not penalized when the previous pull failed for another reason", async () => {
+    it("is not penalized when the previous pull failed for another reason", async () => {
       const state = makeState(["surbl"]);
       seedPreviousPull(state, "surbl", "failed", "HTTP 502");
-      await clippedSurblTick(state);
+      await clippedSurblTick(state, 150_000);
       expect(state.status.get("surbl")!.consecutive_failures).toBe(0);
     });
 
-    it("are penalized on the second timeout in a row, so an always-clipped hang still backs off", async () => {
+    it("penalizes a repeated 120s+ clipped allowance from the 2nd tick, so an always-clipped hang backs off", async () => {
       const state = makeState(["surbl"]);
-      // Tick 1: first clipped timeout — scheduling, not the feed's fault.
-      await clippedSurblTick(state);
+      // Tick 1: first meaningful clipped timeout — no penalty yet.
+      await clippedSurblTick(state, 150_000);
       expect(state.status.get("surbl")!.consecutive_failures).toBe(0);
-      // Tick 2: clipped again after a timeout — penalized.
-      await clippedSurblTick(state);
+      // Tick 2: again, after a meaningful timeout — penalized.
+      await clippedSurblTick(state, 150_000);
       let st = state.status.get("surbl")!;
       expect(st.consecutive_failures).toBe(1);
       expect(st.next_retry_at).not.toBeNull();
-      expect(st.last_error).toBe(`${CLIPPED_100S}; previous pull also timed out`);
+      expect(st.last_error).toBe(`${clippedMsg(150)}; previous pull also timed out`);
       // Tick 3, once the backoff window has passed: keeps climbing toward
-      // auto-pause.
+      // auto-pause. Exactly 120s (the threshold) still qualifies.
       vi.setSystemTime(Date.now() + 60 * 60_000);
-      await clippedSurblTick(state);
+      await clippedSurblTick(state, FEED_RUN_TIMEOUT_MS);
       st = state.status.get("surbl")!;
       expect(st.consecutive_failures).toBe(2);
       // Every pull row keeps its own (unsuffixed) timeout error.
-      expect(newPullsOf(state, "surbl").map((r) => r.error_message)).toEqual([CLIPPED_100S, CLIPPED_100S, CLIPPED_100S]);
+      expect(newPullsOf(state, "surbl").map((r) => r.error_message)).toEqual([clippedMsg(150), clippedMsg(150), clippedMsg(120)]);
       expect(unhandled).toEqual([]);
     });
 
-    it("are penalized after an unclipped timeout too (feed-pool deadline)", async () => {
-      // Same pool layout as the longest-first test: g is clipped to 90s at
-      // the feed-pool deadline and h is deferred. g's previous pull timed
-      // out at its own 120s, so this clipped cut is penalized.
+    it("penalizes a meaningful clip after an unclipped timeout", async () => {
+      const state = makeState(["surbl"]);
+      seedPreviousPull(state, "surbl", "failed", "timed out after 300s — pull abandoned");
+      await clippedSurblTick(state, 150_000);
+      expect(state.status.get("surbl")!.consecutive_failures).toBe(1);
+    });
+
+    it("does not penalize a pool feed squeezed below its allowance, even after a full timeout", async () => {
+      // Same pool layout as the longest-first test: g (own 120s) is clipped
+      // to 90s at the feed-pool deadline and h is deferred. g's previous
+      // pull hung for its full 120s, but 90s is a squeeze, not evidence.
       const defaults = ["a", "b", "c", "d", "e", "f", "g", "h"];
       const long = ["c2_intel_feeds", "typosquat_scanner", "sslbl", "taxii_otx"];
       const state = makeState([...defaults, ...long]);
@@ -649,8 +704,7 @@ describe("feed timeout follow-ups (fake timers)", () => {
       const g = newPullsOf(state, "g");
       expect(g).toHaveLength(1);
       expect(g[0]!.error_message).toBe("timed out after 90s at the feed-pool deadline (600s budget) — pull abandoned");
-      expect(state.status.get("g")!.consecutive_failures).toBe(1);
-      expect(state.status.get("g")!.last_error).toContain("previous pull also timed out");
+      expect(state.status.get("g")!.consecutive_failures).toBe(0);
       expect(state.status.get("h")!.consecutive_failures).toBe(0);
     });
   });

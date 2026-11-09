@@ -166,7 +166,9 @@ runThreatFeedScan
   │                    budget FEED_POOL_BUDGET_MS 10 min): slot freed, row
   │                    failed "timed out after Ns — pull abandoned", same
   │                    breaker penalty; pool-deadline clip = no penalty
-  │                    unless the feed's previous pull also timed out
+  │                    unless the clip was ≥ min(own timeout, 120s) AND
+  │                    the previous pull also timed out with such an
+  │                    allowance (a short squeeze never penalizes)
   │
   ├─► runAllEnrichmentFeeds (sequential; same per-pull cap via
   │     runFeedWithTimeout; loop budget ENRICHMENT_LOOP_BUDGET_MS 6 min,
