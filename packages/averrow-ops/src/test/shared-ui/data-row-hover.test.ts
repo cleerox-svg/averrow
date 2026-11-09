@@ -31,11 +31,17 @@ describe('global .data-row hover under the facelift', () => {
     }
   });
 
-  it('severity rows keep only their severity-token left border', () => {
+  it('severity rows hold their rail at the FULL severity colour on hover (never faded to the -border token)', () => {
     for (const sev of ['critical', 'high', 'medium', 'low', 'info']) {
       const r = rules.find(([sel]) => sel.includes(`.data-row--${sev}:hover`));
-      expect(r?.[1], sev).toContain(`var(--sev-${sev}-border)`);
+      expect(r?.[1], sev).toContain(`border-left-color: var(--sev-${sev}) !important`);
+      expect(r?.[1], sev).not.toContain('-border)');
     }
+  });
+
+  it('plain rows clear the rail on hover but an unread row keeps its own', () => {
+    expect(css).toMatch(/:root\[data-accent\] \.data-row:not\(\.data-row--unread\):hover \{\s*border-left-color: transparent !important;/);
+    expect(css).toContain(':root[data-accent] .data-row--unread:hover { border-left-color: var(--row-rail) !important; }');
   });
 
   it('keeps the legacy glow rule un-gated for FACELIFT=false', () => {
