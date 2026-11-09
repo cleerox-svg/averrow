@@ -15,7 +15,7 @@ import { cachedCount } from "../src/lib/cached-count";
 import { cachedValue } from "../src/lib/cached-value";
 import { handleDashboardOverview } from "../src/handlers/dashboard";
 import { handleListBrands } from "../src/handlers/brands";
-import { handleAdminListBrands } from "../src/handlers/admin/brands";
+import { handleAdminListBrands, ADMIN_BRAND_SOURCES_CACHE_KEY } from "../src/handlers/admin/brands";
 import { handlePipelineStatus } from "../src/handlers/admin/pipeline";
 import { compositionAggregate } from "../src/lib/brand-aggregates";
 import type { Env } from "../src/types";
@@ -109,6 +109,51 @@ describe.skipIf(!hasSqlite())("brand list totals", () => {
 
     const filt = await (await handleAdminListBrands(req("/api/admin/brands?q=alp"), env)).json() as { total: number };
     expect(filt.total).toBe(1);
+  });
+
+  it("admin brand list: counts come from the pre-computed columns, never a threats join", async () => {
+    const { env, raw, log } = makeEnv();
+    raw.prepare("UPDATE brands SET threat_count = 7, active_threat_count = 3 WHERE id = 'b2'").run();
+    raw.prepare(
+      "INSERT INTO monitored_brands (brand_id, tenant_id, added_by, status) VALUES ('b2', '__internal__', 'u1', 'active')",
+    ).run();
+    const res = await handleAdminListBrands(req("/api/admin/brands?q=a&limit=200"), env);
+    const body = await res.json() as {
+      success: boolean;
+      data: Array<{ id: string; threat_count: number; active_threats: number; is_monitored: number }>;
+      sources: Array<{ source: string; count: number }>;
+    };
+    expect(body.success).toBe(true);
+    const byId = new Map(body.data.map((r) => [r.id, r]));
+    expect(byId.get("b2")).toMatchObject({ threat_count: 7, active_threats: 3, is_monitored: 1 });
+    // A brand with no linked threats reads 0, exactly like COUNT/SUM over zero joined threats.
+    expect(byId.get("b3")).toMatchObject({ threat_count: 0, active_threats: 0, is_monitored: 0 });
+    // Default sort is threat_count DESC.
+    expect(body.data[0]!.id).toBe("b2");
+    const listSql = log.find((e) => /FROM brands b/.test(e.sql) && /LIMIT \? OFFSET \?/.test(e.sql))!.sql;
+    expect(listSql).not.toMatch(/JOIN threats|FROM threats/);
+    expect(listSql).not.toMatch(/GROUP BY/);
+    expect(listSql).toMatch(/ORDER BY b\.threat_count DESC/);
+    expect(body.sources.length).toBeGreaterThan(0);
+  });
+
+  it("admin brand list: the default sort walks idx_brands_threat_count", () => {
+    const { raw } = makeEnv();
+    const p = (raw.prepare(
+      "EXPLAIN QUERY PLAN SELECT b.id, COALESCE(b.threat_count, 0) AS threat_count FROM brands b ORDER BY b.threat_count DESC LIMIT 100 OFFSET 0",
+    ).all() as Array<{ detail: string }>).map((r) => r.detail).join(" | ");
+    expect(p).toMatch(/idx_brands_threat_count/);
+    expect(p).not.toMatch(/TEMP B-TREE/);
+  });
+
+  it("admin brand list: source breakdown is served from cachedValue", async () => {
+    const { env, log } = makeEnv();
+    await cachedValue(env, ADMIN_BRAND_SOURCES_CACHE_KEY, 300, async () => [{ source: "cached", count: 9 }]);
+    const body = await (await handleAdminListBrands(req("/api/admin/brands"), env)).json() as {
+      sources: Array<{ source: string; count: number }>;
+    };
+    expect(body.sources).toEqual([{ source: "cached", count: 9 }]);
+    expect(log.some((e) => /GROUP BY source/.test(e.sql))).toBe(false);
   });
 });
 
