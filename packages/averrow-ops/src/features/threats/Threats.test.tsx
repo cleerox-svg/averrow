@@ -12,9 +12,13 @@ vi.mock('@/lib/api', () => ({
   api: { get: vi.fn().mockResolvedValue({ success: true, data: { threats: [], total: 0 } }), patch: vi.fn() },
 }));
 // The mock honours `initial` the way the real hook does, so the seeded filters reach the request.
+const tableProps = vi.hoisted(() => ({ last: undefined as { brands?: Array<{ value: string; label: string }>; countries?: Array<{ value: string; label: string }> } | undefined }));
 const tableInitial = vi.hoisted(() => ({ calls: [] as Array<Record<string, string> | undefined> }));
 vi.mock('@averrow/shared/threats-table', () => ({
-  ThreatsTable: () => null,
+  ThreatsTable: (props: { brands?: Array<{ value: string; label: string }>; countries?: Array<{ value: string; label: string }> }) => {
+    tableProps.last = props;
+    return null;
+  },
   useThreatsTable: (opts?: { initial?: Record<string, string> }) => {
     tableInitial.calls.push(opts?.initial);
     return {
@@ -99,6 +103,47 @@ describe('Threats aggregate panels — failure is never empty or zero', () => {
     expect(screen.getByText("Couldn't load surging signals")).toBeInTheDocument();
     expect(screen.queryByText(/No surging signals/)).not.toBeInTheDocument();
     expect(screen.getByText(/No multi-brand patterns/)).toBeInTheDocument();
+  });
+
+  it('a degraded attributed section shows "unavailable", not 0%, and only the Correlated tile fails', () => {
+    const zeroed = { ...EMPTY_AGG, correlated: 0, attributed: 0, degraded_sections: ['attributed'] };
+    agg.mockReturnValue({ data: zeroed, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getAllByText("Couldn't load")).toHaveLength(1);
+    expect(screen.getByText('Correlated / Attributed')).toBeInTheDocument();
+    expect(screen.getByText('unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/attribution unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/% attributed/)).not.toBeInTheDocument();
+  });
+
+  it('a degraded multi_brand_* section says multi-brand unavailable and that it retries automatically', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['multi_brand_campaigns'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText(/multi-brand unavailable/)).toBeInTheDocument();
+    expect(screen.getByText('Retrying automatically.')).toBeInTheDocument();
+  });
+
+  it('a degraded top_brands shows only that board failed, and the brand filter says unavailable', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['top_brands'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load top brands")).toBeInTheDocument();
+    expect(screen.getByText('Top actors')).toBeInTheDocument();
+    expect(screen.getByText('Retrying automatically.')).toBeInTheDocument();
+    expect(tableProps.last?.brands).toEqual([{ value: '', label: 'Brand list unavailable' }]);
+    expect(tableProps.last?.countries).toEqual([]);
+  });
+
+  it('a degraded top_countries gives the country filter a placeholder', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['top_countries'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(tableProps.last?.countries).toEqual([{ value: '', label: 'Country list unavailable' }]);
+  });
+
+  it('all four leaderboards degraded collapses to one panel-level error', () => {
+    agg.mockReturnValue({ data: { ...EMPTY_AGG, degraded_sections: ['top_brands', 'top_providers', 'top_actors', 'top_countries'] }, isError: false, refetch: vi.fn() });
+    renderWithProviders(<Threats />);
+    expect(screen.getByText("Couldn't load leaderboards")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load top brands")).not.toBeInTheDocument();
   });
 
   it('a healthy response (empty degraded_sections) renders numbers and meta normally', () => {

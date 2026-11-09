@@ -74,7 +74,9 @@ export function useThreatAggregate(filters: ThreatAggregateFilters) {
       const res = await api.get<ThreatAggregate>(`/api/threats/aggregate${toQuery(filters)}`);
       return (res.data ?? null) as ThreatAggregate | null;
     },
-    // A degraded payload (some sections failed server-side) goes stale quickly so it self-heals.
-    staleTime: (query) => (query.state.data?.degraded_sections?.length ? 60_000 : 5 * 60_000),
+    // A degraded payload (some sections failed server-side) is never fresh, and
+    // polls every 60s (the server's degraded cache TTL) until it heals.
+    staleTime: (query) => (query.state.data?.degraded_sections?.length ? 0 : 5 * 60_000),
+    refetchInterval: (query) => (query.state.data?.degraded_sections?.length ? 60_000 : false),
   });
 }
