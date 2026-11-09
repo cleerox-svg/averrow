@@ -93,6 +93,7 @@ export interface LoginMessages {
   passkeyInvalidState?: string;
   passkeySecurity?:     string;
   passkeyFailed?:       string;
+  googleFailed?:        string;
 }
 
 // ─── LoginPage props ─────────────────────────────────────────
@@ -124,8 +125,8 @@ export interface LoginPageProps {
    *  Omitted → unchanged redirect behaviour. */
   onGoogleSignIn?:        () => Promise<void>;
   /** Maps an error thrown by `onGoogleSignIn` to display text. Default: the
-   *  thrown `Error.message`, or "Google sign-in failed. Try again." when
-   *  there is none. Always rendered as plain text, never HTML. */
+   *  fixed `messages.googleFailed` copy; the thrown `Error.message` is never
+   *  shown. Always rendered as plain text, never HTML. */
   googleErrorCopy?:       (error: unknown) => string;
   /** Slot rendered inside the card, under the footer pillars (e.g.
    *  Privacy / Delete account links required by app stores). */

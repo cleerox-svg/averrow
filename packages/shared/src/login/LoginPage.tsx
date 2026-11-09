@@ -35,9 +35,8 @@ type MagicLinkState =
 // one list.
 const DEFAULT_ERROR_COPY: Record<string, string> = AUTH_ERROR_COPY;
 
-// Only well-formed codes are echoed back; anything else is attacker-supplied
-// text (content spoofing via ?error=<sentence>) and gets generic copy.
-const SAFE_ERROR_CODE = /^[a-z0-9_]{1,40}$/;
+// Only codes with known copy are mapped; any other ?error= value is
+// attacker-controllable (content spoofing) and gets generic copy.
 
 // Closed set of sign-in failure messages. Server- or exception-supplied text
 // is never rendered (content spoofing, raw technical errors); failures map to
@@ -46,12 +45,13 @@ const SAFE_ERROR_CODE = /^[a-z0-9_]{1,40}$/;
 const DEFAULT_LOGIN_MESSAGES: Required<LoginMessages> = {
   emailRequired:       'Enter your email first.',
   emailInvalid:        'Enter a valid email address.',
-  rateLimited:         'Too many requests. Wait a minute and try again.',
+  rateLimited:         'Too many requests. Try again in a few minutes.',
   magicLinkFailed:     "We couldn't send the link. Try again.",
   passkeyCancelled:    'Passkey sign-in was cancelled. Try again or use another method.',
   passkeyInvalidState: 'This passkey cannot be used here. Try another method.',
   passkeySecurity:     'Passkey sign-in is not available on this page. Use another method.',
   passkeyFailed:       'Passkey sign-in failed. Try again or use another method.',
+  googleFailed:        'Google sign-in failed. Try again or use another method.',
 };
 
 /** Pull a numeric HTTP status off an API envelope or a thrown ApiError. */
@@ -120,9 +120,7 @@ export function LoginPage(props: LoginPageProps) {
     ? errorCopy[errorParam]
     : null;
   const errorMessage = errorParam
-    ? knownCopy ?? (SAFE_ERROR_CODE.test(errorParam) && !(errorParam in Object.prototype)
-        ? `Sign-in error: ${errorParam}`
-        : 'Sign-in failed. Try again.')
+    ? knownCopy ?? 'Sign-in failed. Try again.'
     : null;
 
   const [email, setEmail] = useState('');
@@ -270,10 +268,8 @@ export function LoginPage(props: LoginPageProps) {
         let message: string | null = null;
         if (googleErrorCopy) {
           try { message = googleErrorCopy(err); } catch { message = null; }
-        } else if (err instanceof Error && err.message) {
-          message = err.message;
         }
-        setGoogleError(message || 'Google sign-in failed. Try again.');
+        setGoogleError(message || msg.googleFailed);
         googleInFlight.current = false;
         setGoogleBusy(false);
       }

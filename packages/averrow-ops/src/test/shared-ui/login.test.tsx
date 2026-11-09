@@ -32,6 +32,8 @@ function setup(over: Partial<LoginPageProps> = {}, search = '') {
   return { ...utils, post };
 }
 
+const GOOGLE_FAILED = 'Google sign-in failed. Try again or use another method.';
+
 afterEach(() => {
   vi.clearAllMocks();
   window.history.pushState({}, '', '/');
@@ -101,9 +103,12 @@ describe('errorCopy lookup', () => {
     expect(err).not.toHaveTextContent('555-0100');
   });
 
-  it('echoes only well-formed codes (lowercase, digits, underscore, <=40)', () => {
-    setup({}, '?error=weird_code_9');
-    expect(screen.getByTestId('login-error')).toHaveTextContent('Sign-in error: weird_code_9');
+  it('shows generic copy for a well-formed but unknown code (no spoofable echo)', () => {
+    setup({}, '?error=account_locked_call_support');
+    const err = screen.getByTestId('login-error');
+    expect(err).toHaveTextContent('Sign-in failed. Try again.');
+    expect(err).not.toHaveTextContent('account_locked_call_support');
+    expect(err).not.toHaveTextContent('Sign-in error:');
   });
 
   it('rejects over-long codes', () => {
@@ -113,7 +118,7 @@ describe('errorCopy lookup', () => {
 
   it('ignores non-string override values', () => {
     setup({ errorCopy: { bad: 42 as unknown as string } }, '?error=bad');
-    expect(screen.getByTestId('login-error')).toHaveTextContent('Sign-in error: bad');
+    expect(screen.getByTestId('login-error')).toHaveTextContent('Sign-in failed. Try again.');
   });
 });
 
@@ -235,13 +240,13 @@ describe('onGoogleSignIn', () => {
     expect(onGoogleSignIn).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the thrown message as text (never HTML), focuses it, re-enables the button', async () => {
+  it('shows fixed copy (never the thrown message), focuses it, re-enables the button', async () => {
     const onGoogleSignIn = vi.fn().mockRejectedValue(new Error('<img src=x onerror=alert(1)>'));
     const { container } = setup({ onGoogleSignIn });
     await userEvent.click(screen.getByTestId('login-google'));
     const err = await screen.findByTestId('login-error');
     expect(err).toHaveAttribute('role', 'alert');
-    expect(err.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(err.textContent).toBe('Google sign-in failed. Try again or use another method.');
     expect(container.querySelector('img')).toBeNull();
     await waitFor(() => expect(err).toHaveFocus());
     const btn = screen.getByTestId('login-google');
@@ -254,7 +259,7 @@ describe('onGoogleSignIn', () => {
     const onGoogleSignIn = vi.fn().mockRejectedValue(new Error('first'));
     setup({ onGoogleSignIn });
     await userEvent.click(screen.getByTestId('login-google'));
-    await screen.findByText('first');
+    await screen.findByText(GOOGLE_FAILED);
     await userEvent.click(screen.getByTestId('login-google'));
     await waitFor(() => expect(onGoogleSignIn).toHaveBeenCalledTimes(2));
   });
@@ -262,7 +267,7 @@ describe('onGoogleSignIn', () => {
   it('falls back to generic copy for a non-Error rejection', async () => {
     setup({ onGoogleSignIn: vi.fn().mockRejectedValue('nope') });
     await userEvent.click(screen.getByTestId('login-google'));
-    expect(await screen.findByTestId('login-error')).toHaveTextContent('Google sign-in failed. Try again.');
+    expect(await screen.findByTestId('login-error')).toHaveTextContent('Google sign-in failed. Try again or use another method.');
   });
 
   it('googleErrorCopy overrides the message', async () => {
@@ -280,7 +285,7 @@ describe('onGoogleSignIn', () => {
       googleErrorCopy: () => { throw new Error('boom'); },
     });
     await userEvent.click(screen.getByTestId('login-google'));
-    expect(await screen.findByTestId('login-error')).toHaveTextContent('Google sign-in failed. Try again.');
+    expect(await screen.findByTestId('login-error')).toHaveTextContent('Google sign-in failed. Try again or use another method.');
   });
 
   it('a Google error forces the full menu and clears when the magic link is requested', async () => {
@@ -292,18 +297,18 @@ describe('onGoogleSignIn', () => {
     expect(screen.queryByTestId('login-google')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Other ways to sign in' }));
     await userEvent.click(screen.getByTestId('login-google'));
-    await screen.findByText('gfail');
+    await screen.findByText(GOOGLE_FAILED);
     expect(screen.getByTestId('login-google')).toBeInTheDocument();
     expect(screen.getByTestId('login-passkey')).toBeInTheDocument();
     await userEvent.type(screen.getByTestId('login-email'), 'a@b.co');
     await userEvent.click(screen.getByTestId('login-magic-link-submit'));
-    await waitFor(() => expect(screen.queryByText('gfail')).toBeNull());
+    await waitFor(() => expect(screen.queryByText(GOOGLE_FAILED)).toBeNull());
   });
 
   it('typing in the email field after a Google error does not steal focus back', async () => {
     setup({ onGoogleSignIn: vi.fn().mockRejectedValue(new Error('gfail')) });
     await userEvent.click(screen.getByTestId('login-google'));
-    await screen.findByText('gfail');
+    await screen.findByText(GOOGLE_FAILED);
     const input = screen.getByTestId('login-email');
     await userEvent.click(input);
     await userEvent.type(input, 'abc');
@@ -510,7 +515,7 @@ describe('fixed failure copy (server / exception text is never rendered)', () =>
 
   it.each([
     [400, 'Enter a valid email address.'],
-    [429, 'Too many requests. Wait a minute and try again.'],
+    [429, 'Too many requests. Try again in a few minutes.'],
     [500, "We couldn't send the link. Try again."],
     [undefined, "We couldn't send the link. Try again."],
   ])('magic link envelope status %s shows fixed copy', async (status, copy) => {
@@ -534,7 +539,7 @@ describe('fixed failure copy (server / exception text is never rendered)', () =>
   it('magic link thrown error carrying a 429 status maps to rate-limit copy', async () => {
     const post = vi.fn().mockRejectedValue(Object.assign(new Error(EVIL), { status: 429 }));
     setup({ apiClient: { post } });
-    expect(await submitLink()).toHaveTextContent('Too many requests. Wait a minute and try again.');
+    expect(await submitLink()).toHaveTextContent('Too many requests. Try again in a few minutes.');
     expect(document.body.textContent).not.toContain('pwned');
   });
 
@@ -567,6 +572,8 @@ describe('fixed failure copy (server / exception text is never rendered)', () =>
     expect(document.body.textContent).not.toContain('pwned');
   });
 
+  // simplewebauthn v11 wraps a dismissed prompt as WebAuthnError whose cause is
+  // the NotAllowedError DOMException, so production shows the cancelled copy.
   it('passkey wrapper error is classified by its cause', async () => {
     const err = new Error(EVIL, { cause: Object.assign(new Error('x'), { name: 'NotAllowedError' }) });
     expect(await fail(err)).toHaveTextContent('Passkey sign-in was cancelled.');
@@ -593,15 +600,33 @@ describe('fixed failure copy (server / exception text is never rendered)', () =>
   });
 
   it('isSupported throwing does not crash; passkey is treated as unsupported', () => {
+    const startConditionalUI = vi.fn();
     setup({
       passkeyAdapter: {
         isSupported: () => { throw new Error(EVIL); },
-        startConditionalUI: vi.fn(),
+        startConditionalUI,
         signIn: vi.fn(),
       },
+      lastSignInMethod: { read: () => 'passkey', write: vi.fn() },
     });
     expect(screen.getByTestId('login-page')).toBeInTheDocument();
     expect(screen.queryByTestId('login-passkey')).toBeNull();
+    expect(startConditionalUI).not.toHaveBeenCalled();
+  });
+
+  it('Google sign-in with a hostile thrown message shows fixed copy', async () => {
+    const onGoogleSignIn = vi.fn().mockRejectedValue(new Error(EVIL));
+    setup({ onGoogleSignIn });
+    await userEvent.click(screen.getByTestId('login-google'));
+    expect(await screen.findByTestId('login-error')).toHaveTextContent('Google sign-in failed. Try again or use another method.');
+    expect(document.body.textContent).not.toContain('pwned');
+  });
+
+  it('messages.googleFailed overrides the Google copy', async () => {
+    const onGoogleSignIn = vi.fn().mockRejectedValue(new Error(EVIL));
+    setup({ onGoogleSignIn, messages: { googleFailed: 'Google is unavailable.' } });
+    await userEvent.click(screen.getByTestId('login-google'));
+    expect(await screen.findByTestId('login-error')).toHaveTextContent('Google is unavailable.');
   });
 });
 
