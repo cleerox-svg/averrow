@@ -19,7 +19,7 @@ import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedCount } from "../lib/cached-count";
 import { scopeCacheSegment } from "../lib/scope-cache-key";
 import { isCacheRefresh, readRefreshableCache, writeRefreshableCache } from "../lib/cache-refresh";
-import { swrCache } from "../lib/swr-cache";
+import { cachedValue } from "../lib/cached-value";
 import { countExposureLookalikes } from "../lib/lookalike-exposure";
 import { persistSocialAssessment } from "../lib/social-assessment-persist";
 import type { Env } from "../types";
@@ -48,15 +48,16 @@ import type { OrgScope } from "../middleware/auth";
 // Cube + brands JOIN is one round-trip; the two windows are split
 // from the same SUM with conditional aggregation.
 //
-// Cached via lib/swr-cache.ts: live requests take an entry up to 5 min old
-// as-is (older → served, refreshed in the background); entries live 1h so
-// Navigator's 30-min Phase C warm keeps Home's first load warm.
+// Cached via cachedValue staleWhileRevalidate: live requests take an entry
+// up to 5 min old as-is (older → served, refreshed in the background by the
+// refill-lock holder); entries are servable for 1h so Navigator's 30-min
+// sequential Phase D warm keeps the Brands page's first load warm.
 export const BRAND_MOVERS_FRESH_S = 300;
 export const BRAND_MOVERS_TTL_S = 3600;
-// v4: swrCache envelope. v3 invalidated v1/v2 payloads built against
-// daily_snapshots.active_threats (which never decreases, so Cooling Down
-// was always empty regardless of the anchor logic).
-export const BRAND_MOVERS_CACHE_KEY = "brand_movers:v4";
+// v5: cachedValue entry under `cv:`. v3 invalidated v1/v2 payloads built
+// against daily_snapshots.active_threats (which never decreases, so Cooling
+// Down was always empty regardless of the anchor logic).
+export const BRAND_MOVERS_CACHE_KEY = "brand_movers:v5";
 
 export async function handleBrandMovers(
   request: Request,
@@ -67,18 +68,20 @@ export async function handleBrandMovers(
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   try {
-    const { value, source } = await swrCache(
-      request,
-      env.CACHE,
+    // computeBrandMovers records its own D1 tally; cache hits record none.
+    const value = await cachedValue(
+      env,
       BRAND_MOVERS_CACHE_KEY,
-      {
-        ttlSeconds: BRAND_MOVERS_TTL_S,
-        freshSeconds: BRAND_MOVERS_FRESH_S,
-        waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
-      },
+      BRAND_MOVERS_TTL_S,
       () => computeBrandMovers(env, session),
+      {
+        refresh: isCacheRefresh(request),
+        staleWhileRevalidate: {
+          freshSeconds: BRAND_MOVERS_FRESH_S,
+          waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
+        },
+      },
     );
-    if (source !== "computed") recordD1Reads(env, "brand_movers", newTally());
     return attachBookmark(json(value, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
@@ -147,7 +150,7 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
   try {
     // KV cache: brand stats rarely change. Refresh-ahead (Observatory
     // pattern, lib/cache-refresh.ts): the 1h TTL outlives Navigator's
-    // 30-min Phase C warm, which recomputes the key once it is
+    // 30-min sequential Phase D warm, which recomputes the key once it is
     // refreshAfterSeconds(3600) = 1740s old — i.e. on every warm — so
     // live reads see data ≤ ~30 min old and the key never lapses. (The
     // old plain 1800s TTL equalled the warm interval: a warm landing a
@@ -894,7 +897,7 @@ export async function handleBrandFirmographics(request: Request, env: Env, brand
 // ── Catalog-level aggregates ────────────────────────────────
 // 4 read-only endpoints powering the Brands Intel page sections
 // (Defense / Pressure / Composition / Posture). All wrapped via
-// cachedValue (1h TTL, refresh-ahead on Navigator Phase C warms) inside lib/brand-aggregates.ts. Hot-path
+// cachedValue (1h TTL, composition/posture 2h; refresh-ahead on Navigator sequential Phase D warms) inside lib/brand-aggregates.ts. Hot-path
 // safe at 100K+ catalog size.
 
 export async function handleBrandsAggregateEmailSecurity(request: Request, env: Env): Promise<Response> {

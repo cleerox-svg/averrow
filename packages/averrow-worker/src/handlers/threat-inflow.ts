@@ -14,7 +14,8 @@
 // row-per-(bucket,type) shape so the client doesn't pivot in JS.
 
 import { json } from "../lib/cors";
-import { swrCache } from "../lib/swr-cache";
+import { cachedValue } from "../lib/cached-value";
+import { isCacheRefresh } from "../lib/cache-refresh";
 import type { Env } from "../types";
 
 type Window = "24h" | "7d";
@@ -36,14 +37,14 @@ export const THREAT_INFLOW_FRESH_S = 300;
  * KV lifetime: outlives Navigator's 15-min Phase B warm (both windows are
  * warmed), so the Home tempo band / Threats chart's first load finds an
  * entry; an entry older than THREAT_INFLOW_FRESH_S is served and refreshed
- * in the background (lib/swr-cache.ts).
+ * in the background by the refill-lock holder (cachedValue staleWhileRevalidate).
  */
 export const THREAT_INFLOW_TTL_S = 1200;
 
 /** KV key for a window. Any `window` other than `7d` is the 24h key. */
 export function threatInflowCacheKey(request: Request): string {
   const windowParam = new URL(request.url).searchParams.get("window") === "7d" ? "7d" : "24h";
-  // v3: swrCache envelope (v2 fixed stale empty payloads from the
+  // v3: cachedValue entry under `cv:` (v2 fixed stale empty payloads from the
   // SQLite modifier bug below; v1 cached them).
   return `threat_inflow:v3:${windowParam}`;
 }
@@ -58,16 +59,18 @@ export async function handleThreatInflow(
   const windowParam: Window = url.searchParams.get("window") === "7d" ? "7d" : "24h";
 
   try {
-    const { value } = await swrCache<InflowResponse>(
-      request,
-      env.CACHE,
+    const value = await cachedValue<InflowResponse>(
+      env,
       threatInflowCacheKey(request),
-      {
-        ttlSeconds: THREAT_INFLOW_TTL_S,
-        freshSeconds: THREAT_INFLOW_FRESH_S,
-        waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
-      },
+      THREAT_INFLOW_TTL_S,
       () => computeThreatInflow(env, windowParam),
+      {
+        refresh: isCacheRefresh(request),
+        staleWhileRevalidate: {
+          freshSeconds: THREAT_INFLOW_FRESH_S,
+          waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
+        },
+      },
     );
     return json(value, 200, origin);
   } catch (err) {

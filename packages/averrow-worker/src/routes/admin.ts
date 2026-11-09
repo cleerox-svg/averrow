@@ -86,7 +86,7 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   // instead of fanning out to ~6 endpoints. Slices are independently
   // nullable (partial failure → missing slice, never a 500).
   // execCtx: a stale snapshot is served at once and refreshed under
-  // waitUntil (lib/swr-cache.ts).
+  // waitUntil (cachedValue staleWhileRevalidate).
   router.get("/api/admin/dashboard", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
@@ -1053,6 +1053,13 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     try {
       const { runAlertJudgeBackfill } = await import("../lib/alert-ai-judge");
       const result = await runAlertJudgeBackfill(env, { limit, offset });
+      // A judged alert carries a new ai_assessment (a list-row column) and a
+      // dismissal changes counts: drop the ops alert caches (list generation,
+      // triage summary, stats) — staff caller, so the global segment.
+      if (result.judged > 0 || result.dismissed > 0) {
+        const { invalidateAlertCaches } = await import("../handlers/alerts");
+        await invalidateAlertCaches(env, null);
+      }
       return new Response(JSON.stringify({ success: true, data: result }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -1153,6 +1160,11 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     try {
       const { runAlertTriageBackfill } = await import("../lib/alert-triage");
       const result = await runAlertTriageBackfill(env.DB, { limit, offset, impersonationThreshold });
+      // Dismissals change status / counts: drop the ops alert caches.
+      if (result.dismissed > 0) {
+        const { invalidateAlertCaches } = await import("../handlers/alerts");
+        await invalidateAlertCaches(env, null);
+      }
       return new Response(JSON.stringify({ success: true, data: result }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },

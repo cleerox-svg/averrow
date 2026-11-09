@@ -94,10 +94,11 @@ export const NAVIGATOR_LEGACY_AGENT_ID = 'fast_tick';
 //   A2 — every 15 min (Observatory 24h/30d period toggles + 7d HEATMAP mode)
 //   B  — every 15 min (Campaigns, Agents, Feeds, admin dashboard, MCP probe,
 //        Home tempo band + critical banner)
-//   C  — every 30 min (Brands + Threat Actors pages, Brand movers, Explore →
-//        Brands aggregates)
+//   C  — every 30 min (Top Targeted Brands + Threat Actors pages)
+//   D  — every 30 min at :05/:35, SEQUENTIAL (brand stats, movers, Explore →
+//        Brands catalog aggregates)
 
-export type NavigatorWarmPhase = 'A' | 'A2' | 'B' | 'C';
+export type NavigatorWarmPhase = 'A' | 'A2' | 'B' | 'C' | 'D';
 
 export interface NavigatorWarmTarget {
   phase: NavigatorWarmPhase;
@@ -167,9 +168,10 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   { phase: 'B', path: '/api/feeds/aggregate-stats', consumer: 'ops Feeds (useFeedStats)', handler: handleFeedsAggregateStats },
   // Warmed as super_admin: a super_admin compute also writes the plain-admin
   // key (same snapshot minus the super_admin-only threat_health slice), so
-  // this one warm keeps BOTH role variants warm. swrCache (1200s KV life,
-  // refreshed on every Phase B tick); live reads accept ≤75s, older entries
-  // are served and refreshed in the background.
+  // this one warm keeps BOTH role variants warm. cachedValue
+  // staleWhileRevalidate (1200s servable, refreshed on every Phase B tick);
+  // live reads accept ≤75s, older entries are served and refreshed in the
+  // background.
   { phase: 'B', path: '/api/admin/dashboard', consumer: 'ops admin dashboard (useDashboardSnapshot), super_admin + admin variants', handler: (req, env) => handleAdminDashboard(req, env, DASHBOARD_WARM_CTX) },
   // Home TempoBand reads both windows on first paint; /threats reads one.
   // requireStaff, unscoped — one key per window for every staff role.
@@ -177,22 +179,79 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   { phase: 'B', path: '/api/threats/inflow?window=7d', consumer: 'ops Home TempoBand + Threats ThreatInflowChart (useThreatInflow)', handler: handleThreatInflow },
   { phase: 'B', path: '/api/intel/critical-banner', consumer: 'ops Home queue critical-intel row (useHomeQueue → useCriticalBanner)', handler: handleIntelCriticalBanner },
 
-  // ── Phase C — Brands + Threat Actors ──
+  // ── Phase C — Top Targeted Brands + Threat Actors ──
   // handleListBrands keys on tab/sort/limit only (view + range are not
   // read); this is the Observatory side panel's Top Targeted Brands load.
   { phase: 'C', path: '/api/brands?view=top&limit=8&offset=0&range=7d', consumer: 'ops SidePanel TopBrandsWidget (useBrands). Writes the `global` scope key — every staff role reads it (getOrgScope null for isPlatformStaff, PR-F)', handler: handleListBrands },
-  { phase: 'C', path: '/api/brands/stats', consumer: 'ops Brands (useBrandStats)', handler: handleBrandStats },
   { phase: 'C', path: '/api/threat-actors?status=active', consumer: 'ops ThreatActors default active-only list (useThreatActors)', handler: handleListThreatActors },
   { phase: 'C', path: '/api/threat-actors/stats', consumer: 'ops ThreatActors (useThreatActorStats)', handler: handleThreatActorStats },
-  // Brand movers + the four catalog aggregates the Explore → Brands tab
-  // loads together (Brands.tsx). All requireStaff + unscoped (one global
-  // key). 1h TTLs refreshed ahead on every Phase C warm (threshold 1740s).
-  { phase: 'C', path: '/api/brands/movers', consumer: 'ops Explore → Brands movers (useBrandMovers; Home digest reads the same React Query entry)', handler: handleBrandMovers },
-  { phase: 'C', path: '/api/brands/aggregate/email-security', consumer: 'ops Explore → Brands (useEmailSecurityAggregate)', handler: handleBrandsAggregateEmailSecurity },
-  { phase: 'C', path: '/api/brands/aggregate/pressure', consumer: 'ops Explore → Brands (usePressureAggregate)', handler: handleBrandsAggregatePressure },
-  { phase: 'C', path: '/api/brands/aggregate/composition', consumer: 'ops Explore → Brands (useCompositionAggregate)', handler: handleBrandsAggregateComposition },
-  { phase: 'C', path: '/api/brands/aggregate/posture', consumer: 'ops Explore → Brands (usePostureAggregate)', handler: handleBrandsAggregatePosture },
+
+  // ── Phase D — brand catalog (SEQUENTIAL, own minute) ──
+  // Brand stats, movers and the four catalog aggregates the Explore → Brands
+  // tab loads together (Brands.tsx). Each refill is one or more full scans
+  // of `brands` (~133K rows) or a typosquat GROUP BY over threats; fired
+  // concurrently they are the burst that tripped D1's 10s overload window
+  // (prod: posture/composition 500 cold, 200 on retry). So this phase runs
+  // its targets ONE AT A TIME (NAVIGATOR_SEQUENTIAL_PHASES) on minutes no
+  // other phase uses (:05/:35). All requireStaff + unscoped (one global key).
+  // TTLs (refresh-ahead): stats / movers / pressure / email-security rollup
+  // 3600s → recomputed every tick (threshold 1740s); composition / posture
+  // 7200s (BRAND_SLOW_AGGREGATE_TTL_S, data moves ~daily) → every 3rd tick.
+  { phase: 'D', path: '/api/brands/stats', consumer: 'ops Brands (useBrandStats)', handler: handleBrandStats },
+  { phase: 'D', path: '/api/brands/movers', consumer: 'ops Explore → Brands movers (useBrandMovers; Home digest reads the same React Query entry)', handler: handleBrandMovers },
+  { phase: 'D', path: '/api/brands/aggregate/email-security', consumer: 'ops Explore → Brands (useEmailSecurityAggregate)', handler: handleBrandsAggregateEmailSecurity },
+  { phase: 'D', path: '/api/brands/aggregate/pressure', consumer: 'ops Explore → Brands (usePressureAggregate)', handler: handleBrandsAggregatePressure },
+  { phase: 'D', path: '/api/brands/aggregate/composition', consumer: 'ops Explore → Brands (useCompositionAggregate)', handler: handleBrandsAggregateComposition },
+  { phase: 'D', path: '/api/brands/aggregate/posture', consumer: 'ops Explore → Brands (usePostureAggregate)', handler: handleBrandsAggregatePosture },
 ];
+
+/** Phases whose targets are warmed one at a time (each awaited) instead of in parallel. */
+export const NAVIGATOR_SEQUENTIAL_PHASES: ReadonlySet<NavigatorWarmPhase> = new Set<NavigatorWarmPhase>(['D']);
+
+/**
+ * Which warm phases a Navigator tick at UTC `minute` runs (before the D1
+ * budget soft-cap, which drops everything but A). Navigator fires every
+ * 5 min; D's :05/:35 are minutes no other phase uses, so its sequential
+ * scans never stack on the A/A2/B/C warms.
+ */
+export function navigatorWarmPhases(minute: number): Record<NavigatorWarmPhase, boolean> {
+  return {
+    A: minute % 10 === 0,  // :00, :10, :20, :30, :40, :50
+    A2: minute % 15 === 0, // :00, :15, :30, :45
+    B: minute % 15 === 0,
+    C: minute % 30 === 0,  // :00, :30
+    D: minute % 30 === 5,  // :05, :35
+  };
+}
+
+/**
+ * Warm `targets`: in parallel (allSettled — one bad target can't sink the
+ * rest), or one at a time when `sequential`. Counts only real warms —
+ * handlers catch their own errors and resolve with a 500 Response, so a
+ * fulfilled promise alone doesn't mean the KV key was written. Exported for
+ * tests.
+ */
+export async function runWarmTargets(
+  targets: readonly NavigatorWarmTarget[],
+  env: Env,
+  overBudget: boolean,
+  sequential: boolean,
+): Promise<{ ok: number; failed: number }> {
+  let ok = 0;
+  if (sequential) {
+    for (const t of targets) {
+      try {
+        if ((await t.handler(warmRequest(t.path, overBudget), env)).ok) ok++;
+      } catch {
+        // Counted as failed below; the next target still runs.
+      }
+    }
+  } else {
+    const results = await Promise.allSettled(targets.map((t) => t.handler(warmRequest(t.path, overBudget), env)));
+    ok = results.filter((r) => r.status === 'fulfilled' && r.value.ok).length;
+  }
+  return { ok, failed: targets.length - ok };
+}
 
 /**
  * Synthetic warm request for a NAVIGATOR_WARM_TARGETS path. Marked as a
@@ -677,18 +736,21 @@ async function runNavigatorImpl(
   //   Phase A2  — every 15 min (Observatory 24h/30d alt periods + 7d heatmap)
   //   Phase B   — every 15 min (Dashboard + agents + operations + feeds +
   //               Home inflow 24h/7d + critical banner)
-  //   Phase C   — every 30 min (Brands + Threat Actors + brand movers +
-  //               the four Explore → Brands aggregates)
+  //   Phase C   — every 30 min (Top Targeted Brands + Threat Actors)
+  //   Phase D   — every 30 min at :05/:35, SEQUENTIAL (brand stats, movers,
+  //               the four Explore → Brands catalog aggregates)
   //
   // The exact targets (and the consumer each serves) are the module-level
-  // NAVIGATOR_WARM_TARGETS table — 31 warms across the four phases.
+  // NAVIGATOR_WARM_TARGETS table — 31 warms across the five phases; the
+  // minute gates are navigatorWarmPhases().
   //
   // Warm CALLS over a 30-day month if Navigator runs clean (*/5 cron =
   // 8,640 ticks; the minute gates below pick the subset each phase runs on):
   //   A:  6 warms × 4,320 ticks (minute % 10) = 25,920
   //   A2: 7 warms × 2,880 ticks (minute % 15) = 20,160
   //   B:  9 warms × 2,880 ticks (minute % 15) = 25,920
-  //   C:  9 warms × 1,440 ticks (minute % 30) = 12,960
+  //   C:  3 warms × 1,440 ticks (minute % 30) =  4,320
+  //   D:  6 warms × 1,440 ticks (minute % 30 === 5) = 8,640
   // A warm call is not a D1 recompute. A refresh-marked Observatory warm
   // recomputes only once the key's age ≥ refreshAfterSeconds(ttl):
   //   - nodes/stats 7d (1800s TTL, Phase A every 600s): threshold 840s —
@@ -712,25 +774,24 @@ async function runNavigatorImpl(
   //     30d/90d): threshold 12540s, recompute at age 12600s (one per 3.5h,
   //     ~7/day per key, was 96/day for nodes/stats), with one spare A2 slot
   //     (13500s) before the key could lapse.
-  //   - B admin dashboard / inflow / critical banner (swrCache, 1200s KV
-  //     life): threshold 540s, so every B warm (age ≈900s) recomputes
-  //     (4/h per key; the admin dashboard's super_admin compute also writes
-  //     the plain-admin key). Live reads accept 75s / 300s / 60s old entries
-  //     and refresh older ones in the background — the same compute rate
-  //     the old short TTLs had, minus the cold first paint;
-  //   - C brand stats / movers / aggregates (3600s TTL): threshold 1740s,
-  //     so every C warm (age ≈1800s) recomputes (2/h per key).
+  //   - B admin dashboard / inflow / critical banner (cachedValue
+  //     staleWhileRevalidate, 1200s servable): threshold 540s, so every B
+  //     warm (age ≈900s) recomputes (4/h per key; the admin dashboard's
+  //     super_admin compute also writes the plain-admin key). Live reads
+  //     accept 75s / 300s / 60s old entries and have the refill-lock holder
+  //     refresh older ones in the background — the same compute rate the
+  //     old short TTLs had, minus the cold first paint;
+  //   - D brand stats / movers / pressure / email-security rollup (3600s):
+  //     threshold 1740s, every D warm (age ≈1800s) recomputes (2/h per key);
+  //     composition / posture (7200s): threshold 5340s → every 3rd warm.
+  //     One target at a time, so at most one catalog scan is in flight.
   // The operations list warms are plain fill-on-miss (1800s TTL).
-  // Over the D1 soft-cap, A2/B/C drop out entirely and Phase A runs
+  // Over the D1 soft-cap, A2/B/C/D drop out entirely and Phase A runs
   // unmarked (fill-on-miss), so no warm forces a recompute.
-  const minute = scheduledTime.getUTCMinutes();
-  const runPhaseA  = minute % 10 === 0;  // :00, :10, :20, :30, :40, :50
-  const runPhaseA2 = minute % 15 === 0;  // :00, :15, :30, :45
-  const runPhaseB  = minute % 15 === 0;
-  const runPhaseC  = minute % 30 === 0;  // :00, :30
+  const phases = navigatorWarmPhases(scheduledTime.getUTCMinutes());
 
   // ── D1 read-budget soft-cap ──────────────────────────────────────
-  // If we're already over 95% of the daily ceiling, skip Phase A2/B/C.
+  // If we're already over 95% of the daily ceiling, skip Phase A2/B/C/D.
   // Phase A still runs because it's the user-facing landing page, but as
   // fill-on-miss only (no refresh-ahead recompute — see warmRequest); the
   // optional warms (alt periods, heatmap, deep-nav modules) get dropped first.
@@ -741,7 +802,7 @@ async function runNavigatorImpl(
     console.warn(
       `[navigator] D1 budget over SKIP threshold — read=${budgetState!.rowsRead24h.toLocaleString()} ` +
       `daily=${DAILY_BUDGET.toLocaleString()} pct=${((budgetState!.rowsRead24h / DAILY_BUDGET) * 100).toFixed(1)}% — ` +
-      `skipping Phase A2/B/C this tick`,
+      `skipping Phase A2/B/C/D this tick`,
     );
     // Diagnostics signal — bump the 24h skip counter + last_skip_at
     // so platform-diagnostics can prove the soft-cap is actually
@@ -758,18 +819,16 @@ async function runNavigatorImpl(
   if (!isOverCap() && status !== 'failed') {
     const warmStart = Date.now();
     let cacheWarmFailed = 0;
-    // Run one phase's targets in parallel (allSettled — one bad target
-    // can't sink the rest). Count only real warms: handlers catch their
-    // own errors and resolve with a 500 Response, so a fulfilled promise
-    // alone doesn't mean the KV key was written.
+    // One phase's targets: in parallel, or one at a time for the
+    // NAVIGATOR_SEQUENTIAL_PHASES (runWarmTargets).
     const warmPhase = async (phase: NavigatorWarmPhase): Promise<number> => {
-      const results = await Promise.allSettled(
-        NAVIGATOR_WARM_TARGETS
-          .filter(t => t.phase === phase)
-          .map(t => t.handler(warmRequest(t.path, skipNonEssential), env)),
+      const { ok, failed } = await runWarmTargets(
+        NAVIGATOR_WARM_TARGETS.filter(t => t.phase === phase),
+        env,
+        skipNonEssential,
+        NAVIGATOR_SEQUENTIAL_PHASES.has(phase),
       );
-      const ok = results.filter(r => r.status === 'fulfilled' && r.value.ok).length;
-      cacheWarmFailed += results.length - ok;
+      cacheWarmFailed += failed;
       return ok;
     };
     try {
@@ -778,32 +837,38 @@ async function runNavigatorImpl(
       // refreshed ahead of expiry, so the landing page hits warm cache on
       // every visit. Over the D1 soft-cap it still runs, but fill-on-miss
       // only (warmRequest leaves the request unmarked).
-      if (runPhaseA) {
+      if (phases.A) {
         cacheWarmed += await warmPhase('A');
       }
 
       // Phase A2: Observatory alternate periods (24h/30d) — every 15 min
-      if (runPhaseA2 && !isOverCap() && !skipNonEssential) {
+      if (phases.A2 && !isOverCap() && !skipNonEssential) {
         cacheWarmed += await warmPhase('A2');
       }
 
       // Phase B: Dashboard + agents + operations — every 15 min
-      // Includes the Tier 2a admin dashboard snapshot (P7): 1200s KV life
-      // (swrCache) so the 15-min warm covers the gap; live reads keep the
-      // 75s freshness by refreshing older entries in the background.
-      if (runPhaseB && !isOverCap() && !skipNonEssential) {
+      // Includes the Tier 2a admin dashboard snapshot (P7): servable 1200s
+      // (cachedValue staleWhileRevalidate) so the 15-min warm covers the gap;
+      // live reads keep the 75s freshness via a background refresh.
+      if (phases.B && !isOverCap() && !skipNonEssential) {
         cacheWarmed += await warmPhase('B');
       }
 
-      // Phase C: Brands, Threat Actors — every 30 min
+      // Phase C: Top Targeted Brands, Threat Actors — every 30 min
       // (Breaches / ATO / Email-auth / Cloud-incidents pre-warm dropped
       // in WS-B cull — those endpoints had no producers and warming the
       // empty cache was burning ~4 D1 reads per Navigator tick.)
-      if (runPhaseC && !isOverCap() && !skipNonEssential) {
+      if (phases.C && !isOverCap() && !skipNonEssential) {
         cacheWarmed += await warmPhase('C');
       }
 
-      console.log(`[navigator] cache-warm: ${cacheWarmed} endpoints warmed, ${cacheWarmFailed} failed in ${Date.now() - warmStart}ms (A=${runPhaseA} A2=${runPhaseA2} B=${runPhaseB} C=${runPhaseC})`);
+      // Phase D: brand catalog aggregates — every 30 min at :05/:35, one
+      // target at a time (heavy catalog scans; never concurrent).
+      if (phases.D && !isOverCap() && !skipNonEssential) {
+        cacheWarmed += await warmPhase('D');
+      }
+
+      console.log(`[navigator] cache-warm: ${cacheWarmed} endpoints warmed, ${cacheWarmFailed} failed in ${Date.now() - warmStart}ms (A=${phases.A} A2=${phases.A2} B=${phases.B} C=${phases.C} D=${phases.D})`);
     } catch (e) {
       console.error('[navigator] cache-warm error:', e instanceof Error ? e.message : String(e));
     }

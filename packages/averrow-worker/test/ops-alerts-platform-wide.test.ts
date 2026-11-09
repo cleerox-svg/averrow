@@ -382,9 +382,22 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
     it("alertListCacheKey / parseAlertListQuery: normalised, ordered, encoded", () => {
       const q = parseAlertListQuery(new URL("https://x/api/alerts?search=a%26b%3Dc&limit=500&status="));
       expect(q).toEqual({ status: null, severity: null, alertType: null, brandId: null, search: "a&b=c", limit: 200, offset: 0 });
+      // limit clamped to [1, 200] (100 on NaN), offset >= 0 (0 on NaN): `?limit=-1`
+      // (SQLite LIMIT -1 = no limit) can't return or cache the whole table.
+      const parse = (qs: string) => parseAlertListQuery(new URL(`https://x/api/alerts?${qs}`));
+      expect(parse("limit=-1")).toMatchObject({ limit: 1, offset: 0 });
+      expect(parse("limit=0&offset=-5")).toMatchObject({ limit: 1, offset: 0 });
+      expect(parse("limit=abc&offset=xyz")).toMatchObject({ limit: 100, offset: 0 });
+      expect(parse("")).toMatchObject({ limit: 100, offset: 0 });
       expect(alertListCacheKey("g1", "org:7:abc", q)).toBe(
         "alerts_list:v1:g1:org:7:abc:status=&severity=&alert_type=&brand_id=&search=a%26b%3Dc&limit=200&offset=0",
       );
+    });
+
+    it("?limit=-1 returns one row, not the whole table", async () => {
+      const body = await list("/api/alerts?limit=-1");
+      expect(body.data).toHaveLength(1);
+      expect(body.total).toBe(ALERTS.length);
     });
 
     const MUTATIONS: Array<{ name: string; run: () => Promise<Response>; changed: number }> = [

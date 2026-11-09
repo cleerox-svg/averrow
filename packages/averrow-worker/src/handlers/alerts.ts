@@ -189,7 +189,7 @@ export interface AlertListQuery {
   alertType: string | null;
   brandId: string | null;
   search: string | null;
-  /** The LIMIT actually bound (min(200, ?limit), default 100). */
+  /** The LIMIT actually bound: clamped to [1, 200], default 100 (also on a non-number). */
   limit: number;
   offset: number;
 }
@@ -197,8 +197,16 @@ export interface AlertListQuery {
 /**
  * Parse `/api/alerts` query params into the values the SQL actually uses.
  * An empty filter (`?status=`) applies no filter, exactly like an absent
- * one, so both normalise to null; `limit` is clamped the way it is bound.
+ * one, so both normalise to null. `limit` is clamped to [1, 200] (100 when
+ * absent or not a number) and `offset` to >= 0 (0 when not a number), so
+ * `?limit=-1` (SQLite: no limit) can neither return nor cache the whole table.
  */
+/** parseInt, or `fallback` when absent / not a number. */
+function intOr(raw: string | null, fallback: number): number {
+  const n = raw === null ? NaN : parseInt(raw, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export function parseAlertListQuery(url: URL): AlertListQuery {
   const p = url.searchParams;
   const opt = (k: string): string | null => p.get(k) || null;
@@ -208,8 +216,8 @@ export function parseAlertListQuery(url: URL): AlertListQuery {
     alertType: opt("alert_type"),
     brandId: opt("brand_id"),
     search: opt("search"),
-    limit: Math.min(200, parseInt(p.get("limit") ?? "100", 10)),
-    offset: parseInt(p.get("offset") ?? "0", 10),
+    limit: Math.min(200, Math.max(1, intOr(p.get("limit"), 100))),
+    offset: Math.max(0, intOr(p.get("offset"), 0)),
   };
 }
 
@@ -271,8 +279,10 @@ async function bumpAlertListGeneration(env: Env): Promise<void> {
 //
 // KV-cached 30s (cachedValue) per generation + scope segment + every
 // effective query param — see alertListCacheKey. Ops mutations bump the
-// generation (invalidateAlertCaches), so the triager's own change shows on
-// the next load; other alert writers rely on the 30s freshness.
+// generation (invalidateAlertCaches): a read at the same KV location sees
+// the triager's change immediately, other KV locations within ~60s (KV
+// write propagation). Other alert writers rely on the 30s freshness; the
+// admin backfill-triage / run-ai-judge routes also invalidate.
 export async function handleListAlerts(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {

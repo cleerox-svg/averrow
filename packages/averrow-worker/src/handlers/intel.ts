@@ -12,7 +12,7 @@ import { json } from "../lib/cors";
 import { getDbContext, getReadSession, type DbContext } from "../lib/db";
 import { cachedValue } from "../lib/cached-value";
 import { notRetiredClusterSql } from "../lib/cluster-status";
-import { swrCache } from "../lib/swr-cache";
+import { isCacheRefresh } from "../lib/cache-refresh";
 import type { Env } from "../types";
 
 // ─── Trust Score History ────────────────────────────────────────
@@ -152,11 +152,12 @@ export async function handleMultiFeedConsensus(request: Request, env: Env): Prom
 //      AND status='new'` count (fallback path; matches what
 //      operators actually triage)
 //
-// Cached (lib/swr-cache.ts): a live request serves an entry up to 60s old
-// as-is — operators want freshness — and an older one at once while it is
-// refreshed in the background. Entries live 20 min so Navigator's 15-min
-// Phase B warm keeps Home's first paint off the cold path.
-export const CRITICAL_BANNER_CACHE_KEY = "intel:critical-banner:v2";
+// Cached (cachedValue staleWhileRevalidate): a live request serves an entry
+// up to 60s old as-is — operators want freshness — and an older one at once
+// while the refill-lock holder refreshes it in the background. Entries are
+// servable for 20 min so Navigator's 15-min Phase B warm keeps Home's first
+// paint off the cold path.
+export const CRITICAL_BANNER_CACHE_KEY = "intel:critical-banner:v3";
 export const CRITICAL_BANNER_FRESH_S = 60;
 export const CRITICAL_BANNER_TTL_S = 1200;
 
@@ -183,16 +184,18 @@ export async function handleIntelCriticalBanner(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const { value } = await swrCache<CriticalBannerBody>(
-      request,
-      env.CACHE,
+    const value = await cachedValue<CriticalBannerBody>(
+      env,
       CRITICAL_BANNER_CACHE_KEY,
-      {
-        ttlSeconds: CRITICAL_BANNER_TTL_S,
-        freshSeconds: CRITICAL_BANNER_FRESH_S,
-        waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
-      },
+      CRITICAL_BANNER_TTL_S,
       () => computeCriticalBanner(env),
+      {
+        refresh: isCacheRefresh(request),
+        staleWhileRevalidate: {
+          freshSeconds: CRITICAL_BANNER_FRESH_S,
+          waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
+        },
+      },
     );
     return json(value, 200, origin);
   } catch (err) {

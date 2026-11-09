@@ -145,13 +145,13 @@ describe("handleAdminDashboard — partial failure degrades to null, never 500",
     const kv = new MockKV();
     const env = makeThrowingEnv(kv);
     await handleAdminDashboard(req(), env, superAdminCtx());
-    expect(kv.store.has("admin:dashboard_snapshot:v2:sa")).toBe(true);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:sa")).toBe(true);
   });
 
   it("serves the cached composite on a warm hit without touching D1", async () => {
     const kv = new MockKV();
-    // swrCache envelope, written 10s ago — inside the 75s freshness.
-    kv.store.set("admin:dashboard_snapshot:v2:sa", envelope(CANNED, 10));
+    // cachedValue envelope, written 10s ago — inside the 75s freshness.
+    kv.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, 10));
     const env = makeThrowingEnv(kv); // DB throws if ever touched
 
     const res = await handleAdminDashboard(req(), env, superAdminCtx());
@@ -173,15 +173,15 @@ const CANNED = {
   },
 };
 
-/** lib/swr-cache.ts envelope for `value`, written `ageS` seconds ago. */
+/** cachedValue envelope (`{ v, t }`) for `value`, written `ageS` seconds ago. */
 function envelope(value: unknown, ageS: number): string {
   return JSON.stringify({ v: value, t: Date.now() - ageS * 1000 });
 }
 
-describe("handleAdminDashboard — long-lived entry, 75s live freshness (swrCache)", () => {
+describe("handleAdminDashboard — long-lived entry, 75s live freshness (cachedValue staleWhileRevalidate)", () => {
   it("a stale entry (> 75s, < KV life) is served at once and refreshed under waitUntil", async () => {
     const kv = new MockKV();
-    kv.store.set("admin:dashboard_snapshot:v2:sa", envelope(CANNED, DASHBOARD_SNAPSHOT_FRESH_S + 60));
+    kv.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, DASHBOARD_SNAPSHOT_FRESH_S + 60));
     const env = makeThrowingEnv(kv);
     const pending: Promise<unknown>[] = [];
 
@@ -192,13 +192,13 @@ describe("handleAdminDashboard — long-lived entry, 75s live freshness (swrCach
     await Promise.all(pending);
 
     // The background refresh rewrote the key — the next poll is fresh.
-    const refreshed = JSON.parse(kv.store.get("admin:dashboard_snapshot:v2:sa")!) as { v: SnapshotBody };
+    const refreshed = JSON.parse(kv.store.get("cv:admin:dashboard_snapshot:v3:sa")!) as { v: SnapshotBody };
     expect(refreshed.v.data.generated_at).not.toBe("2026-07-11T00:00:00.000Z");
   });
 
   it("without an ExecutionContext a stale entry is recomputed inline (old TTL semantics)", async () => {
     const kv = new MockKV();
-    kv.store.set("admin:dashboard_snapshot:v2:sa", envelope(CANNED, DASHBOARD_SNAPSHOT_FRESH_S + 1));
+    kv.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, DASHBOARD_SNAPSHOT_FRESH_S + 1));
     const res = await handleAdminDashboard(req(), makeThrowingEnv(kv), superAdminCtx());
     expect((await bodyOf(res)).data.generated_at).not.toBe("2026-07-11T00:00:00.000Z");
   });
@@ -210,12 +210,12 @@ describe("handleAdminDashboard — long-lived entry, 75s live freshness (swrCach
 
   it("a Navigator warm (refresh-marked) recomputes an entry older than refreshAfterSeconds(TTL), not a younger one", async () => {
     const young = new MockKV();
-    young.store.set("admin:dashboard_snapshot:v2:sa", envelope(CANNED, 300));
+    young.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, 300));
     const warm1 = await handleAdminDashboard(markCacheRefresh(req()), makeThrowingEnv(young), superAdminCtx());
     expect((await bodyOf(warm1)).data.generated_at).toBe("2026-07-11T00:00:00.000Z");
 
     const old = new MockKV();
-    old.store.set("admin:dashboard_snapshot:v2:sa", envelope(CANNED, 900));
+    old.store.set("cv:admin:dashboard_snapshot:v3:sa", envelope(CANNED, 900));
     const warm2 = await handleAdminDashboard(markCacheRefresh(req()), makeThrowingEnv(old), superAdminCtx());
     expect((await bodyOf(warm2)).data.generated_at).not.toBe("2026-07-11T00:00:00.000Z");
   });
@@ -396,8 +396,8 @@ describe("handleBudgetConfigPatch — busts both dashboard snapshot cache keys",
     const { handleBudgetConfigPatch } = await import("../src/handlers/budget");
     const kv = new MockKV();
     // Seed both role-scoped snapshots as if warmed by prior loads.
-    kv.store.set("admin:dashboard_snapshot:v2:sa", JSON.stringify({ success: true, data: {} }));
-    kv.store.set("admin:dashboard_snapshot:v2:admin", JSON.stringify({ success: true, data: {} }));
+    kv.store.set("cv:admin:dashboard_snapshot:v3:sa", JSON.stringify({ success: true, data: {} }));
+    kv.store.set("cv:admin:dashboard_snapshot:v3:admin", JSON.stringify({ success: true, data: {} }));
 
     // Minimal DB stub: budget config UPDATE .run() succeeds, config SELECT
     // .first() returns a row. Only updateConfig's statements are exercised.
@@ -421,8 +421,8 @@ describe("handleBudgetConfigPatch — busts both dashboard snapshot cache keys",
     const res = await handleBudgetConfigPatch(patchReq, env);
     expect(res.status).toBe(200);
     // Both snapshot keys must be gone so the next dashboard load recomputes.
-    expect(kv.store.has("admin:dashboard_snapshot:v2:sa")).toBe(false);
-    expect(kv.store.has("admin:dashboard_snapshot:v2:admin")).toBe(false);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:sa")).toBe(false);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:admin")).toBe(false);
   });
 });
 
@@ -488,10 +488,10 @@ describe("handleAdminDashboard — RBAC: threat_health is super_admin-only", () 
     expect(body.data.feeds).not.toBeNull();
     expect(body.data.pipeline).not.toBeNull();
 
-    expect(kv.store.has("admin:dashboard_snapshot:v2:sa")).toBe(true);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:sa")).toBe(true);
     // One super_admin compute (e.g. Navigator's warm) also writes the
     // plain-admin variant — the same snapshot with threat_health stripped.
-    const adminEntry = JSON.parse(kv.store.get("admin:dashboard_snapshot:v2:admin")!) as { v: SnapshotBody };
+    const adminEntry = JSON.parse(kv.store.get("cv:admin:dashboard_snapshot:v3:admin")!) as { v: SnapshotBody };
     expect(adminEntry.v.data.threat_health).toBeNull();
     expect(adminEntry.v.data.feeds).toEqual(body.data.feeds);
     expect(adminEntry.v.data.pipeline).toEqual(body.data.pipeline);
@@ -526,8 +526,8 @@ describe("handleAdminDashboard — RBAC: threat_health is super_admin-only", () 
     expect(body.data.pipeline!.total_pipelines).toBe(1);
 
     // Admins cache under a distinct key — no cross-role leakage.
-    expect(kv.store.has("admin:dashboard_snapshot:v2:admin")).toBe(true);
-    expect(kv.store.has("admin:dashboard_snapshot:v2:sa")).toBe(false);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:admin")).toBe(true);
+    expect(kv.store.has("cv:admin:dashboard_snapshot:v3:sa")).toBe(false);
   });
 
   it("cache isolation: a super_admin-warmed cache is never served to a plain admin", async () => {
@@ -535,7 +535,7 @@ describe("handleAdminDashboard — RBAC: threat_health is super_admin-only", () 
     // Simulate a super_admin having already populated the snapshot with a
     // threat_health slice under the :sa key.
     kv.store.set(
-      "admin:dashboard_snapshot:v2:sa",
+      "cv:admin:dashboard_snapshot:v3:sa",
       envelope({
         success: true,
         data: {

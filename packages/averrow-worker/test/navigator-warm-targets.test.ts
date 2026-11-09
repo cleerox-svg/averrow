@@ -29,13 +29,20 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { NAVIGATOR_WARM_TARGETS, warmRequest } from "../src/cron/navigator";
+import {
+  NAVIGATOR_WARM_TARGETS,
+  NAVIGATOR_SEQUENTIAL_PHASES,
+  navigatorWarmPhases,
+  runWarmTargets,
+  warmRequest,
+  type NavigatorWarmTarget,
+} from "../src/cron/navigator";
 import { isCacheRefresh, refreshAfterSeconds } from "../src/lib/cache-refresh";
 import { DASHBOARD_SNAPSHOT_TTL_S } from "../src/handlers/admin/dashboard";
 import { THREAT_INFLOW_TTL_S, handleThreatInflow } from "../src/handlers/threat-inflow";
 import { CRITICAL_BANNER_TTL_S } from "../src/handlers/intel";
 import { BRAND_STATS_TTL_S, BRAND_MOVERS_TTL_S } from "../src/handlers/brands";
-import { BRAND_AGGREGATE_TTL_S } from "../src/lib/brand-aggregates";
+import { BRAND_AGGREGATE_TTL_S, BRAND_SLOW_AGGREGATE_TTL_S } from "../src/lib/brand-aggregates";
 import { EMAIL_POSTURE_ROLLUP_TTL_S } from "../src/lib/email-posture-rollup";
 import {
   handleObservatoryNodes,
@@ -151,14 +158,14 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
       "B /api/threats/inflow?window=7d",
       "B /api/intel/critical-banner",
       "C /api/brands?view=top&limit=8&offset=0&range=7d",
-      "C /api/brands/stats",
       "C /api/threat-actors?status=active",
       "C /api/threat-actors/stats",
-      "C /api/brands/movers",
-      "C /api/brands/aggregate/email-security",
-      "C /api/brands/aggregate/pressure",
-      "C /api/brands/aggregate/composition",
-      "C /api/brands/aggregate/posture",
+      "D /api/brands/stats",
+      "D /api/brands/movers",
+      "D /api/brands/aggregate/email-security",
+      "D /api/brands/aggregate/pressure",
+      "D /api/brands/aggregate/composition",
+      "D /api/brands/aggregate/posture",
     ]);
   });
 
@@ -187,24 +194,96 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
   });
 
   // Each warmed key must outlive its phase interval AND be recomputed by
-  // the warm before it lapses: entry age at a warm ≈ the interval, and a
-  // refresh-marked warm recomputes once age ≥ refreshAfterSeconds(ttl).
-  const PHASE_INTERVAL_S = { B: 900, C: 1800 } as const;
-  const TTLS: Array<{ name: string; phase: keyof typeof PHASE_INTERVAL_S; ttl: number }> = [
-    { name: "admin dashboard", phase: "B", ttl: DASHBOARD_SNAPSHOT_TTL_S },
-    { name: "threat inflow", phase: "B", ttl: THREAT_INFLOW_TTL_S },
-    { name: "critical banner", phase: "B", ttl: CRITICAL_BANNER_TTL_S },
-    { name: "brand stats", phase: "C", ttl: BRAND_STATS_TTL_S },
-    { name: "brand movers", phase: "C", ttl: BRAND_MOVERS_TTL_S },
-    { name: "pressure / composition aggregates", phase: "C", ttl: BRAND_AGGREGATE_TTL_S },
-    { name: "email-security aggregate (shared rollup)", phase: "C", ttl: EMAIL_POSTURE_ROLLUP_TTL_S },
+  // a warm before it lapses: warms see the entry at ages k × interval, and a
+  // refresh-marked warm recomputes once age ≥ refreshAfterSeconds(ttl), so
+  // the first warm past the threshold must land before the TTL.
+  const PHASE_INTERVAL_S = { B: 900, D: 1800 } as const;
+  const TTLS: Array<{ name: string; phase: keyof typeof PHASE_INTERVAL_S; ttl: number; everyWarm: boolean }> = [
+    { name: "admin dashboard", phase: "B", ttl: DASHBOARD_SNAPSHOT_TTL_S, everyWarm: true },
+    { name: "threat inflow", phase: "B", ttl: THREAT_INFLOW_TTL_S, everyWarm: true },
+    { name: "critical banner", phase: "B", ttl: CRITICAL_BANNER_TTL_S, everyWarm: true },
+    { name: "brand stats", phase: "D", ttl: BRAND_STATS_TTL_S, everyWarm: true },
+    { name: "brand movers", phase: "D", ttl: BRAND_MOVERS_TTL_S, everyWarm: true },
+    { name: "pressure aggregate", phase: "D", ttl: BRAND_AGGREGATE_TTL_S, everyWarm: true },
+    { name: "email-security aggregate (shared rollup)", phase: "D", ttl: EMAIL_POSTURE_ROLLUP_TTL_S, everyWarm: true },
+    // Daily-moving data: refreshed every 3rd Phase D warm (~90 min), never lapses.
+    { name: "composition / posture aggregates", phase: "D", ttl: BRAND_SLOW_AGGREGATE_TTL_S, everyWarm: false },
   ];
-  for (const { name, phase, ttl } of TTLS) {
-    it(`${name}: TTL ${ttl}s outlives the Phase ${phase} warm and each warm refreshes it`, () => {
-      expect(ttl).toBeGreaterThan(PHASE_INTERVAL_S[phase]);
-      expect(refreshAfterSeconds(ttl)).toBeLessThan(PHASE_INTERVAL_S[phase]);
+  for (const { name, phase, ttl, everyWarm } of TTLS) {
+    it(`${name}: TTL ${ttl}s outlives the Phase ${phase} warm and a warm refreshes it before it lapses`, () => {
+      const interval = PHASE_INTERVAL_S[phase];
+      expect(ttl).toBeGreaterThan(interval);
+      const firstRefreshingWarmAge = Math.max(1, Math.ceil(refreshAfterSeconds(ttl) / interval)) * interval;
+      expect(firstRefreshingWarmAge).toBeLessThan(ttl);
+      expect(refreshAfterSeconds(ttl) < interval).toBe(everyWarm);
     });
   }
+
+  it("composition / posture use the slow (daily-data) TTL: recomputed every 3rd Phase D warm", () => {
+    expect(BRAND_SLOW_AGGREGATE_TTL_S).toBe(7200);
+    expect(Math.ceil(refreshAfterSeconds(BRAND_SLOW_AGGREGATE_TTL_S) / 1800)).toBe(3);
+  });
+
+  it("Phase D holds exactly the brand-catalog warms and runs them sequentially", () => {
+    expect(NAVIGATOR_WARM_TARGETS.filter((t) => t.phase === "D").map((t) => t.path)).toEqual([
+      "/api/brands/stats",
+      "/api/brands/movers",
+      "/api/brands/aggregate/email-security",
+      "/api/brands/aggregate/pressure",
+      "/api/brands/aggregate/composition",
+      "/api/brands/aggregate/posture",
+    ]);
+    expect([...NAVIGATOR_SEQUENTIAL_PHASES]).toEqual(["D"]);
+    // No brand-catalog aggregate is left in a parallel phase.
+    for (const t of NAVIGATOR_WARM_TARGETS) {
+      if (/^\/api\/brands\/(stats|movers|aggregate\/)/.test(t.path)) expect(t.phase).toBe("D");
+    }
+  });
+
+  it("Phase D runs every 30 min on minutes no other phase uses (:05, :35)", () => {
+    const fires = Array.from({ length: 12 }, (_, i) => i * 5); // */5 cron
+    const dMinutes = fires.filter((m) => navigatorWarmPhases(m).D);
+    expect(dMinutes).toEqual([5, 35]);
+    for (const m of dMinutes) {
+      const p = navigatorWarmPhases(m);
+      expect([p.A, p.A2, p.B, p.C]).toEqual([false, false, false, false]);
+    }
+    // The other gates are unchanged.
+    expect(fires.filter((m) => navigatorWarmPhases(m).A)).toEqual([0, 10, 20, 30, 40, 50]);
+    expect(fires.filter((m) => navigatorWarmPhases(m).B)).toEqual([0, 15, 30, 45]);
+    expect(fires.filter((m) => navigatorWarmPhases(m).C)).toEqual([0, 30]);
+  });
+
+  it("runWarmTargets: sequential runs one handler at a time; parallel overlaps; failures are counted, not fatal", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const order: string[] = [];
+    const target = (path: string, outcome: "ok" | "500" | "throw"): NavigatorWarmTarget => ({
+      phase: "D",
+      path,
+      consumer: "test",
+      handler: async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        order.push(`start ${path}`);
+        await new Promise((r) => setTimeout(r, 5));
+        order.push(`end ${path}`);
+        inFlight--;
+        if (outcome === "throw") throw new Error("boom");
+        return new Response("{}", { status: outcome === "ok" ? 200 : 500 });
+      },
+    });
+    const targets = [target("/a", "ok"), target("/b", "throw"), target("/c", "500"), target("/d", "ok")];
+    const env = {} as Env;
+
+    expect(await runWarmTargets(targets, env, false, true)).toEqual({ ok: 2, failed: 2 });
+    expect(maxInFlight).toBe(1);
+    expect(order).toEqual(["start /a", "end /a", "start /b", "end /b", "start /c", "end /c", "start /d", "end /d"]);
+
+    maxInFlight = 0;
+    expect(await runWarmTargets(targets, env, false, false)).toEqual({ ok: 2, failed: 2 });
+    expect(maxInFlight).toBe(4);
+  });
 
   it("never warms a retired target", () => {
     const paths = NAVIGATOR_WARM_TARGETS.map((t) => t.path);

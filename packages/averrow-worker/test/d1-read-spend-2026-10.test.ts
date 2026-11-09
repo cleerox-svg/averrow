@@ -41,6 +41,7 @@ import {
   settledSnapshotDay,
   settledThreshold,
   SNAPSHOT_SETTLED_RATIO,
+  BRAND_SLOW_AGGREGATE_TTL_S,
 } from "../src/lib/brand-aggregates";
 import { threatAggregate, runSequential, THREAT_AGGREGATE_TTL_S, THREAT_AGGREGATE_UNFILTERED_TTL_S } from "../src/lib/threat-aggregates";
 import { THREATS_TOTAL_TTL_S } from "../src/lib/cached-count";
@@ -549,7 +550,8 @@ describe.skipIf(!hasSqlite())("#7 postureAggregate movers rewrite", () => {
     expect(p.join(" | ")).toMatch(/SEARCH s2 USING [A-Z ]*INDEX sqlite_autoindex_brand_score_snapshots_1 \(brand_id=\? AND snapshot_day>\? AND snapshot_day<\?\)/);
   });
 
-  it("caches for 1h (was 5 min)", () => {
-    expect(src("lib/brand-aggregates.ts")).toMatch(/'brand-aggregate\.posture', 3600,/);
+  it("caches for >= 1h (was 5 min; 2h since perf PR 3 — written once a day)", () => {
+    expect(src("lib/brand-aggregates.ts")).toMatch(/'brand-aggregate\.posture', BRAND_SLOW_AGGREGATE_TTL_S,/);
+    expect(BRAND_SLOW_AGGREGATE_TTL_S).toBeGreaterThanOrEqual(3600);
   });
 });

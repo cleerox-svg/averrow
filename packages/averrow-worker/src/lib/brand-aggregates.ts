@@ -1,7 +1,7 @@
 // Catalog-level aggregate queries for the Brands Intel page.
 //
 // Per PR13: each aggregate is a single GROUP BY (or small JOIN) over
-// the catalog. Wrapped in cachedValue (1h TTL + Navigator refresh-ahead; email-security derives from
+// the catalog. Wrapped in cachedValue (1h / 2h TTL + Navigator refresh-ahead; reads run one at a time; email-security derives from
 // the shared 1h email-posture rollup in lib/email-posture-rollup.ts) so the Intel page
 // stays cheap even when the catalog grows to 100K+ brands. Per
 // CLAUDE.md: bare COUNT(*) FROM threats is a code-review red flag —
@@ -16,13 +16,14 @@
 import type { Env } from '../types';
 import { cachedValue } from './cached-value';
 import { cachedCount } from './cached-count';
+import { runSequential } from './run-sequential';
 import {
   emailPostureRollup, emailPostureTotals, gradeDistribution, dmarcDistribution,
   type EmailPostureRollupRow,
 } from './email-posture-rollup';
 
 /**
- * `refresh` = the call comes from a Navigator warm (Phase C, every 30 min):
+ * `refresh` = the call comes from a Navigator warm (sequential Phase D, every 30 min):
  * cachedValue then recomputes once the entry is refreshAfterSeconds(ttl)
  * old, so the key never lapses between warms. Live handlers pass
  * `isCacheRefresh(request)`, which is false for every HTTP request.
@@ -32,14 +33,25 @@ export interface AggregateOpts {
 }
 
 /**
- * TTL of the pressure + composition aggregates. Was 300s, which no
- * 30-min warm could keep warm — the Explore → Brands tab computed them
- * cold on most visits (prod: composition/posture 500'd after ~3s cold,
- * then 200 on retry). 1h + refresh-ahead: Phase C recomputes each key on
- * every warm (threshold 1740s), so data is ≤ ~30 min old and the key never
- * lapses. Both are catalog-level distributions that move slowly.
+ * TTL of the pressure aggregate (top-N typosquat / social / app counts).
+ * Was 300s, which no 30-min warm could keep warm — the Explore → Brands tab
+ * computed the aggregates cold on most visits (prod: composition/posture
+ * 500'd after ~3s cold, then 200 on retry: four parallel catalog scans per
+ * aggregate, four aggregates at once). 1h + refresh-ahead: Navigator's
+ * sequential Phase D (every 30 min) recomputes it on every warm (threshold
+ * 1740s), so data is ≤ ~30 min old and the key never lapses.
  */
 export const BRAND_AGGREGATE_TTL_S = 3600;
+
+/**
+ * TTL of composition (tier / source / Tranco / HQ mix of the catalog) and
+ * posture (brand_score_snapshots, written once a day at 00:16 UTC). Both
+ * move ~daily, so 2h + refresh-ahead: threshold refreshAfterSeconds(7200) =
+ * 5340s, so the 30-min Phase D warm recomputes them every 3rd tick (~90
+ * min) instead of every tick, and the key still never lapses (two spare
+ * warms before expiry).
+ */
+export const BRAND_SLOW_AGGREGATE_TTL_S = 7200;
 
 // ── Email Security ─────────────────────────────────────────────
 
@@ -148,13 +160,13 @@ export async function pressureAggregate(env: Env, opts: AggregateOpts = {}): Pro
         LIMIT 8
       `;
 
-      const [lookalikes, social, apps, dark] = await Promise.all([
-        env.DB.prepare(lookalikesSql)
+      const [lookalikes, social, apps, dark] = await runSequential([
+        () => env.DB.prepare(lookalikesSql)
           .all<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>(),
-        env.DB.prepare(baseSelect('social_profiles',
+        () => env.DB.prepare(baseSelect('social_profiles',
           "WHERE t.classification IN ('impersonation','suspicious') AND COALESCE(t.status,'active') = 'active'"))
           .all<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>(),
-        env.DB.prepare(baseSelect('app_store_listings',
+        () => env.DB.prepare(baseSelect('app_store_listings',
           "WHERE t.classification IN ('impersonation','suspicious') AND COALESCE(t.status,'active') = 'active'"))
           .all<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>(),
         // dark_web_mentions ingestion isn't built yet — table is
@@ -162,7 +174,7 @@ export async function pressureAggregate(env: Env, opts: AggregateOpts = {}): Pro
         // the card lights up the moment data starts landing; for now
         // it returns zero rows and the UI shows "No signal yet". See
         // docs/PLATFORM_DATA_DEPENDENCIES.md §6.
-        env.DB.prepare(baseSelect('dark_web_mentions',
+        () => env.DB.prepare(baseSelect('dark_web_mentions',
           "WHERE t.classification = 'confirmed' AND COALESCE(t.status,'active') = 'active'"))
           .all<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>(),
       ]);
@@ -190,21 +202,21 @@ export interface CompositionAggregate {
 
 export async function compositionAggregate(env: Env, opts: AggregateOpts = {}): Promise<CompositionAggregate> {
   return cachedValue<CompositionAggregate>(
-    env, 'brand-aggregate.composition', BRAND_AGGREGATE_TTL_S,
+    env, 'brand-aggregate.composition', BRAND_SLOW_AGGREGATE_TTL_S,
     async () => {
-      const [tier, source, tranco, geo] = await Promise.all([
-        env.DB.prepare(`
+      const [tier, source, tranco, geo] = await runSequential([
+        () => env.DB.prepare(`
           SELECT tier, COUNT(*) AS count FROM brands
           GROUP BY tier
           ORDER BY CASE tier WHEN 'customer' THEN 0 WHEN 'monitored' THEN 1 WHEN 'tracked' THEN 2 ELSE 3 END
         `).all<{ tier: string; count: number }>(),
-        env.DB.prepare(`
+        () => env.DB.prepare(`
           SELECT COALESCE(source,'unknown') AS source, COUNT(*) AS count
           FROM brands
           GROUP BY source
           ORDER BY count DESC
         `).all<{ source: string; count: number }>(),
-        env.DB.prepare(`
+        () => env.DB.prepare(`
           SELECT
             CASE
               WHEN tranco_rank IS NULL              THEN 'unranked'
@@ -223,7 +235,7 @@ export async function compositionAggregate(env: Env, opts: AggregateOpts = {}): 
             WHEN '100K+'   THEN 3
             ELSE 4 END
         `).all<{ bucket: string; count: number }>(),
-        env.DB.prepare(`
+        () => env.DB.prepare(`
           SELECT hq_country AS country, COUNT(*) AS count
           FROM brands
           WHERE hq_country IS NOT NULL AND hq_country != ''
@@ -310,10 +322,10 @@ export interface PostureAggregate {
 export async function postureAggregate(env: Env, opts: AggregateOpts = {}): Promise<PostureAggregate> {
   return cachedValue<PostureAggregate>(
     // 1h: snapshots are written once a day (16 0 * * * brand_scores cron).
-    env, 'brand-aggregate.posture', 3600,
+    env, 'brand-aggregate.posture', BRAND_SLOW_AGGREGATE_TTL_S,
     async () => {
-      const [healthGrades, healthBuckets, exposureBuckets, total] = await Promise.all([
-        env.DB.prepare(`
+      const [healthGrades, healthBuckets, exposureBuckets, total] = await runSequential([
+        () => env.DB.prepare(`
           SELECT brand_health_grade AS grade, COUNT(*) AS count
           FROM brands
           WHERE brand_health_grade IS NOT NULL
@@ -324,7 +336,7 @@ export async function postureAggregate(env: Env, opts: AggregateOpts = {}): Prom
             WHEN 'C'  THEN 6 WHEN 'D'  THEN 7
             WHEN 'F'  THEN 8 ELSE 9 END
         `).all<{ grade: string; count: number }>(),
-        env.DB.prepare(`
+        () => env.DB.prepare(`
           SELECT
             CASE
               WHEN brand_health_score IS NULL  THEN 'unscored'
@@ -343,7 +355,7 @@ export async function postureAggregate(env: Env, opts: AggregateOpts = {}): Prom
             WHEN '40-59'  THEN 2 WHEN '20-39' THEN 3
             WHEN '0-19'   THEN 4 ELSE 5 END
         `).all<{ bucket: string; count: number }>(),
-        env.DB.prepare(`
+        () => env.DB.prepare(`
           SELECT
             CASE
               WHEN brand_exposure_score IS NULL  THEN 'unscored'
@@ -362,7 +374,7 @@ export async function postureAggregate(env: Env, opts: AggregateOpts = {}): Prom
             WHEN '40-59'  THEN 2 WHEN '60-79' THEN 3
             WHEN '80-100' THEN 4 ELSE 5 END
         `).all<{ bucket: string; count: number }>(),
-        env.DB.prepare(`
+        () => env.DB.prepare(`
           SELECT COUNT(*) AS n FROM brands
           WHERE brand_health_score IS NOT NULL
         `).first<{ n: number }>(),
