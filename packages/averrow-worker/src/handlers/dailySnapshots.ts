@@ -83,6 +83,17 @@ export const DAILY_SNAPSHOTS_INTER_CHUNK_PAUSE_MS = 500;
 export const DAILY_SNAPSHOTS_FINALIZE_BACKOFF_MS: readonly number[] = [3_000, 6_000, 12_000];
 
 /**
+ * Overload retries for each chunk statement and the event write (withD1Retry
+ * with D1_OVERLOAD_RETRY_BASE_MS: 3 s, 6 s, 12 s + ≤ 0.75 s jitter each). 3,
+ * matching finalize: with 2 the waits total ~9 s, so the last retry can land
+ * inside the same 10-second overload window. Budget: no chunk STARTS after
+ * DAILY_SNAPSHOTS_BUDGET_MS (8 min); a chunk started just before it can wait
+ * ≤ ~23 s, then finalize ≤ ~21 s and the event ≤ ~23 s — ~9.2 min worst
+ * case, well inside the 15-minute scheduled invocation.
+ */
+export const DAILY_SNAPSHOTS_WRITE_RETRIES = 3;
+
+/**
  * Provider first: it is the type with a live consumer (Flight Control's
  * provider-escalation watcher) and the heavier statement, so it gets the
  * freshest budget. The two types are isolated — one failing never stops
@@ -179,7 +190,7 @@ export async function runDailySnapshotsCron(
           retry: {
             label: `daily_snapshots ${type} chunk`,
             overloadBaseMs: opts.overloadBaseMs ?? D1_OVERLOAD_RETRY_BASE_MS,
-            retries: 2,
+            retries: DAILY_SNAPSHOTS_WRITE_RETRIES,
           },
           onChunk: async (rowsSoFar) => {
             written[type] = rowsSoFar;
@@ -262,7 +273,7 @@ export async function runDailySnapshotsCron(
             .run(),
         {
           label: "daily_snapshots event",
-          retries: 2,
+          retries: DAILY_SNAPSHOTS_WRITE_RETRIES,
           overloadBaseMs: opts.overloadBaseMs ?? D1_OVERLOAD_RETRY_BASE_MS,
         },
       );

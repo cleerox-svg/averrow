@@ -27,7 +27,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Env } from "../src/types";
-import { runDailySnapshotsCron } from "../src/handlers/dailySnapshots";
+import { runDailySnapshotsCron, DAILY_SNAPSHOTS_WRITE_RETRIES } from "../src/handlers/dailySnapshots";
+import { d1RetryDelayMs, D1_OVERLOAD_RETRY_BASE_MS } from "../src/lib/d1-retry";
 import {
   hasSqlite,
   openDerivedDb,
@@ -301,7 +302,7 @@ describe.skipIf(!hasSqlite())("daily_snapshots dedicated cron", () => {
               run: async () => {
                 brandChunks += 1;
                 // Persistent from chunk 2 on: a transient error is now retried
-                // (2 retries), so it must outlast them to fail the type.
+                // (DAILY_SNAPSHOTS_WRITE_RETRIES), so it must outlast them to fail the type.
                 if (brandChunks >= 2) throw new Error("D1_ERROR: Network connection lost.");
                 return bound.run();
               },
@@ -480,5 +481,17 @@ describe("daily_snapshots cron wiring", () => {
     for (const f of ["../src/handlers/dailySnapshots.ts", "../src/lib/snapshots.ts"]) {
       expect(src(f)).not.toMatch(/getUTCMinutes|getMinutes|getUTCHours|minute\s*===|hour\s*===/);
     }
+  });
+});
+
+describe("daily_snapshots write retries", () => {
+  it("chunk + event overload retries wait past D1's 10-second window (same as finalize)", () => {
+    // Minimum (zero-jitter) total wait before the last attempt.
+    let waited = 0;
+    for (let i = 0; i < DAILY_SNAPSHOTS_WRITE_RETRIES; i++) {
+      waited += d1RetryDelayMs(i, "D1 DB is overloaded. Requests queued for too long.", { overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS }, () => 0);
+    }
+    expect(DAILY_SNAPSHOTS_WRITE_RETRIES).toBe(3);
+    expect(waited).toBeGreaterThan(10_000);
   });
 });
