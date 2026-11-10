@@ -17,7 +17,11 @@
 //
 // All filters from handleListThreats are honored so the aggregates
 // reflect the analyst's current slice. Wrapped in cachedValue (30min;
-// 3h + single-flight refill for the unfiltered, unscoped slice).
+// 3h + single-flight refill for the unfiltered, unscoped slice). The
+// unfiltered slice's whole-table numbers (headline counts, severity / type /
+// status mix, top countries) come from ONE shared base scan cached 6h
+// (`threatAggregateBase`), and `new_24h` from threat_cube_status — never the
+// former five full-table GROUP BYs per refill (D1 spike 2026-11-09/10).
 // Fail-soft per section (softSection): a failed read empties only its
 // section and is listed in `degraded_sections`. A degraded refill never
 // replaces a complete cached entry: the complete one is kept and re-stamped
@@ -26,7 +30,7 @@
 
 import type { Env } from '../types';
 import type { OrgScope } from '../middleware/auth';
-import { cachedValue } from './cached-value';
+import { cachedValue, seedValue } from './cached-value';
 import { logger } from './logger';
 import { scopeCacheSegment } from './scope-cache-key';
 import { runSequential, softSection, type SectionErrors } from './run-sequential';
@@ -59,6 +63,145 @@ export const THREAT_AGGREGATE_DEGRADED_TTL_S = 60;
 export const THREAT_AGGREGATE_LOCK_TTL_S = 120;
 export const THREAT_AGGREGATE_SINGLE_FLIGHT_WAIT_MS = 10_000;
 export const THREAT_AGGREGATE_SINGLE_FLIGHT_POLL_MS = 1_000;
+
+/**
+ * Shared base of the unfiltered, unscoped slice: every whole-table number the
+ * aggregate shows (headline counts, severity / type / status mix, top
+ * countries), computed by ONE `NOT INDEXED` scan of `threats` (~1.55M rows)
+ * and cached 6h with single-flight. Before 2026-11-10 each unfiltered refill
+ * ran five separate full-table reads for these (headline + severity + status
+ * + type + country ≈ 10–12M rows, severity alone ~3.1M via an index walk);
+ * prod D1 analytics showed ~20M unmetered rows per refill and 4–9 refills an
+ * hour in the 2026-11-09 04:00 / 21:00 spikes (retries / degraded polling on
+ * a cold key). The numbers it holds move slowly; `new_24h` is NOT taken from
+ * it (6h would be too stale) but from threat_cube_status.
+ *
+ * Why not the cubes for these: threat_cube_status / _geo start at the first
+ * rebuilt hour (prod: 2026-03-30, ~100K older threats missing) and are healed
+ * only 2d/14d back, so their status split drifts (prod 2026-11-10: cube
+ * remediated 122 vs 1,366 live); they carry no confidence_score or
+ * campaign_id (the `confirmed` / `correlated` headline numbers would still
+ * need a full scan); and _geo is active + lat/lng only.
+ *
+ * Cost (prod EXPLAIN + run, 2026-11-10): `SCAN t` + temp B-tree, 2,716
+ * groups, rows_read ~3.1M (the GROUP BY sorter doubles the 1.55M table
+ * rows), ~10s. Refreshed off the request path by cube_healer every 6h
+ * (`refreshThreatAggregateBase`), so ≤ 4 scans (~12M rows) a day; the TTL is
+ * 7h so a live read finds it fresh between two healer runs and only computes
+ * it inline if the healer missed a run (single-flight then serves the stale
+ * copy to everyone else; KV keeps it 2× TTL).
+ */
+export const THREAT_AGGREGATE_BASE_KEY = 'threats.aggregate_base.v1';
+
+/** Response sections the base scan feeds besides `headline` (degraded together with it). */
+const BASE_FED_SECTIONS = ['by_severity', 'by_type', 'by_status', 'top_countries'] as const;
+export const THREAT_AGGREGATE_BASE_TTL_S = 25200;
+
+/** The whole-table base scan (see THREAT_AGGREGATE_BASE_KEY). Exported for tests. */
+export const THREAT_AGGREGATE_BASE_SQL = `
+  SELECT t.status AS status, t.severity AS severity, t.threat_type AS threat_type,
+         t.country_code AS country_code,
+         COUNT(*) AS n,
+         SUM(CASE WHEN t.confidence_score >= 70 THEN 1 ELSE 0 END) AS confirmed,
+         SUM(CASE WHEN t.campaign_id IS NOT NULL THEN 1 ELSE 0 END) AS correlated_by_campaign
+  FROM threats t NOT INDEXED
+  GROUP BY t.status, t.severity, t.threat_type, t.country_code`;
+
+/**
+ * Threats created in the last 24h, from threat_cube_status (rebuilt for the
+ * current + previous hour every 5 min by Navigator). The window is
+ * hour-snapped, so it covers 24h plus the part of the oldest hour bucket
+ * before the cut (≤ 25h) — the unfiltered `new_24h` was an exact 24h scan of
+ * the whole table. Seeks idx_cube_status_hour.
+ */
+export const THREAT_AGGREGATE_NEW_24H_CUBE_SQL = `
+  SELECT COALESCE(SUM(threat_count), 0) AS n
+  FROM threat_cube_status
+  WHERE hour_bucket >= strftime('%Y-%m-%d %H:00:00', 'now', '-24 hours')`;
+
+/** Reduced form of the base scan — what is cached under THREAT_AGGREGATE_BASE_KEY. */
+export interface ThreatAggregateBase {
+  total:                  number;
+  confirmed:              number;
+  correlated_by_campaign: number;
+  active:                 number;
+  addressed:              number;
+  by_severity:   Array<{ severity: string; count: number }>;
+  /** Top 8, like the filtered slice's `LIMIT 8`. */
+  by_type:       Array<{ type: string; count: number }>;
+  by_status:     Array<{ status: string; count: number }>;
+  /** Top 10 non-null, non-'XX' countries, like the filtered slice's query. */
+  top_countries: Array<{ country: string; count: number }>;
+}
+
+interface ThreatAggregateBaseRow {
+  status: string | null; severity: string | null; threat_type: string | null;
+  country_code: string | null; n: number; confirmed: number | null; correlated_by_campaign: number | null;
+}
+
+/** Sum `n` per key (NULL kept as its own key, as SQL GROUP BY does), count DESC, ties by key. */
+function rankBy(rows: ThreatAggregateBaseRow[], key: (r: ThreatAggregateBaseRow) => string | null): Array<[string, number]> {
+  const sums = new Map<string | null, number>();
+  for (const r of rows) {
+    const k = key(r);
+    sums.set(k, (sums.get(k) ?? 0) + (r.n ?? 0));
+  }
+  // The response types declare string keys; a NULL group is returned as null
+  // exactly like the former per-dimension GROUP BY did.
+  return [...sums.entries()]
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+    .map(([k, n]) => [k as string, n]);
+}
+
+/** Fold the base scan's (status, severity, type, country) groups into the cached base. Exported for tests. */
+export function reduceThreatAggregateBase(rows: ThreatAggregateBaseRow[]): ThreatAggregateBase {
+  let total = 0, confirmed = 0, correlated = 0, active = 0, addressed = 0;
+  for (const r of rows) {
+    total += r.n ?? 0;
+    confirmed += r.confirmed ?? 0;
+    correlated += r.correlated_by_campaign ?? 0;
+    if (r.status === 'active') active += r.n ?? 0;
+    if (r.status === 'down' || r.status === 'remediated') addressed += r.n ?? 0;
+  }
+  return {
+    total, confirmed, correlated_by_campaign: correlated, active, addressed,
+    by_severity: rankBy(rows, (r) => r.severity).map(([severity, count]) => ({ severity, count })),
+    by_type: rankBy(rows, (r) => r.threat_type).slice(0, 8).map(([type, count]) => ({ type, count })),
+    by_status: rankBy(rows, (r) => r.status).map(([status, count]) => ({ status, count })),
+    top_countries: rankBy(rows.filter((r) => r.country_code !== null && r.country_code !== 'XX'), (r) => r.country_code)
+      .slice(0, 10).map(([country, count]) => ({ country, count })),
+  };
+}
+
+async function computeThreatAggregateBase(db: AggregateReadDb): Promise<ThreatAggregateBase> {
+  const r = await db.prepare(THREAT_AGGREGATE_BASE_SQL).all<ThreatAggregateBaseRow>();
+  return reduceThreatAggregateBase(r.results ?? []);
+}
+
+/**
+ * Recompute the base and write it to KV (cube_healer, every 6h). Throws on a
+ * failed scan and leaves the previous entry in place.
+ */
+export async function refreshThreatAggregateBase(env: Env, db: AggregateReadDb): Promise<ThreatAggregateBase> {
+  const base = await computeThreatAggregateBase(db);
+  await seedValue(env, THREAT_AGGREGATE_BASE_KEY, base, THREAT_AGGREGATE_BASE_TTL_S);
+  return base;
+}
+
+/**
+ * The shared, cached base of the unfiltered slice (see
+ * THREAT_AGGREGATE_BASE_KEY). One key for every caller — it only exists for
+ * the unscoped, unfiltered slice. A failed scan throws and caches nothing.
+ */
+export async function threatAggregateBase(env: Env, db: AggregateReadDb): Promise<ThreatAggregateBase> {
+  return cachedValue<ThreatAggregateBase>(env, THREAT_AGGREGATE_BASE_KEY, THREAT_AGGREGATE_BASE_TTL_S, () => computeThreatAggregateBase(db), {
+    singleFlight: {
+      lockTtlSeconds: THREAT_AGGREGATE_LOCK_TTL_S,
+      waitMs: THREAT_AGGREGATE_SINGLE_FLIGHT_WAIT_MS,
+      pollMs: THREAT_AGGREGATE_SINGLE_FLIGHT_POLL_MS,
+    },
+  });
+}
 
 /** Anything with `prepare` — `env.DB` or a read-replica `D1DatabaseSession`. */
 export type AggregateReadDb = Pick<D1Database, 'prepare'>;
@@ -241,17 +384,39 @@ export async function threatAggregate(
     // Only when EVERY attempted read failed does compute throw (→ 500, and
     // nothing is cached).
     const sectionErrors: SectionErrors = {};
-    const attempted: string[] = [];
+    // A Set: the unfiltered headline is two reads (base + cube) in one section.
+    const attempted = new Set<string>();
     const soft = <T>(section: string, fallback: T, fn: () => Promise<T>): (() => Promise<T>) => {
-      attempted.push(section);
+      attempted.add(section);
       return softSection(sectionErrors, section, fallback, fn);
     };
     type Rows<T> = { results: T[] };
     const noRows = <T>(): Rows<T> => ({ results: [] });
     const rowsOf = <T>(r: { results?: T[] } | null | undefined): Rows<T> => ({ results: r?.results ?? [] });
+    const fromBase = <T>(rows: T[] | undefined) => async (): Promise<Rows<T>> => ({ results: rows ?? [] });
 
+    type Headline = {
+      total: number; confirmed: number; correlated_by_campaign: number;
+      active: number; addressed: number; new_24h: number;
+    };
+    // Unfiltered: the shared 6h base scan feeds the headline AND the
+    // severity / type / status / country sections (no per-refill full-table
+    // GROUP BYs); new_24h comes from threat_cube_status. A failed base scan
+    // degrades every section it feeds, under their usual names.
+    let base: ThreatAggregateBase | null = null;
+    let headline: Headline | null;
+    if (unfiltered) {
+      base = await soft('headline', null, () => threatAggregateBase(env, db))();
+      for (const section of BASE_FED_SECTIONS) {
+        attempted.add(section);
+        if (!base) sectionErrors[`${section}_error`] = sectionErrors.headline_error ?? 'base scan failed';
+      }
+      const new24 = await soft('headline', null, () =>
+        db.prepare(THREAT_AGGREGATE_NEW_24H_CUBE_SQL).first<{ n: number }>())();
+      headline = base ? { ...base, new_24h: new24?.n ?? 0 } : null;
+    } else {
     // Headline counts in one query
-    const headline = await soft('headline', null, () => db.prepare(`
+    headline = await soft('headline', null, () => db.prepare(`
       SELECT
         COUNT(*) AS total,
         SUM(CASE WHEN t.confidence_score >= 70 THEN 1 ELSE 0 END) AS confirmed,
@@ -260,10 +425,8 @@ export async function threatAggregate(
         SUM(CASE WHEN t.status IN ('down','remediated') THEN 1 ELSE 0 END) AS addressed,
         SUM(CASE WHEN t.created_at >= datetime('now','-24 hours') THEN 1 ELSE 0 END) AS new_24h
       ${fromClause}
-    `).bind(...queryParams).first<{
-      total: number; confirmed: number; correlated_by_campaign: number;
-      active: number; addressed: number; new_24h: number;
-    }>())();
+    `).bind(...queryParams).first<Headline>())();
+    }
 
     // Attribution count
     let attributed = 0;
@@ -291,15 +454,11 @@ export async function threatAggregate(
     const addressed = headline?.addressed ?? 0;
     const remediation_rate = total > 0 ? addressed / total : 0;
 
-    // Unfiltered slice: only top_brands / top_providers have a pre-computed
-    // source of the same all-time, all-status quantity (maintained
-    // counters, so they can lag the live table by hours). The rest stay on
-    // threats:
-    //  - by_severity / by_status: threat_cube_status has the right
-    //    dimensions but only covers rebuilt hour buckets (healed 2d/14d, see
-    //    handlers/public.ts — its SUM under-counts the all-time total), and
-    //    it maps NULL severity/status to 'unknown'.
-    //  - top_countries: threat_cube_geo is status='active' + lat/lng only.
+    // Unfiltered slice: by_severity / by_type / by_status / top_countries come
+    // from the shared base scan above; top_brands / top_providers from
+    // pre-computed counters of the same all-time, all-status quantity
+    // (maintained counters, so they can lag the live table by hours). The
+    // rest stay on threats:
     //  - campaigns / actors / multi-brand rows: no pre-computed source
     //    (multi_brand_providers needs COUNT(DISTINCT target_brand_id) per
     //    provider; no cube carries provider × brand).
@@ -315,19 +474,19 @@ export async function threatAggregate(
 
     const [bySev, byType, byStatus, geo, brands, providers, actors, campaigns,
            mbCampaigns, mbActors, mbProviders, surgeTypes, surgeCampaigns] = await runSequential([
-      soft('by_severity', noRows<{ severity: string; count: number }>(), async () => rowsOf(await db.prepare(
+      unfiltered ? fromBase(base?.by_severity) : soft('by_severity', noRows<{ severity: string; count: number }>(), async () => rowsOf(await db.prepare(
         `SELECT t.severity AS severity, COUNT(*) AS count ${fromClause}
                       GROUP BY t.severity ORDER BY count DESC`)
         .bind(...queryParams).all<{ severity: string; count: number }>())),
-      soft('by_type', noRows<{ type: string; count: number }>(), async () => rowsOf(await db.prepare(
+      unfiltered ? fromBase(base?.by_type) : soft('by_type', noRows<{ type: string; count: number }>(), async () => rowsOf(await db.prepare(
         `SELECT t.threat_type AS type, COUNT(*) AS count ${fromClause}
                       GROUP BY t.threat_type ORDER BY count DESC LIMIT 8`)
         .bind(...queryParams).all<{ type: string; count: number }>())),
-      soft('by_status', noRows<{ status: string; count: number }>(), async () => rowsOf(await db.prepare(
+      unfiltered ? fromBase(base?.by_status) : soft('by_status', noRows<{ status: string; count: number }>(), async () => rowsOf(await db.prepare(
         `SELECT t.status AS status, COUNT(*) AS count ${fromClause}
                       GROUP BY t.status ORDER BY count DESC`)
         .bind(...queryParams).all<{ status: string; count: number }>())),
-      soft('top_countries', noRows<{ country: string; count: number }>(), async () => rowsOf(await db.prepare(
+      unfiltered ? fromBase(base?.top_countries) : soft('top_countries', noRows<{ country: string; count: number }>(), async () => rowsOf(await db.prepare(
         `SELECT t.country_code AS country, COUNT(*) AS count
                       ${fromClause} ${sliceWhere ? 'AND' : 'WHERE'} t.country_code IS NOT NULL AND t.country_code != 'XX'
                       GROUP BY t.country_code ORDER BY count DESC LIMIT 10`)
@@ -457,7 +616,7 @@ export async function threatAggregate(
 
     // Section names (without the `_error` suffix softSection appends).
     const degraded_sections = Object.keys(sectionErrors).map((k) => k.replace(/_error$/, ''));
-    const allFailed = attempted.length > 0 && degraded_sections.length === attempted.length;
+    const allFailed = attempted.size > 0 && degraded_sections.length === attempted.size;
     if (degraded_sections.length > 0) {
       // Log the messages (never put them in the response): a deterministic SQL
       // bug in one section must be tellable from a D1 overload.

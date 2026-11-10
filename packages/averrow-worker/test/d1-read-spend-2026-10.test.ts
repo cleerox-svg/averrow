@@ -126,7 +126,7 @@ describe.skipIf(!hasSqlite())("#1 emailSecurityAggregate DMARC distribution", ()
 
 const AGG_TABLES = [
   "threats", "brands", "hosting_providers", "campaigns",
-  "threat_actors", "threat_actor_infrastructure",
+  "threat_actors", "threat_actor_infrastructure", "threat_cube_status",
 ];
 
 function seedThreatAggDb(analyze: boolean): SqliteDb {
