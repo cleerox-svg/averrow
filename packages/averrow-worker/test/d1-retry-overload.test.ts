@@ -173,15 +173,19 @@ describe("executeAgent finalize under D1 overload", () => {
   });
 
   it("a scheduled run whose finalize is overloaded 3× still lands success + completed_at", async () => {
-    vi.useFakeTimers();
+    // Warm executeAgent's lazy import so it resolves promptly under load.
+    await import("../src/lib/agent-approvals");
+    // Fake only setTimeout: setImmediate stays real so the loop below can
+    // yield to genuine I/O (module loading) between clock steps.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { db, runs, finalizeCalls } = makeDb(3);
     const env = { DB: db } as unknown as Env;
     let settled = false;
     const p = executeAgent(env, okAgent, {}, "cron", "scheduled").finally(() => { settled = true; });
-    // executeAgent awaits dynamic imports before the first timer exists, so
-    // step the clock until it settles (~21 s of backoff in total).
-    for (let i = 0; i < 120 && !settled; i++) {
-      await vi.advanceTimersByTimeAsync(500);
+    // Step the clock until it settles (~21 s of backoff in total).
+    for (let i = 0; i < 2_000 && !settled; i++) {
+      await new Promise<void>((r) => setImmediate(r));
+      await vi.advanceTimersByTimeAsync(250);
     }
     const res = await p;
     expect(res.status).toBe("success");
