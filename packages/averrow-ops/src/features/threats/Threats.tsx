@@ -127,7 +127,7 @@ export function Threats() {
   const multiBrandFailed = aggFailed || [...degraded].some((n) => n.startsWith('multi_brand_'));
   const surgingFailed = aggFailed || [...degraded].some((n) => n.startsWith('surging_'));
   const attributedFailed = degraded.has('attributed');
-  // While a degraded body is on screen the hook re-polls every 60s; Try again may
+  // While a degraded body is on screen the hook re-polls every 5 min; Try again may
   // return the same server-cached body, so say it retries on its own.
   const retrying = degraded.size > 0;
 

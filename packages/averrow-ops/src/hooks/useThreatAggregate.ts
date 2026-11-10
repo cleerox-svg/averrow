@@ -67,6 +67,9 @@ function toQuery(filters: ThreatAggregateFilters): string {
   return qs ? `?${qs}` : '';
 }
 
+/** Re-poll interval while the aggregate is degraded (5 min). */
+export const DEGRADED_POLL_MS = 5 * 60_000;
+
 export function useThreatAggregate(filters: ThreatAggregateFilters) {
   return useQuery({
     queryKey: ['threats', 'aggregate', filters],
@@ -75,8 +78,11 @@ export function useThreatAggregate(filters: ThreatAggregateFilters) {
       return (res.data ?? null) as ThreatAggregate | null;
     },
     // A degraded payload (some sections failed server-side) is never fresh, and
-    // polls every 60s (the server's degraded cache TTL) until it heals.
+    // re-polls every DEGRADED_POLL_MS until it heals. Not 60s (the server's
+    // degraded back-off): a degraded body usually means D1 is overloaded, and
+    // each poll past the back-off re-runs the aggregate's reads, so a 60s poll
+    // per open tab fed the overload it was waiting out (D1 spike 2026-11-09).
     staleTime: (query) => (query.state.data?.degraded_sections?.length ? 0 : 5 * 60_000),
-    refetchInterval: (query) => (query.state.data?.degraded_sections?.length ? 60_000 : false),
+    refetchInterval: (query) => (query.state.data?.degraded_sections?.length ? DEGRADED_POLL_MS : false),
   });
 }
