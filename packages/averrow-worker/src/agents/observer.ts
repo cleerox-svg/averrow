@@ -94,6 +94,8 @@ export const observerAgent: AgentModule = {
     { kind: "d1_table", name: "threat_signals" },
     { kind: "d1_table", name: "threats" },
     { kind: "d1_table", name: "users" },
+    // observer:last_scheduled_success_at marker (lib/observer-schedule-marker.ts)
+    { kind: "kv", namespace: "CACHE" },
   ],
   writes: [
     { kind: "d1_table", name: "agent_outputs" },
