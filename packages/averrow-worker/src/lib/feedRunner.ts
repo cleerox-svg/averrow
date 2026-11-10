@@ -522,8 +522,11 @@ export const FEED_RUN_TIMEOUT_OVERRIDES_MS: Readonly<Record<string, number>> = {
   // puts (NRD_TAIL_ALLOWANCE_MS, 120s). A deferring run is progress and must
   // not be timed out and penalized. ≥ budget + tail is pinned by
   // test/nrd-hagezi-budget.test.ts (no import here: feeds/nrd_hagezi
-  // imports this module).
-  nrd_hagezi: 180_000,
+  // imports this module). Its own cron invocation does nothing else and has a
+  // 15-min wall limit, so the cap is generous (420s) — a slow-D1 day whose
+  // tail runs past budget + tail must still reach the snapshot put; real
+  // hangs are caught by the readers' idle timeouts.
+  nrd_hagezi: 420_000,
 
   // Enrichment feeds (runAllEnrichmentFeeds, sequential). Same 14-day
   // data; spamhaus_dbl (max 68s), abuseipdb (max 25s) and circl_pdns

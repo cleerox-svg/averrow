@@ -166,7 +166,7 @@ afterEach(() => {
 });
 
 describe("budget vs the feed's per-pull timeout", () => {
-  it("runAllFeeds gives nrd_hagezi at least the processing budget plus the tail allowance", () => {
+  it("the dedicated cron gives nrd_hagezi at least the processing budget plus the tail allowance", () => {
     expect(feedRunTimeoutMs("nrd_hagezi")).toBeGreaterThanOrEqual(NRD_PROCESS_BUDGET_MS + NRD_TAIL_ALLOWANCE_MS);
   });
 });

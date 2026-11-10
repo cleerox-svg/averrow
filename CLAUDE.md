@@ -756,7 +756,7 @@ nrd_hagezi:   29 */2 * * *  (every 2h at :29 — dedicated ingest-feed cron, own
                              (DEDICATED_INGEST_FEEDS, lib/feedRunner.ts); handleScheduled
                              early-returns on exact `event.cron === '29 */2 * * *'` ABOVE the
                              hourly-mesh guard → dispatchDedicatedIngestFeed (enabled + breaker
-                             + its 180s per-pull timeout, normal runFeed bookkeeping; no
+                             + its 420s per-pull timeout, normal runFeed bookkeeping; no
                              interval check — the cron is the schedule). No minute/hour gates.
                              Per-run 45s processing budget with resume_after rotation, see
                              feeds/nrd_hagezi.ts.)

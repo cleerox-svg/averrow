@@ -230,7 +230,7 @@ export const NRD_MAX_NEW_PER_RUN = 1_000_000;
  * finishes the tail: scanning the rest of both lists into the snapshot and
  * the two R2 puts, which this budget does NOT bound (the snapshot must hold
  * every old line, so the scan cannot be cut short). NRD_TAIL_ALLOWANCE_MS
- * covers that tail, and runAllFeeds' per-pull timeout for this feed
+ * covers that tail, and dispatchDedicatedIngestFeed's per-pull timeout for this feed
  * (FEED_RUN_TIMEOUT_OVERRIDES_MS.nrd_hagezi, lib/feedRunner.ts) is ≥ budget
  * + tail allowance (pinned by test/nrd-hagezi-budget.test.ts), so a run that
  * is making progress is not timed out and penalized. A slow day (D1 under
