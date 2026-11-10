@@ -26,6 +26,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  DEDICATED_INGEST_FEEDS,
+  dispatchDedicatedIngestFeed,
   runAllFeeds,
   runAllEnrichmentFeeds,
   runAllSocialFeeds,
@@ -186,6 +188,15 @@ function query(state: State, sql: string, args: unknown[]): unknown[] {
     const rows = [...state.pulls.values()].filter((r) => r.feed_name === args[0] && r.id !== args[1]);
     const prev = rows.at(-1);
     return prev ? [{ status: prev.status, error_message: prev.error_message }] : [];
+  }
+  // Cron-dispatched feeds (dispatchDedicatedIngestFeed / dispatchEnrichmentFeed).
+  if (s.startsWith("SELECT feed_name, display_name, source_url, schedule_cron") && s.includes("WHERE feed_name = ?")) {
+    const all = query(state, "SELECT * FROM feed_configs WHERE enabled = 1", []) as Array<{ feed_name: string }>;
+    return all.filter((c) => c.feed_name === args[0]);
+  }
+  if (s.startsWith("SELECT next_retry_at FROM feed_status WHERE feed_name = ?")) {
+    const row = state.status.get(String(args[0]));
+    return row ? [{ next_retry_at: row.next_retry_at }] : [];
   }
   if (s.startsWith("SELECT * FROM feed_status")) return [...state.status.values()];
   if (s.startsWith("SELECT health_status, consecutive_failures FROM feed_status")) {
@@ -846,5 +857,80 @@ describe("clip tolerance with a real advancing clock", () => {
     expect(plan!.timeoutMs).toBeGreaterThanOrEqual(FEED_POOL_BUDGET_MS - FEED_TIMEOUT_CLIP_TOLERANCE_MS);
     // The pool still never runs past its deadline.
     expect(plannedAt + plan!.timeoutMs).toBeLessThanOrEqual(deadline);
+  });
+});
+
+// ─── Dedicated ingest feeds (nrd_hagezi on `29 */2 * * *`, 2026-11-10) ──
+
+describe("dedicated ingest feeds", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-10T04:29:00Z"));
+    createNotificationMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("nrd_hagezi is a dedicated ingest feed", () => {
+    expect([...DEDICATED_INGEST_FEEDS]).toEqual(["nrd_hagezi"]);
+  });
+
+  it("runAllFeeds never runs a dedicated feed inline, even when it is due", async () => {
+    const state = makeState(["nrd_hagezi", "urlhaus"]);
+    const nrd = vi.fn(async () => ({ ...OK }));
+    const result = await runAllFeeds(makeEnv(state), { nrd_hagezi: { ingest: nrd }, urlhaus: fastModule() });
+
+    expect(nrd).not.toHaveBeenCalled();
+    expect(state.inserts).toEqual(["urlhaus"]);
+    expect(result).toMatchObject({ feedsRun: 1, feedsSkipped: 1 });
+  });
+
+  it("dispatchDedicatedIngestFeed runs the feed through runFeed's bookkeeping", async () => {
+    const state = makeState(["nrd_hagezi"]);
+    const nrd = vi.fn(async () => ({ ...OK }));
+    await dispatchDedicatedIngestFeed(makeEnv(state), "nrd_hagezi", { ingest: nrd });
+
+    expect(nrd).toHaveBeenCalledTimes(1);
+    expect(pullOf(state, "nrd_hagezi").status).toBe("success");
+    expect(state.status.get("nrd_hagezi")!.consecutive_failures).toBe(0);
+  });
+
+  it("honors the circuit breaker (future next_retry_at) and a missing feed_configs row", async () => {
+    const state = makeState(["nrd_hagezi"]);
+    state.status.get("nrd_hagezi")!.next_retry_at = "2026-11-10T05:00:00Z";
+    const nrd = vi.fn(async () => ({ ...OK }));
+    await dispatchDedicatedIngestFeed(makeEnv(state), "nrd_hagezi", { ingest: nrd });
+    expect(nrd).not.toHaveBeenCalled();
+    expect(state.inserts).toEqual([]);
+
+    // Backoff window over → runs.
+    state.status.get("nrd_hagezi")!.next_retry_at = "2026-11-10T04:00:00Z";
+    await dispatchDedicatedIngestFeed(makeEnv(state), "nrd_hagezi", { ingest: nrd });
+    expect(nrd).toHaveBeenCalledTimes(1);
+
+    // No (enabled) feed_configs row → skipped, never throws.
+    const none = makeState([]);
+    await dispatchDedicatedIngestFeed(makeEnv(none), "nrd_hagezi", { ingest: nrd });
+    expect(nrd).toHaveBeenCalledTimes(1);
+    expect(none.inserts).toEqual([]);
+  });
+
+  it("a hung pull is finalized + penalized at the feed's own (unclipped) timeout; the dispatcher never throws", async () => {
+    const state = makeState(["nrd_hagezi"]);
+    let done = false;
+    const run = dispatchDedicatedIngestFeed(makeEnv(state), "nrd_hagezi", hangingModule()).finally(() => { done = true; });
+
+    await vi.advanceTimersByTimeAsync(feedRunTimeoutMs("nrd_hagezi") - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await run;
+
+    const row = pullOf(state, "nrd_hagezi");
+    expect(row.status).toBe("failed");
+    expect(row.error_message).toBe(`timed out after ${feedRunTimeoutMs("nrd_hagezi") / 1000}s — pull abandoned`);
+    expect(state.status.get("nrd_hagezi")!.consecutive_failures).toBe(1);
+    expect(state.status.get("nrd_hagezi")!.next_retry_at).not.toBeNull();
   });
 });
