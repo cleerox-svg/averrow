@@ -7,6 +7,9 @@ import { dispatchWorkflow } from '../lib/workflow-dispatch';
 import type { Env } from '../types';
 import { withD1Meter } from '../lib/d1-meter';
 
+/** Dedicated daily Observer cron (see the branch in runScheduled). */
+export const OBSERVER_CRON = '41 0 * * *';
+
 interface CronJobResult {
   job: string;
   status: 'success' | 'error' | 'skipped';
@@ -612,6 +615,33 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
       }
     } catch (err) {
       logger.error('page_capture_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  // ─── Observer daily briefing: dedicated cron (41 0 * * *) ──
+  //
+  // Was `if (hour === 0)` inline-awaited at the TAIL of runThreatFeedScan in
+  // the :07 tick — the heaviest tick of the day (cube_healer cold heal at
+  // :12, brand_scores :16, daily_snapshots :28, nrd_hagezi :29 all around
+  // it). On 2026-11-10 the 00:07 tick died before reaching it (analyst
+  // orphaned) and no observer row was written at all. Own invocation = fresh
+  // budget, same once-a-day run (owner decision 2026-11-10). 00:41: minute 41
+  // is off the */5 and */10 grids and used by no other trigger, after the
+  // 00:28 snapshots run's 8-min budget, and it keeps Observer's day boundary
+  // (it still reads the last 24h; Sunday weekly report gate `hour < 7`
+  // still holds). Pivot-triggered runs stay on processAgentEvents.
+  //
+  // CRON-AUDIT (CLAUDE.md §6): EXACT event.cron match, no minute/hour gate
+  // here or in agents/observer.ts. MUST stay above the mesh guard below.
+  if (event.cron === OBSERVER_CRON) {
+    try {
+      const { agentModules } = await import('../agents');
+      const { executeAgent } = await import('../lib/agentRunner');
+      const mod = agentModules['observer'];
+      if (mod) await executeAgent(env, mod, {}, 'cron', 'scheduled');
+    } catch (err) {
+      logger.error('observer_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
     }
     return;
   }
@@ -1541,17 +1571,10 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   // Same rationale as strategist above — was getting starved by the
   // orchestrator's heavy inline awaits.
 
-  // Observer + daily assessments — daily at midnight UTC
+  // Daily assessments — daily at midnight UTC. The Observer run that used
+  // to sit here moved to its dedicated `41 0 * * *` cron (OBSERVER_CRON,
+  // handleScheduled) on 2026-11-10 so it can't be starved by this tick.
   if (hour === 0) {
-    try {
-      const mod = allAgents["observer"];
-      if (mod) {
-        await executeAgent(env, mod, {}, "cron", "scheduled");
-      }
-    } catch (err) {
-      logger.error('threat_feed_scan_observer_error', { error: err instanceof Error ? err.message : String(err) });
-    }
-
     try {
       const { runDailyAssessments } = await import('../brand-threat-correlator');
       const assessResult = await runDailyAssessments(env);

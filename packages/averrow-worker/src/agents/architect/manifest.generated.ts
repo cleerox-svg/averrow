@@ -212,7 +212,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 1776,
-      "last_modified": "2026-11-10T03:21:20.667Z"
+      "last_modified": "2026-11-10T03:58:56.315Z"
     },
     {
       "name": "ct-monitor",
@@ -357,7 +357,7 @@ export const REPO_MANIFEST: RepoInventory = {
       ],
       "ai_models_referenced": [],
       "loc": 3660,
-      "last_modified": "2026-11-10T03:05:09.615Z"
+      "last_modified": "2026-11-10T03:59:52.696Z"
     },
     {
       "name": "geo-campaign-assessment",
@@ -540,8 +540,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "agent_outputs"
       ],
       "ai_models_referenced": [],
-      "loc": 1180,
-      "last_modified": "2026-11-10T03:16:52.451Z"
+      "loc": 1217,
+      "last_modified": "2026-11-10T04:00:49.779Z"
     },
     {
       "name": "pageCapture",
@@ -1064,8 +1064,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/averrow-worker/src/feeds/nrd_hagezi.ts",
       "source_type": "http",
       "schedule": null,
-      "loc": 780,
-      "last_modified": "2026-11-10T03:05:09.623Z"
+      "loc": 971,
+      "last_modified": "2026-11-10T03:58:55.967Z"
     },
     {
       "name": "nvd_cve",
@@ -1965,6 +1965,68 @@ export const REPO_MANIFEST: RepoInventory = {
         "strategist",
         "trademarkMonitor"
       ]
+    },
+    {
+      "pattern": "29 */2 * * *",
+      "handler_path": "packages/averrow-worker/src/index.ts",
+      "agents_invoked": [
+        "abuseMailboxClassifier",
+        "analyst",
+        "appStoreMonitor",
+        "attributor",
+        "auto-seeder",
+        "cartographer",
+        "ct-monitor",
+        "cube-healer",
+        "darkWebMonitor",
+        "executiveMonitor",
+        "flightControl",
+        "geoip-refresh",
+        "lookalike-scanner",
+        "narrator",
+        "news-watcher",
+        "nexus",
+        "notification_narrator",
+        "observer",
+        "pageCapture",
+        "seed-strategist",
+        "socialDiscovery",
+        "socialMonitor",
+        "sparrow",
+        "strategist",
+        "trademarkMonitor"
+      ]
+    },
+    {
+      "pattern": "41 0 * * *",
+      "handler_path": "packages/averrow-worker/src/index.ts",
+      "agents_invoked": [
+        "abuseMailboxClassifier",
+        "analyst",
+        "appStoreMonitor",
+        "attributor",
+        "auto-seeder",
+        "cartographer",
+        "ct-monitor",
+        "cube-healer",
+        "darkWebMonitor",
+        "executiveMonitor",
+        "flightControl",
+        "geoip-refresh",
+        "lookalike-scanner",
+        "narrator",
+        "news-watcher",
+        "nexus",
+        "notification_narrator",
+        "observer",
+        "pageCapture",
+        "seed-strategist",
+        "socialDiscovery",
+        "socialMonitor",
+        "sparrow",
+        "strategist",
+        "trademarkMonitor"
+      ]
     }
   ],
   "workers": [
@@ -1996,7 +2058,7 @@ export const REPO_MANIFEST: RepoInventory = {
   "totals": {
     "agents": 44,
     "feeds": 51,
-    "crons": 23,
+    "crons": 25,
     "workers": 1
   }
 };

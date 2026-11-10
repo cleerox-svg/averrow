@@ -3160,7 +3160,7 @@ export async function scaleAgents(
 //
 // The ONLY agents FC can re-dispatch today are the six daily/weekly
 // hour-gated mesh agents, which have no other catch-up path when their
-// one gated tick dies: observer (h0), seed_strategist + narrator (h6),
+// one gated tick dies: observer (once-daily `41 0 * * *` cron since 2026-11-10), seed_strategist + narrator (h6),
 // notification_narrator (h13), auto_seeder (Sun h5), geoip_refresh
 // (Sun h2). Gates 2-4 apply to them: re-run only once overdue past their
 // own threshold, one per tick, 2h→24h backoff. test/flight-control-stall-
