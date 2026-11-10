@@ -401,7 +401,10 @@ so install/push there is aspirational until improvement-plan session S12
 statement for the rest of a rolling 10 s window once its resource budget is
 spent ("D1 DB is overloaded"). `executeAgent` finalizes (success and failure)
 through `withD1Retry` with `overloadBaseMs` (`D1_OVERLOAD_RETRY_BASE_MS`,
-3 s / 6 s / 12 s, `lib/d1-retry.ts`) for every trigger except `api`; the old
+3 s / 6 s / 12 s, `lib/d1-retry.ts`) for `scheduled` and `event` triggers;
+`api` and `manual` runs are awaited inside an HTTP request and keep the short
+default (a cron call must pass its trigger explicitly — `executeAgent`
+defaults to `manual`); the old
 50/100/200 ms backoff retried inside the window and left finished runs
 'partial' with `completed_at` NULL, later reaped as "worker terminated".
 Handler-dispatched writers should pass a backoff of the same size to

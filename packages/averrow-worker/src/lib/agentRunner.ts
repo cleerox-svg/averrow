@@ -328,11 +328,16 @@ export interface ExecuteAgentResult {
  * the finalize UPDATE (and then, 350 ms later, the failure UPDATE): that row
  * is reaped an hour later as "worker terminated", which is what 2026-11-09/10
  * prod showed for navigator's :25/:55 ticks and the :07-:13 agents. Scheduled
- * and event runs wait the window out (lib/d1-retry.ts, 3 s / 6 s / 12 s);
- * 'api' runs (runSyncAgent, inside an HTTP request) keep the short default.
+ * and event runs (crons, Flight Control, Workflows, the agent_events
+ * consumer) wait the window out (lib/d1-retry.ts, 3 s / 6 s / 12 s). 'api'
+ * (runSyncAgent) and 'manual' (handlers/agents.ts trigger + TrustBot,
+ * handlers/spamTrap.ts, routes/admin.ts geoip reload) runs are awaited
+ * inside an HTTP request, so they keep the short default rather than hold
+ * the response for up to ~21 s. A cron path must therefore pass
+ * 'scheduled' / 'event' explicitly — executeAgent's default is 'manual'.
  */
 export function finalizeOverloadBaseMs(triggerType: TriggerType): number | undefined {
-  return triggerType === "api" ? undefined : D1_OVERLOAD_RETRY_BASE_MS;
+  return triggerType === "api" || triggerType === "manual" ? undefined : D1_OVERLOAD_RETRY_BASE_MS;
 }
 
 // ─── Run Execution ──────────────────────────────────────────────

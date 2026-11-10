@@ -20,6 +20,8 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   d1RetryDelayMs,
   withD1Retry,
@@ -165,11 +167,24 @@ const okAgent: AgentModule = {
 };
 
 describe("executeAgent finalize under D1 overload", () => {
-  it("maps trigger types: scheduled/event/manual wait the window out, api does not", () => {
+  it("maps trigger types: scheduled/event wait the window out, HTTP-awaited api/manual do not", () => {
     expect(finalizeOverloadBaseMs("scheduled")).toBe(D1_OVERLOAD_RETRY_BASE_MS);
     expect(finalizeOverloadBaseMs("event")).toBe(D1_OVERLOAD_RETRY_BASE_MS);
-    expect(finalizeOverloadBaseMs("manual")).toBe(D1_OVERLOAD_RETRY_BASE_MS);
+    expect(finalizeOverloadBaseMs("manual")).toBeUndefined();
     expect(finalizeOverloadBaseMs("api")).toBeUndefined();
+  });
+
+  it("every cron/orchestrator executeAgent call passes an explicit scheduled/event trigger", () => {
+    // executeAgent defaults to 'manual' (short backoff), so a cron call that
+    // omits the trigger would silently lose the overload backoff.
+    for (const rel of ["../src/cron/orchestrator.ts", "../src/cron/navigator.ts", "../src/cron/enricher.ts"]) {
+      const text = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+      const calls = text.split("executeAgent(").slice(1).map((c) => c.slice(0, c.indexOf(");") + 1));
+      for (const call of calls) {
+        if (call.startsWith(")") || call.startsWith("env: Env")) continue; // a prose mention / signature, not a call
+        expect(/'(scheduled|event)'|"(scheduled|event)"/.test(call), `${rel}: executeAgent(${call.slice(0, 80)}`).toBe(true);
+      }
+    }
   });
 
   it("a scheduled run whose finalize is overloaded 3× still lands success + completed_at", async () => {

@@ -855,7 +855,9 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
     const digestResult = await runJob('notification_narrator', async () => {
       const { executeAgent } = await import('../lib/agentRunner');
       const { notificationNarratorAgent } = await import('../agents/notification_narrator');
-      await executeAgent(env, notificationNarratorAgent);
+      // 'scheduled', not the 'manual' default: a cron run gets the long
+      // finalize backoff (finalizeOverloadBaseMs).
+      await executeAgent(env, notificationNarratorAgent, {}, 'cron', 'scheduled');
     });
     results.push(digestResult);
   }
