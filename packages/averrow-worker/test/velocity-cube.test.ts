@@ -220,6 +220,8 @@ function stubCtx(scheduledTime: string, opts: { failBatch?: (sql: string, n: num
         batches.push(stmts.map((s) => ({ sql: s.sql, binds: s.binds })));
         return stmts.map(() => ({ meta: { changes: 0 } }));
       },
+      // cube_healer reads the Threats aggregate base through a read session.
+      withSession: () => ({ prepare: (sql: string) => stmt(sql) }),
     },
     CACHE: fakeKv({ "cube_healer:last_analyze_at": String(Date.now()) }),
   } as unknown as Env;

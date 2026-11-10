@@ -26,7 +26,7 @@ import { threatAggregate, type ThreatAggregateFilters } from "../src/lib/threat-
 
 const TABLES = [
   "threats", "brands", "hosting_providers", "campaigns",
-  "threat_actors", "threat_actor_infrastructure",
+  "threat_actors", "threat_actor_infrastructure", "threat_cube_status",
 ];
 
 interface Seed {

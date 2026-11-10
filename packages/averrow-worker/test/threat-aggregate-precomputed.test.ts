@@ -31,7 +31,7 @@ import {
 
 const TABLES = [
   "threats", "brands", "hosting_providers", "campaigns",
-  "threat_actors", "threat_actor_infrastructure",
+  "threat_actors", "threat_actor_infrastructure", "threat_cube_status",
 ];
 
 function seed() {
@@ -168,6 +168,8 @@ function cachedAgeSeconds(kv: { store: Map<string, string> }): number {
 }
 
 const isByType = (sql: string) => /GROUP BY t\.threat_type ORDER BY count DESC LIMIT 8/.test(sql.replace(/\s+/g, " "));
+/** surging_types — a section the unfiltered slice still reads per refill (by_type comes from the base scan there). */
+const isSurgeTypes = (sql: string) => sql.includes("t.threat_type AS label");
 
 describe.skipIf(!hasSqlite())("threatAggregate fail-soft sections", () => {
   it("healthy compute: degraded_sections is empty and the entry gets the full slice TTL", async () => {
@@ -180,12 +182,13 @@ describe.skipIf(!hasSqlite())("threatAggregate fail-soft sections", () => {
 
   it("one failing section → partial result, degraded_sections names it, cached for the short TTL", async () => {
     const kv = fakeKv();
-    const env = { DB: failingDb(d1FromSqlite(seed()), isByType), CACHE: kv } as unknown as Env;
+    const env = { DB: failingDb(d1FromSqlite(seed()), isSurgeTypes), CACHE: kv } as unknown as Env;
     const agg = await threatAggregate(env, {});
-    expect(agg.degraded_sections).toEqual(["by_type"]);
-    expect(agg.by_type).toEqual([]);
+    expect(agg.degraded_sections).toEqual(["surging_types"]);
+    expect(agg.surging_signals).toEqual([]);
     // Every other section still has its real data.
     expect(agg.total).toBe(3);
+    expect(agg.by_type).toEqual([{ type: "phishing", count: 3 }]);
     expect(byKey(agg.by_status, (r) => r.status, (r) => r.count)).toEqual({ active: 2, down: 1 });
     expect(agg.top_providers.length).toBe(2);
     // Stamped as written (unfiltered TTL − degraded TTL) ago → expires after ~60s.
@@ -210,7 +213,7 @@ describe.skipIf(!hasSqlite())("threatAggregate fail-soft sections", () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     try {
       const env = { DB: failingDb(d1FromSqlite(seed()), isByType), CACHE: fakeKv() } as unknown as Env;
-      const agg = await threatAggregate(env, {});
+      const agg = await threatAggregate(env, { status: "active" });
       expect(warn).toHaveBeenCalledWith("threat_aggregate_sections_degraded", expect.objectContaining({
         sections: ["by_type"],
         errors: { by_type_error: expect.stringContaining("D1 DB is overloaded") },
@@ -242,11 +245,12 @@ describe.skipIf(!hasSqlite())("threatAggregate fail-soft sections", () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     try {
       let prepares = 0;
-      const counting = failingDb(d1FromSqlite(seed()), (sql) => { prepares++; return isByType(sql); });
+      const counting = failingDb(d1FromSqlite(seed()), (sql) => { prepares++; return isSurgeTypes(sql); });
       const env = { DB: counting, CACHE: kv } as unknown as Env;
       const agg = await threatAggregate(env, {});
       expect(agg.degraded_sections).toEqual([]);
-      expect(agg.by_type).toEqual(good.by_type);
+      expect(agg.surging_signals).toEqual(good.surging_signals);
+      expect(good.surging_signals.length).toBeGreaterThan(0);
       expect(prepares).toBeGreaterThan(0);
       // Kept value re-stamped fresh for the degraded back-off; original write time in `w`.
       const kept = JSON.parse(kv.store.get(key)!) as { v: { by_type: unknown }; t: number; w: number };

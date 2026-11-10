@@ -5,7 +5,8 @@
 //
 // D1 never auto-runs ANALYZE, so a freshly created index has no
 // sqlite_stat1 row until something analyzes it (cube_healer runs a weekly
-// `ANALYZE threats` + `ANALYZE brands`; nothing periodic covers
+// `ANALYZE brands` only — its table-scoped `ANALYZE threats` was dropped
+// 2026-11-10, a ~89M-row statement; nothing periodic covers threats or
 // lookalike_domains). This endpoint closes that gap for the indexes the
 // IdP-impersonation work added (migration 0288) without a migration.
 //
