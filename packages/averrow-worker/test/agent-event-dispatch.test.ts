@@ -25,6 +25,8 @@ import {
   EVENT_DISPATCH_DAILY_CAP_DEFAULT,
   type PendingAgentEvent,
 } from "../src/lib/agent-event-dispatch";
+import { STALE_PROCESSING_AGENT_EVENTS_SQL } from "../src/cron/orchestrator";
+import { hasSqlite, openDerivedDb } from "./sqlite-d1-harness";
 
 const ev = (id: string, target: string | null, payload: Record<string, unknown> = {}, priority = 1): PendingAgentEvent => ({
   id,
@@ -101,5 +103,40 @@ describe("orchestrator processAgentEvents wiring", () => {
     // The old per-event executeAgent loop is gone.
     expect(body).not.toMatch(/for \(const event of events\.results\)/);
     expect(body).toContain("coalescedEventInput(d)");
+  });
+});
+
+describe("orchestrator processAgentEvents finalize + stale claims", () => {
+  const orch = readFileSync(fileURLToPath(new URL("../src/cron/orchestrator.ts", import.meta.url)), "utf8");
+  const start = orch.indexOf("async function processAgentEvents");
+  const body = orch.slice(start, orch.indexOf("\nasync function runJob", start));
+
+  it("the final done/failed batch runs under the overload retry; the sweep runs before the claim", () => {
+    expect(body).toMatch(/withD1Retry\(\(\) => env\.DB\.batch\(finalStmts\)/);
+    expect(body).toContain("overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS");
+    expect(body.indexOf("STALE_PROCESSING_AGENT_EVENTS_SQL")).toBeGreaterThan(0);
+    expect(body.indexOf("STALE_PROCESSING_AGENT_EVENTS_SQL"))
+      .toBeLessThan(body.indexOf("SET status = 'processing'"));
+  });
+
+  it.skipIf(!hasSqlite())("fails only 'processing' rows from an earlier tick", () => {
+    const db = openDerivedDb(["agent_events"]);
+    const ins = db.prepare(
+      `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, created_at, status)
+       VALUES (?, 'pivot_detected', 'nexus', 'observer', '{}', 1, datetime('now', ?), ?)`,
+    );
+    ins.run("stuck-2h", "-2 hours", "processing");
+    ins.run("claimed-now", "-10 minutes", "processing");
+    ins.run("pending-2h", "-2 hours", "pending");
+    ins.run("done-2h", "-2 hours", "done");
+    // node:sqlite lacks UPDATE … LIMIT (D1 has it): run the same WHERE.
+    db.exec(STALE_PROCESSING_AGENT_EVENTS_SQL.replace(/\s+LIMIT \?\s*$/, ""));
+    const rows = db.prepare(`SELECT id, status FROM agent_events ORDER BY id`).all() as Array<{ id: string; status: string }>;
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({
+      "claimed-now": "processing",
+      "done-2h": "done",
+      "pending-2h": "pending",
+      "stuck-2h": "failed",
+    });
   });
 });

@@ -900,7 +900,28 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
  *  reading the whole burst in one tick is what keeps it to ONE run (was 10:
  *  an 11-event burst left a straggler that cost a second run next tick). */
 export const AGENT_EVENTS_PER_TICK = 50;
+
+/** Events claimed 'processing' by an earlier consumer tick that never
+ *  finalized them (worker killed, or the final batch lost to D1 overload).
+ *  A tick claims and finalizes inside one invocation, so any 'processing'
+ *  row created over an hour ago belongs to a dead tick. Marked 'failed', not
+ *  re-queued: its dispatch may already have run, and a replay would be a
+ *  duplicate observer run. Seeks idx on (status, priority, created_at). */
+export const STALE_PROCESSING_AGENT_EVENTS_SQL = `
+      UPDATE agent_events
+      SET status = 'failed'
+      WHERE status = 'processing'
+        AND created_at <= datetime('now', '-1 hour')
+      LIMIT ?`;
+
 async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void> {
+  // Best-effort sweep of a previous tick's unfinalized claims (see above).
+  try {
+    const swept = await env.DB.prepare(STALE_PROCESSING_AGENT_EVENTS_SQL).bind(AGENT_EVENTS_PER_TICK * 4).run();
+    const n = swept.meta?.changes ?? 0;
+    if (n > 0) logger.warn('agent_events_stale_processing_failed', { count: n });
+  } catch { /* the next tick retries */ }
+
   try {
     const events = await env.DB.prepare(`
       SELECT id, event_type, source_agent, target_agent, payload_json, priority
@@ -1005,7 +1026,16 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
       ...markStmts(`UPDATE agent_events SET status = 'done', processed_at = datetime('now') WHERE id = ?`, doneIds),
       ...markStmts(`UPDATE agent_events SET status = 'failed' WHERE id = ?`, failedIds),
     ];
-    if (finalStmts.length > 0) await env.DB.batch(finalStmts);
+    // Under overload retry: the statements are idempotent, and a lost batch
+    // would leave up to AGENT_EVENTS_PER_TICK rows 'processing' until the
+    // next tick's stale sweep fails them.
+    if (finalStmts.length > 0) {
+      const { withD1Retry, D1_OVERLOAD_RETRY_BASE_MS } = await import('../lib/d1-retry');
+      await withD1Retry(() => env.DB.batch(finalStmts), {
+        label: 'agent_events finalize',
+        overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS,
+      });
+    }
 
     logger.info('agent_events_processed', {
       count: events.results.length,

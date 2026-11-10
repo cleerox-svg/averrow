@@ -504,7 +504,13 @@ Active edges (event-driven):
                                              cron/navigator.ts — before 2026-11-10 it expired
                                              them after 5 min and the edge never fired). The
                                              consumer reads 50 pending events per tick so a
-                                             7-11 event burst is one run. Observer's pivot run
+                                             7-11 event burst is one run. Its final done/failed
+                                             batch runs under `withD1Retry` (overload backoff);
+                                             a claim a dead tick never finalized ('processing',
+                                             created > 1h ago) is marked 'failed' at the start
+                                             of the next tick (`STALE_PROCESSING_AGENT_EVENTS_SQL`
+                                             — not re-queued: its run may already have
+                                             happened). Observer's pivot run
                                              (`input.triggeredByEvent='pivot_detected'`) is a
                                              focused rule-based report from the payloads only
                                              (`lib/observer-pivot-report.ts`: per-cluster
