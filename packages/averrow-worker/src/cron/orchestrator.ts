@@ -889,62 +889,96 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
 
     const { agentModules } = await import('../agents/index');
     const { executeAgent } = await import('../lib/agentRunner');
+    const {
+      planAgentEventDispatch, eventDispatchKey, parseDispatchCount,
+    } = await import('../lib/agent-event-dispatch');
 
-    for (const event of events.results) {
-      // Mark as processing to prevent double-processing
-      await env.DB.prepare(
-        `UPDATE agent_events SET status = 'processing' WHERE id = ?`
-      ).bind(event.id).run();
+    // Claim the whole tick's events up front (one batch) so a concurrent
+    // consumer can't pick them up while their dispatch is planned.
+    const markStmts = (sql: string, ids: string[]): D1PreparedStatement[] =>
+      ids.map((id) => env.DB.prepare(sql).bind(id));
+    const allIds = events.results.map((e) => e.id);
+    await env.DB.batch(markStmts(`UPDATE agent_events SET status = 'processing' WHERE id = ?`, allIds));
 
+    // Coalesce per target + per-UTC-day cap (lib/agent-event-dispatch.ts).
+    // Telemetry events (target_agent NULL/'') are recorded, never dispatched.
+    const utcDate = new Date().toISOString().slice(0, 10);
+    const targets = [...new Set(events.results.map((e) => e.target_agent).filter((t): t is string => !!t))];
+    const dispatchedToday = new Map<string, number>();
+    for (const t of targets) {
       try {
-        const payload = event.payload_json ? JSON.parse(event.payload_json) as Record<string, unknown> : {};
-        // Telemetry-only events carry target_agent=NULL or an empty
-        // string. They're written to give operators a forensic record
-        // of agent completions (e.g. threats_enriched, nexus_complete)
-        // but don't drive control flow — cron + FC already dispatch the
-        // relevant downstream work on a fixed cadence. Mark as 'done'
-        // without trying to dispatch and without warning.
-        const isTelemetry = !event.target_agent || event.target_agent.length === 0;
-        const mod = isTelemetry ? undefined : agentModules[event.target_agent];
+        dispatchedToday.set(t, parseDispatchCount(await env.CACHE.get(eventDispatchKey(t, utcDate))));
+      } catch { dispatchedToday.set(t, 0); /* best-effort: unknown count = 0 */ }
+    }
+    const plan = planAgentEventDispatch(events.results, dispatchedToday);
 
-        if (mod) {
-          ctx.waitUntil(
-            executeAgent(env, mod, { ...payload, triggeredByEvent: event.event_type }, "cron", "event")
+    const doneIds: string[] = [...plan.telemetryIds];
+    const failedIds: string[] = [];
+
+    for (const c of plan.capped) {
+      doneIds.push(...c.eventIds);
+      await logFlightControlActivity(env, 'scaling',
+        `Event dispatch to ${c.target} capped (${c.dispatchedToday}/${c.cap} today) — ${c.eventIds.length} event(s) recorded, not dispatched`,
+        { target_agent: c.target, event_ids: c.eventIds, dispatched_today: c.dispatchedToday, cap: c.cap }, 'info');
+    }
+
+    for (const d of plan.dispatches) {
+      const mod = agentModules[d.target];
+      if (!mod) {
+        // target_agent was set but we don't have a module for it —
+        // genuine misconfiguration worth surfacing.
+        logger.warn('agent_event_unknown_target', {
+          event_ids: d.eventIds,
+          target_agent: d.target,
+          event_type: d.event.event_type,
+        });
+        doneIds.push(...d.eventIds);
+        continue;
+      }
+      try {
+        const payload = d.event.payload_json ? JSON.parse(d.event.payload_json) as Record<string, unknown> : {};
+        ctx.waitUntil(
+          executeAgent(env, mod, {
+            ...payload,
+            triggeredByEvent: d.event.event_type,
+            coalescedEvents: d.eventIds.length,
+          }, "cron", "event"),
+        );
+        try {
+          await env.CACHE.put(
+            eventDispatchKey(d.target, utcDate),
+            String((dispatchedToday.get(d.target) ?? 0) + 1),
+            { expirationTtl: 2 * 24 * 3600 },
           );
-        } else if (!isTelemetry) {
-          // target_agent was set but we don't have a module for it —
-          // genuine misconfiguration worth surfacing.
-          logger.warn('agent_event_unknown_target', {
-            event_id: event.id,
-            target_agent: event.target_agent,
-            event_type: event.event_type,
-          });
-        }
-
-        await env.DB.prepare(
-          `UPDATE agent_events SET status = 'done', processed_at = datetime('now') WHERE id = ?`
-        ).bind(event.id).run();
-
+        } catch { /* best-effort — worst case one extra run today */ }
+        doneIds.push(...d.eventIds);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error('agent_event_processing_failed', {
-          event_id: event.id,
-          target_agent: event.target_agent,
+          event_ids: d.eventIds,
+          target_agent: d.target,
           error: message,
         });
-        await env.DB.prepare(
-          `UPDATE agent_events SET status = 'failed' WHERE id = ?`
-        ).bind(event.id).run();
-
-        await logFlightControlActivity(env, 'recovery', `Agent event processing failed for ${event.target_agent}: ${message}`, {
-          event_id: event.id,
-          target_agent: event.target_agent,
-          event_type: event.event_type,
+        failedIds.push(...d.eventIds);
+        await logFlightControlActivity(env, 'recovery', `Agent event processing failed for ${d.target}: ${message}`, {
+          event_ids: d.eventIds,
+          target_agent: d.target,
+          event_type: d.event.event_type,
         }, 'warning');
       }
     }
 
-    logger.info('agent_events_processed', { count: events.results.length });
+    const finalStmts = [
+      ...markStmts(`UPDATE agent_events SET status = 'done', processed_at = datetime('now') WHERE id = ?`, doneIds),
+      ...markStmts(`UPDATE agent_events SET status = 'failed' WHERE id = ?`, failedIds),
+    ];
+    if (finalStmts.length > 0) await env.DB.batch(finalStmts);
+
+    logger.info('agent_events_processed', {
+      count: events.results.length,
+      dispatched: plan.dispatches.length,
+      capped: plan.capped.length,
+    });
   } catch (err) {
     logger.error('agent_events_consumer_error', {
       error: err instanceof Error ? err.message : String(err),
