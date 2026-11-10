@@ -22,6 +22,62 @@ export async function runSequential<T extends Array<() => Promise<unknown>>>(
   return out as { [K in keyof T]: Awaited<ReturnType<T[K]>> };
 }
 
+/** Resolve after `ms` (immediately for `ms <= 0`). */
+export function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise<void>((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+/** Thrown by `withTimeout` when the work did not settle in time. */
+export class TimeoutError extends Error {
+  constructor(label: string, ms: number) {
+    super(`${label} timed out after ${ms}ms`);
+    this.name = "TimeoutError";
+  }
+}
+
+/**
+ * Race `fn()` against a timer. Rejects with `TimeoutError` when the timer
+ * wins (the underlying work is not cancelled — a D1 query keeps running
+ * server-side — but the caller stops waiting for it). The timer is always
+ * cleared. `ms <= 0` disables the timeout.
+ */
+export async function withTimeout<T>(fn: () => Promise<T>, ms: number, label: string): Promise<T> {
+  if (!(ms > 0)) return fn();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new TimeoutError(label, ms)), ms);
+  });
+  try {
+    return await Promise.race([fn(), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Run `fn` up to `backoffMs.length + 1` times, sleeping `backoffMs[i]`
+ * before retry i+1, and rethrow the last error. Only use it for work that is
+ * safe to repeat (idempotent writes). D1's overload rejection
+ * (`Too many resources consumed within a 10 second window`) clears only once
+ * that window rolls over, so a backoff schedule meant to ride it out must
+ * add up to more than 10 s.
+ */
+export async function retryWithBackoff<T>(
+  fn: (attempt: number) => Promise<T>,
+  backoffMs: readonly number[],
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= backoffMs.length; attempt++) {
+    if (attempt > 0) await sleep(backoffMs[attempt - 1] ?? 0);
+    try {
+      return await fn(attempt);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 /** `<section>_error` → message, filled by `softSection`. */
 export type SectionErrors = Record<string, string>;
 

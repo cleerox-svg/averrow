@@ -77,7 +77,7 @@ function makeEnv(opts: MakeEnvOpts = {}): { env: Env; rec: Recorder } {
           if (lower.includes("insert into threat_briefings")) {
             if (opts.failBriefingInsert) throw new Error("D1 briefings INSERT failed");
             rec.briefingInserts++;
-            return { meta: { last_row_id: 42 } };
+            return { meta: { last_row_id: 42, changes: 1 } };
           }
           return { meta: { last_row_id: 42 } };
         },
@@ -116,6 +116,11 @@ describe("daily briefing agent-run contract", () => {
   beforeAll(async () => {
     const mod = await import("../src/cron/orchestrator");
     expect(typeof mod.handleScheduled).toBe("function");
+    // Zero the production retry delays (they span > 10 s on purpose).
+    const { BRIEFING_TIMING } = await import("../src/handlers/briefing");
+    BRIEFING_TIMING.writeBackoffMs = [0, 0, 0, 0];
+    BRIEFING_TIMING.finalizeBackoffMs = [0, 0, 0];
+    BRIEFING_TIMING.enrichmentChunkPauseMs = 0;
   }, 120_000);
 
   beforeEach(() => vi.clearAllMocks());
@@ -183,8 +188,9 @@ describe("daily briefing agent-run contract", () => {
 
     expect(result.briefingId).toBe(42);
     expect(rec.agentRunUpdates).toHaveLength(0);
-    // Exactly 3 attempts consumed — and telemetry still emitted.
-    expect(opts.failRunUpdates).toBe(7);
+    // Exactly 4 attempts consumed (BRIEFING_TIMING.finalizeBackoffMs + 1) —
+    // and telemetry still emitted.
+    expect(opts.failRunUpdates).toBe(6);
     expect(rec.events).toHaveLength(1);
   });
 

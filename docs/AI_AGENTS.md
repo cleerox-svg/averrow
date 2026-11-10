@@ -495,16 +495,23 @@ the name map above) — it's a handler dispatched from a dedicated cron
 branch and two HTTP routes, not from the agent mesh. As of the Tier 2b
 instrumentation pass, it participates in the agent-run contract via a
 `withBriefingRun` wrapper shared by all three call sites: an
-`agent_runs` row (`agent_id='daily_briefing'`, running → success/failed,
-`error_message` on failure) plus a telemetry `agent_events` row
-(`briefing_generated`, `target_agent=NULL` — no downstream dispatch,
-operator traceability only). `fetchComprehensiveBriefing` is pure
+`agent_runs` row (`agent_id='daily_briefing'`, running → success /
+partial / failed, finalized in a `finally` with retries spanning more
+than one D1 10 s overload window; `partial` + `completed_at` = the
+briefing was stored and emailed but the sections named in
+`error_message` fell back) plus a telemetry `agent_events` row
+(`briefing_generated`, `target_agent=NULL`, payload `fallback_sections`
+— no downstream dispatch, operator traceability only). Section reads are
+time-boxed and budgeted, the enrichment totals are summed over rowid
+chunks, the source-feed totals read `threat_cube_status`, and the
+`threat_briefings` INSERT is idempotent and retried (2026-11-10 fix; knobs
+in `BRIEFING_TIMING`). `fetchComprehensiveBriefing` is pure
 SQL — no AI call in the briefing path. See `CLAUDE.md §6` for the
 cron-relocation history (previously gated at `hour === 13` inside the
 hourly mesh; moved to its own invocation after that budget was
 exhausted before the `threat_briefings` INSERT could land).
 
-**Inputs:** `threats`, `feed_status`/`feed_pull_history`, `agent_runs`,
+**Inputs:** `threats`, `threat_cube_status`, `feed_status`/`feed_pull_history`, `agent_runs`,
 `agent_outputs` (flight_control diagnostic), `social_mentions`,
 `app_store_listings`, `dark_web_mentions`, `seed_addresses`/
 `spam_trap_captures`, `honeypot_visits`, `brands`/`monitored_brands`,

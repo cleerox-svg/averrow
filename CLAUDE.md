@@ -673,7 +673,20 @@ daily_briefing: 13 13 * * * (once daily at 13:13 UTC — generates the 12-sectio
                              ~30 section reads run one at a time (`runSequential`, each
                              with its own fallback) instead of one Promise.all burst, and
                              the threat total reads the shared `count.threats.total`
-                             counter (can lag ≤6h) instead of a full COUNT(*). Handler:
+                             counter (can lag ≤6h) instead of a full COUNT(*). Since
+                             2026-11-10 (after the 11-09 run lost its INSERT and every
+                             finalize to a D1 overload window it caused itself with
+                             4.67M rows read): every read is time-boxed (20 s) under a
+                             180 s read budget and falls back per section; the all-time
+                             enrichment SUM walks threats in 200K-rowid chunks with a
+                             pause between them; typosquat/certstream totals read
+                             `threat_cube_status` (≤6% of the old reads); the INSERT is
+                             idempotent (`generation_id` stamp, NOT EXISTS) and retried
+                             1/3/6/12 s; finalize retries 2/5/12 s in a `finally`; the
+                             Resend send has a 30 s ceiling. Fallback sections (other than
+                             a missing table) finish the run `partial` with
+                             `completed_at` set and error_message naming them — the row and
+                             email still land. Knobs: `BRIEFING_TIMING`. Handler:
                              `handlers/briefing.ts` `generateAndEmailBriefing`, wrapped by
                              `withBriefingRun` — writes `agent_runs` (agent_id
                              'daily_briefing') + a telemetry `agent_events` row
