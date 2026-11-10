@@ -108,11 +108,14 @@ export const observerAgent: AgentModule = {
     const callCtx = { agentId: "observer", runId };
 
     // Event-triggered runs (pivot_detected → processAgentEvents, which sets
-    // input.triggeredByEvent) do the rule-based briefing only. The Claude
-    // budget (observer's 2M-token cap, AI_CLAUDE_TASKS) is reserved for the
-    // scheduled daily/weekly narrative — up to 10 events per hourly tick
-    // would otherwise drain it. No call is made, so nothing is counted —
-    // a deliberate skip, not a failure.
+    // input.triggeredByEvent) never call AI: the Claude budget (observer's
+    // 2M-token cap, AI_CLAUDE_TASKS) is reserved for the scheduled
+    // daily/weekly narrative. processAgentEvents coalesces a tick's events
+    // into one run and caps event runs at 3 per UTC day
+    // (lib/agent-event-dispatch.ts). A pivot_detected run writes the pivot
+    // report below; any other event trigger falls through to the rule-based
+    // briefing with the AI call skipped. No call is made, so nothing is
+    // counted — a deliberate skip, not a failure.
     const triggeredByEvent = typeof ctx.input.triggeredByEvent === "string" && ctx.input.triggeredByEvent.length > 0
       ? ctx.input.triggeredByEvent
       : null;

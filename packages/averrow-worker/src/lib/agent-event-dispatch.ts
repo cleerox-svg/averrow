@@ -31,9 +31,10 @@ export interface PendingAgentEvent {
 export const EVENT_DISPATCH_DAILY_CAP_DEFAULT = 6;
 
 /**
- * Per-target overrides. Observer: its scheduled daily run (hour 0) is the
- * briefing; an event-triggered run only re-renders the same rule-based
- * briefing, so a few a day is plenty.
+ * Per-target overrides. Observer: its scheduled daily run (dedicated
+ * `41 0 * * *` cron) is the briefing; an event-triggered run is a short
+ * rule-based pivot report (lib/observer-pivot-report.ts), so a few a day is
+ * plenty.
  */
 export const EVENT_DISPATCH_DAILY_CAPS: Readonly<Record<string, number>> = {
   observer: 3,
