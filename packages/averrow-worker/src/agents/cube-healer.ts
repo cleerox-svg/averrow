@@ -75,6 +75,13 @@
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
 import { cubeStaleSweepSQL, VELOCITY_SOURCE_FILTER, type CubeName } from '../lib/cube-builder';
+import { getReadSession } from '../lib/db';
+
+/**
+ * The weekly statistics refresh. A table-scoped `ANALYZE threats` is
+ * deliberately absent — see the "Weekly ANALYZE" block in execute().
+ */
+export const CUBE_HEALER_ANALYZE_SQL = 'ANALYZE brands';
 
 // ─── Heal window selection ───────────────────────────────────────
 // Hot vs cold scope (PR-BM): hot covers the most recent 2 days,
@@ -581,19 +588,40 @@ export const cubeHealerAgent: AgentModule = {
       });
     }
 
-    // ── Weekly ANALYZE ──────────────────────────────────────────
+    // ── Threats aggregate base (D1 spike 2026-11-09/10) ─────────
+    // The unfiltered Threats-page aggregate's whole-table numbers come from
+    // one shared base scan (lib/threat-aggregates.ts, THREAT_AGGREGATE_BASE_KEY,
+    // ~3.1M rows read / ~10s). Refreshed here every 6h so the HTTP path reads
+    // KV and never runs it on a page view; its 7h TTL outlives one healer
+    // interval. Reads go through a read-replica session. Non-fatal.
+    try {
+      const { refreshThreatAggregateBase } = await import('../lib/threat-aggregates');
+      await refreshThreatAggregateBase(env, getReadSession(env, { bookmark: null }));
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      partialFailures.push({
+        type: 'diagnostic',
+        summary: 'cube_healer threats aggregate base refresh failed (non-fatal — the Threats page computes it on demand)',
+        severity: 'medium',
+        details: { error: errMsg, stage: 'threat_aggregate_base' },
+      });
+    }
+
+    // ── Weekly ANALYZE (brands only) ────────────────────────────
     // D1 doesn't auto-run ANALYZE, so sqlite_stat1 only updates when
-    // we explicitly ask. Without fresh stats the query planner falls
-    // back to heuristics that can silently pick a worse index as the
-    // data shape drifts — we saw exactly this in PR #776 where
-    // partial indexes were only picked up after a manual ANALYZE.
+    // we explicitly ask. Gated once per 7 days via KV.
     //
-    // Gated once per 7 days via KV so it runs ~once/week regardless
-    // of which 6-hour tick happens to cross the boundary. Full-table
-    // scan during ANALYZE is cheap (a few hundred ms) but we don't
-    // need it more often than that — distribution changes are slow.
+    // `threats` is NOT analyzed here any more (2026-11-10): a table-scoped
+    // ANALYZE reads every row once per index, and threats carries ~59
+    // indexes over ~1.55M rows, so the weekly `ANALYZE threats` was a single
+    // ~89M-row statement (prod D1 top query; it landed in the 2026-11-10
+    // 00:00 UTC hour, 115M rows read, ~98M of them unmetered). The hot
+    // threats reads pin their indexes (INDEXED BY / unary +); an index that
+    // needs fresh stats gets an index-scoped `ANALYZE <index>` (one index
+    // walk), the pattern of handlers/admin/dbAnalyze.ts.
+    // brands (~133K rows x ~18 indexes, ~2.4M rows) stays weekly.
     //
-    // Non-fatal: ANALYZE failure becomes a low-severity diagnostic.
+    // Non-fatal: ANALYZE failure becomes a medium-severity diagnostic.
     try {
       const ANALYZE_LOCK_KEY = 'cube_healer:last_analyze_at';
       const ANALYZE_INTERVAL_S = 7 * 24 * 60 * 60; // 7 days
@@ -601,8 +629,7 @@ export const cubeHealerAgent: AgentModule = {
       const lastRunMs = lastRun ? Number(lastRun) : 0;
       const shouldAnalyze = !lastRunMs || (Date.now() - lastRunMs) > ANALYZE_INTERVAL_S * 1000;
       if (shouldAnalyze) {
-        await env.DB.prepare('ANALYZE threats').run();
-        await env.DB.prepare('ANALYZE brands').run();
+        await env.DB.prepare(CUBE_HEALER_ANALYZE_SQL).run();
         await env.CACHE.put(ANALYZE_LOCK_KEY, String(Date.now()), {
           expirationTtl: ANALYZE_INTERVAL_S * 2,
         });
