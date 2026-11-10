@@ -31,17 +31,16 @@ function probeDb(answer: (sql: string) => Record<string, unknown> | null, throwO
   let inFlight = 0;
   let peak = 0;
   const run = async <T>(q: string, out: () => T): Promise<T> => {
-    const counted = !isMarketing(q);
-    if (counted) {
-      inFlight++;
-      peak = Math.max(peak, inFlight);
-    }
+    // Every read counts, marketing included: the briefing runs the shared
+    // marketing reads one at a time too (fetchMarketingVisibility `guard`).
+    inFlight++;
+    peak = Math.max(peak, inFlight);
     try {
       await new Promise((r) => setTimeout(r, 0));
       if (throwOn?.(q)) throw new Error("D1 DB is overloaded");
       return out();
     } finally {
-      if (counted) inFlight--;
+      inFlight--;
     }
   };
   const db = {
@@ -62,10 +61,10 @@ describe("fetchComprehensiveBriefing D1 read shape", () => {
   it("runs its section reads one at a time", async () => {
     const p = probeDb(() => null);
     await fetchComprehensiveBriefing({ DB: p.db, CACHE: fakeKv() } as unknown as Env);
-    // Marketing visibility (shared with an admin route, small indexed
-    // windowed reads) runs after every briefing section, and the probe only
-    // counts concurrency for the briefing's own reads.
+    // Marketing visibility (shared with an admin route) runs after every
+    // briefing section — sequentially here, so it is inside the peak too.
     expect(p.sql.filter((s) => !isMarketing(s)).length).toBeGreaterThanOrEqual(30);
+    expect(p.sql.filter(isMarketing)).toHaveLength(9);
     expect(p.maxInFlight()).toBe(1);
   });
 

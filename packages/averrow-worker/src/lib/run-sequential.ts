@@ -22,6 +22,56 @@ export async function runSequential<T extends Array<() => Promise<unknown>>>(
   return out as { [K in keyof T]: Awaited<ReturnType<T[K]>> };
 }
 
+/**
+ * `runSequential`'s signature with `Promise.all` semantics — for callers
+ * that pick sequential or parallel at runtime with the same task list.
+ */
+export function runParallel<T extends Array<() => Promise<unknown>>>(
+  tasks: [...T],
+): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
+  return Promise.all(tasks.map((task) => task())) as Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }>;
+}
+
+/** Resolve after `ms` (immediately for `ms <= 0`). */
+export function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise<void>((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+/** Thrown by `withTimeout` when the work did not settle in time. */
+export class TimeoutError extends Error {
+  constructor(label: string, ms: number) {
+    super(`${label} timed out after ${ms}ms`);
+    this.name = "TimeoutError";
+  }
+}
+
+/**
+ * True for our `TimeoutError` and for the runtime's `AbortSignal.timeout`
+ * rejection (a DOMException named "TimeoutError").
+ */
+export function isTimeoutError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { name?: unknown }).name === "TimeoutError";
+}
+
+/**
+ * Race `fn()` against a timer. Rejects with `TimeoutError` when the timer
+ * wins (the underlying work is not cancelled — a D1 query keeps running
+ * server-side — but the caller stops waiting for it). The timer is always
+ * cleared. `ms <= 0` disables the timeout.
+ */
+export async function withTimeout<T>(fn: () => Promise<T>, ms: number, label: string): Promise<T> {
+  if (!(ms > 0)) return fn();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new TimeoutError(label, ms)), ms);
+  });
+  try {
+    return await Promise.race([fn(), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /** `<section>_error` → message, filled by `softSection`. */
 export type SectionErrors = Record<string, string>;
 

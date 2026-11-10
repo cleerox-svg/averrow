@@ -54,6 +54,14 @@ interface ResendResponse {
 
 const RESEND_LAST_ERROR_KV = 'briefing:resend_last_error';
 
+/**
+ * Abort the Resend request after this long, so a hung send rejects (the
+ * caller records "not sent") instead of being abandoned while it may still
+ * deliver. Kept below the briefing's own 30 s email ceiling
+ * (`BRIEFING_TIMING.emailTimeoutMs`, handlers/briefing.ts).
+ */
+export const RESEND_TIMEOUT_MS = 25_000;
+
 async function sendViaResend(
   env: Env,
   apiKey: string,
@@ -65,6 +73,7 @@ async function sendViaResend(
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ from: FROM_ADDRESS, to: [to], subject, html }),
+    signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
   });
   const rawBody = await res.text();
   let body: ResendResponse;

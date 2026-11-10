@@ -77,7 +77,7 @@ function makeEnv(opts: MakeEnvOpts = {}): { env: Env; rec: Recorder } {
           if (lower.includes("insert into threat_briefings")) {
             if (opts.failBriefingInsert) throw new Error("D1 briefings INSERT failed");
             rec.briefingInserts++;
-            return { meta: { last_row_id: 42 } };
+            return { meta: { last_row_id: 42, changes: 1 } };
           }
           return { meta: { last_row_id: 42 } };
         },
@@ -116,6 +116,11 @@ describe("daily briefing agent-run contract", () => {
   beforeAll(async () => {
     const mod = await import("../src/cron/orchestrator");
     expect(typeof mod.handleScheduled).toBe("function");
+    // Zero the production retry delays (they span > 10 s on purpose).
+    const { BRIEFING_TIMING } = await import("../src/handlers/briefing");
+    BRIEFING_TIMING.writeBackoffMs = [0, 0, 0, 0];
+    BRIEFING_TIMING.finalizeBackoffMs = [0, 0, 0];
+    BRIEFING_TIMING.enrichmentChunkPauseMs = 0;
   }, 120_000);
 
   beforeEach(() => vi.clearAllMocks());
@@ -145,20 +150,20 @@ describe("daily briefing agent-run contract", () => {
     expect(rec.briefingInserts).toBe(1);
   });
 
-  it("marks the run failed and propagates the error when persistence throws", async () => {
+  it("when the briefing row cannot be stored it still emails and finishes the run 'partial'", async () => {
     const { generateAndEmailBriefing } = await import("../src/handlers/briefing");
     const { env, rec } = makeEnv({ failBriefingInsert: true });
 
-    await expect(generateAndEmailBriefing(env, "cron:daily")).rejects.toThrow(
-      /briefings INSERT failed/,
-    );
+    const result = await generateAndEmailBriefing(env, "cron:daily");
 
-    // Run was opened, then marked failed (via failAgentRun UPDATE).
+    expect(result.briefingId).toBe(0);
+    expect(result.emailSent).toBe(true);
+    // Run was opened, then finalized partial with the insert error.
     expect(rec.agentRunInserts).toHaveLength(1);
     expect(rec.agentRunUpdates).toHaveLength(1);
-    expect(rec.agentRunUpdates[0].sql.toLowerCase()).toContain("status = 'failed'");
-    // No success telemetry on failure.
-    expect(rec.events).toHaveLength(0);
+    expect(rec.agentRunUpdates[0].args[0]).toBe("partial");
+    expect(String(rec.agentRunUpdates[0].args[4])).toMatch(/threat_briefings insert failed: D1 briefings INSERT failed/);
+    expect(rec.events).toHaveLength(1);
   });
 
   it("retries a transient finalize failure so the run does not stay 'running' (2026-11-05 orphan)", async () => {
@@ -183,8 +188,9 @@ describe("daily briefing agent-run contract", () => {
 
     expect(result.briefingId).toBe(42);
     expect(rec.agentRunUpdates).toHaveLength(0);
-    // Exactly 3 attempts consumed — and telemetry still emitted.
-    expect(opts.failRunUpdates).toBe(7);
+    // Exactly 4 attempts consumed (BRIEFING_TIMING.finalizeBackoffMs + 1) —
+    // and telemetry still emitted.
+    expect(opts.failRunUpdates).toBe(6);
     expect(rec.events).toHaveLength(1);
   });
 

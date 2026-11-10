@@ -495,16 +495,29 @@ the name map above) — it's a handler dispatched from a dedicated cron
 branch and two HTTP routes, not from the agent mesh. As of the Tier 2b
 instrumentation pass, it participates in the agent-run contract via a
 `withBriefingRun` wrapper shared by all three call sites: an
-`agent_runs` row (`agent_id='daily_briefing'`, running → success/failed,
-`error_message` on failure) plus a telemetry `agent_events` row
-(`briefing_generated`, `target_agent=NULL` — no downstream dispatch,
-operator traceability only). `fetchComprehensiveBriefing` is pure
+`agent_runs` row (`agent_id='daily_briefing'`, running → success /
+partial / failed, finalized in a `finally` with retries spanning more
+than one D1 10 s overload window; `partial` + `completed_at` = the run
+finished but `error_message` names what is missing — sections that fell
+back, a `threat_briefings` row that could not be stored, or an email that
+was not sent; `failed` = generation itself threw) plus a telemetry
+`agent_events` row (`briefing_generated`, `target_agent=NULL`, payload
+`fallback_sections` + `issues` — no downstream dispatch, operator
+traceability only). Every D1 read (sections, the threat-total counter,
+the marketing reads) is time-boxed and budgeted, and the first read
+timeout ends the read phase; the enrichment totals are summed over
+hidden-rowid chunks; the source-feed totals read `threat_cube_status`.
+Every write attempt is time-boxed and retried only on transient D1
+errors (`withD1Retry`); the INSERT is retry-safe (a lost-response retry
+cannot double-insert) but does not dedupe separate runs. The email is
+sent even when the row cannot be stored (2026-11-10 fix; knobs in
+`BRIEFING_TIMING`). `fetchComprehensiveBriefing` is pure
 SQL — no AI call in the briefing path. See `CLAUDE.md §6` for the
 cron-relocation history (previously gated at `hour === 13` inside the
 hourly mesh; moved to its own invocation after that budget was
 exhausted before the `threat_briefings` INSERT could land).
 
-**Inputs:** `threats`, `feed_status`/`feed_pull_history`, `agent_runs`,
+**Inputs:** `threats`, `threat_cube_status`, `feed_status`/`feed_pull_history`, `agent_runs`,
 `agent_outputs` (flight_control diagnostic), `social_mentions`,
 `app_store_listings`, `dark_web_mentions`, `seed_addresses`/
 `spam_trap_captures`, `honeypot_visits`, `brands`/`monitored_brands`,

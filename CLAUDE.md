@@ -673,7 +673,32 @@ daily_briefing: 13 13 * * * (once daily at 13:13 UTC — generates the 12-sectio
                              ~30 section reads run one at a time (`runSequential`, each
                              with its own fallback) instead of one Promise.all burst, and
                              the threat total reads the shared `count.threats.total`
-                             counter (can lag ≤6h) instead of a full COUNT(*). Handler:
+                             counter (can lag ≤6h) instead of a full COUNT(*). Since
+                             2026-11-10 (after the 11-09 run lost its INSERT and every
+                             finalize to a D1 overload window it caused itself with
+                             4.67M rows read): every D1 read (sections, the
+                             `count.threats.total` counter, the 9 marketing reads — run
+                             one at a time here, unlike the admin route) is time-boxed
+                             (20 s) under a 180 s read budget and falls back per section,
+                             and the FIRST read timeout ends the read phase (the abandoned
+                             statement still runs; more reads would queue behind it); the
+                             all-time enrichment SUM walks threats in 200K hidden-rowid
+                             chunks with a pause between them; typosquat/certstream
+                             totals read `threat_cube_status` (≤6% of the old reads; may
+                             lag or slightly overcount the table). Writes: each attempt
+                             15 s-capped, retried only on transient D1 errors or our own
+                             timeout (`withD1Retry` `delaysMs` 1/3/6/12 s), no retry
+                             starting after a 600 s run budget. The INSERT is
+                             retry-safe (`generation_id` stamp + NOT EXISTS) — it does NOT
+                             dedupe separate runs (the cron dedup SELECT does that). If
+                             the INSERT never lands the email is still sent. Resend:
+                             fetch aborts at 25 s, 30 s outer ceiling. Finalize in a
+                             `finally`, 4 attempts × 15 s cap, 2/5/12 s backoff. The run
+                             is `partial` (`completed_at` set, error_message says why)
+                             when a section fell back (other than a missing table), the
+                             row was not stored, or the email was not sent; `failed` only
+                             if generation itself threw. Simulated worst case ≈ 8 min.
+                             Knobs: `BRIEFING_TIMING`. Handler:
                              `handlers/briefing.ts` `generateAndEmailBriefing`, wrapped by
                              `withBriefingRun` — writes `agent_runs` (agent_id
                              'daily_briefing') + a telemetry `agent_events` row
