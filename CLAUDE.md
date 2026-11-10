@@ -842,7 +842,16 @@ observer:     41 0 * * *    (daily at 00:41 UTC — the scheduled Observer brief
                              nrd_hagezi). `handleScheduled` early-returns on exact
                              `event.cron === OBSERVER_CRON` above the mesh guard →
                              `executeAgent` (agent_runs + agent_events). No minute/hour gates.
-                             FC stall recovery remains its catch-up path. The hour-6 "Observer
+                             FC stall recovery is its catch-up path: the scheduled path (cron or
+                             FC catch-up, never a pivot_detected run) stamps KV
+                             `observer:last_scheduled_success_at` when its briefing is built
+                             (`lib/observer-schedule-marker.ts`), and FC measures Observer's stall
+                             age from that marker (`AgentHealth.stall_reference_at`), not from the
+                             newest agent_runs row — so a pivot run cannot mask a failed or missing
+                             00:41 briefing. Stalled once the marker is > 25h old
+                             (stallThresholdMinutes 1500) → one catch-up per tick, 2h→24h backoff
+                             that only a newer scheduled success resets. No marker (first deploy) →
+                             newest row, as before. The hour-6 "Observer
                              briefing" job is a different job — Tranco import + Seed Strategist —
                              and stays on the hourly tick.)
 ```

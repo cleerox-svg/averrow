@@ -14,6 +14,7 @@ import { SUBSCRIBER_MAY_WATCH_BRAND_SQL } from "../lib/brand-subscription-access
 import { renderIntelSectorTrend } from "../lib/intel-templates";
 import { emailPostureRollup, gradeDistributionByCount } from "../lib/email-posture-rollup";
 import { buildPivotReport, pivotsFromInput } from "../lib/observer-pivot-report";
+import { stampObserverScheduledSuccess } from "../lib/observer-schedule-marker";
 
 /** Cube window shared by the three 24h aggregates below: the last 24 cube hours. */
 const CUBE_24H_SQL = "strftime('%Y-%m-%d %H:00:00', 'now', '-24 hours')";
@@ -1192,6 +1193,13 @@ export const observerAgent: AgentModule = {
         details: { ...ai },
       });
     }
+
+    // The scheduled briefing is done. Flight Control measures Observer's
+    // stall age from this stamp, not from the newest agent_runs row, so an
+    // event run cannot hide a failed or missing daily briefing
+    // (lib/observer-schedule-marker.ts). Event runs never stamp: pivot runs
+    // returned above, and any other event trigger is excluded here.
+    if (!triggeredByEvent) await stampObserverScheduledSuccess(env.CACHE);
 
     return {
       itemsProcessed: 1,
