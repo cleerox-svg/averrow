@@ -33,6 +33,8 @@
  * COUNTs over threats per provider once a day for ~0 changed rows.
  */
 
+import { withD1Retry, type D1RetryOptions } from "./d1-retry";
+
 export type SnapshotEntityType = "brand" | "provider";
 
 /** Entities per INSERT … SELECT chunk. */
@@ -72,7 +74,22 @@ export interface GenerateSnapshotsOptions {
   onChunk?: (rowsSoFar: number) => Promise<void> | void;
   /** Clock, injectable for tests. */
   now?: () => number;
+  /**
+   * Retry each chunk's bound read and INSERT OR REPLACE (both idempotent) on
+   * transient D1 errors. The cron path passes an overload-aware policy so a
+   * chunk rejected by D1's 10-second overload window waits it out instead of
+   * failing the whole type (2026-11-08..10: every run lost its type to that).
+   * Unset = no retry (the manual endpoint's semantics).
+   */
+  retry?: D1RetryOptions;
+  /** Pause (ms) between chunks, to spread the reads over D1's 10 s window. */
+  interChunkPauseMs?: number;
+  /** Sleep, injectable for tests. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const BRAND_SNAPSHOT_CHUNK_SQL = `
     INSERT OR REPLACE INTO daily_snapshots (date, entity_type, entity_id, new_threats, active_threats, remediated_threats, dominant_threat_type, dominant_hosting_provider)
@@ -201,24 +218,37 @@ export async function generateSnapshotType(
     }
   }
 
+  const retry = opts.retry;
+  const attempt = <T>(fn: () => Promise<T>): Promise<T> => (retry ? withD1Retry(fn, retry) : fn());
+  const sleep = opts.sleep ?? defaultSleep;
+
   let rows = 0;
   let chunks = 0;
   while (chunks < MAX_CHUNKS_PER_TYPE) {
     if (opts.deadline !== undefined && now() >= opts.deadline) {
       return { action: chunks > 0 || !resumed ? "generated" : "skipped", rows, complete: false, chunks };
     }
-    const bound = await db
-      .prepare(CHUNK_BOUND_SQL[entityType])
-      .bind(cursor, chunkSize)
-      .first<{ hi: string | null }>();
+    const from = cursor;
+    const bound = await attempt(() =>
+      db
+        .prepare(CHUNK_BOUND_SQL[entityType])
+        .bind(from, chunkSize)
+        .first<{ hi: string | null }>(),
+    );
     const hi = bound?.hi ?? null;
     // hi > cursor by construction, so every iteration makes progress.
     if (hi === null || hi <= cursor) break;
 
-    const res = await db
-      .prepare(SNAPSHOT_CHUNK_SQL[entityType])
-      .bind(date, date, date, cursor, hi)
-      .run();
+    // Only between two chunk statements — never before the first or after the last.
+    if (chunks > 0 && opts.interChunkPauseMs !== undefined && opts.interChunkPauseMs > 0) {
+      await sleep(opts.interChunkPauseMs);
+    }
+    const res = await attempt(() =>
+      db
+        .prepare(SNAPSHOT_CHUNK_SQL[entityType])
+        .bind(date, date, date, from, hi)
+        .run(),
+    );
     rows += res.meta.changes ?? 0;
     chunks += 1;
     cursor = hi;
