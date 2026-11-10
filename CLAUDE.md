@@ -749,6 +749,17 @@ daily_snapshots: 28 0,12 * * * (00:28 + 12:28 UTC — writes `daily_snapshots` b
                              provider-counter recount it used to run was dropped —
                              `lib/provider-counts.ts` (enrichment Stage 5, every 4h) owns
                              those columns. Manual force-regenerate: `POST /api/snapshots/generate`.)
+nrd_hagezi:   29 */2 * * *  (every 2h at :29 — dedicated ingest-feed cron, owner decision
+                             2026-11-10. Its daily diff (~51 MB list vs ~17 MB R2 snapshot,
+                             ~23 large D1 batches) was reaped mid-run 5× on 2026-11-09 inside
+                             the hourly `7 * * * *` pool. runAllFeeds skips it
+                             (DEDICATED_INGEST_FEEDS, lib/feedRunner.ts); handleScheduled
+                             early-returns on exact `event.cron === '29 */2 * * *'` ABOVE the
+                             hourly-mesh guard → dispatchDedicatedIngestFeed (enabled + breaker
+                             + its 180s per-pull timeout, normal runFeed bookkeeping; no
+                             interval check — the cron is the schedule). No minute/hour gates.
+                             Per-run 45s processing budget with resume_after rotation, see
+                             feeds/nrd_hagezi.ts.)
 ```
 
 ### Agent dispatch (inside orchestrator hourly tick):
@@ -764,7 +775,7 @@ Always (every tick):  Flight Control, Incident recovery sweep, CertStream health
                        tick to dedicated crons `18 * * * *` / `22 * * * *` / `23 * * * *` in
                        S0.1 — see schedule above. Each now runs via `executeAgent` so it
                        writes `agent_runs`; no more inline tail dispatch / bare `runJob`.)
-Always (every tick):  Feed ingestion, brand match, email security, Analyst
+Always (every tick):  Feed ingestion (except nrd_hagezi, own cron), brand match, email security, Analyst
                       (The former hourly Haiku "AI attribution" batch step is gone — removed in
                        AI_STRATEGY Phase 1 #27; rule-based brand match is the only attribution here.)
 Sentinel:             after feed ingestion if totalNew > 0 (inline await)
