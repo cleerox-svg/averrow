@@ -690,7 +690,8 @@ export const observerAgent: AgentModule = {
         FROM brand_threat_assessments bta
         JOIN brands b ON b.id = bta.brand_id
         WHERE bta.composite_risk_score > 60
-          AND bta.assessed_at >= datetime('now', '-48 hours')
+          -- assessed_at is JS ISO text ('…T…Z'); normalise before comparing
+          AND datetime(bta.assessed_at) >= datetime('now', '-48 hours')
         ORDER BY bta.composite_risk_score DESC
         LIMIT 5
       `).all<{

@@ -100,33 +100,49 @@ describe.skipIf(!hasSqlite())("daily brand threat assessments (migrated schema)"
 
     const mon = await correlateBrandThreats(env, "b_mon_new");
     expect(mon!.dmarc_failures_30d).toBe(7);
-    expect(mon!.unauthorized_senders_30d).toBe(2);
+    // .1 fails SPF but passes DKIM, .2 the reverse: both pass DMARC, so neither is unauthorized.
+    expect(mon!.unauthorized_senders_30d).toBe(0);
   });
 
-  it("throttles only after the brand selection succeeds", async () => {
-    const broken = { DB: { prepare: () => { throw new Error("no such column: x"); } }, CACHE: fakeKv() } as unknown as Env;
-    await expect(runDailyAssessments(broken)).rejects.toThrow(/no such column/);
-    expect(await broken.CACHE.get("pipeline:assessments:last_run")).toBeNull();
-
-    await runDailyAssessments(env);
-    expect(await env.CACHE.get("pipeline:assessments:last_run")).not.toBeNull();
+  it("runs once per UTC day: a run late yesterday never blocks today's", async () => {
+    const kv = env.CACHE as unknown as { put(k: string, v: string): Promise<void>; get(k: string): Promise<string | null> };
+    // Yesterday's run, at any minute, must not suppress today's.
+    const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+    await kv.put("pipeline:assessments:last_run_date", yesterday);
+    expect((await runDailyAssessments(env)).brandsAssessed).toBe(3);
+    expect(await kv.get("pipeline:assessments:last_run_date")).toBe(new Date().toISOString().slice(0, 10));
+    // A second call the same day is skipped.
+    expect((await runDailyAssessments(env)).brandsAssessed).toBe(0);
   });
 
-  it("both DMARC reads seek the brand/received_at index", () => {
-    const plan = (sql: string) =>
-      (raw.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("b", "2026-01-01") as Array<{ detail: string }>)
-        .map((r) => r.detail)
+  it("a failed brand selection does not mark the day done", async () => {
+    const realDb = env.DB;
+    (env as { DB: unknown }).DB = { prepare: () => { throw new Error("no such column: x"); } };
+    await expect(runDailyAssessments(env)).rejects.toThrow(/no such column/);
+    expect(await env.CACHE.get("pipeline:assessments:last_run_date")).toBeNull();
+    (env as { DB: unknown }).DB = realDb;
+    expect((await runDailyAssessments(env)).brandsAssessed).toBe(3);
+  });
+
+  it("unauthorized senders are sources passing neither SPF nor DKIM", async () => {
+    raw.prepare(
+      "INSERT INTO dmarc_report_records (report_id, source_ip, count, spf_result, dkim_result) VALUES ((SELECT id FROM dmarc_reports), '198.51.100.9', 3, 'fail', 'fail')",
+    ).run();
+    const mon = await correlateBrandThreats(env, "b_mon_new");
+    // .1 (spf fail, dkim pass) and .2 (spf pass, dkim fail) passed DMARC; only .9 failed both.
+    expect(mon!.unauthorized_senders_30d).toBe(1);
+  });
+
+  it("the DMARC reads the code actually runs seek the brand/received_at index", async () => {
+    await correlateBrandThreats(env, "b_mon_new");
+    const dmarcReads = log.filter((l) => /FROM dmarc_reports/.test(l.sql));
+    expect(dmarcReads).toHaveLength(2);
+    for (const r of dmarcReads) {
+      const plan = (raw.prepare(`EXPLAIN QUERY PLAN ${r.sql}`).all(...(r.binds ?? [])) as Array<{ detail: string }>)
+        .map((p) => p.detail)
         .join(" | ");
-    const sumPlan = plan(
-      "SELECT COALESCE(SUM(total_fail), 0) FROM dmarc_reports WHERE brand_id = ? AND received_at >= ?",
-    );
-    expect(sumPlan).toContain("idx_dmarc_reports_brand_received");
-    const joinPlan = plan(
-      `SELECT COUNT(DISTINCT rr.source_ip) FROM dmarc_reports dr
-       CROSS JOIN dmarc_report_records rr ON rr.report_id = dr.id
-       WHERE dr.brand_id = ? AND dr.received_at >= ? AND (rr.spf_result = 'fail' OR rr.dkim_result = 'fail')`,
-    );
-    expect(joinPlan).toContain("idx_dmarc_reports_brand_received");
-    expect(joinPlan).toContain("idx_drr_report");
+      expect(plan).toContain("idx_dmarc_reports_brand_received");
+      if (/dmarc_report_records/.test(r.sql)) expect(plan).toContain("idx_drr_report");
+    }
   });
 });

@@ -149,7 +149,11 @@ export async function correlateBrandThreats(
   }));
 
   // 6. DMARC aggregate reports: one dmarc_reports row per received report
-  // (total_fail = failing messages), per-source rows in dmarc_report_records.
+  // (total_fail = messages not passing BOTH SPF and DKIM, as dmarc-receiver
+  // counts them — a superset of DMARC failures, since DMARC passes on either),
+  // per-source rows in dmarc_report_records. "Unauthorized senders" are
+  // sources that pass NEITHER check, i.e. actual DMARC failures (a forwarder
+  // that breaks SPF but keeps DKIM is not counted).
   // Both seek idx_dmarc_reports_brand_received (migration 0325); CROSS JOIN pins
   // dr as the outer loop so the records are reached via idx_drr_report.
   const dmarcFailures = await env.DB.prepare(`
@@ -165,7 +169,7 @@ export async function correlateBrandThreats(
     CROSS JOIN dmarc_report_records rr ON rr.report_id = dr.id
     WHERE dr.brand_id = ?
       AND dr.received_at >= datetime('now', '-30 days')
-      AND (rr.spf_result = 'fail' OR rr.dkim_result = 'fail')
+      AND rr.spf_result <> 'pass' AND rr.dkim_result <> 'pass'
   `).bind(brandId).first<{ count: number }>().catch(() => ({ count: 0 }));
 
   // 7. Compute composite risk score
@@ -342,11 +346,15 @@ export const ASSESSMENT_BRAND_LIMIT = 100;
 export const ASSESSMENT_BUDGET_MS = 60_000;
 
 export async function runDailyAssessments(env: Env): Promise<AssessmentCronResult> {
-  const THROTTLE_KEY = "pipeline:assessments:last_run";
+  const THROTTLE_KEY = "pipeline:assessments:last_run_date";
   const now = Date.now();
+  // Once per UTC day, keyed on the date. A "< 24h since last run" check skipped
+  // about every other day: the run starts late in the hour-0 tick at a minute
+  // that drifts, and the caller only allows hour 0.
+  const today = new Date(now).toISOString().slice(0, 10);
 
-  const lastRun = await env.CACHE.get(THROTTLE_KEY);
-  if (lastRun && now - parseInt(lastRun, 10) < 86400_000) {
+  const lastRunDate = await env.CACHE.get(THROTTLE_KEY);
+  if (lastRunDate === today) {
     return { brandsAssessed: 0, highRiskBrands: 0, scoreSpikes: 0 };
   }
 
@@ -371,17 +379,18 @@ export async function runDailyAssessments(env: Env): Promise<AssessmentCronResul
     throw err;
   }
 
-  // Throttle only once the selection worked, so a failed read retries next tick.
-  await env.CACHE.put(THROTTLE_KEY, String(now), { expirationTtl: 90000 });
+  // Stamp only once the selection worked: a failed run doesn't mark the day
+  // done (the caller only runs at hour 0, so the retry is the next day's run).
+  await env.CACHE.put(THROTTLE_KEY, today, { expirationTtl: 2 * 86400 });
 
   let brandsAssessed = 0;
   let highRiskBrands = 0;
   let scoreSpikes = 0;
 
-  for (const { id } of brands.results) {
+  for (const [index, { id }] of brands.results.entries()) {
     if (Date.now() - now > ASSESSMENT_BUDGET_MS) {
       logger.warn('daily_assessments_budget_exhausted', {
-        brandsAssessed, remaining: brands.results.length - brandsAssessed,
+        brandsAssessed, remaining: brands.results.length - index,
       });
       break;
     }
