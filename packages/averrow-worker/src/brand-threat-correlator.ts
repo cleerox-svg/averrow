@@ -8,6 +8,8 @@
 
 import type { Env } from "./types";
 import { AI_GENERATION_PROBABILITY_THRESHOLD } from "./lib/phishing-signals";
+import { MONITORED_BRAND_PREDICATE_SQL } from "./lib/monitored-brands";
+import { logger } from "./lib/logger";
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -91,7 +93,7 @@ export async function correlateBrandThreats(
 
   // 2. Query email_security_scans for latest scan
   const emailScan = await env.DB.prepare(`
-    SELECT has_dmarc, has_spf, has_dkim, dmarc_policy
+    SELECT dmarc_exists AS has_dmarc, spf_exists AS has_spf, dkim_exists AS has_dkim, dmarc_policy
     FROM email_security_scans
     WHERE brand_id = ?
     ORDER BY scanned_at DESC LIMIT 1
@@ -146,21 +148,24 @@ export async function correlateBrandThreats(
     phishtank_urls: 0, urlhaus_urls: 0, breaches: 0,
   }));
 
-  // 6. Query DMARC report data (if tables exist)
+  // 6. DMARC aggregate reports: one dmarc_reports row per received report
+  // (total_fail = failing messages), per-source rows in dmarc_report_records.
+  // Both seek idx_dmarc_reports_brand_received (migration 0325); CROSS JOIN pins
+  // dr as the outer loop so the records are reached via idx_drr_report.
   const dmarcFailures = await env.DB.prepare(`
-    SELECT COUNT(*) as failures
+    SELECT COALESCE(SUM(total_fail), 0) as failures
     FROM dmarc_reports
     WHERE brand_id = ?
-      AND created_at >= datetime('now', '-30 days')
-      AND (spf_result = 'fail' OR dkim_result = 'fail')
+      AND received_at >= datetime('now', '-30 days')
   `).bind(brandId).first<{ failures: number }>().catch(() => ({ failures: 0 }));
 
   const unauthorizedSenders = await env.DB.prepare(`
-    SELECT COUNT(DISTINCT source_ip) as count
-    FROM dmarc_reports
-    WHERE brand_id = ?
-      AND created_at >= datetime('now', '-30 days')
-      AND (spf_result = 'fail' OR dkim_result = 'fail')
+    SELECT COUNT(DISTINCT rr.source_ip) as count
+    FROM dmarc_reports dr
+    CROSS JOIN dmarc_report_records rr ON rr.report_id = dr.id
+    WHERE dr.brand_id = ?
+      AND dr.received_at >= datetime('now', '-30 days')
+      AND (rr.spf_result = 'fail' OR rr.dkim_result = 'fail')
   `).bind(brandId).first<{ count: number }>().catch(() => ({ count: 0 }));
 
   // 7. Compute composite risk score
@@ -331,6 +336,11 @@ export interface AssessmentCronResult {
  * Run brand threat assessments for all monitored brands.
  * Throttled to once per 24 hours via KV.
  */
+/** Brands assessed per daily run (each is ~9 small indexed reads + 1 insert). */
+export const ASSESSMENT_BRAND_LIMIT = 100;
+/** Wall-clock cap for the run: it is awaited inline in the hour-0 :07 tick. */
+export const ASSESSMENT_BUDGET_MS = 60_000;
+
 export async function runDailyAssessments(env: Env): Promise<AssessmentCronResult> {
   const THROTTLE_KEY = "pipeline:assessments:last_run";
   const now = Date.now();
@@ -340,23 +350,41 @@ export async function runDailyAssessments(env: Env): Promise<AssessmentCronResul
     return { brandsAssessed: 0, highRiskBrands: 0, scoreSpikes: 0 };
   }
 
-  await env.CACHE.put(THROTTLE_KEY, String(now), { expirationTtl: 90000 });
+  // Monitored-scope brands (brands.tier — see lib/monitored-brands.ts; there
+  // is no brands.is_monitored column, so the old query errored every night
+  // and nothing was ever assessed), customers first, then the most recently
+  // targeted. Pre-computed last_threat_seen instead of a JOIN to threats.
+  let brands: { results: Array<{ id: string }> };
+  try {
+    brands = await env.DB.prepare(`
+      SELECT b.id
+      FROM brands b
+      WHERE ${MONITORED_BRAND_PREDICATE_SQL}
+      ORDER BY (b.tier = 'customer') DESC, b.last_threat_seen DESC
+      LIMIT ${ASSESSMENT_BRAND_LIMIT}
+    `).all<{ id: string }>();
+  } catch (err) {
+    // Don't swallow silently: a broken selection means no assessments at all.
+    logger.error('daily_assessments_brand_select_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 
-  // Get monitored brands (or brands with recent activity)
-  const brands = await env.DB.prepare(`
-    SELECT DISTINCT b.id
-    FROM brands b
-    LEFT JOIN threats t ON t.target_brand_id = b.id
-    WHERE b.is_monitored = 1
-       OR t.created_at >= datetime('now', '-7 days')
-    LIMIT 100
-  `).all<{ id: string }>().catch(() => ({ results: [] as Array<{ id: string }> }));
+  // Throttle only once the selection worked, so a failed read retries next tick.
+  await env.CACHE.put(THROTTLE_KEY, String(now), { expirationTtl: 90000 });
 
   let brandsAssessed = 0;
   let highRiskBrands = 0;
   let scoreSpikes = 0;
 
   for (const { id } of brands.results) {
+    if (Date.now() - now > ASSESSMENT_BUDGET_MS) {
+      logger.warn('daily_assessments_budget_exhausted', {
+        brandsAssessed, remaining: brands.results.length - brandsAssessed,
+      });
+      break;
+    }
     try {
       const assessment = await correlateBrandThreats(env, id);
       if (!assessment) continue;
