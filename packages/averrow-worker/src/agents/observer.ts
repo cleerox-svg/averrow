@@ -14,6 +14,47 @@ import { SUBSCRIBER_MAY_WATCH_BRAND_SQL } from "../lib/brand-subscription-access
 import { renderIntelSectorTrend } from "../lib/intel-templates";
 import { emailPostureRollup, gradeDistributionByCount } from "../lib/email-posture-rollup";
 
+/** Cube window shared by the three 24h aggregates below: the last 24 cube hours. */
+const CUBE_24H_SQL = "strftime('%Y-%m-%d %H:00:00', 'now', '-24 hours')";
+
+/** Top 10 targeted brands, last 24h, from threat_cube_brand (never raw threats). */
+export const OBSERVER_TOP_BRANDS_24H_SQL = `
+  SELECT c.id, b.name, c.count
+  FROM (
+    SELECT target_brand_id AS id, SUM(threat_count) AS count
+    FROM threat_cube_brand INDEXED BY idx_cube_brand_hour
+    WHERE hour_bucket >= ${CUBE_24H_SQL}
+    GROUP BY target_brand_id
+    ORDER BY count DESC
+    LIMIT 10
+  ) c
+  JOIN brands b ON b.id = c.id
+  ORDER BY c.count DESC`;
+
+/** Top 10 hosting providers (by name), last 24h, from threat_cube_provider. */
+export const OBSERVER_TOP_PROVIDERS_24H_SQL = `
+  SELECT hp.name, SUM(c.count) AS count
+  FROM (
+    SELECT hosting_provider_id AS id, SUM(threat_count) AS count
+    FROM threat_cube_provider INDEXED BY idx_cube_provider_hour
+    WHERE hour_bucket >= ${CUBE_24H_SQL}
+    GROUP BY hosting_provider_id
+    ORDER BY count DESC
+    LIMIT 50
+  ) c
+  JOIN hosting_providers hp ON hp.id = c.id
+  GROUP BY hp.name
+  ORDER BY count DESC
+  LIMIT 10`;
+
+/** Threat-type distribution, last 24h, from threat_cube_status (all statuses). */
+export const OBSERVER_TYPE_BREAKDOWN_24H_SQL = `
+  SELECT threat_type, SUM(threat_count) AS count
+  FROM threat_cube_status INDEXED BY idx_cube_status_hour
+  WHERE hour_bucket >= ${CUBE_24H_SQL}
+  GROUP BY threat_type
+  ORDER BY count DESC`;
+
 export const observerAgent: AgentModule = {
   name: "observer",
   displayName: "Observer",
@@ -45,6 +86,9 @@ export const observerAgent: AgentModule = {
     { kind: "d1_table", name: "social_profiles" },
     { kind: "d1_table", name: "spam_trap_captures" },
     { kind: "d1_table", name: "threat_narratives" },
+    { kind: "d1_table", name: "threat_cube_brand" },
+    { kind: "d1_table", name: "threat_cube_provider" },
+    { kind: "d1_table", name: "threat_cube_status" },
     { kind: "d1_table", name: "threat_signals" },
     { kind: "d1_table", name: "threats" },
     { kind: "d1_table", name: "users" },
@@ -125,26 +169,23 @@ export const observerAgent: AgentModule = {
         greynoise_targeted_24h: number; greynoise_riot_24h: number;
         seclookup_high_risk_24h: number; seclookup_checked_24h: number;
       }>(),
-      // ─── Top targeted brands (with IDs for linking) ──────────────
-      env.DB.prepare(`
-        SELECT b.id, b.name, COUNT(*) as count
-        FROM threats t JOIN brands b ON t.target_brand_id = b.id
-        WHERE t.created_at >= datetime('now', '-24 hours')
-        GROUP BY b.id ORDER BY count DESC LIMIT 10
-      `).all<{ id: string; name: string; count: number }>(),
-      // ─── Top hosting providers ───────────────────────────────────
-      env.DB.prepare(`
-        SELECT hp.name, COUNT(*) as count
-        FROM threats t JOIN hosting_providers hp ON t.hosting_provider_id = hp.id
-        WHERE t.created_at >= datetime('now', '-24 hours')
-        GROUP BY hp.name ORDER BY count DESC LIMIT 10
-      `).all<{ name: string; count: number }>(),
-      // ─── Threat type distribution ────────────────────────────────
-      env.DB.prepare(`
-        SELECT threat_type, COUNT(*) as count
-        FROM threats WHERE created_at >= datetime('now', '-24 hours')
-        GROUP BY threat_type ORDER BY count DESC
-      `).all<{ threat_type: string; count: number }>(),
+      // ─── Top targeted brands / providers / types: OLAP cubes ─────
+      // D1 spend + run-survival fix (2026-11-10, CLAUDE.md §8): these three
+      // were GROUP BYs over raw `threats`. The type breakdown planned as
+      // `SCAN threats USING INDEX idx_threats_type` — all 1.55M rows, a
+      // non-covering walk — and the top-brands join scanned all ~133K
+      // brands to seek each one's 24h threats. Together ~1.55M rows/run,
+      // the AE-metered cost of every observer run (14 runs, 21.7M rows on
+      // 2026-11-09). The hourly cubes hold the same 24h window as a few
+      // hundred rows. Window = the last 24 cube hours (hour-snapped).
+      // Brand/provider cubes count ACTIVE threats (cube-builder source
+      // filter) — for threats created in the last 24h that is ~all of them.
+      // INDEXED BY pins the hour-range seek: without it the planner walks the
+      // whole cube on the (id, hour) index to skip the GROUP BY sort.
+      env.DB.prepare(OBSERVER_TOP_BRANDS_24H_SQL).all<{ id: string; name: string; count: number }>(),
+      env.DB.prepare(OBSERVER_TOP_PROVIDERS_24H_SQL).all<{ name: string; count: number }>(),
+      // Status cube = every status, so this matches the old all-threats count.
+      env.DB.prepare(OBSERVER_TYPE_BREAKDOWN_24H_SQL).all<{ threat_type: string; count: number }>(),
       // ─── Compare with previous day ───────────────────────────────
       env.DB.prepare(`
         SELECT COUNT(*) as total_prev
