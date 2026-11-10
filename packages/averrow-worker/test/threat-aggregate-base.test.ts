@@ -183,7 +183,7 @@ describe.skipIf(!hasSqlite())("threatAggregate unfiltered base scan", () => {
     expect(log.map((e) => e.sql).filter(isBase)).toEqual([]);
     expect(second.by_severity).toEqual(first.by_severity);
     expect(second.total).toBe(first.total);
-    expect(THREAT_AGGREGATE_BASE_TTL_S).toBe(25200);
+    expect(THREAT_AGGREGATE_BASE_TTL_S).toBe(28800);
   });
 
   it("single-flight: a cold caller that finds the base lock held waits for the holder's write instead of scanning", async () => {

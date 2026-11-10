@@ -19,7 +19,7 @@
 // reflect the analyst's current slice. Wrapped in cachedValue (30min;
 // 3h + single-flight refill for the unfiltered, unscoped slice). The
 // unfiltered slice's whole-table numbers (headline counts, severity / type /
-// status mix, top countries) come from ONE shared base scan cached 6h
+// status mix, top countries) come from ONE shared base scan cached 8h
 // (`threatAggregateBase`), and `new_24h` from threat_cube_status — never the
 // former five full-table GROUP BYs per refill (D1 spike 2026-11-09/10).
 // Fail-soft per section (softSection): a failed read empties only its
@@ -68,7 +68,7 @@ export const THREAT_AGGREGATE_SINGLE_FLIGHT_POLL_MS = 1_000;
  * Shared base of the unfiltered, unscoped slice: every whole-table number the
  * aggregate shows (headline counts, severity / type / status mix, top
  * countries), computed by ONE `NOT INDEXED` scan of `threats` (~1.55M rows)
- * and cached 6h with single-flight. Before 2026-11-10 each unfiltered refill
+ * and cached 8h with single-flight. Before 2026-11-10 each unfiltered refill
  * ran five separate full-table reads for these (headline + severity + status
  * + type + country ≈ 10–12M rows, severity alone ~3.1M via an index walk);
  * prod D1 analytics showed ~20M unmetered rows per refill and 4–9 refills an
@@ -87,7 +87,7 @@ export const THREAT_AGGREGATE_SINGLE_FLIGHT_POLL_MS = 1_000;
  * groups, rows_read ~3.1M (the GROUP BY sorter doubles the 1.55M table
  * rows), ~10s. Refreshed off the request path by cube_healer every 6h
  * (`refreshThreatAggregateBase`), so ≤ 4 scans (~12M rows) a day; the TTL is
- * 7h so a live read finds it fresh between two healer runs and only computes
+ * 8h so a live read finds it fresh between two healer runs and only computes
  * it inline if the healer missed a run (single-flight then serves the stale
  * copy to everyone else; KV keeps it 2× TTL).
  */
@@ -95,7 +95,7 @@ export const THREAT_AGGREGATE_BASE_KEY = 'threats.aggregate_base.v1';
 
 /** Response sections the base scan feeds besides `headline` (degraded together with it). */
 const BASE_FED_SECTIONS = ['by_severity', 'by_type', 'by_status', 'top_countries'] as const;
-export const THREAT_AGGREGATE_BASE_TTL_S = 25200;
+export const THREAT_AGGREGATE_BASE_TTL_S = 28800;
 
 /** The whole-table base scan (see THREAT_AGGREGATE_BASE_KEY). Exported for tests. */
 export const THREAT_AGGREGATE_BASE_SQL = `
@@ -399,7 +399,7 @@ export async function threatAggregate(
       total: number; confirmed: number; correlated_by_campaign: number;
       active: number; addressed: number; new_24h: number;
     };
-    // Unfiltered: the shared 6h base scan feeds the headline AND the
+    // Unfiltered: the shared 8h base scan feeds the headline AND the
     // severity / type / status / country sections (no per-refill full-table
     // GROUP BYs); new_24h comes from threat_cube_status. A failed base scan
     // degrades every section it feeds, under their usual names.

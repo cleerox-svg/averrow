@@ -592,7 +592,7 @@ export const cubeHealerAgent: AgentModule = {
     // The unfiltered Threats-page aggregate's whole-table numbers come from
     // one shared base scan (lib/threat-aggregates.ts, THREAT_AGGREGATE_BASE_KEY,
     // ~3.1M rows read / ~10s). Refreshed here every 6h so the HTTP path reads
-    // KV and never runs it on a page view; its 7h TTL outlives one healer
+    // KV and never runs it on a page view; its 8h TTL outlives one healer
     // interval. Reads go through a read-replica session. Non-fatal.
     try {
       const { refreshThreatAggregateBase } = await import('../lib/threat-aggregates');
