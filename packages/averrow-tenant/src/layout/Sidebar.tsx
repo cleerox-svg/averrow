@@ -1,7 +1,7 @@
 // averrow-tenant — sidebar.
 //
 // One entry per module the tenant has access to. Modules show as
-// active / trial badges; not_entitled modules render in a separate
+// active / trial / suspended badges; not_entitled modules render in a separate
 // "Unlock" section with an upsell pill (clicks → /settings/modules
 // once that lands in Phase B).
 
@@ -59,8 +59,9 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
   const ThemeIcon = themeIconFor(theme);
   const canViewAudit = useCanViewAudit();
 
-  const active = (data?.modules ?? []).filter((m) => m.status === 'active' || m.status === 'trial');
-  const locked = (data?.modules ?? []).filter((m) => m.status === 'not_entitled' || m.status === 'suspended');
+  // Suspended modules stay in the customer's own list (badged); only never-bought ones are upsell.
+  const owned = (data?.modules ?? []).filter((m) => m.status === 'active' || m.status === 'trial' || m.status === 'suspended');
+  const locked = (data?.modules ?? []).filter((m) => m.status === 'not_entitled');
 
   return (
     <aside
@@ -143,11 +144,21 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
 
         <Section label="Modules">
           {isLoading && <div className="px-3 py-2 text-[12px] text-[var(--text-tertiary)]">Loading…</div>}
-          {!isLoading && active.length === 0 && (
+          {!isLoading && owned.length === 0 && (
             <div className="px-3 py-2 text-[12px] text-[var(--text-tertiary)]">No modules entitled yet.</div>
           )}
-          {active.map((m) => {
+          {owned.map((m) => {
             const Icon = MODULE_ICONS[m.module_key];
+            if (m.status === 'suspended') {
+              // Not a link: the worker refuses a suspended module's page.
+              return (
+                <div key={m.module_key} className={cn(NAV_BASE, 'text-[var(--text-tertiary)] cursor-default')}>
+                  <Icon size={16} className="opacity-50" />
+                  <span className="min-w-0 flex-1 truncate" title={MODULE_LABELS[m.module_key]}>{MODULE_LABELS[m.module_key]}</span>
+                  <Badge status="warning" size="xs" font="sans" label="Suspended" className="shrink-0 !py-0 !leading-4" />
+                </div>
+              );
+            }
             return (
               <NavLink
                 key={m.module_key}
