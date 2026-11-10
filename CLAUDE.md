@@ -397,6 +397,16 @@ so install/push there is aspirational until improvement-plan session S12
 3. Emit to `agent_events` after completion
 4. Handle errors — catch all exceptions, log to `agent_runs.error_message`
 
+**Finalize vs. D1's overload window (2026-11-10).** D1 rejects every
+statement for the rest of a rolling 10 s window once its resource budget is
+spent ("D1 DB is overloaded"). `executeAgent` finalizes (success and failure)
+through `withD1Retry` with `overloadBaseMs` (`D1_OVERLOAD_RETRY_BASE_MS`,
+3 s / 6 s / 12 s, `lib/d1-retry.ts`) for every trigger except `api`; the old
+50/100/200 ms backoff retried inside the window and left finished runs
+'partial' with `completed_at` NULL, later reaped as "worker terminated".
+Handler-dispatched writers should pass a backoff of the same size to
+`finalizeAgentRun`.
+
 ### Agent status field (`AgentModule.status`)
 
 The `status` value on each AgentModule registration is **descriptive,
@@ -476,7 +486,17 @@ Active edges (event-driven):
                                              `MEMBER_QUERY_CHUNK` = 90 for D1's 100-bind
                                              cap, `lib/cluster-infra-movement.ts`). Same
                                              event_type + target_agent — no new
-                                             dispatch wiring.)
+                                             dispatch wiring.
+                                             processAgentEvents coalesces a tick's events
+                                             to ONE run per target (`coalescedEvents: n`)
+                                             and caps event-triggered runs per UTC day
+                                             (observer 3, default 6; KV counter,
+                                             `lib/agent-event-dispatch.ts`); every consumed
+                                             event is marked done. Caveat: NEXUS emits at
+                                             ~:10-:15 after its 4-hourly dispatch and
+                                             Navigator marks pending events older than
+                                             5 min 'done' without dispatch, so in practice
+                                             these events rarely reach the :07 consumer.)
 
 Telemetry only (target_agent=NULL):
   Sentinel        → [feed_pulled]         — operator sees "new items found"
@@ -643,6 +663,15 @@ cartographer: 9 * * * *     (hourly at :09 — guaranteed maintenance run with o
                              FC scaleAgents defers to it (2026-11-09) instead of
                              starting extra instances inside the :07 tick, which were
                              killed with the tick and starved feed ingestion.
+                             One 8-min run budget (`CARTOGRAPHER_RUN_BUDGET_MS`) is checked
+                             before each phase and inside the Phase 0 / RDAP / Phase 3
+                             loops; once spent the rest is skipped and the run returns
+                             `degraded` → `partial` WITH `completed_at` (2026-11-10: 23/44
+                             runs had orphaned). RDAP is capped at 20 attempts / 10
+                             successes per run. Phase 2's per-provider campaign counts are
+                             KV-cached 24h (`carto:provider_campaigns:<id>`) with a 150K
+                             estimated-row budget on misses per run; an uncached provider
+                             over budget is deferred, not scored.
                              Dedicated cron added in PR-F after 24% failure rate
                              observed at the orchestrator's :07-:12 window.)
 strategist:   10 */6 * * * (every 6h at :10 — relocated from orchestrator in PR-Q because
@@ -755,8 +784,13 @@ daily_snapshots: 28 0,12 * * * (00:28 + 12:28 UTC — writes `daily_snapshots` b
                              its any-row check could not see a missing TYPE — prod lacked
                              provider snapshots on 11 of ~23 days (2026-10-12: 10,137 brand
                              rows / 0 provider). Per-type and resumable: each type is written in
-                             keyset chunks of 1000 entities (`SNAPSHOT_CHUNK_SIZE`,
-                             `lib/snapshots.ts`), resuming after MAX(entity_id) for that
+                             keyset chunks (cron: 250 entities, `DAILY_SNAPSHOTS_CHUNK_SIZE`,
+                             500 ms apart; manual endpoint: 1000, `SNAPSHOT_CHUNK_SIZE`,
+                             `lib/snapshots.ts`); chunk statements retry D1 overload errors
+                             past the 10 s window, and finalize + the event write back off
+                             3 s / 6 s / 12 s (2026-11-08..10 every run's writes after the
+                             heavy chunks were rejected as overloaded and the row stayed
+                             'running'), resuming after MAX(entity_id) for that
                              date+type, so a complete type is skipped and a partial one
                              continues. An 8-min budget (`DAILY_SNAPSHOTS_BUDGET_MS`) ends a
                              type `incomplete`; the run then finishes `partial` with
