@@ -18,7 +18,7 @@ import { useTenantDashboard, type DashboardBrand, type DashboardRecentAlert, typ
 import { useAuth } from '@/lib/auth';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Lock, PauseCircle, AlertTriangle, Shield, ShieldAlert, TrendingUp } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ElementType, ReactNode } from 'react';
 import { Badge, Banner, Card, PageState, Table, buttonVariants, pageStateKind } from '@averrow/shared/ui';
 import { FACELIFT } from '@averrow/shared/theme';
 import { cn } from '@/lib/cn';
@@ -422,12 +422,16 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
   const trial = m.status === 'trial';
   const suspended = m.status === 'suspended';
 
+  // A suspended module's page is refused by the worker, so its card is not a link.
+  const Wrapper: ElementType = suspended ? 'div' : Link;
+  const wrapperProps = suspended ? {} : { to: MODULE_PATHS[m.module_key] };
+
   return (
-    <Link
-      to={MODULE_PATHS[m.module_key]}
+    <Wrapper
+      {...wrapperProps}
       className={cn(
         'th-module block rounded-xl border border-[var(--border-base)] bg-bg-card p-4 transition-colors motion-reduce:transition-none',
-        'hover:border-[var(--border-strong)] ds-focusable',
+        suspended ? 'cursor-default' : 'hover:border-[var(--border-strong)] ds-focusable',
         !entitled && 'th-module--locked',
       )}
     >
@@ -467,7 +471,7 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
           </div>
         </div>
       )}
-    </Link>
+    </Wrapper>
   );
 }
 

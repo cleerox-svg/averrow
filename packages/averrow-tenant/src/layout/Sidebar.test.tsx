@@ -32,6 +32,7 @@ describe('Sidebar module sections', () => {
     const unlock = section('Unlock');
     expect(within(modules).getByText('Trademark Infringement')).toBeTruthy();
     expect(within(modules).getByText('Suspended')).toBeTruthy();
+    expect(within(modules).getByText('Trademark Infringement').closest('a')).toBeNull();
     expect(within(modules).getByText('Trial')).toBeTruthy();
     expect(within(unlock).queryByText('Trademark Infringement')).toBeNull();
     expect(within(unlock).getByText('Dark Web Monitoring')).toBeTruthy();

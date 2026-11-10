@@ -196,6 +196,8 @@ describe('Modules (tenant Workspace overview)', () => {
     expect(within(owned).getByText('Trademark Infringement')).toBeTruthy();
     expect(within(owned).getByText('Suspended')).toBeTruthy();
     expect(within(owned).getByText('Access paused. Contact your admin.')).toBeTruthy();
+    // Its page is refused by the worker, so the card is not a link.
+    expect(within(owned).getByText('Trademark Infringement').closest('a')).toBeNull();
     expect(within(avail).queryByText('Trademark Infringement')).toBeNull();
     expect(within(avail).getByText('Dark Web Monitoring')).toBeTruthy();
     expect(within(avail).getByText('Locked')).toBeTruthy();
