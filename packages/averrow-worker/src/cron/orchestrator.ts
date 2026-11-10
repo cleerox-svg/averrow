@@ -892,6 +892,12 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
 }
 
 // ─── Flight Control v1: Agent Event Consumer ────────────────────
+
+/** Pending events consumed per hourly tick. A NEXUS pivot burst is 7-11
+ *  events; coalescing turns any number of them into one run per target, so
+ *  reading the whole burst in one tick is what keeps it to ONE run (was 10:
+ *  an 11-event burst left a straggler that cost a second run next tick). */
+export const AGENT_EVENTS_PER_TICK = 50;
 async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void> {
   try {
     const events = await env.DB.prepare(`
@@ -899,8 +905,8 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
       FROM agent_events
       WHERE status = 'pending'
       ORDER BY priority ASC, created_at ASC
-      LIMIT 10
-    `).all<{
+      LIMIT ?
+    `).bind(AGENT_EVENTS_PER_TICK).all<{
       id: string;
       event_type: string;
       source_agent: string;
@@ -920,7 +926,7 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
     const { agentModules } = await import('../agents/index');
     const { executeAgent } = await import('../lib/agentRunner');
     const {
-      planAgentEventDispatch, eventDispatchKey, parseDispatchCount,
+      planAgentEventDispatch, eventDispatchKey, parseDispatchCount, coalescedEventInput,
     } = await import('../lib/agent-event-dispatch');
 
     // Claim the whole tick's events up front (one batch) so a concurrent
@@ -966,13 +972,8 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
         continue;
       }
       try {
-        const payload = d.event.payload_json ? JSON.parse(d.event.payload_json) as Record<string, unknown> : {};
         ctx.waitUntil(
-          executeAgent(env, mod, {
-            ...payload,
-            triggeredByEvent: d.event.event_type,
-            coalescedEvents: d.eventIds.length,
-          }, "cron", "event"),
+          executeAgent(env, mod, coalescedEventInput(d), "cron", "event"),
         );
         try {
           await env.CACHE.put(

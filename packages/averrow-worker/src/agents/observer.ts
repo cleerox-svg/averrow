@@ -13,6 +13,7 @@ import { createNotification } from "../lib/notifications";
 import { SUBSCRIBER_MAY_WATCH_BRAND_SQL } from "../lib/brand-subscription-access";
 import { renderIntelSectorTrend } from "../lib/intel-templates";
 import { emailPostureRollup, gradeDistributionByCount } from "../lib/email-posture-rollup";
+import { buildPivotReport, pivotsFromInput } from "../lib/observer-pivot-report";
 
 /** Cube window shared by the three 24h aggregates below: the last 24 cube hours. */
 const CUBE_24H_SQL = "strftime('%Y-%m-%d %H:00:00', 'now', '-24 hours')";
@@ -114,6 +115,42 @@ export const observerAgent: AgentModule = {
     const triggeredByEvent = typeof ctx.input.triggeredByEvent === "string" && ctx.input.triggeredByEvent.length > 0
       ? ctx.input.triggeredByEvent
       : null;
+
+    // ─── pivot_detected → focused operational report (no AI, no D1) ───
+    // The nexus → observer edge (CLAUDE.md §6). The run reports exactly the
+    // pivots it was dispatched for — every payload the orchestrator folded
+    // into this run (input.events) — instead of re-rendering the daily
+    // briefing. No model call and no weekly report (the Claude budget is
+    // for the scheduled narrative), and no aggregate reads.
+    if (triggeredByEvent === "pivot_detected") {
+      const pivots = pivotsFromInput(ctx.input);
+      const report = buildPivotReport(pivots);
+      return {
+        itemsProcessed: pivots.length,
+        itemsCreated: report ? 1 : 0,
+        itemsUpdated: 0,
+        output: {
+          triggered_by_event: triggeredByEvent,
+          ai_skipped: "event_triggered",
+          pivots: pivots.length,
+          coalesced_events: typeof ctx.input.coalescedEvents === "number" ? ctx.input.coalescedEvents : 1,
+        },
+        tokensUsed: 0,
+        agentOutputs: report
+          ? [{
+              type: "insight",
+              summary: report.summary,
+              severity: report.severity,
+              details: { ...report.details, run_id: runId },
+            }]
+          : [{
+              type: "diagnostic",
+              summary: "Observer pivot run: no valid pivot_detected payload in the dispatched events",
+              severity: "low",
+              details: { kind: "pivot_report", pivots: 0, run_id: runId },
+            }],
+      };
+    }
 
     // No run-level cost guard: the spend throttle, per-agent cap and
     // AI_CLAUDE_TASKS are enforced inside callAnthropic (KV-cached), and a

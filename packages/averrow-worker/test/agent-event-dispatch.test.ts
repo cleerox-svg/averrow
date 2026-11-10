@@ -100,6 +100,6 @@ describe("orchestrator processAgentEvents wiring", () => {
     expect(body).toMatch(/for \(const d of plan\.dispatches\)/);
     // The old per-event executeAgent loop is gone.
     expect(body).not.toMatch(/for \(const event of events\.results\)/);
-    expect(body).toContain("coalescedEvents: d.eventIds.length");
+    expect(body).toContain("coalescedEventInput(d)");
   });
 });

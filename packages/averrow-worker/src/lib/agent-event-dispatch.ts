@@ -54,6 +54,8 @@ export interface PlannedEventDispatch {
   event: PendingAgentEvent;
   /** Every event folded into this one dispatch (includes `event`). */
   eventIds: string[];
+  /** The folded events themselves, in consumer order. */
+  events: PendingAgentEvent[];
 }
 
 export interface AgentEventDispatchPlan {
@@ -98,7 +100,7 @@ export function planAgentEventDispatch(
       capped.push({ target, eventIds, dispatchedToday: done, cap });
       continue;
     }
-    dispatches.push({ target, event: list[0]!, eventIds });
+    dispatches.push({ target, event: list[0]!, eventIds, events: list });
   }
   return { dispatches, capped, telemetryIds };
 }
@@ -108,4 +110,30 @@ export function parseDispatchCount(raw: string | null): number {
   if (raw === null) return 0;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function parsePayload(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const v: unknown = JSON.parse(raw);
+    return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Pure: the executeAgent input for one coalesced dispatch. The first event's
+ * payload is spread at the top level (back-compat for agents that read a
+ * single payload), and EVERY folded event is listed in `events` so the
+ * agent can report all of them (observer's pivot report does). A malformed
+ * payload reads as {} — it must not drop the rest of the burst.
+ */
+export function coalescedEventInput(d: PlannedEventDispatch): Record<string, unknown> {
+  return {
+    ...parsePayload(d.event.payload_json),
+    triggeredByEvent: d.event.event_type,
+    coalescedEvents: d.events.length,
+    events: d.events.map((e) => ({ id: e.id, event_type: e.event_type, payload: parsePayload(e.payload_json) })),
+  };
 }
