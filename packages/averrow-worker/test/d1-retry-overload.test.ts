@@ -36,6 +36,7 @@ const OVERLOAD = "D1_ERROR: D1 DB is overloaded. Too many resources consumed wit
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("d1RetryDelayMs", () => {
@@ -73,6 +74,12 @@ describe("d1RetryDelayMs", () => {
 
 describe("withD1Retry overload backoff", () => {
   it("rides out an overload burst longer than the old 350 ms retry span", async () => {
+    // Zero jitter: withD1Retry draws jitter from Math.random (≤ base/4 per
+    // retry), so the 2nd retry fires at 9 s + up to 1.5 s. With real
+    // randomness it landed past the 10 s window ~1/3 of the time and the
+    // burst cleared on the 3rd call ("expected 3 to be 4") — a coin flip,
+    // not load. Pin the schedule to exactly t=0, 3 s, 9 s, 21 s.
+    vi.spyOn(Math, "random").mockReturnValue(0);
     vi.useFakeTimers();
     const start = Date.now();
     let calls = 0;
@@ -193,6 +200,7 @@ describe("executeAgent finalize under D1 overload", () => {
     // Fake only setTimeout: setImmediate stays real so the loop below can
     // yield to genuine I/O (module loading) between clock steps.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(Math, "random").mockReturnValue(0); // fixed 3/6/12 s backoff
     const { db, runs, finalizeCalls } = makeDb(3);
     const env = { DB: db } as unknown as Env;
     let settled = false;
