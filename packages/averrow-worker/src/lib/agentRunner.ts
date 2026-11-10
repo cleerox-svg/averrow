@@ -9,7 +9,7 @@
 import { runInAlertScope, drainAlertScope, ALERT_SCOPE_DRAIN_DEADLINE_MS } from "./alert-events";
 import type { Env } from "../types";
 import { createNotification } from "./notifications";
-import { withD1Retry } from "./d1-retry";
+import { withD1Retry, D1_OVERLOAD_RETRY_BASE_MS } from "./d1-retry";
 import { withD1Meter, isExecutionContextLike } from "./d1-meter";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -322,6 +322,19 @@ export interface ExecuteAgentResult {
   reason?: string;
 }
 
+/**
+ * Overload backoff for the run-finalize writes. A run whose body finished
+ * must not be left 'partial' because D1's 10-second overload window rejected
+ * the finalize UPDATE (and then, 350 ms later, the failure UPDATE): that row
+ * is reaped an hour later as "worker terminated", which is what 2026-11-09/10
+ * prod showed for navigator's :25/:55 ticks and the :07-:13 agents. Scheduled
+ * and event runs wait the window out (lib/d1-retry.ts, 3 s / 6 s / 12 s);
+ * 'api' runs (runSyncAgent, inside an HTTP request) keep the short default.
+ */
+export function finalizeOverloadBaseMs(triggerType: TriggerType): number | undefined {
+  return triggerType === "api" ? undefined : D1_OVERLOAD_RETRY_BASE_MS;
+}
+
 // ─── Run Execution ──────────────────────────────────────────────
 
 export async function executeAgent(
@@ -546,7 +559,7 @@ async function executeAgentMetered(
           finalStatus, durationMs, result.itemsProcessed,
           outputsGenerated, result.tokensUsed ?? 0, runId,
         ).run(),
-      { label: `${agentId} finalize-success` },
+      { label: `${agentId} finalize-success`, overloadBaseMs: finalizeOverloadBaseMs(triggerType) },
     );
 
     // ── Circuit breaker: reset counter on success/partial ────
@@ -567,7 +580,7 @@ async function executeAgentMetered(
         env.DB.prepare(
           `UPDATE agent_runs SET status = 'failed', error_message = ?, duration_ms = ?, completed_at = datetime('now') WHERE id = ?`,
         ).bind(errorMsg, durationMs, runId).run(),
-      { label: `${agentId} finalize-failure` },
+      { label: `${agentId} finalize-failure`, overloadBaseMs: finalizeOverloadBaseMs(triggerType) },
     );
 
     // ── Circuit breaker: increment counter + maybe trip ──────

@@ -27,6 +27,27 @@ const TRANSIENT_D1_PATTERNS: RegExp[] = [
   /internal error in d1/i,
 ];
 
+/**
+ * D1 rejects every statement against a database for the rest of a rolling
+ * 10-second window once that window's resource budget is spent ("D1 DB is
+ * overloaded. Too many resources consumed within a 10 second window"). A
+ * 50/100/200 ms backoff retries INSIDE that window and fails every attempt —
+ * the mechanism that left agent runs unfinalized in prod (2026-11-09/10:
+ * navigator :25/:55 ticks, daily_snapshots, cartographer — the body finished,
+ * the finalize UPDATE and then the failure UPDATE were both rejected, and the
+ * row sat 'partial' / 'running' until a reaper called it "worker terminated").
+ * Callers that can afford to wait pass `overloadBaseMs` so an overload error
+ * backs off past the window (3 s, 6 s, 12 s with the default below).
+ */
+export const D1_OVERLOAD_RETRY_BASE_MS = 3_000;
+
+const OVERLOAD_PATTERN = /\boverloaded\b/i;
+
+/** True for D1's 10-second-window overload rejection. */
+export function isD1OverloadError(message: string): boolean {
+  return OVERLOAD_PATTERN.test(message);
+}
+
 /** True if the error message matches a known-transient, retryable D1 failure. */
 export function isTransientD1Error(message: string): boolean {
   return TRANSIENT_D1_PATTERNS.some((p) => p.test(message));
@@ -58,6 +79,29 @@ export interface D1RetryOptions {
    * last error is re-thrown instead. Keeps a caller's wall-clock bounded.
    */
   deadline?: number;
+  /**
+   * Base backoff for an OVERLOAD error (see D1_OVERLOAD_RETRY_BASE_MS):
+   * attempt N waits overloadBaseMs·2^N + up to overloadBaseMs/4 jitter.
+   * Unset = overload errors use `baseMs` like any other transient error
+   * (the pre-2026-11-10 behaviour; keep it for latency-sensitive paths).
+   */
+  overloadBaseMs?: number;
+}
+
+/** Backoff (ms) before retry `attempt` (0-based) for an error `message`. Pure
+ *  apart from `random` (injectable for tests). */
+export function d1RetryDelayMs(
+  attempt: number,
+  message: string,
+  opts: Pick<D1RetryOptions, "baseMs" | "overloadBaseMs"> = {},
+  random: () => number = Math.random,
+): number {
+  if (opts.overloadBaseMs !== undefined && opts.overloadBaseMs > 0 && isD1OverloadError(message)) {
+    const base = opts.overloadBaseMs;
+    return base * 2 ** attempt + Math.floor(random() * (base / 4));
+  }
+  const baseMs = opts.baseMs ?? 50;
+  return baseMs * 2 ** attempt + Math.floor(random() * baseMs);
 }
 
 const defaultShouldRetry = (err: unknown): boolean =>
@@ -76,7 +120,6 @@ export async function withD1Retry<T>(
   opts: D1RetryOptions = {},
 ): Promise<T> {
   const retries = opts.delaysMs ? opts.delaysMs.length : (opts.retries ?? 3);
-  const baseMs = opts.baseMs ?? 50;
   const shouldRetry = opts.shouldRetry ?? defaultShouldRetry;
   let lastErr: unknown;
 
@@ -90,7 +133,7 @@ export async function withD1Retry<T>(
       if (attempt === retries || !shouldRetry(err)) throw err;
       const delay = opts.delaysMs
         ? (opts.delaysMs[attempt] ?? 0)
-        : baseMs * 2 ** attempt + Math.floor(Math.random() * baseMs);
+        : d1RetryDelayMs(attempt, msg, opts);
       // Out of wall-clock budget → surface the error rather than sleep past it.
       if (opts.deadline !== undefined && Date.now() + delay > opts.deadline) throw err;
       if (opts.label) {
