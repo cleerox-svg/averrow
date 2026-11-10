@@ -282,7 +282,10 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
 
     const first = await ingestNrdHagezi(ctxOf(envOf(db, r2)), { maxNewPerRun: 2, flushEvery: 1 });
 
-    expect(first).toEqual({ itemsFetched: 5, itemsNew: 2, itemsDuplicate: 0, itemsError: 0 });
+    expect(first).toEqual({
+      itemsFetched: 5, itemsNew: 2, itemsDuplicate: 0, itemsError: 0,
+      warning: "resumable: processed 2 of 4 new domains (per-run cap); 2 deferred to the next run",
+    });
     expect(nrdRows().map((x) => x.domain)).toEqual(["acmebank-1.example", "acmebank-2.example"]);
     // Old + flushed only — the capped tail is NOT recorded as seen.
     let snap = r2.store.get(NRD_SNAPSHOT_KEY)!;

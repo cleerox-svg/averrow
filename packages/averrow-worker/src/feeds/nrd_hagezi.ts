@@ -66,13 +66,14 @@ export type { BrandKeywordSpec, BrandMatchEntry } from "../lib/nrd-brand-match";
  *      even if a brand keyword floods.
  *   4. Every today-line that is old (in the snapshot) or was actually
  *      flushed is gzip-streamed into the NEW snapshot as it is read. A new
- *      domain beyond the per-run cap (NRD_MAX_NEW_PER_RUN) is left OUT of
- *      the snapshot, so the next run sees it as new again: the cap DEFERS,
- *      never drops, and successive runs converge. A run that deferred
+ *      domain beyond the per-run cap (NRD_MAX_NEW_PER_RUN) or past the
+ *      per-run processing budget (NRD_PROCESS_BUDGET_MS, below) is left OUT
+ *      of the snapshot, so the next run sees it as new again: both DEFER,
+ *      never drop, and successive runs converge. A run that deferred
  *      anything stores no etag/version on the snapshot, so the next 2-hourly
  *      run re-diffs instead of short-circuiting on an unchanged list. The
  *      cap bounds brand-matching CPU, filter probes and archive memory per
- *      run.
+ *      run; the budget bounds its wall time (see NRD_PROCESS_BUDGET_MS).
  *   5. The snapshot is PUT to R2 only after every D1 write succeeded, so a
  *      failed run leaves the old snapshot and the retry re-diffs (INSERT OR
  *      IGNORE + deterministic threatId make that idempotent).
@@ -156,6 +157,8 @@ export type { BrandKeywordSpec, BrandMatchEntry } from "../lib/nrd-brand-match";
  * itemsDuplicate / itemsError = brand-match THREAT rows inserted / already
  * present (or repeated in the list) / failed — not NRD counts. NRD counts
  * (new, stored_in_d1, archived, deferred) are in the `nrd_hagezi_diffed` log.
+ * A run that deferred domains (cap or time budget) still succeeds, with a
+ * counts-only `warning` (the pull row's error_message) saying it resumes.
  *
  * First run (no snapshot): write the snapshot only and insert nothing, so
  * the 3.1M-row window isn't dumped into D1 in one pull; the next daily list
@@ -200,6 +203,31 @@ export function nrdArchiveKey(registeredDate: string, version: string | null, fi
  *  the snapshot). */
 export const NRD_MAX_NEW_PER_RUN = 1_000_000;
 
+/**
+ * Wall-clock budget (from the start of ingest) for processing NEW domains in
+ * one run. Checked after each flush: once it is spent, the remaining new
+ * domains are DEFERRED exactly like the per-run cap (left out of the
+ * snapshot, picked up by the next run), and the run only finishes the cheap
+ * part — scanning the rest of both lists into the snapshot and the two R2
+ * puts. So every run commits its progress and ends well inside runAllFeeds'
+ * per-pull cap (FEED_RUN_TIMEOUT_MS, 120s, lib/feedRunner.ts), and a slow
+ * day (D1 under load: each flush is a 20-statement batch of ~40K index
+ * probes plus the threat inserts) converges over a few runs instead of
+ * re-diffing the whole day from scratch every time.
+ *
+ * Why: on 2026-11-09 five consecutive diff pulls (14:08–21:07 UTC) never
+ * settled — at 16:08 every other feed and the whole enrichment + social
+ * loops finished while nrd_hagezi stayed open for 8+ minutes — and each was
+ * reaped by Navigator. The all-or-nothing diff meant nothing committed, so
+ * each retry redid the full day and the breaker reached 5/5. Normal diff
+ * pulls take 15–66s (14-day max 66s).
+ *
+ * Only checked after a flush, so every run processes at least one flush
+ * (NRD_FLUSH_EVERY new domains) — progress is guaranteed even when the scan
+ * up to the first new domain is slow.
+ */
+export const NRD_PROCESS_BUDGET_MS = 45_000;
+
 /** Timeout for the response HEADERS. The body has its own idle timeout,
  *  because the body is read across D1 flushes that can take minutes in
  *  total — a whole-request AbortSignal.timeout would abort it mid-diff. */
@@ -222,6 +250,12 @@ export interface NrdIngestOptions {
   flushEvery?: number;
   /** Override NRD_KEYWORD_DEMOTE_AFTER (tests). */
   keywordDemoteAfter?: number;
+  /** Override NRD_PROCESS_BUDGET_MS (tests). */
+  processBudgetMs?: number;
+  /** Clock (tests). Defaults to Date.now. */
+  now?: () => number;
+  /** Override BODY_IDLE_TIMEOUT_MS for both list readers (tests). */
+  idleTimeoutMs?: number;
 }
 
 export const nrd_hagezi: FeedModule = {
@@ -234,6 +268,9 @@ const NOOP: FeedResult = { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, item
 export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions = {}): Promise<FeedResult> {
   const maxNew = opts.maxNewPerRun ?? NRD_MAX_NEW_PER_RUN;
   const flushEvery = opts.flushEvery ?? NRD_FLUSH_EVERY;
+  const now = opts.now ?? Date.now;
+  const processDeadline = now() + (opts.processBudgetMs ?? NRD_PROCESS_BUDGET_MS);
+  const idleMs = opts.idleTimeoutMs ?? BODY_IDLE_TIMEOUT_MS;
   const bucket = ctx.env.GEOIP_STAGING;
   if (!bucket) {
     throw new Error(
@@ -270,7 +307,10 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     throw new Error(`NRD Hagezi: expected a plain-text domain list, got content-type "${contentType}"`);
   }
 
-  const today = new SortedDomainReader(lineReader(res.body.pipeThrough(new TextDecoderStream()), BODY_IDLE_TIMEOUT_MS), "list");
+  const today = new SortedDomainReader(
+    lineReader(res.body.pipeThrough(new TextDecoderStream()), idleMs, "list body"),
+    "list",
+  );
   let prev: SortedDomainReader | null = null;
   const snapshot = new SnapshotWriter();
   let archive: SnapshotWriter | null = null;
@@ -306,7 +346,13 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       throw new Error(`NRD Hagezi: snapshot ${NRD_SNAPSHOT_KEY} vanished between head() and get() — retry`);
     }
     prev = new SortedDomainReader(
-      lineReader(prevObj.body.pipeThrough(new DecompressionStream("gzip")).pipeThrough(new TextDecoderStream()), 0),
+      // Idle timeout here too: a stalled R2 read used to hang the pull
+      // with no error until the invocation died (no timeout on this path).
+      lineReader(
+        prevObj.body.pipeThrough(new DecompressionStream("gzip")).pipeThrough(new TextDecoderStream()),
+        idleMs,
+        "snapshot read",
+      ),
       `snapshot ${NRD_SNAPSHOT_KEY} (delete that R2 object to re-bootstrap)`,
       (err) => {
         logger.error("nrd_hagezi_snapshot_unreadable", {
@@ -338,6 +384,10 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     let newTotal = 0;
     let newProcessed = 0;
     let storedInD1 = 0;
+    /** Why new domains stopped being processed this run (rest deferred). */
+    // An object, not a `let`: flush() (a closure) sets it, and TS would
+    // otherwise narrow a `let` to its initializer at the read sites.
+    const stop: { reason: "cap" | "budget" | null } = { reason: null };
 
     const flush = async (): Promise<void> => {
       if (pending.length === 0) return;
@@ -360,6 +410,8 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
         totals.itemsError += r.itemsError;
       }
       pending = [];
+      // Budget check only at a flush boundary: every run commits ≥1 flush.
+      if (stop.reason === null && now() >= processDeadline) stop.reason = "budget";
     };
 
     // ── Merge-diff: emit today-lines absent from the snapshot. ──
@@ -372,9 +424,10 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
         continue;
       }
       newTotal++;
-      // Over the cap: leave it OUT of the new snapshot so the next run sees
-      // it as new again (deferred, not dropped).
-      if (newProcessed >= maxNew) continue;
+      if (stop.reason === null && newProcessed >= maxNew) stop.reason = "cap";
+      // Over the cap or the budget: leave it OUT of the new snapshot so the
+      // next run sees it as new again (deferred, not dropped).
+      if (stop.reason !== null) continue;
       newProcessed++;
       await snapshot.add(d);
       pending.push(d);
@@ -386,7 +439,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     const deferred = newTotal - newProcessed;
 
     if (deferred > 0) {
-      logger.warn("nrd_hagezi_deferred", { newTotal, processed: newProcessed, deferred, cap: maxNew });
+      logger.warn("nrd_hagezi_deferred", { newTotal, processed: newProcessed, deferred, cap: maxNew, reason: stop.reason });
     }
     const demoted = matcher.demotedKeywords();
     if (demoted.length > 0) {
@@ -443,7 +496,14 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       itemsError,
     });
 
-    return { itemsFetched: lines, itemsNew, itemsDuplicate, itemsError };
+    const result: FeedResult = { itemsFetched: lines, itemsNew, itemsDuplicate, itemsError };
+    // A deferring run SUCCEEDED (its progress is committed); the note lands
+    // on the success row (feed_pull_history.error_message), never on
+    // feed_status.last_error. Counts only — no upstream text.
+    if (deferred > 0) {
+      result.warning = `resumable: processed ${newProcessed} of ${newTotal} new domains (${stop.reason === "budget" ? "time budget" : "per-run cap"}); ${deferred} deferred to the next run`;
+    }
+    return result;
   } finally {
     snapshot.abort();
     archive?.abort();
@@ -582,8 +642,10 @@ interface LineReader {
 }
 
 /** Split a text stream into lines without buffering it whole. `idleMs` > 0
- *  aborts when no chunk arrives within that window. */
-function lineReader(stream: ReadableStream<string>, idleMs: number): LineReader {
+ *  aborts when no chunk arrives within that window (only while a read is
+ *  pending — time spent in D1 flushes between reads never counts). `what` is
+ *  FIXED text for the error message. */
+function lineReader(stream: ReadableStream<string>, idleMs: number, what: string): LineReader {
   const reader = stream.getReader();
   let buf = "";
   let lines: string[] = [];
@@ -595,7 +657,7 @@ function lineReader(stream: ReadableStream<string>, idleMs: number): LineReader 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
-        () => reject(new Error(`NRD Hagezi: list body stalled — no data for ${idleMs / 1000}s`)),
+        () => reject(new Error(`NRD Hagezi: ${what} stalled — no data for ${idleMs / 1000}s`)),
         idleMs,
       );
     });
