@@ -74,6 +74,17 @@ export type { BrandKeywordSpec, BrandMatchEntry } from "../lib/nrd-brand-match";
  *      run re-diffs instead of short-circuiting on an unchanged list. The
  *      cap bounds brand-matching CPU, filter probes and archive memory per
  *      run; the budget bounds its wall time (see NRD_PROCESS_BUDGET_MS).
+ *      A run that STOPPED (cap or budget) records the last domain it
+ *      processed as `resume_after` in the snapshot metadata; the next run
+ *      processes only new domains after it (those at or before it stay
+ *      deferred) and, once it reaches the end of the list, clears it so the
+ *      run after that starts from the top again. Deferred work therefore
+ *      ROTATES through the alphabet instead of always restarting at "a" — a
+ *      domain is listed for only 7 days, and one never processed before it
+ *      leaves the window would never be archived (the archive is the only
+ *      copy). A backlog that does not shrink, or outlives a list version, is
+ *      flagged (`nrd_hagezi_backlog_stuck` log + "BACKLOG STUCK" in the pull
+ *      note).
  *   5. The snapshot is PUT to R2 only after every D1 write succeeded, so a
  *      failed run leaves the old snapshot and the retry re-diffs (INSERT OR
  *      IGNORE + deterministic threatId make that idempotent).
@@ -170,6 +181,12 @@ export type { BrandKeywordSpec, BrandMatchEntry } from "../lib/nrd-brand-match";
  * lib/lookalike-nrd-matcher.ts) cursor on `created_at`; the lookalike
  * matcher reads `registered_date` only to stamp `first_seen` and to apply
  * its 30-day claim window. It is also the archive object's date partition.
+ * A domain deferred past a list version change (cap/budget backlog) is
+ * stamped with the LATER list's date when it is finally processed — up to
+ * the backlog's age late; old-vs-newly-listed cannot be told apart without
+ * the older list. The snapshot carries `deferred_since` (registered_date of
+ * the run that started the backlog) so the drift is visible; the lookalike
+ * matcher's 30-day window and the 30-day retention absorb a day or two.
  *
  * Snapshot lives in the GEOIP_STAGING R2 bucket under NRD_SNAPSHOT_KEY. The
  * GeoIP workflow only ever deletes its own staging key there, never lists
@@ -205,14 +222,20 @@ export const NRD_MAX_NEW_PER_RUN = 1_000_000;
 
 /**
  * Wall-clock budget (from the start of ingest) for processing NEW domains in
- * one run. Checked after each flush: once it is spent, the remaining new
- * domains are DEFERRED exactly like the per-run cap (left out of the
- * snapshot, picked up by the next run), and the run only finishes the cheap
- * part — scanning the rest of both lists into the snapshot and the two R2
- * puts. So every run commits its progress and ends well inside runAllFeeds'
- * per-pull cap (FEED_RUN_TIMEOUT_MS, 120s, lib/feedRunner.ts), and a slow
- * day (D1 under load: each flush is a 20-statement batch of ~40K index
- * probes plus the threat inserts) converges over a few runs instead of
+ * one run. Checked PREDICTIVELY after each flush: the run stops taking new
+ * domains when `now + duration of the flush just done >= deadline`, so no
+ * flush is expected to end past it. The remaining new domains are DEFERRED
+ * exactly like the per-run cap (left out of the snapshot, picked up by the
+ * next run — see `resume_after` in the module header). The run then only
+ * finishes the tail: scanning the rest of both lists into the snapshot and
+ * the two R2 puts, which this budget does NOT bound (the snapshot must hold
+ * every old line, so the scan cannot be cut short). NRD_TAIL_ALLOWANCE_MS
+ * covers that tail, and runAllFeeds' per-pull timeout for this feed
+ * (FEED_RUN_TIMEOUT_OVERRIDES_MS.nrd_hagezi, lib/feedRunner.ts) is ≥ budget
+ * + tail allowance (pinned by test/nrd-hagezi-budget.test.ts), so a run that
+ * is making progress is not timed out and penalized. A slow day (D1 under
+ * load: each flush is a 20-statement batch of ~40K index probes plus the
+ * threat inserts) commits progress every run and converges instead of
  * re-diffing the whole day from scratch every time.
  *
  * Why: on 2026-11-09 five consecutive diff pulls (14:08–21:07 UTC) never
@@ -227,6 +250,16 @@ export const NRD_MAX_NEW_PER_RUN = 1_000_000;
  * up to the first new domain is slow.
  */
 export const NRD_PROCESS_BUDGET_MS = 45_000;
+
+/**
+ * Allowance for the part of a run the budget does not bound: the post-stop
+ * scan of the rest of both lists (~3.1M lines each, gzip in and out) and
+ * the archive + snapshot R2 puts. Measured bound: whole diff pulls, flushes
+ * included, took at most 66s over the 14 days to 2026-11-09, and the tail is
+ * a subset of that; 120s is ~2× it. The per-pull timeout override for this
+ * feed must be ≥ NRD_PROCESS_BUDGET_MS + this.
+ */
+export const NRD_TAIL_ALLOWANCE_MS = 120_000;
 
 /** Timeout for the response HEADERS. The body has its own idle timeout,
  *  because the body is read across D1 flushes that can take minutes in
@@ -389,8 +422,14 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     // otherwise narrow a `let` to its initializer at the read sites.
     const stop: { reason: "cap" | "budget" | null } = { reason: null };
 
+    // Object for the same reason as `stop`: written inside flush().
+    const cursor: { lastProcessed: string | null } = { lastProcessed: null };
+    /** New domains after the rotation cursor left unprocessed by the stop. */
+    let stoppedSkips = 0;
+
     const flush = async (): Promise<void> => {
       if (pending.length === 0) return;
+      const flushStart = now();
       // Only domains a matcher join can return land in D1 — the filter is
       // in the INSERT itself (NRD_INSERT_SQL, module header).
       storedInD1 += await storeNrdReference(ctx.env.DB, pending, registeredDate);
@@ -409,10 +448,17 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
         totals.itemsDuplicate += r.itemsDuplicate + inPayloadDuplicates;
         totals.itemsError += r.itemsError;
       }
+      cursor.lastProcessed = pending[pending.length - 1]!;
       pending = [];
-      // Budget check only at a flush boundary: every run commits ≥1 flush.
-      if (stop.reason === null && now() >= processDeadline) stop.reason = "budget";
+      // Budget check only at a flush boundary (every run commits ≥1 flush),
+      // and predictive: stop if another flush as slow as this one would end
+      // past the deadline.
+      const t = now();
+      if (stop.reason === null && t + (t - flushStart) >= processDeadline) stop.reason = "budget";
     };
+
+    // Rotation cursor of the previous (stopped) run — module header.
+    const resumeAfter = prevMeta.resume_after ? prevMeta.resume_after : null;
 
     // ── Merge-diff: emit today-lines absent from the snapshot. ──
     let p = await prev.next();
@@ -424,10 +470,13 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
         continue;
       }
       newTotal++;
+      // Rotation: the previous stopped run already got this far in the
+      // alphabet; what is at or before its last domain waits for the wrap.
+      if (resumeAfter !== null && d <= resumeAfter) continue;
       if (stop.reason === null && newProcessed >= maxNew) stop.reason = "cap";
       // Over the cap or the budget: leave it OUT of the new snapshot so the
       // next run sees it as new again (deferred, not dropped).
-      if (stop.reason !== null) continue;
+      if (stop.reason !== null) { stoppedSkips++; continue; }
       newProcessed++;
       await snapshot.add(d);
       pending.push(d);
@@ -438,8 +487,23 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     const { itemsNew, itemsDuplicate, itemsError } = totals;
     const deferred = newTotal - newProcessed;
 
+    const backlog = backlogState(prevMeta, deferred, header.version, registeredDate);
+    // A stopped run resumes after its last processed domain; one that reached
+    // the end of the list wraps to the top (resume_after cleared).
+    const stopped = stoppedSkips > 0 ? stop.reason : null;
+    const nextResumeAfter = stopped !== null ? (cursor.lastProcessed ?? resumeAfter) : null;
+
     if (deferred > 0) {
-      logger.warn("nrd_hagezi_deferred", { newTotal, processed: newProcessed, deferred, cap: maxNew, reason: stop.reason });
+      logger.warn("nrd_hagezi_deferred", {
+        newTotal, processed: newProcessed, deferred, cap: maxNew,
+        reason: stopped ?? "wrap", resumeAfter, nextResumeAfter,
+      });
+    }
+    if (backlog.stuck) {
+      logger.warn("nrd_hagezi_backlog_stuck", {
+        deferred, previousDeferred: backlog.previousDeferred, runs: backlog.runs,
+        acrossVersion: backlog.acrossVersion, deferredSince: backlog.since,
+      });
     }
     const demoted = matcher.demotedKeywords();
     if (demoted.length > 0) {
@@ -477,7 +541,12 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       logger.warn("nrd_hagezi_snapshot_held", { reason: "threat_insert_errors", itemsError, version: header.version });
     } else {
       await bucket.put(NRD_SNAPSHOT_KEY, await snapshot.finish(), {
-        customMetadata: snapshotMetadata(etag, header, deferred),
+        customMetadata: snapshotMetadata(etag, header, deferred, {
+          resumeAfter: nextResumeAfter,
+          runs: backlog.runs,
+          since: backlog.since,
+          version: header.version,
+        }),
       });
     }
 
@@ -501,7 +570,16 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     // on the success row (feed_pull_history.error_message), never on
     // feed_status.last_error. Counts only — no upstream text.
     if (deferred > 0) {
-      result.warning = `resumable: processed ${newProcessed} of ${newTotal} new domains (${stop.reason === "budget" ? "time budget" : "per-run cap"}); ${deferred} deferred to the next run`;
+      const why = stopped === "budget"
+        ? "time budget"
+        : stopped === "cap" ? "per-run cap" : "end of list, next run wraps to the top";
+      let note = `resumable: processed ${newProcessed} of ${newTotal} new domains (${why}); ${deferred} deferred to the next run`;
+      if (backlog.stuck) {
+        note += backlog.acrossVersion
+          ? `; BACKLOG STUCK: deferred domains carried across a list version (backlog since ${backlog.since}, ${backlog.runs} runs)`
+          : `; BACKLOG STUCK: not shrinking (${deferred} >= previous ${backlog.previousDeferred}, ${backlog.runs} runs)`;
+      }
+      result.warning = note;
     }
     return result;
   } finally {
@@ -589,23 +667,74 @@ export function registeredDateFromHeader(lastModified: string | null, now: Date 
   return base.toISOString().slice(0, 10);
 }
 
+interface BacklogInfo {
+  /** Rotation cursor for the next run (null = start from the top). */
+  resumeAfter: string | null;
+  /** Consecutive deferring runs, this one included. */
+  runs: number;
+  /** registered_date of the run that started the backlog. */
+  since: string;
+  /** This run's list version (the backlog's latest). */
+  version: string | null;
+}
+
 /**
- * Snapshot customMetadata. When the run deferred domains (per-run cap), the
- * etag/version are deliberately omitted: the snapshot is then NOT a complete
- * image of that list version, so the next run must neither send
- * If-None-Match nor take the same-version shortcut — it re-diffs and picks
- * up the deferred domains.
+ * Snapshot customMetadata. When the run deferred domains (per-run cap, time
+ * budget, or the rotation wrap), the etag/version are deliberately omitted:
+ * the snapshot is then NOT a complete image of that list version, so the
+ * next run must neither send If-None-Match nor take the same-version
+ * shortcut — it re-diffs and picks up the deferred domains. A deferring
+ * snapshot also records the backlog: `deferred`, `deferred_runs`,
+ * `deferred_since`, `deferred_version` and, for a run that stopped,
+ * `resume_after` (module header). A complete run writes none of them.
  */
-function snapshotMetadata(etag: string | null, header: NrdListHeader, deferred: number): Record<string, string> {
+function snapshotMetadata(
+  etag: string | null,
+  header: NrdListHeader,
+  deferred: number,
+  backlog?: BacklogInfo,
+): Record<string, string> {
   const meta: Record<string, string> = {};
   if (deferred === 0) {
     if (etag) meta.etag = etag;
     if (header.version) meta.version = header.version;
   } else {
     meta.deferred = String(deferred);
+    if (backlog) {
+      meta.deferred_runs = String(backlog.runs);
+      meta.deferred_since = backlog.since;
+      meta.deferred_version = backlog.version ?? "unversioned";
+      if (backlog.resumeAfter !== null) meta.resume_after = backlog.resumeAfter;
+    }
   }
   if (header.lastModified) meta.list_modified = header.lastModified;
   return meta;
+}
+
+/**
+ * Backlog bookkeeping from the previous snapshot's metadata. `stuck` when
+ * this run deferred, the previous one did too, and the backlog either did
+ * not shrink or outlived a list version — the conditions under which a
+ * deferred domain could age out of the 7-day window unprocessed. Exported
+ * for tests.
+ */
+export function backlogState(
+  prevMeta: Record<string, string>,
+  deferred: number,
+  version: string | null,
+  registeredDate: string,
+): { runs: number; since: string; stuck: boolean; acrossVersion: boolean; previousDeferred: number } {
+  const previousDeferred = Number(prevMeta.deferred ?? 0) || 0;
+  const carried = deferred > 0 && previousDeferred > 0;
+  const runs = deferred > 0 ? (carried ? (Number(prevMeta.deferred_runs ?? 1) || 1) + 1 : 1) : 0;
+  const since = carried && prevMeta.deferred_since ? prevMeta.deferred_since : registeredDate;
+  // A pre-rotation snapshot has no deferred_version: don't call that a
+  // version change.
+  const acrossVersion = carried
+    && prevMeta.deferred_version !== undefined
+    && prevMeta.deferred_version !== (version ?? "unversioned");
+  const stuck = carried && (deferred >= previousDeferred || acrossVersion);
+  return { runs, since, stuck, acrossVersion, previousDeferred };
 }
 
 /**

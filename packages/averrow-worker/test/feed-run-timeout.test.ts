@@ -261,7 +261,7 @@ describe("runAllFeeds per-feed timeout", () => {
 
   it("resolves the per-feed timeout from the default + overrides", () => {
     expect(FEED_RUN_TIMEOUT_MS).toBe(120_000);
-    expect(feedRunTimeoutMs("nrd_hagezi")).toBe(120_000);
+    expect(feedRunTimeoutMs("dshield")).toBe(120_000);
     expect(feedRunTimeoutMs("cloudflare_scanner")).toBe(120_000);
     expect(feedRunTimeoutMs("urlhaus")).toBe(120_000);
     expect(feedRunTimeoutMs("taxii_otx")).toBe(600_000);
@@ -275,7 +275,7 @@ describe("runAllFeeds per-feed timeout", () => {
   it("abandons hung pulls at the timeout, frees their slots, and finalizes + penalizes them", async () => {
     // Four hangs fill the whole pool (FEED_CONCURRENCY = 4); the fast
     // feeds behind them can only run once the timeouts free the slots.
-    const hung = ["nrd_hagezi", "cloudflare_scanner", "urlhaus", "hang_d"];
+    const hung = ["dshield", "cloudflare_scanner", "urlhaus", "hang_d"];
     const fast = ["openphish", "threatfox"];
     const state = makeState([...hung, ...fast]);
     const modules: Record<string, FeedModule> = {};
@@ -312,21 +312,21 @@ describe("runAllFeeds per-feed timeout", () => {
 
   it("does not let a late completion overwrite the timed-out row or reset the breaker", async () => {
     const late = controllable();
-    const state = makeState(["nrd_hagezi"]);
-    const run = runAllFeeds(makeEnv(state), { nrd_hagezi: late.mod });
+    const state = makeState(["dshield"]);
+    const run = runAllFeeds(makeEnv(state), { dshield: late.mod });
     await vi.advanceTimersByTimeAsync(FEED_RUN_TIMEOUT_MS);
     const result = await run;
     expect(result.feedsTimedOut).toBe(1);
-    const retryAt = state.status.get("nrd_hagezi")!.next_retry_at;
+    const retryAt = state.status.get("dshield")!.next_retry_at;
     expect(retryAt).not.toBeNull();
 
     late.resolve({ ...OK });
     await vi.advanceTimersByTimeAsync(1_000);
 
-    const row = pullOf(state, "nrd_hagezi");
+    const row = pullOf(state, "dshield");
     expect(row.status).toBe("failed");
     expect(row.error_message).toBe("timed out after 120s — pull abandoned");
-    const st = state.status.get("nrd_hagezi")!;
+    const st = state.status.get("dshield")!;
     expect(st.consecutive_failures).toBe(1);
     expect(st.next_retry_at).toBe(retryAt);
     expect(st.last_successful_pull).toBeNull();
@@ -557,13 +557,13 @@ describe("feed timeout follow-ups (fake timers)", () => {
 
   describe("penalizing a feed with no feed_status row", () => {
     it("creates the row and backs off a feed that times out before it ever succeeded", async () => {
-      const state = makeState(["nrd_hagezi"]);
-      state.status.delete("nrd_hagezi");
-      const run = runAllFeeds(makeEnv(state), { nrd_hagezi: hangingModule() });
+      const state = makeState(["dshield"]);
+      state.status.delete("dshield");
+      const run = runAllFeeds(makeEnv(state), { dshield: hangingModule() });
       await vi.advanceTimersByTimeAsync(FEED_RUN_TIMEOUT_MS);
       expect(await run).toMatchObject({ feedsTimedOut: 1 });
 
-      const st = state.status.get("nrd_hagezi");
+      const st = state.status.get("dshield");
       expect(st).toBeDefined();
       expect(st!.consecutive_failures).toBe(1);
       expect(st!.next_retry_at).not.toBeNull();
@@ -573,7 +573,7 @@ describe("feed timeout follow-ups (fake timers)", () => {
       // transition and notifies.
       expect(createNotificationMock).toHaveBeenCalledTimes(1);
       expect(createNotificationMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-        type: "feed_health", title: "Feed degraded: nrd_hagezi",
+        type: "feed_health", title: "Feed degraded: dshield",
       }));
       expect(unhandled).toEqual([]);
     });

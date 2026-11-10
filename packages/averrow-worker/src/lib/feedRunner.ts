@@ -467,6 +467,13 @@ export const FEED_RUN_TIMEOUT_OVERRIDES_MS: Readonly<Record<string, number>> = {
   c2_intel_feeds: 240_000,    // p95 / max 187s
   ct_logs: 180_000,           // p95 31s / max 162s
   otx_alienvault: 180_000,    // p95 52s / max 160s
+  // 14-day max 66s, but the module now bounds new-domain processing to
+  // NRD_PROCESS_BUDGET_MS (45s) and must then finish the snapshot scan + R2
+  // puts (NRD_TAIL_ALLOWANCE_MS, 120s). A deferring run is progress and must
+  // not be timed out and penalized. ≥ budget + tail is pinned by
+  // test/nrd-hagezi-budget.test.ts (no import here: feeds/nrd_hagezi
+  // imports this module).
+  nrd_hagezi: 180_000,
 
   // Enrichment feeds (runAllEnrichmentFeeds, sequential). Same 14-day
   // data; spamhaus_dbl (max 68s), abuseipdb (max 25s) and circl_pdns

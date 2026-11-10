@@ -292,7 +292,16 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
     expect(await gunzipText(snap.bytes)).toBe("acmebank-0.example\nacmebank-1.example\nacmebank-2.example\n");
     // Incomplete image of this version → no etag/version, so the next run
     // neither 304s nor takes the same-version shortcut.
-    expect(snap.customMetadata).toEqual({ deferred: "2", list_modified: MODIFIED });
+    // resume_after: the next run continues after the last processed domain
+    // (rotation, test/nrd-hagezi-budget.test.ts).
+    expect(snap.customMetadata).toEqual({
+      deferred: "2",
+      deferred_runs: "1",
+      deferred_since: "2026-10-04",
+      deferred_version: VERSION,
+      resume_after: "acmebank-2.example",
+      list_modified: MODIFIED,
+    });
 
     // Next run, SAME list: re-diffs and picks up the deferred tail.
     const second = await ingestNrdHagezi(ctxOf(envOf(db, r2)), { maxNewPerRun: 2, flushEvery: 1 });
