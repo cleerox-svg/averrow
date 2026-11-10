@@ -211,8 +211,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 1603,
-      "last_modified": "2026-11-10T03:05:09.611Z"
+      "loc": 1776,
+      "last_modified": "2026-11-10T03:21:20.667Z"
     },
     {
       "name": "ct-monitor",
