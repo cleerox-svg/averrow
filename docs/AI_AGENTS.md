@@ -207,7 +207,7 @@ surfaced via `/api/insights/latest` → Home "Latest Intel" until both were reti
 | Property | Value |
 |----------|-------|
 | **File** | `packages/averrow-worker/src/agents/observer.ts` |
-| **Trigger** | Scheduled — daily at 00:00 UTC (inline await on the hourly mesh) |
+| **Trigger** | Scheduled — daily at 00:41 UTC, dedicated `41 0 * * *` cron (`OBSERVER_CRON`, since 2026-11-10; was inline at hour 0 on the :07 mesh). Event — `pivot_detected` from NEXUS via the :07 agent_events consumer |
 | **Purpose** | Generate intelligence briefings from trend analysis |
 
 The Observer synthesizes threat data from the last 24 hours into human-readable intelligence briefings. It gathers:
@@ -220,7 +220,7 @@ The Observer synthesizes threat data from the last 24 hours into human-readable 
 
 This context is sent to Claude Haiku, which generates 3-5 professional intelligence briefing items. Briefings are stored as `agent_outputs` and surfaced in the HUD and insights panel. Creates user notifications for critical findings.
 
-**D1 reads (2026-11-10):** the 24h top-brands, top-providers and threat-type aggregates read the hourly cubes (`threat_cube_brand` / `_provider` / `_status`, hour index pinned with `INDEXED BY`; SQL exported as `OBSERVER_*_24H_SQL`). The raw-threats versions read ~1.55M rows per run (`SCAN threats USING INDEX idx_threats_type` plus a full `brands` scan); the cube versions read ~2.5K. Event-triggered runs (`pivot_detected`) are coalesced to one per orchestrator tick and capped at 3 per UTC day (`lib/agent-event-dispatch.ts`); they skip the AI call.
+**D1 reads (2026-11-10):** the 24h top-brands, top-providers and threat-type aggregates read the hourly cubes (`threat_cube_brand` / `_provider` / `_status`, hour index pinned with `INDEXED BY`; SQL exported as `OBSERVER_*_24H_SQL`). The raw-threats versions read ~1.55M rows per run (`SCAN threats USING INDEX idx_threats_type` plus a full `brands` scan); the cube versions read ~2.5K. **Pivot-triggered runs (2026-11-10):** `pivot_detected` events (kind `dormancy` / `infra_movement`) stay pending until the hourly :07 consumer (Navigator expires targeted events only after 3h), are coalesced to one observer run per tick and capped at 3 per UTC day (`lib/agent-event-dispatch.ts`). The run receives every folded payload as `input.events` and writes one focused rule-based `insight` (`lib/observer-pivot-report.ts`): which operations moved infrastructure (+ASNs with the new and previous ASN lists, +IPs, +cert serials) and which clusters went dormant, severity `high` when any infrastructure moved, else `medium`; `details` lists cluster ids, ASNs and the parsed events. No AI call, no weekly report and no D1 aggregate reads on this path.
 
 **Inputs:** Aggregated threat statistics, brand targeting patterns, provider data
 **Outputs:** Intelligence briefing entries in `agent_outputs`; user notifications
@@ -752,7 +752,7 @@ The hourly mesh cron is `7 * * * *`. All time gates below use hour-only checks o
 | Strategist | Every 6 hours (hours 0/6/12/18) | `ctx.waitUntil` | Yes | No |
 | Nexus | Every 4 hours (hours 0/4/8/12/16/20) | `NexusWorkflow` | No | No |
 | Sparrow | Every 6 hours (hours 0/6/12/18) | `ctx.waitUntil` | No | No |
-| Observer | Daily at 00:00 UTC | Inline await | Yes | No |
+| Observer | Daily at 00:41 UTC (`41 0 * * *`) | Dedicated cron | Yes | No |
 | Pathfinder | Daily at 03:00 UTC (KV throttle to 7 days) | Inline await | No | No |
 | Seed Strategist | Daily at 06:00 UTC (inside Observer briefing job) | Inline await | Yes | No |
 | Narrator | Daily at 06:00 UTC (after Observer briefing) | `executeAgent` | Yes | No |
