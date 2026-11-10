@@ -17,7 +17,7 @@ import { useTenantModules, MODULE_LABELS, MODULE_DESCRIPTIONS, type ModuleKey, t
 import { useTenantDashboard, type DashboardBrand, type DashboardRecentAlert, type DashboardTrendPoint } from '@/lib/dashboard';
 import { useAuth } from '@/lib/auth';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Lock, AlertTriangle, Shield, ShieldAlert, TrendingUp } from 'lucide-react';
+import { CheckCircle2, Lock, PauseCircle, AlertTriangle, Shield, ShieldAlert, TrendingUp } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Badge, Banner, Card, PageState, Table, buttonVariants, pageStateKind } from '@averrow/shared/ui';
 import { FACELIFT } from '@averrow/shared/theme';
@@ -100,7 +100,9 @@ export function Modules() {
   if (!modulesData) return <PageState kind="loading" />;
 
   const active = modulesData.modules.filter((m) => m.status === 'active' || m.status === 'trial');
-  const locked = modulesData.modules.filter((m) => m.status === 'not_entitled' || m.status === 'suspended');
+  // Suspended modules are still the customer's own: listed with active ones, never under "Available to add".
+  const owned = modulesData.modules.filter((m) => m.status === 'active' || m.status === 'trial' || m.status === 'suspended');
+  const locked = modulesData.modules.filter((m) => m.status === 'not_entitled');
 
   return (
     <div className="tenant-home space-y-8 max-w-6xl">
@@ -151,14 +153,14 @@ export function Modules() {
       {/* Modules section — secondary, but still part of the overview. */}
       <section aria-labelledby="th-active-modules">
         <h2 id="th-active-modules" className={SECTION_LABEL}>Active modules</h2>
-        {active.length === 0 ? (
+        {owned.length === 0 ? (
           <Surface padding={24} className="text-center">
             <p className="text-[var(--text-secondary)] text-type-small">No modules active yet.</p>
             <p className="text-[var(--text-secondary)] text-type-label mt-1">A super-admin needs to activate modules for your organization.</p>
           </Surface>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {active.map((m) => (
+            {owned.map((m) => (
               <ModuleCard key={m.module_key} module={m} entitled />
             ))}
           </div>
@@ -418,6 +420,7 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
   const totalUsage = m.metrics.reduce((sum, metric) => sum + (metric.value_this_month ?? 0), 0);
   // Trial is informational (blue 'running' status), deliberately not amber/pending.
   const trial = m.status === 'trial';
+  const suspended = m.status === 'suspended';
 
   return (
     <Link
@@ -433,7 +436,12 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
           <div className="text-type-body font-semibold text-[var(--text-primary)]">{MODULE_LABELS[m.module_key]}</div>
           <p className="text-type-small text-[var(--text-secondary)] mt-1">{MODULE_DESCRIPTIONS[m.module_key]}</p>
         </div>
-        {entitled ? (
+        {suspended ? (
+          <Badge status="warning" font="sans" size="md" className="flex-shrink-0">
+            <PauseCircle size={12} aria-hidden="true" className="mr-1" />
+            Suspended
+          </Badge>
+        ) : entitled ? (
           <Badge status={trial ? 'running' : 'active'} font="sans" size="md" className="flex-shrink-0">
             <CheckCircle2 size={12} aria-hidden="true" className="mr-1" />
             {trial ? 'Trial' : 'Active'}
@@ -446,7 +454,11 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
         )}
       </div>
 
-      {entitled && m.metrics.length > 0 && (
+      {suspended && (
+        <p className="mt-2 text-type-small text-[var(--text-secondary)]">Access paused. Contact your admin.</p>
+      )}
+
+      {entitled && !suspended && m.metrics.length > 0 && (
         <div className="mt-3 pt-3 border-t border-[var(--border-base)]">
           <div className="text-type-label text-[var(--text-tertiary)] mb-1">This month</div>
           <div className="flex items-baseline gap-2">

@@ -185,6 +185,26 @@ describe('Modules (tenant Workspace overview)', () => {
     }
   });
 
+  it('lists a suspended module with the owned modules, badged Suspended, not under Available to add', () => {
+    const m = modulesData(false);
+    setup(false, { modules: { ...m, modules: [
+      ...m.modules,
+      { module_key: 'trademark', status: 'suspended', metrics: [] },
+    ] } });
+    const owned = screen.getByRole('region', { name: 'Active modules' });
+    const avail = screen.getByRole('region', { name: 'Available to add' });
+    expect(within(owned).getByText('Trademark Infringement')).toBeTruthy();
+    expect(within(owned).getByText('Suspended')).toBeTruthy();
+    expect(within(owned).getByText('Access paused. Contact your admin.')).toBeTruthy();
+    expect(within(avail).queryByText('Trademark Infringement')).toBeNull();
+    expect(within(avail).getByText('Dark Web Monitoring')).toBeTruthy();
+    expect(within(avail).getByText('Locked')).toBeTruthy();
+    expect(within(avail).queryByText('Suspended')).toBeNull();
+    expect(within(owned).getByText('Active')).toBeTruthy();
+    expect(within(owned).getByText('Trial')).toBeTruthy();
+    expect(screen.getByText(/2 modules active/)).toBeTruthy();
+  });
+
   it('announces loading with role=status', () => {
     auth.state = { user: null, hasOrg: false, loading: true };
     modulesHook.result = { data: undefined, isLoading: true, error: null };
