@@ -59,7 +59,6 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
   const ThemeIcon = themeIconFor(theme);
   const canViewAudit = useCanViewAudit();
 
-  const active = (data?.modules ?? []).filter((m) => m.status === 'active' || m.status === 'trial');
   // Suspended modules stay in the customer's own list (badged); only never-bought ones are upsell.
   const owned = (data?.modules ?? []).filter((m) => m.status === 'active' || m.status === 'trial' || m.status === 'suspended');
   const locked = (data?.modules ?? []).filter((m) => m.status === 'not_entitled');
