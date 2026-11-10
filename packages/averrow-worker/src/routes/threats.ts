@@ -5,10 +5,10 @@ import { requireAdmin, requireStaff, requireStaffMutation, requirePermission, is
 import { corsHeaders, json } from "../lib/cors";
 import { rateLimitCustom } from "../middleware/rateLimit";
 import {
-  handleListThreats, handleThreatStats, handleThreatsAggregate,
+  handleListThreats, handleThreatsAggregate,
   handleGetThreat, handleUpdateThreat,
   handleListBriefings, handleGetBriefing, handleListSocialIOCs, handleEnrichGeo,
-  handleEnrichAll, handleDailySnapshots, handleGeoClusters, handleAttackFlows,
+  handleEnrichAll, handleDailySnapshots,
   handleRecentThreats,
 } from "../handlers/threats";
 import { handleCorrelations } from "../handlers/correlations";
@@ -54,11 +54,6 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleCorrelations(request, env);
-  });
-  router.get("/api/threats/stats", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleThreatStats(request, env);
   });
   // Slice-aware catalog aggregate — narrative numbers for the Threats
   // Intel surface. Honors same filters as /api/threats list. Scope-
@@ -107,16 +102,6 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
       headers: { "Content-Type": "application/json", ...corsHeaders(origin, env) },
     });
     return attachBookmark(resp, session);
-  });
-  router.get("/api/threats/geo-clusters", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleGeoClusters(request, env);
-  });
-  router.get("/api/threats/attack-flows", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleAttackFlows(request, env);
   });
   router.get("/api/threats/recent", async (request: Request, env: Env) => {
     const ctx = await requireStaff(request, env);

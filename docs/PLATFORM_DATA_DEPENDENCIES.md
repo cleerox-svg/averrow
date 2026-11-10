@@ -245,7 +245,7 @@ When adding a new workflow-dispatched agent:
 | Observatory | `/observatory` | `/api/observatory/{nodes,arcs,stats,operations,live}` |
 | Brands grid | `/brands` | `/api/brands` |
 | Brand detail | `/brands/:id` | `/api/brands/:id` (which itself includes threats, alerts, takedowns) |
-| Threats | `/threats` | `/api/threats/list`, `/api/threats/stats` |
+| Threats | `/threats` | `/api/threats`, `/api/threats/aggregate`, `/api/threats/inflow` |
 | Agents | `/agents` | **`/api/agents`** (PR-R reconciled) |
 | Agent detail | `/agents/:name` | `/api/agents/:name`, `/api/agents/:name/health` (TODO: reconcile in follow-up) |
 | Alerts | `/alerts` | `/api/alerts/list`, `/api/alerts/stats` |
