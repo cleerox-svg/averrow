@@ -6,6 +6,7 @@
  */
 
 import type { AgentRun, CompleteRunStats, Env } from "../types";
+import { withTimeout } from "../lib/run-sequential";
 
 // Re-export for consumers that import from db/agent-runs
 export type { AgentRun, CompleteRunStats };
@@ -91,6 +92,8 @@ export interface FinalizeRetryOptions {
   attempts?: number;
   /** Delay before each retry, ms (default [250, 1000]); last value repeats. */
   backoffMs?: readonly number[];
+  /** Ceiling per attempt, ms (default none). A hung write counts as a failed attempt. */
+  attemptTimeoutMs?: number;
 }
 
 /**
@@ -116,11 +119,10 @@ export async function finalizeAgentRun(
       if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
     }
     try {
-      if (outcome.kind === "failed") {
-        await failAgentRun(env, runId, outcome.error_message);
-      } else {
-        await completeAgentRun(env, runId, outcome.stats);
-      }
+      const write = () => outcome.kind === "failed"
+        ? failAgentRun(env, runId, outcome.error_message)
+        : completeAgentRun(env, runId, outcome.stats);
+      await withTimeout(write, opts.attemptTimeoutMs ?? 0, "agent_runs finalize");
       return { ok: true };
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);

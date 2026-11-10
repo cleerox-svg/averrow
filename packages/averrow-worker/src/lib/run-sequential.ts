@@ -22,6 +22,16 @@ export async function runSequential<T extends Array<() => Promise<unknown>>>(
   return out as { [K in keyof T]: Awaited<ReturnType<T[K]>> };
 }
 
+/**
+ * `runSequential`'s signature with `Promise.all` semantics — for callers
+ * that pick sequential or parallel at runtime with the same task list.
+ */
+export function runParallel<T extends Array<() => Promise<unknown>>>(
+  tasks: [...T],
+): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
+  return Promise.all(tasks.map((task) => task())) as Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }>;
+}
+
 /** Resolve after `ms` (immediately for `ms <= 0`). */
 export function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise<void>((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
@@ -33,6 +43,14 @@ export class TimeoutError extends Error {
     super(`${label} timed out after ${ms}ms`);
     this.name = "TimeoutError";
   }
+}
+
+/**
+ * True for our `TimeoutError` and for the runtime's `AbortSignal.timeout`
+ * rejection (a DOMException named "TimeoutError").
+ */
+export function isTimeoutError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { name?: unknown }).name === "TimeoutError";
 }
 
 /**
@@ -52,30 +70,6 @@ export async function withTimeout<T>(fn: () => Promise<T>, ms: number, label: st
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-/**
- * Run `fn` up to `backoffMs.length + 1` times, sleeping `backoffMs[i]`
- * before retry i+1, and rethrow the last error. Only use it for work that is
- * safe to repeat (idempotent writes). D1's overload rejection
- * (`Too many resources consumed within a 10 second window`) clears only once
- * that window rolls over, so a backoff schedule meant to ride it out must
- * add up to more than 10 s.
- */
-export async function retryWithBackoff<T>(
-  fn: (attempt: number) => Promise<T>,
-  backoffMs: readonly number[],
-): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= backoffMs.length; attempt++) {
-    if (attempt > 0) await sleep(backoffMs[attempt - 1] ?? 0);
-    try {
-      return await fn(attempt);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 /** `<section>_error` → message, filled by `softSection`. */

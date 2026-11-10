@@ -39,7 +39,29 @@ export interface D1RetryOptions {
   baseMs?: number;
   /** Optional label for diagnostic logging on each retry. */
   label?: string;
+  /**
+   * Explicit delay before each retry, ms. When set it replaces
+   * `retries`/`baseMs`: `delaysMs.length` retries, retry i+1 after
+   * `delaysMs[i]` (no jitter). Use a schedule summing to > 10 s to ride out
+   * D1's overload window (`Too many resources consumed within a 10 second
+   * window` clears only when the window rolls over).
+   */
+  delaysMs?: readonly number[];
+  /**
+   * Which errors are worth another attempt. Default: `isTransientD1Error`
+   * on the message. Deterministic failures (no such column, CHECK,
+   * SQLITE_TOOBIG) are re-thrown at once.
+   */
+  shouldRetry?: (err: unknown) => boolean;
+  /**
+   * Epoch ms: never start a retry whose delay would end after this — the
+   * last error is re-thrown instead. Keeps a caller's wall-clock bounded.
+   */
+  deadline?: number;
 }
+
+const defaultShouldRetry = (err: unknown): boolean =>
+  isTransientD1Error(err instanceof Error ? err.message : String(err));
 
 /**
  * Run an idempotent D1 operation, retrying on transient D1 errors with
@@ -53,8 +75,9 @@ export async function withD1Retry<T>(
   fn: () => Promise<T>,
   opts: D1RetryOptions = {},
 ): Promise<T> {
-  const retries = opts.retries ?? 3;
+  const retries = opts.delaysMs ? opts.delaysMs.length : (opts.retries ?? 3);
   const baseMs = opts.baseMs ?? 50;
+  const shouldRetry = opts.shouldRetry ?? defaultShouldRetry;
   let lastErr: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -63,9 +86,13 @@ export async function withD1Retry<T>(
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
-      // Last attempt, or a non-transient error → give up and surface it.
-      if (attempt === retries || !isTransientD1Error(msg)) throw err;
-      const delay = baseMs * 2 ** attempt + Math.floor(Math.random() * baseMs);
+      // Last attempt, or a non-retryable error → give up and surface it.
+      if (attempt === retries || !shouldRetry(err)) throw err;
+      const delay = opts.delaysMs
+        ? (opts.delaysMs[attempt] ?? 0)
+        : baseMs * 2 ** attempt + Math.floor(Math.random() * baseMs);
+      // Out of wall-clock budget → surface the error rather than sleep past it.
+      if (opts.deadline !== undefined && Date.now() + delay > opts.deadline) throw err;
       if (opts.label) {
         console.warn(
           `[d1-retry] ${opts.label}: transient D1 error (attempt ${attempt + 1}/${retries + 1}), retrying in ${delay}ms — ${msg}`,
