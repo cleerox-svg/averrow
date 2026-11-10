@@ -7,6 +7,9 @@ import { dispatchWorkflow } from '../lib/workflow-dispatch';
 import type { Env } from '../types';
 import { withD1Meter } from '../lib/d1-meter';
 
+/** Dedicated daily Observer cron (see the branch in runScheduled). */
+export const OBSERVER_CRON = '41 0 * * *';
+
 interface CronJobResult {
   job: string;
   status: 'success' | 'error' | 'skipped';
@@ -616,6 +619,33 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
     return;
   }
 
+  // ─── Observer daily briefing: dedicated cron (41 0 * * *) ──
+  //
+  // Was `if (hour === 0)` inline-awaited at the TAIL of runThreatFeedScan in
+  // the :07 tick — the heaviest tick of the day (cube_healer cold heal at
+  // :12, brand_scores :16, daily_snapshots :28, nrd_hagezi :29 all around
+  // it). On 2026-11-10 the 00:07 tick died before reaching it (analyst
+  // orphaned) and no observer row was written at all. Own invocation = fresh
+  // budget, same once-a-day run (owner decision 2026-11-10). 00:41: minute 41
+  // is off the */5 and */10 grids and used by no other trigger, after the
+  // 00:28 snapshots run's 8-min budget, and it keeps Observer's day boundary
+  // (it still reads the last 24h; Sunday weekly report gate `hour < 7`
+  // still holds). Pivot-triggered runs stay on processAgentEvents.
+  //
+  // CRON-AUDIT (CLAUDE.md §6): EXACT event.cron match, no minute/hour gate
+  // here or in agents/observer.ts. MUST stay above the mesh guard below.
+  if (event.cron === OBSERVER_CRON) {
+    try {
+      const { agentModules } = await import('../agents');
+      const { executeAgent } = await import('../lib/agentRunner');
+      const mod = agentModules['observer'];
+      if (mod) await executeAgent(env, mod, {}, 'cron', 'scheduled');
+    } catch (err) {
+      logger.error('observer_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ─── Hourly tick: full agent mesh (7 * * * *, 15min CPU ceiling) ───
   // Shifted from :00 to :07 in Wave 1A so the hourly mesh no longer collides
   // with the */5 Navigator that fires at :00. Parity-checker was removed as a
@@ -825,7 +855,9 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
     const digestResult = await runJob('notification_narrator', async () => {
       const { executeAgent } = await import('../lib/agentRunner');
       const { notificationNarratorAgent } = await import('../agents/notification_narrator');
-      await executeAgent(env, notificationNarratorAgent);
+      // 'scheduled', not the 'manual' default: a cron run gets the long
+      // finalize backoff (finalizeOverloadBaseMs).
+      await executeAgent(env, notificationNarratorAgent, {}, 'cron', 'scheduled');
     });
     results.push(digestResult);
   }
@@ -862,15 +894,49 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
 }
 
 // ─── Flight Control v1: Agent Event Consumer ────────────────────
+
+/** Pending events consumed per hourly tick. A NEXUS pivot burst is 7-11
+ *  events; coalescing turns any number of them into one run per target, so
+ *  reading the whole burst in one tick is what keeps it to ONE run (was 10:
+ *  an 11-event burst left a straggler that cost a second run next tick). */
+export const AGENT_EVENTS_PER_TICK = 50;
+
+/** Events claimed 'processing' by an earlier consumer tick that never
+ *  finalized them (worker killed, or the final batch lost to D1 overload).
+ *  A tick claims and finalizes inside one invocation, so any 'processing'
+ *  row created over an hour ago belongs to a dead tick. Marked 'failed', not
+ *  re-queued: its dispatch may already have run, and a replay would be a
+ *  duplicate observer run. Seeks idx on (status, priority, created_at).
+ *  D1 accepts UPDATE … LIMIT (prod EXPLAIN QUERY PLAN, 2026-11-10: rowid
+ *  list subquery over idx_agent_events_pending). */
+export const STALE_PROCESSING_AGENT_EVENTS_SQL = `
+      UPDATE agent_events
+      SET status = 'failed'
+      WHERE status = 'processing'
+        AND created_at <= datetime('now', '-1 hour')
+      LIMIT ?`;
+
 async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void> {
+  // Best-effort sweep of a previous tick's unfinalized claims (see above).
+  try {
+    const swept = await env.DB.prepare(STALE_PROCESSING_AGENT_EVENTS_SQL).bind(AGENT_EVENTS_PER_TICK * 4).run();
+    const n = swept.meta?.changes ?? 0;
+    if (n > 0) logger.warn('agent_events_stale_processing_failed', { count: n });
+  } catch (err) {
+    // The next tick retries; log so a persistently failing sweep is visible.
+    logger.warn('agent_events_stale_sweep_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   try {
     const events = await env.DB.prepare(`
       SELECT id, event_type, source_agent, target_agent, payload_json, priority
       FROM agent_events
       WHERE status = 'pending'
       ORDER BY priority ASC, created_at ASC
-      LIMIT 10
-    `).all<{
+      LIMIT ?
+    `).bind(AGENT_EVENTS_PER_TICK).all<{
       id: string;
       event_type: string;
       source_agent: string;
@@ -889,62 +955,100 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
 
     const { agentModules } = await import('../agents/index');
     const { executeAgent } = await import('../lib/agentRunner');
+    const {
+      planAgentEventDispatch, eventDispatchKey, parseDispatchCount, coalescedEventInput,
+    } = await import('../lib/agent-event-dispatch');
 
-    for (const event of events.results) {
-      // Mark as processing to prevent double-processing
-      await env.DB.prepare(
-        `UPDATE agent_events SET status = 'processing' WHERE id = ?`
-      ).bind(event.id).run();
+    // Claim the whole tick's events up front (one batch) so a concurrent
+    // consumer can't pick them up while their dispatch is planned.
+    const markStmts = (sql: string, ids: string[]): D1PreparedStatement[] =>
+      ids.map((id) => env.DB.prepare(sql).bind(id));
+    const allIds = events.results.map((e) => e.id);
+    await env.DB.batch(markStmts(`UPDATE agent_events SET status = 'processing' WHERE id = ?`, allIds));
 
+    // Coalesce per target + per-UTC-day cap (lib/agent-event-dispatch.ts).
+    // Telemetry events (target_agent NULL/'') are recorded, never dispatched.
+    const utcDate = new Date().toISOString().slice(0, 10);
+    const targets = [...new Set(events.results.map((e) => e.target_agent).filter((t): t is string => !!t))];
+    const dispatchedToday = new Map<string, number>();
+    for (const t of targets) {
       try {
-        const payload = event.payload_json ? JSON.parse(event.payload_json) as Record<string, unknown> : {};
-        // Telemetry-only events carry target_agent=NULL or an empty
-        // string. They're written to give operators a forensic record
-        // of agent completions (e.g. threats_enriched, nexus_complete)
-        // but don't drive control flow — cron + FC already dispatch the
-        // relevant downstream work on a fixed cadence. Mark as 'done'
-        // without trying to dispatch and without warning.
-        const isTelemetry = !event.target_agent || event.target_agent.length === 0;
-        const mod = isTelemetry ? undefined : agentModules[event.target_agent];
+        dispatchedToday.set(t, parseDispatchCount(await env.CACHE.get(eventDispatchKey(t, utcDate))));
+      } catch { dispatchedToday.set(t, 0); /* best-effort: unknown count = 0 */ }
+    }
+    const plan = planAgentEventDispatch(events.results, dispatchedToday);
 
-        if (mod) {
-          ctx.waitUntil(
-            executeAgent(env, mod, { ...payload, triggeredByEvent: event.event_type }, "cron", "event")
+    const doneIds: string[] = [...plan.telemetryIds];
+    const failedIds: string[] = [];
+
+    for (const c of plan.capped) {
+      doneIds.push(...c.eventIds);
+      await logFlightControlActivity(env, 'scaling',
+        `Event dispatch to ${c.target} capped (${c.dispatchedToday}/${c.cap} today) — ${c.eventIds.length} event(s) recorded, not dispatched`,
+        { target_agent: c.target, event_ids: c.eventIds, dispatched_today: c.dispatchedToday, cap: c.cap }, 'info');
+    }
+
+    for (const d of plan.dispatches) {
+      const mod = agentModules[d.target];
+      if (!mod) {
+        // target_agent was set but we don't have a module for it —
+        // genuine misconfiguration worth surfacing.
+        logger.warn('agent_event_unknown_target', {
+          event_ids: d.eventIds,
+          target_agent: d.target,
+          event_type: d.event.event_type,
+        });
+        doneIds.push(...d.eventIds);
+        continue;
+      }
+      try {
+        ctx.waitUntil(
+          executeAgent(env, mod, coalescedEventInput(d), "cron", "event"),
+        );
+        try {
+          await env.CACHE.put(
+            eventDispatchKey(d.target, utcDate),
+            String((dispatchedToday.get(d.target) ?? 0) + 1),
+            { expirationTtl: 2 * 24 * 3600 },
           );
-        } else if (!isTelemetry) {
-          // target_agent was set but we don't have a module for it —
-          // genuine misconfiguration worth surfacing.
-          logger.warn('agent_event_unknown_target', {
-            event_id: event.id,
-            target_agent: event.target_agent,
-            event_type: event.event_type,
-          });
-        }
-
-        await env.DB.prepare(
-          `UPDATE agent_events SET status = 'done', processed_at = datetime('now') WHERE id = ?`
-        ).bind(event.id).run();
-
+        } catch { /* best-effort — worst case one extra run today */ }
+        doneIds.push(...d.eventIds);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error('agent_event_processing_failed', {
-          event_id: event.id,
-          target_agent: event.target_agent,
+          event_ids: d.eventIds,
+          target_agent: d.target,
           error: message,
         });
-        await env.DB.prepare(
-          `UPDATE agent_events SET status = 'failed' WHERE id = ?`
-        ).bind(event.id).run();
-
-        await logFlightControlActivity(env, 'recovery', `Agent event processing failed for ${event.target_agent}: ${message}`, {
-          event_id: event.id,
-          target_agent: event.target_agent,
-          event_type: event.event_type,
+        failedIds.push(...d.eventIds);
+        await logFlightControlActivity(env, 'recovery', `Agent event processing failed for ${d.target}: ${message}`, {
+          event_ids: d.eventIds,
+          target_agent: d.target,
+          event_type: d.event.event_type,
         }, 'warning');
       }
     }
 
-    logger.info('agent_events_processed', { count: events.results.length });
+    const finalStmts = [
+      ...markStmts(`UPDATE agent_events SET status = 'done', processed_at = datetime('now') WHERE id = ?`, doneIds),
+      ...markStmts(`UPDATE agent_events SET status = 'failed' WHERE id = ?`, failedIds),
+    ];
+    // Under overload retry: the statements are idempotent, and a lost batch
+    // would leave up to AGENT_EVENTS_PER_TICK rows 'processing' until the
+    // next tick's stale sweep fails them.
+    if (finalStmts.length > 0) {
+      const { withD1Retry, D1_OVERLOAD_RETRY_BASE_MS } = await import('../lib/d1-retry');
+      await withD1Retry(() => env.DB.batch(finalStmts), {
+        label: 'agent_events finalize',
+        overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS,
+      });
+    }
+
+    logger.info('agent_events_processed', {
+      count: events.results.length,
+      dispatched: plan.dispatches.length,
+      capped: plan.capped.length,
+    });
   } catch (err) {
     logger.error('agent_events_consumer_error', {
       error: err instanceof Error ? err.message : String(err),
@@ -1507,17 +1611,10 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   // Same rationale as strategist above — was getting starved by the
   // orchestrator's heavy inline awaits.
 
-  // Observer + daily assessments — daily at midnight UTC
+  // Daily assessments — daily at midnight UTC. The Observer run that used
+  // to sit here moved to its dedicated `41 0 * * *` cron (OBSERVER_CRON,
+  // handleScheduled) on 2026-11-10 so it can't be starved by this tick.
   if (hour === 0) {
-    try {
-      const mod = allAgents["observer"];
-      if (mod) {
-        await executeAgent(env, mod, {}, "cron", "scheduled");
-      }
-    } catch (err) {
-      logger.error('threat_feed_scan_observer_error', { error: err instanceof Error ? err.message : String(err) });
-    }
-
     try {
       const { runDailyAssessments } = await import('../brand-threat-correlator');
       const assessResult = await runDailyAssessments(env);

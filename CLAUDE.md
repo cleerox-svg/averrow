@@ -397,6 +397,19 @@ so install/push there is aspirational until improvement-plan session S12
 3. Emit to `agent_events` after completion
 4. Handle errors — catch all exceptions, log to `agent_runs.error_message`
 
+**Finalize vs. D1's overload window (2026-11-10).** D1 rejects every
+statement for the rest of a rolling 10 s window once its resource budget is
+spent ("D1 DB is overloaded"). `executeAgent` finalizes (success and failure)
+through `withD1Retry` with `overloadBaseMs` (`D1_OVERLOAD_RETRY_BASE_MS`,
+3 s / 6 s / 12 s, `lib/d1-retry.ts`) for `scheduled` and `event` triggers;
+`api` and `manual` runs are awaited inside an HTTP request and keep the short
+default (a cron call must pass its trigger explicitly — `executeAgent`
+defaults to `manual`); the old
+50/100/200 ms backoff retried inside the window and left finished runs
+'partial' with `completed_at` NULL, later reaped as "worker terminated".
+Handler-dispatched writers should pass a backoff of the same size to
+`finalizeAgentRun`.
+
 ### Agent status field (`AgentModule.status`)
 
 The `status` value on each AgentModule registration is **descriptive,
@@ -476,7 +489,35 @@ Active edges (event-driven):
                                              `MEMBER_QUERY_CHUNK` = 90 for D1's 100-bind
                                              cap, `lib/cluster-infra-movement.ts`). Same
                                              event_type + target_agent — no new
-                                             dispatch wiring.)
+                                             dispatch wiring.
+                                             processAgentEvents coalesces a tick's events
+                                             to ONE run per target (`coalescedEvents: n`)
+                                             and caps event-triggered runs per UTC day
+                                             (observer 3, default 6; KV counter,
+                                             `lib/agent-event-dispatch.ts`); every consumed
+                                             event is marked done. The run gets EVERY folded
+                                             payload as `input.events` (`coalescedEventInput`).
+                                             NEXUS emits ~:10-:15; the events stay pending for
+                                             the next :07 consumer (≤ ~57 min): Navigator's
+                                             drain expires telemetry after 5 min but TARGETED
+                                             events only after 3h (`TARGETED_EVENT_EXPIRY_HOURS`,
+                                             cron/navigator.ts — before 2026-11-10 it expired
+                                             them after 5 min and the edge never fired). The
+                                             consumer reads 50 pending events per tick so a
+                                             7-11 event burst is one run. Its final done/failed
+                                             batch runs under `withD1Retry` (overload backoff);
+                                             a claim a dead tick never finalized ('processing',
+                                             created > 1h ago) is marked 'failed' at the start
+                                             of the next tick (`STALE_PROCESSING_AGENT_EVENTS_SQL`
+                                             — not re-queued: its run may already have
+                                             happened). Observer's pivot run
+                                             (`input.triggeredByEvent='pivot_detected'`) is a
+                                             focused rule-based report from the payloads only
+                                             (`lib/observer-pivot-report.ts`: per-cluster
+                                             dormancy / new ASNs+IPs+serials, one `insight`
+                                             row, severity high if any infra_movement else
+                                             medium) — no AI call, no weekly report, no D1
+                                             aggregate reads.)
 
 Telemetry only (target_agent=NULL):
   Sentinel        → [feed_pulled]         — operator sees "new items found"
@@ -496,8 +537,8 @@ Cron-driven dispatch (no event needed):
   Analyst       every hour via orchestrator inline await
   Strategist    every 6h via orchestrator
   Sparrow       every 6h via orchestrator
-  Observer      daily at hour===0 via orchestrator
-                + pivot_detected event for immediate dispatch
+  Observer      daily at 00:41 UTC via dedicated `41 0 * * *` cron (2026-11-10)
+                + pivot_detected events via the :07 consumer (focused pivot report)
 
 Not wired (historically declared but never implemented):
   Nexus    → [cluster_detected]  → Analyst + Observer  (never emitted)
@@ -643,6 +684,15 @@ cartographer: 9 * * * *     (hourly at :09 — guaranteed maintenance run with o
                              FC scaleAgents defers to it (2026-11-09) instead of
                              starting extra instances inside the :07 tick, which were
                              killed with the tick and starved feed ingestion.
+                             One 8-min run budget (`CARTOGRAPHER_RUN_BUDGET_MS`) is checked
+                             before each phase and inside the Phase 0 / RDAP / Phase 3
+                             loops; once spent the rest is skipped and the run returns
+                             `degraded` → `partial` WITH `completed_at` (2026-11-10: 23/44
+                             runs had orphaned). RDAP is capped at 20 attempts / 10
+                             successes per run. Phase 2's per-provider campaign counts are
+                             KV-cached 24h (`carto:provider_campaigns:<id>`) with a 150K
+                             estimated-row budget on misses per run; an uncached provider
+                             over budget is deferred, not scored.
                              Dedicated cron added in PR-F after 24% failure rate
                              observed at the orchestrator's :07-:12 window.)
 strategist:   10 */6 * * * (every 6h at :10 — relocated from orchestrator in PR-Q because
@@ -755,8 +805,13 @@ daily_snapshots: 28 0,12 * * * (00:28 + 12:28 UTC — writes `daily_snapshots` b
                              its any-row check could not see a missing TYPE — prod lacked
                              provider snapshots on 11 of ~23 days (2026-10-12: 10,137 brand
                              rows / 0 provider). Per-type and resumable: each type is written in
-                             keyset chunks of 1000 entities (`SNAPSHOT_CHUNK_SIZE`,
-                             `lib/snapshots.ts`), resuming after MAX(entity_id) for that
+                             keyset chunks (cron: 250 entities, `DAILY_SNAPSHOTS_CHUNK_SIZE`,
+                             500 ms apart; manual endpoint: 1000, `SNAPSHOT_CHUNK_SIZE`,
+                             `lib/snapshots.ts`); chunk statements retry D1 overload errors
+                             past the 10 s window, and finalize + the event write back off
+                             3 s / 6 s / 12 s (2026-11-08..10 every run's writes after the
+                             heavy chunks were rejected as overloaded and the row stayed
+                             'running'), resuming after MAX(entity_id) for that
                              date+type, so a complete type is skipped and a partial one
                              continues. An 8-min budget (`DAILY_SNAPSHOTS_BUDGET_MS`) ends a
                              type `incomplete`; the run then finishes `partial` with
@@ -785,6 +840,30 @@ nrd_hagezi:   29 */2 * * *  (every 2h at :29 — dedicated ingest-feed cron, own
                              interval check — the cron is the schedule). No minute/hour gates.
                              Per-run 45s processing budget with resume_after rotation, see
                              feeds/nrd_hagezi.ts.)
+observer:     41 0 * * *    (daily at 00:41 UTC — the scheduled Observer briefing, owner decision
+                             2026-11-10. Was `hour === 0` inline-awaited at the TAIL of the :07
+                             tick; on 2026-11-10 that tick died before reaching it and no observer
+                             run was written. Own invocation, same once-a-day run, same AI call
+                             (one daily Haiku narrative + the Sunday weekly report, gate
+                             `hour < 7` still holds). :41 is off the */5 and */10 grids, used by
+                             no other trigger, and after the 00:07-00:36 heavy window (mesh,
+                             cube_healer cold heal, brand_scores, daily_snapshots + budget,
+                             nrd_hagezi). `handleScheduled` early-returns on exact
+                             `event.cron === OBSERVER_CRON` above the mesh guard →
+                             `executeAgent` (agent_runs + agent_events). No minute/hour gates.
+                             FC stall recovery is its catch-up path: every non-event run (cron, FC
+                             catch-up or manual trigger, never a pivot_detected run;
+                             a degraded run too) stamps KV
+                             `observer:last_scheduled_success_at` when its briefing is built
+                             (`lib/observer-schedule-marker.ts`), and FC measures Observer's stall
+                             age from that marker (`AgentHealth.stall_reference_at`), not from the
+                             newest agent_runs row — so a pivot run cannot mask a failed or missing
+                             00:41 briefing. Stalled once the marker is > 25h old
+                             (stallThresholdMinutes 1500) → one catch-up per tick, 2h→24h backoff
+                             that only a newer scheduled success resets. No marker (first deploy) →
+                             newest row, as before. The hour-6 "Observer
+                             briefing" job is a different job — Tranco import + Seed Strategist —
+                             and stays on the hourly tick.)
 ```
 
 ### Agent dispatch (inside orchestrator hourly tick):
@@ -823,7 +902,9 @@ Strategist:           NOT dispatched on this hourly tick — relocated to dedica
 Sparrow:              NOT dispatched on this hourly tick — relocated to dedicated
                        `11 */6 * * *` cron in PR-Q (see schedule above), same
                        rationale as Strategist (orchestrator.ts:358)
-Observer:             hour === 0 (inline await)
+Observer:             NOT dispatched on this hourly tick — moved to dedicated
+                       `41 0 * * *` cron on 2026-11-10 (see schedule above).
+                       pivot_detected runs still come from processAgentEvents.
 Pathfinder:           NOT dispatched on this hourly tick — demoted to manual
                        trigger 2026-04-29 (orchestrator.ts:1303; prior daily
                        hour === 3 dispatch produced 1 run/24h, 0 records/7d).
@@ -831,7 +912,8 @@ Pathfinder:           NOT dispatched on this hourly tick — demoted to manual
                        KV throttle on Phase 1 lead creation still lives inside
                        the handler regardless of trigger path.
 GeoIP Refresh:        Sunday hour === 2 (ctx.waitUntil, polls MaxMind sha256 — no-op when current; FC supervises stuck workflows hourly per §15)
-Observer briefing:    hour === 6 (inline await — also runs Seed Strategist)
+Observer briefing:    hour === 6 (inline await — Tranco import + Seed Strategist; despite the
+                       name it does NOT run the observer agent)
 Narrator:             hour === 6 (executeAgent, after Observer briefing)
 Notification digest:  hour === 13 (executeAgent, agent 'notification_narrator' — per-user digest
                        envelopes; the daily platform-ops briefing itself moved OFF this hourly
@@ -871,7 +953,7 @@ scheduling is needed, use Navigator (`*/5`) or add a dedicated cron trigger.
 - **ctx.waitUntil:** Analyst runs in parallel without blocking the cron mesh (Strategist and
   Sparrow no longer share this mesh — both moved to dedicated `*/6` crons, see Agent
   dispatch table above)
-- **Inline await:** Observer runs sequentially (quiet times, fast execution). Pathfinder is
+- **Inline await:** Observer no longer runs on this mesh (dedicated `41 0 * * *` cron). Pathfinder is
   no longer dispatched from this mesh — demoted to manual trigger, see Agent dispatch table above.
 
 ### Feed circuit breaker (`lib/feedRunner.ts:computeFeedRetryAt`)

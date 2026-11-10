@@ -34,8 +34,19 @@
 // invocation's limit, leaving the rest to the 12:28 resume; (3) finalize
 // runs in a `finally`, with retries; (4) lib/agent-runs-reaper.ts now also
 // reaps stuck 'running' rows.
+//
+// Still orphaned after that (2026-11-08 → 11-10, 6 of 6 runs): the AE meter
+// shows the invocation RETURNED (cron:28 0,12 rows recorded at settle — 26
+// queries on 11-10), yet the run row kept its chunk-5 heartbeat (5,000 while
+// 6,000 rows had committed) and no snapshots_generated event landed. The
+// heavy chunks spent D1's 10-second resource window, and every write after
+// them — heartbeat, the 3 finalize attempts 250 ms / 1 s apart, the event —
+// was rejected inside that same window ("D1 DB is overloaded"). Now: chunk
+// statements retry overload errors past the window, chunks are smaller with
+// a pause between them, and finalize + the event back off 3 s / 6 s / 12 s.
 
 import { createAgentRun, finalizeAgentRun, updateAgentRunProgress } from "../db/agent-runs";
+import { D1_OVERLOAD_RETRY_BASE_MS, withD1Retry } from "../lib/d1-retry";
 import { logger } from "../lib/logger";
 import {
   generateSnapshotType,
@@ -52,6 +63,35 @@ export const DAILY_SNAPSHOTS_CRON = "28 0,12 * * *";
  * writes always have room; a type cut short resumes on the next pass.
  */
 export const DAILY_SNAPSHOTS_BUDGET_MS = 8 * 60_000;
+
+/**
+ * Entities per chunk on the cron path (the manual endpoint keeps
+ * SNAPSHOT_CHUNK_SIZE = 1000). A 1000-provider chunk read ~300K rows in one
+ * statement (prod 2026-11-10: 6 chunks, 1.9M rows) — enough on its own to
+ * spend D1's 10-second window. 250 keeps each statement ~4× lighter.
+ */
+export const DAILY_SNAPSHOTS_CHUNK_SIZE = 250;
+
+/** Pause between chunks so consecutive statements don't share one 10 s window. */
+export const DAILY_SNAPSHOTS_INTER_CHUNK_PAUSE_MS = 500;
+
+/**
+ * Finalize backoff: 3 attempts after the first, waiting past D1's 10-second
+ * overload window (3 s + 6 s + 12 s). The old [250, 1000] retried inside the
+ * window that had just rejected the first attempt.
+ */
+export const DAILY_SNAPSHOTS_FINALIZE_BACKOFF_MS: readonly number[] = [3_000, 6_000, 12_000];
+
+/**
+ * Overload retries for each chunk statement and the event write (withD1Retry
+ * with D1_OVERLOAD_RETRY_BASE_MS: 3 s, 6 s, 12 s + ≤ 0.75 s jitter each). 3,
+ * matching finalize: with 2 the waits total ~9 s, so the last retry can land
+ * inside the same 10-second overload window. Budget: no chunk STARTS after
+ * DAILY_SNAPSHOTS_BUDGET_MS (8 min); a chunk started just before it can wait
+ * ≤ ~23 s, then finalize ≤ ~21 s and the event ≤ ~23 s — ~9.2 min worst
+ * case, well inside the 15-minute scheduled invocation.
+ */
+export const DAILY_SNAPSHOTS_WRITE_RETRIES = 3;
 
 /**
  * Provider first: it is the type with a live consumer (Flight Control's
@@ -86,6 +126,12 @@ export interface DailySnapshotsOptions {
   now?: () => number;
   /** Finalize retry backoff (tests). */
   finalizeBackoffMs?: readonly number[];
+  /** Pause between chunks (tests). */
+  interChunkPauseMs?: number;
+  /** Overload retry base for chunk statements + the event write (tests). */
+  overloadBaseMs?: number;
+  /** Sleep used between chunks (tests). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -138,7 +184,14 @@ export async function runDailySnapshotsCron(
           resume: true,
           deadline,
           now,
-          chunkSize: opts.chunkSize,
+          chunkSize: opts.chunkSize ?? DAILY_SNAPSHOTS_CHUNK_SIZE,
+          interChunkPauseMs: opts.interChunkPauseMs ?? DAILY_SNAPSHOTS_INTER_CHUNK_PAUSE_MS,
+          sleep: opts.sleep,
+          retry: {
+            label: `daily_snapshots ${type} chunk`,
+            overloadBaseMs: opts.overloadBaseMs ?? D1_OVERLOAD_RETRY_BASE_MS,
+            retries: DAILY_SNAPSHOTS_WRITE_RETRIES,
+          },
           onChunk: async (rowsSoFar) => {
             written[type] = rowsSoFar;
             await heartbeat();
@@ -193,7 +246,10 @@ export async function runDailySnapshotsCron(
                 error_message: errorMessage,
               },
             },
-        opts.finalizeBackoffMs ? { backoffMs: opts.finalizeBackoffMs } : {},
+        {
+          backoffMs: opts.finalizeBackoffMs ?? DAILY_SNAPSHOTS_FINALIZE_BACKOFF_MS,
+          attempts: (opts.finalizeBackoffMs ?? DAILY_SNAPSHOTS_FINALIZE_BACKOFF_MS).length + 1,
+        },
       );
       if (!fin.ok) {
         logger.error("daily_snapshots_run_complete_error", { run_id: runId, error: fin.error });
@@ -202,17 +258,25 @@ export async function runDailySnapshotsCron(
 
     // Telemetry-only completion event: target_agent = NULL, so the
     // orchestrator's agent_events consumer records it without dispatching.
+    // One id for every attempt + OR IGNORE, so a retry after an ambiguous
+    // failure can never write the event twice.
+    const eventId = crypto.randomUUID();
+    const payload = JSON.stringify({ date, trigger, status, provider: outcomes.provider, brand: outcomes.brand });
     try {
-      await env.DB.prepare(
-        `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
-         VALUES (?, 'snapshots_generated', ?, NULL, ?, 3, 'pending')`,
-      )
-        .bind(
-          crypto.randomUUID(),
-          DAILY_SNAPSHOTS_AGENT_ID,
-          JSON.stringify({ date, trigger, status, provider: outcomes.provider, brand: outcomes.brand }),
-        )
-        .run();
+      await withD1Retry(
+        () =>
+          env.DB.prepare(
+            `INSERT OR IGNORE INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
+             VALUES (?, 'snapshots_generated', ?, NULL, ?, 3, 'pending')`,
+          )
+            .bind(eventId, DAILY_SNAPSHOTS_AGENT_ID, payload)
+            .run(),
+        {
+          label: "daily_snapshots event",
+          retries: DAILY_SNAPSHOTS_WRITE_RETRIES,
+          overloadBaseMs: opts.overloadBaseMs ?? D1_OVERLOAD_RETRY_BASE_MS,
+        },
+      );
     } catch (err) {
       logger.error("daily_snapshots_event_write_error", { error: errMsg(err) });
     }

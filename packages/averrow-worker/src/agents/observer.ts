@@ -13,6 +13,49 @@ import { createNotification } from "../lib/notifications";
 import { SUBSCRIBER_MAY_WATCH_BRAND_SQL } from "../lib/brand-subscription-access";
 import { renderIntelSectorTrend } from "../lib/intel-templates";
 import { emailPostureRollup, gradeDistributionByCount } from "../lib/email-posture-rollup";
+import { buildPivotReport, pivotsFromInput } from "../lib/observer-pivot-report";
+import { stampObserverScheduledSuccess } from "../lib/observer-schedule-marker";
+
+/** Cube window shared by the three 24h aggregates below: the last 24 cube hours. */
+const CUBE_24H_SQL = "strftime('%Y-%m-%d %H:00:00', 'now', '-24 hours')";
+
+/** Top 10 targeted brands, last 24h, from threat_cube_brand (never raw threats). */
+export const OBSERVER_TOP_BRANDS_24H_SQL = `
+  SELECT c.id, b.name, c.count
+  FROM (
+    SELECT target_brand_id AS id, SUM(threat_count) AS count
+    FROM threat_cube_brand INDEXED BY idx_cube_brand_hour
+    WHERE hour_bucket >= ${CUBE_24H_SQL}
+    GROUP BY target_brand_id
+    ORDER BY count DESC
+    LIMIT 10
+  ) c
+  JOIN brands b ON b.id = c.id
+  ORDER BY c.count DESC`;
+
+/** Top 10 hosting providers (by name), last 24h, from threat_cube_provider. */
+export const OBSERVER_TOP_PROVIDERS_24H_SQL = `
+  SELECT hp.name, SUM(c.count) AS count
+  FROM (
+    SELECT hosting_provider_id AS id, SUM(threat_count) AS count
+    FROM threat_cube_provider INDEXED BY idx_cube_provider_hour
+    WHERE hour_bucket >= ${CUBE_24H_SQL}
+    GROUP BY hosting_provider_id
+    ORDER BY count DESC
+    LIMIT 50
+  ) c
+  JOIN hosting_providers hp ON hp.id = c.id
+  GROUP BY hp.name
+  ORDER BY count DESC
+  LIMIT 10`;
+
+/** Threat-type distribution, last 24h, from threat_cube_status (all statuses). */
+export const OBSERVER_TYPE_BREAKDOWN_24H_SQL = `
+  SELECT threat_type, SUM(threat_count) AS count
+  FROM threat_cube_status INDEXED BY idx_cube_status_hour
+  WHERE hour_bucket >= ${CUBE_24H_SQL}
+  GROUP BY threat_type
+  ORDER BY count DESC`;
 
 export const observerAgent: AgentModule = {
   name: "observer",
@@ -45,9 +88,14 @@ export const observerAgent: AgentModule = {
     { kind: "d1_table", name: "social_profiles" },
     { kind: "d1_table", name: "spam_trap_captures" },
     { kind: "d1_table", name: "threat_narratives" },
+    { kind: "d1_table", name: "threat_cube_brand" },
+    { kind: "d1_table", name: "threat_cube_provider" },
+    { kind: "d1_table", name: "threat_cube_status" },
     { kind: "d1_table", name: "threat_signals" },
     { kind: "d1_table", name: "threats" },
     { kind: "d1_table", name: "users" },
+    // observer:last_scheduled_success_at marker (lib/observer-schedule-marker.ts)
+    { kind: "kv", namespace: "CACHE" },
   ],
   writes: [
     { kind: "d1_table", name: "agent_outputs" },
@@ -62,14 +110,53 @@ export const observerAgent: AgentModule = {
     const callCtx = { agentId: "observer", runId };
 
     // Event-triggered runs (pivot_detected → processAgentEvents, which sets
-    // input.triggeredByEvent) do the rule-based briefing only. The Claude
-    // budget (observer's 2M-token cap, AI_CLAUDE_TASKS) is reserved for the
-    // scheduled daily/weekly narrative — up to 10 events per hourly tick
-    // would otherwise drain it. No call is made, so nothing is counted —
-    // a deliberate skip, not a failure.
+    // input.triggeredByEvent) never call AI: the Claude budget (observer's
+    // 2M-token cap, AI_CLAUDE_TASKS) is reserved for the scheduled
+    // daily/weekly narrative. processAgentEvents coalesces a tick's events
+    // into one run and caps event runs at 3 per UTC day
+    // (lib/agent-event-dispatch.ts). A pivot_detected run writes the pivot
+    // report below; any other event trigger falls through to the rule-based
+    // briefing with the AI call skipped. No call is made, so nothing is
+    // counted — a deliberate skip, not a failure.
     const triggeredByEvent = typeof ctx.input.triggeredByEvent === "string" && ctx.input.triggeredByEvent.length > 0
       ? ctx.input.triggeredByEvent
       : null;
+
+    // ─── pivot_detected → focused operational report (no AI, no D1) ───
+    // The nexus → observer edge (CLAUDE.md §6). The run reports exactly the
+    // pivots it was dispatched for — every payload the orchestrator folded
+    // into this run (input.events) — instead of re-rendering the daily
+    // briefing. No model call and no weekly report (the Claude budget is
+    // for the scheduled narrative), and no aggregate reads.
+    if (triggeredByEvent === "pivot_detected") {
+      const pivots = pivotsFromInput(ctx.input);
+      const report = buildPivotReport(pivots);
+      return {
+        itemsProcessed: pivots.length,
+        itemsCreated: report ? 1 : 0,
+        itemsUpdated: 0,
+        output: {
+          triggered_by_event: triggeredByEvent,
+          ai_skipped: "event_triggered",
+          pivots: pivots.length,
+          coalesced_events: typeof ctx.input.coalescedEvents === "number" ? ctx.input.coalescedEvents : 1,
+        },
+        tokensUsed: 0,
+        agentOutputs: report
+          ? [{
+              type: "insight",
+              summary: report.summary,
+              severity: report.severity,
+              details: { ...report.details, run_id: runId },
+            }]
+          : [{
+              type: "diagnostic",
+              summary: "Observer pivot run: no valid pivot_detected payload in the dispatched events",
+              severity: "low",
+              details: { kind: "pivot_report", pivots: 0, run_id: runId },
+            }],
+      };
+    }
 
     // No run-level cost guard: the spend throttle, per-agent cap and
     // AI_CLAUDE_TASKS are enforced inside callAnthropic (KV-cached), and a
@@ -125,26 +212,23 @@ export const observerAgent: AgentModule = {
         greynoise_targeted_24h: number; greynoise_riot_24h: number;
         seclookup_high_risk_24h: number; seclookup_checked_24h: number;
       }>(),
-      // ─── Top targeted brands (with IDs for linking) ──────────────
-      env.DB.prepare(`
-        SELECT b.id, b.name, COUNT(*) as count
-        FROM threats t JOIN brands b ON t.target_brand_id = b.id
-        WHERE t.created_at >= datetime('now', '-24 hours')
-        GROUP BY b.id ORDER BY count DESC LIMIT 10
-      `).all<{ id: string; name: string; count: number }>(),
-      // ─── Top hosting providers ───────────────────────────────────
-      env.DB.prepare(`
-        SELECT hp.name, COUNT(*) as count
-        FROM threats t JOIN hosting_providers hp ON t.hosting_provider_id = hp.id
-        WHERE t.created_at >= datetime('now', '-24 hours')
-        GROUP BY hp.name ORDER BY count DESC LIMIT 10
-      `).all<{ name: string; count: number }>(),
-      // ─── Threat type distribution ────────────────────────────────
-      env.DB.prepare(`
-        SELECT threat_type, COUNT(*) as count
-        FROM threats WHERE created_at >= datetime('now', '-24 hours')
-        GROUP BY threat_type ORDER BY count DESC
-      `).all<{ threat_type: string; count: number }>(),
+      // ─── Top targeted brands / providers / types: OLAP cubes ─────
+      // D1 spend + run-survival fix (2026-11-10, CLAUDE.md §8): these three
+      // were GROUP BYs over raw `threats`. The type breakdown planned as
+      // `SCAN threats USING INDEX idx_threats_type` — all 1.55M rows, a
+      // non-covering walk — and the top-brands join scanned all ~133K
+      // brands to seek each one's 24h threats. Together ~1.55M rows/run,
+      // the AE-metered cost of every observer run (14 runs, 21.7M rows on
+      // 2026-11-09). The hourly cubes hold the same 24h window as a few
+      // hundred rows. Window = the last 24 cube hours (hour-snapped).
+      // Brand/provider cubes count ACTIVE threats (cube-builder source
+      // filter) — for threats created in the last 24h that is ~all of them.
+      // INDEXED BY pins the hour-range seek: without it the planner walks the
+      // whole cube on the (id, hour) index to skip the GROUP BY sort.
+      env.DB.prepare(OBSERVER_TOP_BRANDS_24H_SQL).all<{ id: string; name: string; count: number }>(),
+      env.DB.prepare(OBSERVER_TOP_PROVIDERS_24H_SQL).all<{ name: string; count: number }>(),
+      // Status cube = every status, so this matches the old all-threats count.
+      env.DB.prepare(OBSERVER_TYPE_BREAKDOWN_24H_SQL).all<{ threat_type: string; count: number }>(),
       // ─── Compare with previous day ───────────────────────────────
       env.DB.prepare(`
         SELECT COUNT(*) as total_prev
@@ -1114,6 +1198,13 @@ export const observerAgent: AgentModule = {
         details: { ...ai },
       });
     }
+
+    // The scheduled briefing is done. Flight Control measures Observer's
+    // stall age from this stamp, not from the newest agent_runs row, so an
+    // event run cannot hide a failed or missing daily briefing
+    // (lib/observer-schedule-marker.ts). Event runs never stamp: pivot runs
+    // returned above, and any other event trigger is excluded here.
+    if (!triggeredByEvent) await stampObserverScheduledSuccess(env.CACHE);
 
     return {
       itemsProcessed: 1,

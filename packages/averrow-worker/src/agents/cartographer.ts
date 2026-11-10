@@ -158,6 +158,139 @@ async function lookupRegistrar(env: Env, domain: string): Promise<{ registrar: s
   }
 }
 
+// ─── Run-wide wall-clock budget ───────────────────────────────────
+//
+// Incident 2026-11-08..10: 23 of 44 cartographer runs ended orphaned
+// ('partial', completed_at NULL — reaped at 180 min or force-failed by FC).
+// The run is six sequential network + D1 phases with only per-phase guards
+// (ip-api 60s, MMDB 90s); the rest had none. Phase 3 alone is 50 brands ×
+// DoH lookups at 5s timeout each, and RDAP's "max 10 per run" counted only
+// SUCCESSES, so a run of failing RDAP servers did one 5s lookup per threat
+// (up to 1,500). A slow upstream or a saturated D1 pushed the invocation
+// past the cron's limits and nothing after that point ran — not even
+// finalize. Now every phase checks one run budget, well inside the cron
+// invocation's 15-min wall limit: once it is spent, the remaining phases
+// (or the rest of a phase's loop) are skipped, the run returns `degraded`
+// → agent_runs.status 'partial' WITH completed_at, and the next hourly run
+// carries on.
+export const CARTOGRAPHER_RUN_BUDGET_MS = 8 * 60_000;
+
+/** Max RDAP lookups ATTEMPTED per run (successes are separately capped at 10). */
+export const RDAP_MAX_ATTEMPTS_PER_RUN = 20;
+export const RDAP_MAX_SUCCESSES_PER_RUN = 10;
+
+/** Pure: true once `budgetMs` has elapsed since `startMs`. */
+export function cartographerBudgetSpent(startMs: number, nowMs: number, budgetMs: number = CARTOGRAPHER_RUN_BUDGET_MS): boolean {
+  return nowMs - startMs >= budgetMs;
+}
+
+/** Pure: may another RDAP lookup start? Caps attempts AND successes. */
+export function rdapLookupAllowed(attempts: number, successes: number): boolean {
+  return attempts < RDAP_MAX_ATTEMPTS_PER_RUN && successes < RDAP_MAX_SUCCESSES_PER_RUN;
+}
+
+// ─── Phase 2 campaign counts (per-provider KV cache) ──────────────
+//
+// Phase 2's campaign-count input was `COUNT(DISTINCT campaign_id) FROM threats
+// WHERE hosting_provider_id IN (<up to 50 ids>)` on EVERY run. The scored set
+// is the top providers by active threats, whose threats sum to ~607K rows
+// (prod 2026-11-10), read through the non-covering idx_threats_provider —
+// the ~670K rows/run the AE meter attributes to agent:cartographer, and the
+// slowest statement in the run. A provider's distinct-campaign count moves
+// slowly and only feeds a heuristic score, so each one is cached in KV for
+// 24h and the misses a run may compute are bounded by an estimated row
+// budget (the providers' total_threat_count). A provider whose count is
+// unknown and over budget is DEFERRED — not scored this run, its
+// last_scored_at untouched, so the next run picks it up.
+export const PROVIDER_CAMPAIGN_COUNT_TTL_S = 24 * 3600;
+export const PROVIDER_CAMPAIGN_COUNT_ROW_BUDGET = 150_000;
+export const PROVIDER_CAMPAIGN_COUNT_KV_PREFIX = 'carto:provider_campaigns:';
+
+/**
+ * Pure: which uncached providers to compute this run. Walks `misses` in the
+ * given (scoring) order, adding each while the summed estimated rows stay
+ * within `rowBudget`. The first miss is always taken so a provider larger
+ * than the budget is not deferred forever (its read is then ≤ once a day).
+ */
+export function planCampaignCountFetch(
+  misses: ReadonlyArray<{ id: string; estimatedRows: number }>,
+  rowBudget: number = PROVIDER_CAMPAIGN_COUNT_ROW_BUDGET,
+): { fetch: string[]; deferred: string[] } {
+  const fetch: string[] = [];
+  const deferred: string[] = [];
+  let spent = 0;
+  for (const m of misses) {
+    const rows = Math.max(0, m.estimatedRows);
+    if (fetch.length === 0 || spent + rows <= rowBudget) {
+      fetch.push(m.id);
+      spent += rows;
+    } else {
+      deferred.push(m.id);
+    }
+  }
+  return { fetch, deferred };
+}
+
+/** Parse a cached campaign count; anything malformed is a miss (null). */
+export function parseCampaignCount(raw: string | null): number | null {
+  if (raw === null) return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Distinct-campaign count per provider for Phase 2: KV hits first, then one
+ * bounded threats read for the misses `planCampaignCountFetch` allows. The
+ * returned map holds only providers whose count is KNOWN — callers defer the
+ * rest. KV failures read as misses / are ignored on write (best-effort).
+ */
+export async function loadProviderCampaignCounts(
+  env: Env,
+  providers: ReadonlyArray<{ id: string; total_threat_count: number }>,
+  rowBudget: number = PROVIDER_CAMPAIGN_COUNT_ROW_BUDGET,
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (providers.length === 0) return counts;
+
+  const cached = await Promise.all(providers.map(async (p) => {
+    try {
+      return parseCampaignCount(await env.CACHE.get(PROVIDER_CAMPAIGN_COUNT_KV_PREFIX + p.id));
+    } catch {
+      return null;
+    }
+  }));
+  const misses: Array<{ id: string; estimatedRows: number }> = [];
+  providers.forEach((p, i) => {
+    const hit = cached[i];
+    if (hit !== null && hit !== undefined) counts.set(p.id, hit);
+    else misses.push({ id: p.id, estimatedRows: p.total_threat_count });
+  });
+
+  const { fetch } = planCampaignCountFetch(misses, rowBudget);
+  if (fetch.length === 0) return counts;
+
+  const rows = await env.DB.prepare(`
+    SELECT hosting_provider_id, COUNT(DISTINCT campaign_id) AS campaign_count
+    FROM threats
+    WHERE hosting_provider_id IN (${fetch.map(() => '?').join(',')})
+      AND campaign_id IS NOT NULL
+    GROUP BY hosting_provider_id
+  `).bind(...fetch).all<{ hosting_provider_id: string; campaign_count: number }>();
+  const fetched = new Map(rows.results.map((r) => [r.hosting_provider_id, r.campaign_count]));
+
+  await Promise.all(fetch.map(async (id) => {
+    // A provider absent from the GROUP BY has no campaign-linked threats.
+    const n = fetched.get(id) ?? 0;
+    counts.set(id, n);
+    try {
+      await env.CACHE.put(PROVIDER_CAMPAIGN_COUNT_KV_PREFIX + id, String(n), {
+        expirationTtl: PROVIDER_CAMPAIGN_COUNT_TTL_S,
+      });
+    } catch { /* best-effort — recomputed on a later run */ }
+  }));
+  return counts;
+}
+
 // ─── Agent Definition ─────────────────────────────────────────────
 
 export const cartographerAgent: AgentModule = {
@@ -216,6 +349,12 @@ export const cartographerAgent: AgentModule = {
     let itemsCreated = 0;
     const outputs: AgentOutputEntry[] = [];
 
+    // Run-wide wall-clock budget (see CARTOGRAPHER_RUN_BUDGET_MS).
+    const runStart = Date.now();
+    const budgetSpent = (): boolean => cartographerBudgetSpent(runStart, Date.now());
+    /** Phases (or phase tails) skipped because the budget ran out. */
+    const budgetSkipped: string[] = [];
+
     // ─── Phase 0: ip-api.com batch enrichment for unenriched threats ───
     // Process up to 3 batches of 500 (1,500 threats) per cron tick. 2026-05-12
     // platform-status went degraded because 5 batches at ~3s/threat overshot
@@ -230,6 +369,7 @@ export const cartographerAgent: AgentModule = {
     let batchGeoResponded = 0;
     let batchGeoLocated = 0;
     let rdapEnriched = 0;
+    let rdapAttempts = 0;
     // Surface env.DB.batch() failures so we can diagnose without wrangler tail.
     // Pre-PR-#825 these went only to console.error and were invisible. The
     // 2026-04-27 cartographer-health snapshot revealed ~90% of threat UPDATEs
@@ -243,6 +383,10 @@ export const cartographerAgent: AgentModule = {
 
     try {
       for (let batchIndex = 0; batchIndex < MAX_BATCHES_PER_RUN; batchIndex++) {
+        if (budgetSpent()) {
+          budgetSkipped.push(`phase0 batches ${batchIndex + 1}-${MAX_BATCHES_PER_RUN}`);
+          break;
+        }
         const currentOffset = startOffset + (batchIndex * BATCH_SIZE);
         const unenriched = await env.DB.prepare(`
           SELECT id, ip_address, malicious_domain, malicious_url, hosting_provider_id
@@ -374,11 +518,14 @@ export const cartographerAgent: AgentModule = {
             }
           }
 
-          // RDAP for domain (throttled — max 10 per run to avoid overload).
-          // This stays sequential because it's network-bound and rate-limited.
+          // RDAP for domain (throttled — max 10 successes AND max
+          // RDAP_MAX_ATTEMPTS_PER_RUN attempts per run; counting only
+          // successes let a run of failing servers do one 5s lookup per
+          // threat). Sequential: network-bound and rate-limited.
           let registrar: string | null = null;
           let registration_date: string | null = null;
-          if (threat.malicious_domain && rdapEnriched < 10) {
+          if (threat.malicious_domain && rdapLookupAllowed(rdapAttempts, rdapEnriched) && !budgetSpent()) {
+            rdapAttempts++;
             const rdap = await lookupRegistrar(env, threat.malicious_domain);
             registrar = rdap.registrar;
             registration_date = rdap.registration_date;
@@ -503,6 +650,7 @@ export const cartographerAgent: AgentModule = {
             batch_geo_responded: batchGeoResponded,
             batch_geo_located: batchGeoLocated,
             rdap_enriched: rdapEnriched,
+            rdap_attempts: rdapAttempts,
             batch_size: BATCH_SIZE,
             max_batches: MAX_BATCHES_PER_RUN,
             batch_flush_successes: batchFlushSuccesses,
@@ -545,7 +693,9 @@ export const cartographerAgent: AgentModule = {
     let mmdbResolved = 0;
     let mmdbPartial = 0;
     let mmdbBudgetHit = false;
-    try {
+    if (budgetSpent()) {
+      budgetSkipped.push("phase0.5 mmdb");
+    } else try {
       const { lookupGeoMmdb } = await import("../lib/geoip-mmdb");
       // Fetch threats that came out of Phase 0 with an IP but no
       // lat/lng and that GeoLite2 hasn't been asked about yet.
@@ -658,7 +808,9 @@ export const cartographerAgent: AgentModule = {
     }
 
     // ─── Phase 1: ipinfo.io fallback for threats still missing country_code ───
-    try {
+    if (budgetSpent()) {
+      budgetSkipped.push("phase1 ipinfo");
+    } else try {
       const { enrichThreatsGeo } = await import("../lib/geoip");
       const enrichResult = await enrichThreatsGeo(env.DB, env.CACHE, env.IPINFO_TOKEN);
       itemsUpdated += enrichResult.enriched;
@@ -671,7 +823,15 @@ export const cartographerAgent: AgentModule = {
     // previous scoring pass — the hosting_providers write further down sets reputation_score
     // and last_score with the same value, so reading it BEFORE the
     // overwrite gives the prior score for the insight-emission gate.
-    const providers = await env.DB.prepare(
+    type ScoringProviderRow = {
+      id: string; name: string; asn: string | null;
+      active_threat_count: number; total_threat_count: number;
+      avg_response_time: number | null; trend_7d: number | null; trend_30d: number | null;
+      last_score: number | null;
+    };
+    const phase2Skipped = budgetSpent();
+    if (phase2Skipped) budgetSkipped.push("phase2 provider scoring");
+    const providers: { results: ScoringProviderRow[] } = phase2Skipped ? { results: [] } : await env.DB.prepare(
       `SELECT hp.id, hp.name, hp.asn, hp.active_threat_count, hp.total_threat_count,
               hp.avg_response_time, hp.trend_7d, hp.trend_30d, hp.last_score
        FROM hosting_providers hp
@@ -682,12 +842,7 @@ export const cartographerAgent: AgentModule = {
            OR ABS(hp.active_threat_count - COALESCE(hp.last_score_threat_count, 0)) > 10
          )
        ORDER BY hp.active_threat_count DESC LIMIT 50`
-    ).all<{
-      id: string; name: string; asn: string | null;
-      active_threat_count: number; total_threat_count: number;
-      avg_response_time: number | null; trend_7d: number | null; trend_30d: number | null;
-      last_score: number | null;
-    }>();
+    ).all<ScoringProviderRow>();
 
     // Diagnostic counts — used for cartographer's per-run summary
     // logging only (see the summary line + agent_outputs details
@@ -787,21 +942,13 @@ export const cartographerAgent: AgentModule = {
 
     let insightsEmitted = 0;
 
-    // Batch: campaign counts for all providers (an input to the score, so
-    // needed for every provider, unlike the type breakdown below).
-    const providerIds = providers.results.map(p => p.id);
-    const allCampaignStats = providerIds.length > 0 ? await env.DB.prepare(`
-      SELECT hosting_provider_id, COUNT(DISTINCT campaign_id) as campaign_count
-      FROM threats
-      WHERE hosting_provider_id IN (${providerIds.map(() => '?').join(',')})
-        AND campaign_id IS NOT NULL
-      GROUP BY hosting_provider_id
-    `).bind(...providerIds).all<{ hosting_provider_id: string; campaign_count: number }>() : { results: [] as { hosting_provider_id: string; campaign_count: number }[] };
-
-    const campaignCountByProvider = new Map<string, number>();
-    for (const row of allCampaignStats.results) {
-      campaignCountByProvider.set(row.hosting_provider_id, row.campaign_count);
-    }
+    // Campaign counts — an input to the score, so needed for every scored
+    // provider. Per-provider KV cache (24h) + a row budget on the misses
+    // computed this run; see PROVIDER_CAMPAIGN_COUNT_ROW_BUDGET.
+    const campaignCountByProvider = await loadProviderCampaignCounts(env, providers.results);
+    // Providers whose count is still unknown are deferred to a later run.
+    const scorable = providers.results.filter((p) => campaignCountByProvider.has(p.id));
+    const campaignDeferred = providers.results.length - scorable.length;
 
     // One deterministic pass per provider. computeHeuristicScore is the
     // sole score (AI_STRATEGY_2026-10 Phase 1 removed the Haiku
@@ -813,7 +960,7 @@ export const cartographerAgent: AgentModule = {
     // Scores (and the emit decision) are computed FIRST so the threat-type
     // breakdown — needed only for the insight text — is fetched for the
     // emitting providers alone, not all ~50 scored ones.
-    const scored = providers.results.map((provider) => {
+    const scored = scorable.map((provider) => {
       const campaignCount = campaignCountByProvider.get(provider.id) ?? 0;
       const heuristic = computeHeuristicScore({
         activeThreats: provider.active_threat_count,
@@ -894,12 +1041,14 @@ export const cartographerAgent: AgentModule = {
       }
     }
 
-    console.log(`[cartographer] phase2: ${providers.results.length} providers eligible for scoring (gate: 6h OR ±10 threat delta)`);
+    console.log(`[cartographer] phase2: ${providers.results.length} providers eligible for scoring (gate: 6h OR ±10 threat delta), ${scorable.length} scored, ${campaignDeferred} deferred (campaign-count budget)`);
 
     // ─── Phase 3: Email security posture scans — 50 brands per cycle, oldest first ───
     let emailScanned = 0;
     let emailErrors = 0;
-    try {
+    if (budgetSpent()) {
+      budgetSkipped.push("phase3 email security");
+    } else try {
       // (The old Tranco canonical_domain fix-up was removed: brands.canonical_domain is
       // NOT NULL + UNIQUE, so it matched nothing and full-scanned brands every run.)
 
@@ -914,7 +1063,13 @@ export const cartographerAgent: AgentModule = {
         LIMIT 50
       `).all<{ id: number; domain: string; existing_grade: string | null }>();
 
-      for (const brand of brandsToScan.results) {
+      for (const [i, brand] of brandsToScan.results.entries()) {
+        // Each scan is several sequential DoH lookups (5s timeout each);
+        // stop starting new ones once the run budget is spent.
+        if (budgetSpent()) {
+          budgetSkipped.push(`phase3 email security (${brandsToScan.results.length - i}/${brandsToScan.results.length} brands)`);
+          break;
+        }
         try {
           const result = await runEmailSecurityScan(brand.domain);
           await saveEmailSecurityScan(env.DB, brand.id, result);
@@ -1005,7 +1160,9 @@ export const cartographerAgent: AgentModule = {
 
     // ─── Phase 4: Geo-enrich DMARC source IPs — up to 10 per cycle ───
     let dmarcGeoEnriched = 0;
-    try {
+    if (budgetSpent()) {
+      budgetSkipped.push("phase4 dmarc geo");
+    } else try {
       const unenrichedIps = await env.DB.prepare(`
         SELECT DISTINCT source_ip FROM dmarc_report_records
         WHERE country_code IS NULL AND source_ip IS NOT NULL
@@ -1072,7 +1229,12 @@ export const cartographerAgent: AgentModule = {
       ? PROVIDER_STATS_THROTTLE_MS
       : PROVIDER_STATS_BACKLOG_THROTTLE_MS;
     const lastProviderStatsRun = await env.CACHE.get(PROVIDER_STATS_LAST_RUN_KEY);
-    if (shouldRunProviderStats(lastProviderStatsRun, Date.now(), providerStatsWindowMs)) {
+    // Budget spent → skip without stamping, so the next run (or an FC
+    // backlog instance past its window) still refreshes the stats.
+    const phase5Due = shouldRunProviderStats(lastProviderStatsRun, Date.now(), providerStatsWindowMs);
+    const phase5OverBudget = phase5Due && budgetSpent();
+    if (phase5OverBudget) budgetSkipped.push("phase5 provider stats");
+    if (phase5Due && !phase5OverBudget) {
       statsCreated = await aggregateProviderStats(env);
       // TTL must outlive the WIDEST throttle window: a 3600s stamp expired
       // before the 150-min backlog window elapsed, so every backlog
@@ -1086,7 +1248,7 @@ export const cartographerAgent: AgentModule = {
     // Emit diagnostic output so cartographer never shows 0 outputs silently
     outputs.push({
       type: "diagnostic",
-      summary: `Cartographer: ${batchGeoResponded} ip-api responses (${batchGeoLocated} geo-located), ${providers.results.length} providers scored (rules, ${insightsEmitted} insights), ${statsCreated} stat entries, ${emailScanned} email security scans, ${dmarcGeoEnriched} DMARC IPs geo-enriched, ${fmtDiagCount(threatsWithProvider.n)}/${fmtDiagCount(threatsTotal.n)} threats have provider`,
+      summary: `Cartographer: ${batchGeoResponded} ip-api responses (${batchGeoLocated} geo-located), ${scorable.length} providers scored (rules, ${insightsEmitted} insights), ${statsCreated} stat entries, ${emailScanned} email security scans, ${dmarcGeoEnriched} DMARC IPs geo-enriched, ${fmtDiagCount(threatsWithProvider.n)}/${fmtDiagCount(threatsTotal.n)} threats have provider`,
       // agent_outputs.severity CHECK allows critical/high/medium/low/info
       // (migration 0061).
       severity: providers.results.length === 0 ? "medium" : "info",
@@ -1099,7 +1261,8 @@ export const cartographerAgent: AgentModule = {
         rdap_enriched: rdapEnriched,
         providers_with_threats: providers.results.length,
         total_providers: totalProviders.n,
-        heuristic_scored: providers.results.length,
+        heuristic_scored: scorable.length,
+        providers_deferred_campaign_budget: campaignDeferred,
         provider_insights_emitted: insightsEmitted,
         stats_entries: statsCreated,
         email_security_scanned: emailScanned,
@@ -1112,6 +1275,10 @@ export const cartographerAgent: AgentModule = {
         threats_with_provider: threatsWithProvider.n,
         threats_without_provider_but_with_ip: threatsWithoutProvider.n,
         diag_counts_computed_here: isMaintenanceRun,
+        rdap_attempts: rdapAttempts,
+        run_budget_ms: CARTOGRAPHER_RUN_BUDGET_MS,
+        run_elapsed_ms: Date.now() - runStart,
+        budget_skipped: budgetSkipped,
       },
     });
 
@@ -1119,9 +1286,15 @@ export const cartographerAgent: AgentModule = {
       itemsProcessed,
       itemsCreated,
       itemsUpdated,
-      output: { providersScored: providers.results.length, statsEntries: statsCreated, ipApiBatchEnriched: batchGeoResponded, ipApiGeoLocated: batchGeoLocated },
+      output: { providersScored: scorable.length, statsEntries: statsCreated, ipApiBatchEnriched: batchGeoResponded, ipApiGeoLocated: batchGeoLocated },
       tokensUsed: 0,
       agentOutputs: outputs,
+      // Budget ran out: the run did real work and is FINISHED — executeAgent
+      // records it 'partial' with completed_at set (never an orphan); the
+      // next hourly run picks up what was skipped.
+      ...(budgetSkipped.length > 0
+        ? { degraded: { reason: `wall-clock budget (${Math.round(CARTOGRAPHER_RUN_BUDGET_MS / 60_000)} min) spent — skipped: ${budgetSkipped.join(", ")}` } }
+        : {}),
     };
   },
 };

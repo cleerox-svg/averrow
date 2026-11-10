@@ -27,7 +27,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Env } from "../src/types";
-import { runDailySnapshotsCron } from "../src/handlers/dailySnapshots";
+import { runDailySnapshotsCron, DAILY_SNAPSHOTS_WRITE_RETRIES } from "../src/handlers/dailySnapshots";
+import { d1RetryDelayMs, D1_OVERLOAD_RETRY_BASE_MS } from "../src/lib/d1-retry";
 import {
   hasSqlite,
   openDerivedDb,
@@ -300,7 +301,9 @@ describe.skipIf(!hasSqlite())("daily_snapshots dedicated cron", () => {
             return {
               run: async () => {
                 brandChunks += 1;
-                if (brandChunks === 2) throw new Error("D1_ERROR: Network connection lost.");
+                // Persistent from chunk 2 on: a transient error is now retried
+                // (DAILY_SNAPSHOTS_WRITE_RETRIES), so it must outlast them to fail the type.
+                if (brandChunks >= 2) throw new Error("D1_ERROR: Network connection lost.");
                 return bound.run();
               },
             };
@@ -356,6 +359,93 @@ describe.skipIf(!hasSqlite())("daily_snapshots dedicated cron", () => {
     expect(events(raw)).toHaveLength(1);
   });
 
+  // ── 2026-11-10: D1 10-second overload window ──────────────────────
+  // Prod 11-08..11-10: the invocation returned, but the heartbeat, all three
+  // finalize attempts (250 ms / 1 s apart) and the event write were rejected
+  // with "D1 DB is overloaded" inside the window the heavy chunks had spent.
+  const OVERLOAD = "D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window";
+
+  /** Statements matching `re` throw OVERLOAD on their first `n` executions. */
+  function overloadFirst(base: D1Database, re: RegExp, n: number, counter: { calls: number }): D1Database {
+    return {
+      ...base,
+      prepare: (sql: string) => {
+        const stmt = base.prepare(sql);
+        if (!re.test(sql)) return stmt;
+        return {
+          bind: (...args: unknown[]) => {
+            const bound = stmt.bind(...args);
+            const gate = async <T>(fn: () => Promise<T>): Promise<T> => {
+              counter.calls += 1;
+              if (counter.calls <= n) throw new Error(OVERLOAD);
+              return fn();
+            };
+            return {
+              run: () => gate(() => bound.run()),
+              first: <T>() => gate(() => bound.first<T>()),
+              all: <T>() => gate(() => bound.all<T>()),
+            };
+          },
+        } as unknown as D1PreparedStatement;
+      },
+    } as D1Database;
+  }
+
+  it("finalize backoff spans D1's 10 s overload window by default", async () => {
+    const { DAILY_SNAPSHOTS_FINALIZE_BACKOFF_MS } = await import("../src/handlers/dailySnapshots");
+    const total = DAILY_SNAPSHOTS_FINALIZE_BACKOFF_MS.reduce((a, b) => a + b, 0);
+    expect(total).toBeGreaterThan(10_000);
+    // Every retry after the first waits a meaningful fraction of the window.
+    expect(Math.min(...DAILY_SNAPSHOTS_FINALIZE_BACKOFF_MS)).toBeGreaterThanOrEqual(2_000);
+  });
+
+  it("finalize survives three overload rejections in a row (4 attempts) — run closed, never 'running'", async () => {
+    const counter = { calls: 0 };
+    env = { DB: overloadFirst(db, /completed_at = datetime\('now'\)/, 3, counter) } as unknown as Env;
+
+    const result = await runDailySnapshotsCron(env, AT, "cron", { finalizeBackoffMs: [0, 0, 0], overloadBaseMs: 1 });
+
+    expect(result.status).toBe("success");
+    expect(counter.calls).toBe(4);
+    const r = runs(raw)[0]!;
+    expect(r.status).toBe("success");
+    expect(r.completed_at).not.toBeNull();
+  });
+
+  it("a chunk rejected by the overload window is retried, not lost — the type completes", async () => {
+    const counter = { calls: 0 };
+    env = { DB: overloadFirst(db, /'brand' AS entity_type/, 1, counter) } as unknown as Env;
+
+    const result = await runDailySnapshotsCron(env, AT, "cron", { overloadBaseMs: 1, interChunkPauseMs: 0 });
+
+    expect(result.brand).toEqual({ action: "generated", rows: 2 });
+    expect(result.status).toBe("success");
+    expect(counter.calls).toBe(2);
+    expect(snapshotRows(raw, "brand")).toHaveLength(2);
+  });
+
+  it("the telemetry event write is retried through an overload rejection and written once", async () => {
+    const counter = { calls: 0 };
+    env = { DB: overloadFirst(db, /INTO agent_events/, 1, counter) } as unknown as Env;
+
+    await runDailySnapshotsCron(env, AT, "cron", { overloadBaseMs: 1 });
+
+    expect(counter.calls).toBe(2);
+    expect(events(raw)).toHaveLength(1);
+  });
+
+  it("pauses between chunks (not before the first) on the cron path", async () => {
+    const pauses: number[] = [];
+    const result = await runDailySnapshotsCron(env, AT, "cron", {
+      chunkSize: 1,
+      interChunkPauseMs: 7,
+      sleep: async (ms) => { pauses.push(ms); },
+    });
+    expect(result.status).toBe("success");
+    // provider: 1 chunk (no pause); brand: 2 chunks (one pause between).
+    expect(pauses).toEqual([7]);
+  });
+
   it("handleScheduled routes '28 0,12 * * *' to the handler (end to end) and does not enter the mesh", async () => {
     const { handleScheduled } = await import("../src/cron/orchestrator");
     const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
@@ -391,5 +481,17 @@ describe("daily_snapshots cron wiring", () => {
     for (const f of ["../src/handlers/dailySnapshots.ts", "../src/lib/snapshots.ts"]) {
       expect(src(f)).not.toMatch(/getUTCMinutes|getMinutes|getUTCHours|minute\s*===|hour\s*===/);
     }
+  });
+});
+
+describe("daily_snapshots write retries", () => {
+  it("chunk + event overload retries wait past D1's 10-second window (same as finalize)", () => {
+    // Minimum (zero-jitter) total wait before the last attempt.
+    let waited = 0;
+    for (let i = 0; i < DAILY_SNAPSHOTS_WRITE_RETRIES; i++) {
+      waited += d1RetryDelayMs(i, "D1 DB is overloaded. Requests queued for too long.", { overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS }, () => 0);
+    }
+    expect(DAILY_SNAPSHOTS_WRITE_RETRIES).toBe(3);
+    expect(waited).toBeGreaterThan(10_000);
   });
 });

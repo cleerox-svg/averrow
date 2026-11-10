@@ -207,7 +207,7 @@ surfaced via `/api/insights/latest` → Home "Latest Intel" until both were reti
 | Property | Value |
 |----------|-------|
 | **File** | `packages/averrow-worker/src/agents/observer.ts` |
-| **Trigger** | Scheduled — daily at 00:00 UTC (inline await on the hourly mesh) |
+| **Trigger** | Scheduled — daily at 00:41 UTC, dedicated `41 0 * * *` cron (`OBSERVER_CRON`, since 2026-11-10; was inline at hour 0 on the :07 mesh). Event — `pivot_detected` from NEXUS via the :07 agent_events consumer |
 | **Purpose** | Generate intelligence briefings from trend analysis |
 
 The Observer synthesizes threat data from the last 24 hours into human-readable intelligence briefings. It gathers:
@@ -219,6 +219,8 @@ The Observer synthesizes threat data from the last 24 hours into human-readable 
 - Feed health status
 
 This context is sent to Claude Haiku, which generates 3-5 professional intelligence briefing items. Briefings are stored as `agent_outputs` and surfaced in the HUD and insights panel. Creates user notifications for critical findings.
+
+**D1 reads (2026-11-10):** the 24h top-brands, top-providers and threat-type aggregates read the hourly cubes (`threat_cube_brand` / `_provider` / `_status`, hour index pinned with `INDEXED BY`; SQL exported as `OBSERVER_*_24H_SQL`). The raw-threats versions read ~1.55M rows per run (`SCAN threats USING INDEX idx_threats_type` plus a full `brands` scan); the cube versions read ~2.5K. **Pivot-triggered runs (2026-11-10):** `pivot_detected` events (kind `dormancy` / `infra_movement`) stay pending until the hourly :07 consumer (Navigator expires targeted events only after 3h), are coalesced to one observer run per tick and capped at 3 per UTC day (`lib/agent-event-dispatch.ts`). The run receives every folded payload as `input.events` and writes one focused rule-based `insight` (`lib/observer-pivot-report.ts`): which operations moved infrastructure (+ASNs with the new and previous ASN lists, +IPs, +cert serials) and which clusters went dormant, severity `high` when any infrastructure moved, else `medium`; `details` lists cluster ids, ASNs and the parsed events. No AI call, no weekly report and no D1 aggregate reads on this path. **Catch-up (2026-11-10):** agent_runs has no trigger column, so Flight Control does not judge Observer by its newest run (that may be a pivot run). Every non-event run — the `41 0 * * *` cron, FC's stall-recovery catch-up or a manual `POST /api/agents/observer/trigger`, never a pivot run — stamps KV `observer:last_scheduled_success_at` (14-day TTL, `lib/observer-schedule-marker.ts`) once the briefing is built (also when the run ends degraded/`partial` because every AI call failed: the rule-based briefing still exists), and FC's `getAgentHealth` measures Observer's stall age from it (`AgentHealth.stall_reference_at`; `planStallRecoveries` uses the same reference, and only a newer scheduled success resets the recovery cooldown). A failed or missing 00:41 briefing is therefore stalled once the last scheduled success is > 25h old (stallThresholdMinutes 1500) and FC re-runs it (one per tick, 2h→24h backoff), even when a pivot run succeeded in between. Without a marker (first deploy) FC falls back to the newest agent_runs row. `platform_agent_stalled` still fires only for a run stuck in `running`.
 
 **Inputs:** Aggregated threat statistics, brand targeting patterns, provider data
 **Outputs:** Intelligence briefing entries in `agent_outputs`; user notifications
@@ -264,7 +266,9 @@ The Cartographer operates in two phases:
 
 Also runs email security scans for monitored brands via `packages/averrow-worker/src/email-security.ts`.
 
-Cartographer no longer emits the `aiCalls*` counters and cannot finish `degraded`. An insight row is emitted only when the rule score moves meaningfully versus `hosting_providers.last_score` (or for a repeat offender); the top-threat-types breakdown on an insight comes from `threat_cube_provider` (active threats in the cube window), queried only for emitting providers.
+**Run budget (2026-11-10):** one 8-minute wall-clock budget (`CARTOGRAPHER_RUN_BUDGET_MS`) is checked before every phase and inside the Phase 0 batch / RDAP and Phase 3 brand loops. When it is spent the remaining work is skipped and listed in the summary's `details.budget_skipped`, and the run returns `degraded` — `agent_runs.status='partial'` with `completed_at` set, never an orphan; the next hourly run continues. RDAP is capped at 20 attempts (and 10 successes) per run. Phase 2's distinct-campaign count per provider is KV-cached for 24h (`carto:provider_campaigns:<id>`); a run computes misses only up to a 150K estimated-row budget (providers' `total_threat_count`) and defers the rest (`details.providers_deferred_campaign_budget`) instead of re-reading ~607K threat rows every run.
+
+Cartographer no longer emits the `aiCalls*` counters; it finishes `degraded` only when the run budget is spent. An insight row is emitted only when the rule score moves meaningfully versus `hosting_providers.last_score` (or for a repeat offender); the top-threat-types breakdown on an insight comes from `threat_cube_provider` (active threats in the cube window), queried only for emitting providers.
 
 **Inputs:** Threats missing `country_code`; hosting providers with `total_threat_count > 0`
 **Outputs:** Enriched threat records (`threats.registrar`, `registration_date` populated via IANA RDAP bootstrap — switched from rdap.org in PR-C of the 2026-05-16 audit because rdap.org returns HTTP 403 to CF Workers); provider reputation scores (`hosting_providers.reputation_score`); `agent_outputs` entries (`type='insight'` for providers with reputation <70 OR repeat-offender ≥3 campaigns, `type='diagnostic'` for per-run stats); `provider_threat_stats` rows (today / 7d / 30d / all-time, written by `aggregateProviderStats` and read by `GET /api/providers/stats`)
@@ -543,7 +547,9 @@ Handler-dispatched writer following the `daily_briefing` pattern: an
 when one entity type failed; `failed` when both did), then a telemetry
 `agent_events` row (`snapshots_generated`, `target_agent=NULL`, payload has
 the per-type outcome). Each type is written in bounded keyset chunks
-(`SNAPSHOT_CHUNK_SIZE` = 1000 entities, `entity_id > lo AND entity_id <= hi`)
+(cron: `DAILY_SNAPSHOTS_CHUNK_SIZE` = 250 entities with a 500 ms pause between
+chunk statements; manual endpoint: `SNAPSHOT_CHUNK_SIZE` = 1000;
+`entity_id > lo AND entity_id <= hi`)
 and resumes after the highest `entity_id` already written for the date (a
 one-row PK `MAX` probe), so the 12:28 fire is a repair pass that finishes any
 type the 00:28 fire lost or left half-written. Every committed chunk
@@ -563,6 +569,19 @@ Flight Control's orphan force-fail (registered modules only) closed them.
 `lib/agent-runs-reaper.ts` now reaps `status IN ('partial','running')` past
 the per-agent ceiling (default 90 min for these handler writers), stamping
 `reaped by navigator: agent run stuck running > …`.
+
+**Overload-window fix (2026-11-10).** The chunked runs still stayed `running`
+(2026-11-08 → 11-10, every run): the Analytics Engine meter recorded each
+invocation as returned (`cron:28 0,12 * * *`, e.g. 26 queries / 1.9M rows on
+11-10), yet the run row kept an older heartbeat and no `snapshots_generated`
+event landed. The heavy chunks spent D1's 10-second window and every write
+after them — heartbeat, three finalize attempts 250 ms / 1 s apart, the
+event — was rejected as "D1 DB is overloaded". Brand snapshots were not
+written after 2026-11-07 because provider never finished. Now chunk
+statements retry overload errors past the window (`lib/d1-retry.ts`
+`overloadBaseMs`), chunks are 250 entities with a 500 ms pause, finalize
+backs off 3 s / 6 s / 12 s (`DAILY_SNAPSHOTS_FINALIZE_BACKOFF_MS`, 4 attempts)
+and the event write retries with a fixed id (`INSERT OR IGNORE`).
 
 **Inputs:** `threats`, `hosting_providers` (names for `dominant_hosting_provider`)
 **Outputs:** `daily_snapshots` rows; `agent_runs` + `agent_events` (`snapshots_generated`)
@@ -733,7 +752,7 @@ The hourly mesh cron is `7 * * * *`. All time gates below use hour-only checks o
 | Strategist | Every 6 hours (hours 0/6/12/18) | `ctx.waitUntil` | Yes | No |
 | Nexus | Every 4 hours (hours 0/4/8/12/16/20) | `NexusWorkflow` | No | No |
 | Sparrow | Every 6 hours (hours 0/6/12/18) | `ctx.waitUntil` | No | No |
-| Observer | Daily at 00:00 UTC | Inline await | Yes | No |
+| Observer | Daily at 00:41 UTC (`41 0 * * *`) | Dedicated cron | Yes | No |
 | Pathfinder | Daily at 03:00 UTC (KV throttle to 7 days) | Inline await | No | No |
 | Seed Strategist | Daily at 06:00 UTC (inside Observer briefing job) | Inline await | Yes | No |
 | Narrator | Daily at 06:00 UTC (after Observer briefing) | `executeAgent` | Yes | No |

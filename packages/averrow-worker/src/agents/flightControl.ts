@@ -53,6 +53,7 @@ import { evaluateGeoipStall, type GeoipStallWatch } from "../lib/geoip-stall";
 import { parseCronIntervalMs } from "../lib/feedRunner";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { cachedCount } from "../lib/cached-count";
+import { readObserverScheduledSuccess } from "../lib/observer-schedule-marker";
 import {
   noGeoProbeLabel,
   TOTAL_NO_GEO_PROBE_SQL,
@@ -140,6 +141,13 @@ export interface AgentHealth {
   last_run_completed_at: string | null;
   avg_duration_ms: number;
   is_stalled: boolean;
+  // When set, the timestamp the stall age is measured from instead of
+  // last_run_at. Only Observer sets it today: its scheduled-briefing success
+  // marker (lib/observer-schedule-marker.ts), so a pivot_detected event run
+  // (newest agent_runs row) cannot mask a failed or missing daily briefing.
+  // Absent/null → last_run_at (every other agent; Observer before its first
+  // scheduled success after deploy).
+  stall_reference_at?: string | null;
   circuit_state: 'closed' | 'tripped';
   // agent_configs.enabled !== 0 (no config row = enabled). Unlike
   // circuit_state, false for ANY pause — auto trip or manual. executeAgent
@@ -507,7 +515,7 @@ export const flightControlAgent: AgentModule = {
     // Run all reads in parallel — single round trip to D1
     const [backlogs, health, navigatorHealth, budgetStatus, agentLimits, lastCuratorRun, curatorHealth, unscannedEmails, degradedFeeds, autoPausedFeeds, silentFeedCandidates, trippedAgents] = await Promise.all([
       measureBacklogs(env, db),
-      getAgentHealth(db),
+      getAgentHealth(db, env.CACHE),
       getNavigatorHealth(db),
       budgetMgr.getStatus(anthropicReported),
       budgetMgr.getAgentLimits(),
@@ -2784,13 +2792,26 @@ async function getStallThresholdMap(): Promise<Map<string, number>> {
   return new Map(Object.entries(mods).map(([id, mod]) => [id, mod.stallThresholdMinutes]));
 }
 
-async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
+/** Agents whose stall age is measured from a scheduled-run marker rather
+ *  than the newest agent_runs row (see AgentHealth.stall_reference_at). */
+async function readScheduledStallReferences(
+  agentIds: string[],
+  cache: KVNamespace | undefined,
+): Promise<Map<string, string>> {
+  const refs = new Map<string, string>();
+  if (!cache || !agentIds.includes('observer')) return refs;
+  const observerRef = await readObserverScheduledSuccess(cache);
+  if (observerRef) refs.set('observer', observerRef);
+  return refs;
+}
+
+export async function getAgentHealth(db: D1Database, cache?: KVNamespace): Promise<AgentHealth[]> {
   const agentIds = await getAgentsToMonitor();
   // Build a placeholder list for the IN clause
   const placeholders = agentIds.map(() => '?').join(',');
   const stallThresholds = await getStallThresholdMap();
 
-  const [results, avgResults, configResults, workflowAgentStats] = await Promise.all([
+  const [results, avgResults, configResults, workflowAgentStats, scheduledRefs] = await Promise.all([
     db.prepare(LATEST_RUN_PER_AGENT_SQL)
       .bind(JSON.stringify(agentIds))
       .all<{ agent_id: string; last_run_status: string; last_run_at: string; last_completed_at: string | null; duration_ms: number | null }>(),
@@ -2821,6 +2842,9 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
     // is_stalled comes back true for healthy workflow agents → false
     // platform_agent_stalled notifications fire every FC tick.
     getWorkflowAgentStats(db),
+
+    // Observer's scheduled-briefing marker (one KV read, no D1).
+    readScheduledStallReferences(agentIds, cache),
   ]);
 
   const avgMap = new Map(avgResults.results.map(r => [r.agent_id, r.avg_ms]));
@@ -2849,11 +2873,16 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
          wf.dispatched > 0 ? 'partial' : null)
       : null;
 
+    // A scheduled-run marker (Observer) replaces the newest-row age: an
+    // event-triggered run must not reset the scheduled run's stall clock.
+    const stallReferenceAt = wf ? null : (scheduledRefs.get(agentId) ?? null);
     const lastRunAge = wf && wfLastEventMs > 0
       ? Date.now() - wfLastEventMs
-      : latest?.last_run_at
-        ? Date.now() - new Date(latest.last_run_at + 'Z').getTime()
-        : Infinity;
+      : stallReferenceAt
+        ? Date.now() - parseRunTimestampMs(stallReferenceAt)
+        : latest?.last_run_at
+          ? Date.now() - new Date(latest.last_run_at + 'Z').getTime()
+          : Infinity;
     const effectiveLastStatus = wf ? wfLastRunStatus : latest?.last_run_status;
     // See computeIsStalled's doc comment above for the partial-orphan
     // rationale (false-recovery loop for strategist/cartographer). The hard
@@ -2879,6 +2908,7 @@ async function getAgentHealth(db: D1Database): Promise<AgentHealth[]> {
       last_run_completed_at: wf ? null : (latest?.last_completed_at ?? null),
       avg_duration_ms: Math.round(avgMap.get(agentId) ?? 0),
       is_stalled: isStalled,
+      stall_reference_at: stallReferenceAt,
       circuit_state: isTripped ? 'tripped' as const : 'closed' as const,
       enabled: config?.enabled !== 0,
       consecutive_failures: config?.consecutive_failures ?? 0,
@@ -3160,7 +3190,7 @@ export async function scaleAgents(
 //
 // The ONLY agents FC can re-dispatch today are the six daily/weekly
 // hour-gated mesh agents, which have no other catch-up path when their
-// one gated tick dies: observer (h0), seed_strategist + narrator (h6),
+// one gated tick dies: observer (once-daily `41 0 * * *` cron since 2026-11-10), seed_strategist + narrator (h6),
 // notification_narrator (h13), auto_seeder (Sun h5), geoip_refresh
 // (Sun h2). Gates 2-4 apply to them: re-run only once overdue past their
 // own threshold, one per tick, 2h→24h backoff. test/flight-control-stall-
@@ -3409,7 +3439,11 @@ export async function planStallRecoveries(
       `).bind(ORPHAN_FORCE_FAIL_MESSAGE, agent.agent_id, agent.last_run_at));
     }
 
-    const lastRunAgeMs = agent.last_run_at ? nowMs - parseRunTimestampMs(agent.last_run_at) : Infinity;
+    // Stall age from the scheduled-run marker when the agent has one
+    // (Observer), else from the newest run — the same reference
+    // getAgentHealth used for is_stalled, so the orphan-only gate agrees.
+    const stallRef = agent.stall_reference_at ?? agent.last_run_at;
+    const lastRunAgeMs = stallRef ? nowMs - parseRunTimestampMs(stallRef) : Infinity;
     const thresholdMs = (thresholdsMinutes.get(agent.agent_id) ?? 60) * 60 * 1000;
     const decisionInput = {
       agentId: agent.agent_id,
@@ -3429,11 +3463,17 @@ export async function planStallRecoveries(
       try {
         record = parseStallRecoveryRecord(await cache.get(STALL_RECOVERY_KV_PREFIX + agent.agent_id));
       } catch { record = null; }
-      record = effectiveStallRecoveryRecord(record, {
-        status: agent.last_run_status,
-        completedAt: agent.last_run_completed_at,
-        startedAt: agent.last_run_at,
-      });
+      // With a scheduled-run marker, only a scheduled success after the
+      // recovery clears the cooldown — a newer event-triggered run must not
+      // (it would reset the backoff every tick while the briefing keeps
+      // failing). The marker is only ever written on success.
+      record = effectiveStallRecoveryRecord(record, agent.stall_reference_at
+        ? { status: 'success', completedAt: agent.stall_reference_at, startedAt: agent.stall_reference_at }
+        : {
+            status: agent.last_run_status,
+            completedAt: agent.last_run_completed_at,
+            startedAt: agent.last_run_at,
+          });
       if (isStallRecoveryCoolingDown(record, nowMs)) {
         decision = decideStallRecovery({ ...decisionInput, inCooldown: true });
       }

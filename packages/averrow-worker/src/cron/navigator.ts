@@ -426,6 +426,25 @@ export function warmRequest(path: string, overBudget: boolean): Request {
 /** How many agent_events to drain per tick. */
 const EVENT_DRAIN_LIMIT = 50;
 
+/** Hours a TARGETED pending agent_event may wait for the hourly :07
+ *  consumer before Navigator expires it: an event written just after :07
+ *  gets two consumer ticks (~:07 next hour and the one after). */
+export const TARGETED_EVENT_EXPIRY_HOURS = 3;
+
+/** Navigator's stale-event drain. Telemetry (no target) after 5 min;
+ *  targeted events only after TARGETED_EVENT_EXPIRY_HOURS. */
+export const STALE_AGENT_EVENTS_DRAIN_SQL = `
+        UPDATE agent_events
+        SET status = 'done', processed_at = datetime('now')
+        WHERE status = 'pending'
+          AND (
+            ((target_agent IS NULL OR target_agent = '')
+              AND created_at <= datetime('now', '-5 minutes'))
+            OR (target_agent IS NOT NULL AND target_agent != ''
+              AND created_at <= datetime('now', '-${TARGETED_EVENT_EXPIRY_HOURS} hours'))
+          )
+        LIMIT ?`;
+
 /** Default DNS batch size — conservative for 30s ceiling. */
 const DNS_BATCH_SIZE = 200;
 
@@ -503,17 +522,15 @@ async function runNavigatorImpl(
   try {
     // ── 1. Drain stale pending agent_events ──
     // The hourly tick's processAgentEvents does full routing + execution.
-    // Here we only mark old pending events as 'done' so they don't pile up
-    // between hourly ticks. Events younger than 5 min are left for the
-    // hourly tick to route properly.
+    // Here we only mark old pending TELEMETRY events (target_agent NULL/'')
+    // 'done' after 5 min so they don't pile up between hourly ticks.
+    // TARGETED events (pivot_detected → observer) stay pending for the :07
+    // consumer: NEXUS emits them at ~:10-:15, and the old 5-min rule marked
+    // every one 'done' undispatched before the next :07 tick could see it —
+    // the nexus → observer edge never fired (2026-11-10). They expire only
+    // after TARGETED_EVENT_EXPIRY_HOURS, i.e. two missed :07 ticks.
     try {
-      const stale = await env.DB.prepare(`
-        UPDATE agent_events
-        SET status = 'done', processed_at = datetime('now')
-        WHERE status = 'pending'
-          AND created_at <= datetime('now', '-5 minutes')
-        LIMIT ?
-      `).bind(EVENT_DRAIN_LIMIT).run();
+      const stale = await env.DB.prepare(STALE_AGENT_EVENTS_DRAIN_SQL).bind(EVENT_DRAIN_LIMIT).run();
       // D1 .run() returns meta with changes count
       eventsDrained = stale.meta?.changes ?? 0;
       if (eventsDrained > 0) {

@@ -300,13 +300,13 @@ describe("S3.4b — orchestrator hour-gate dispatch table (src/cron/orchestrator
     }
   });
 
-  it("hour===0 fires observer + daily assessments + the brand-candidates aggregator", async () => {
+  it("hour===0 fires daily assessments + the brand-candidates aggregator — NOT observer (own `41 0 * * *` cron since 2026-11-10)", async () => {
     const { handleScheduled } = await import("../src/cron/orchestrator");
     const env = makeEnv({ dailySnapshotCount: 5 });
 
     await handleScheduled(eventAtHour(0), env, ctx);
 
-    expect(executeAgentCalls).toContain("observer");
+    expect(executeAgentCalls).not.toContain("observer");
     expect(runDailyAssessmentsSpy).toHaveBeenCalledTimes(1);
     expect(aggregateBrandCandidatesSpy).toHaveBeenCalledTimes(1);
   });
