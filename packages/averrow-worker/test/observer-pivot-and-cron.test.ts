@@ -108,7 +108,7 @@ describe.skipIf(!hasSqlite())("Navigator stale-event drain", () => {
     ins.run("pivot-2h", "pivot_detected", "observer", "-119 minutes");
     ins.run("pivot-expired", "pivot_detected", "observer", `-${TARGETED_EVENT_EXPIRY_HOURS * 60 + 5} minutes`);
 
-    // node:sqlite lacks UPDATE … LIMIT (D1 has it): run the same WHERE.
+    // node:sqlite lacks UPDATE … LIMIT; D1 accepts it (prod EXPLAIN, 2026-11-10). Run the same WHERE.
     db.exec(STALE_AGENT_EVENTS_DRAIN_SQL.replace(/\s+LIMIT \?\s*$/, ""));
 
     const rows = db.prepare(`SELECT id, status FROM agent_events ORDER BY id`).all() as Array<{ id: string; status: string }>;

@@ -851,8 +851,9 @@ observer:     41 0 * * *    (daily at 00:41 UTC — the scheduled Observer brief
                              nrd_hagezi). `handleScheduled` early-returns on exact
                              `event.cron === OBSERVER_CRON` above the mesh guard →
                              `executeAgent` (agent_runs + agent_events). No minute/hour gates.
-                             FC stall recovery is its catch-up path: the scheduled path (cron or
-                             FC catch-up, never a pivot_detected run) stamps KV
+                             FC stall recovery is its catch-up path: every non-event run (cron, FC
+                             catch-up or manual trigger, never a pivot_detected run;
+                             a degraded run too) stamps KV
                              `observer:last_scheduled_success_at` when its briefing is built
                              (`lib/observer-schedule-marker.ts`), and FC measures Observer's stall
                              age from that marker (`AgentHealth.stall_reference_at`), not from the

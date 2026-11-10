@@ -129,7 +129,7 @@ describe("orchestrator processAgentEvents finalize + stale claims", () => {
     ins.run("claimed-now", "-10 minutes", "processing");
     ins.run("pending-2h", "-2 hours", "pending");
     ins.run("done-2h", "-2 hours", "done");
-    // node:sqlite lacks UPDATE … LIMIT (D1 has it): run the same WHERE.
+    // node:sqlite lacks UPDATE … LIMIT; D1 accepts it (prod EXPLAIN, 2026-11-10). Run the same WHERE.
     db.exec(STALE_PROCESSING_AGENT_EVENTS_SQL.replace(/\s+LIMIT \?\s*$/, ""));
     const rows = db.prepare(`SELECT id, status FROM agent_events ORDER BY id`).all() as Array<{ id: string; status: string }>;
     expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({

@@ -906,7 +906,9 @@ export const AGENT_EVENTS_PER_TICK = 50;
  *  A tick claims and finalizes inside one invocation, so any 'processing'
  *  row created over an hour ago belongs to a dead tick. Marked 'failed', not
  *  re-queued: its dispatch may already have run, and a replay would be a
- *  duplicate observer run. Seeks idx on (status, priority, created_at). */
+ *  duplicate observer run. Seeks idx on (status, priority, created_at).
+ *  D1 accepts UPDATE … LIMIT (prod EXPLAIN QUERY PLAN, 2026-11-10: rowid
+ *  list subquery over idx_agent_events_pending). */
 export const STALE_PROCESSING_AGENT_EVENTS_SQL = `
       UPDATE agent_events
       SET status = 'failed'
@@ -920,7 +922,12 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
     const swept = await env.DB.prepare(STALE_PROCESSING_AGENT_EVENTS_SQL).bind(AGENT_EVENTS_PER_TICK * 4).run();
     const n = swept.meta?.changes ?? 0;
     if (n > 0) logger.warn('agent_events_stale_processing_failed', { count: n });
-  } catch { /* the next tick retries */ }
+  } catch (err) {
+    // The next tick retries; log so a persistently failing sweep is visible.
+    logger.warn('agent_events_stale_sweep_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   try {
     const events = await env.DB.prepare(`
