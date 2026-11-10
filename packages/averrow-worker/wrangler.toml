@@ -118,6 +118,7 @@ not_found_handling = "404-page"
 #   :26 (6h)   executive_monitor     ← EXEC_IMPERSONATION Stage 4
 #   :27 (4h)   pulsedive enrichment feed
 #   :28 (00:28, 12:28) daily_snapshots (brand + provider, per-type repair)
+#   :29 (2h)   nrd_hagezi ingest feed (NRD list diff + R2 archive)
 #   */10       page_capture          ← PHISH_PAGE_CAPTURE_SPEC_2026-10
 #   14:24 Mon  tenant weekly digest
 #
@@ -140,7 +141,18 @@ not_found_handling = "404-page"
 # one-row reads unless a type is missing). Minute :28 is off the */5 and
 # */10 grids and distinct from the other dedicated crons. Exact event.cron
 # match, no minute/hour gates — cron-audit-safe.
-crons = ["7 * * * *", "8 * * * *", "9 * * * *", "10 */6 * * *", "11 */6 * * *", "13 */6 * * *", "14 */6 * * *", "15 */6 * * *", "16 0 * * *", "*/5 * * * *", "12 */6 * * *", "13 13 * * *", "17 * * * *", "18 * * * *", "19 */4 * * *", "21 * * * *", "22 * * * *", "23 * * * *", "26 */6 * * *", "24 14 * * 1", "27 */4 * * *", "*/10 * * * *", "28 0,12 * * *"]
+# `29 */2 * * *` is the nrd_hagezi ingest feed (owner decision 2026-11-10).
+# Its once-a-day diff (~51 MB list merge-diffed against a ~17 MB R2
+# snapshot, ~23 large D1 batches) ran inside runAllFeeds' pool in the
+# hourly `7 * * * *` invocation; on 2026-11-09 five consecutive diff pulls
+# were reaped mid-run. Own invocation = fresh budget. runAllFeeds skips it
+# (DEDICATED_INGEST_FEEDS, lib/feedRunner.ts); handleScheduled dispatches it
+# by exact event.cron match through dispatchDedicatedIngestFeed (enabled +
+# circuit breaker + per-pull timeout, normal runFeed bookkeeping). Every 2h
+# = the feed's feed_configs interval. Minute :29 is off the */5 and */10
+# grids and distinct from every other cron. No minute/hour gates —
+# cron-audit-safe. 24 cron triggers on this Worker (account limit 250).
+crons = ["7 * * * *", "8 * * * *", "9 * * * *", "10 */6 * * *", "11 */6 * * *", "13 */6 * * *", "14 */6 * * *", "15 */6 * * *", "16 0 * * *", "*/5 * * * *", "12 */6 * * *", "13 13 * * *", "17 * * * *", "18 * * * *", "19 */4 * * *", "21 * * * *", "22 * * * *", "23 * * * *", "26 */6 * * *", "24 14 * * 1", "27 */4 * * *", "*/10 * * * *", "28 0,12 * * *", "29 */2 * * *"]
 
 # ─── Workflows (durable multi-step processing) ──────────────
 [[workflows]]

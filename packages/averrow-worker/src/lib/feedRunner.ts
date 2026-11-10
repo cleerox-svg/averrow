@@ -392,38 +392,87 @@ export async function dispatchEnrichmentFeed(
   mod: FeedModule,
 ): Promise<void> {
   try {
-    const config = await env.DB.prepare(
-      `SELECT feed_name, display_name, source_url, schedule_cron, rate_limit,
-              batch_size, retry_count, enabled, consecutive_failure_threshold
-         FROM feed_configs WHERE feed_name = ?`,
-    ).bind(name).first<FeedConfigRow>();
-    if (!config) {
-      console.warn(`[dispatchEnrichmentFeed] ${name}: no feed_configs row — skipping`);
-      return;
-    }
-    if (config.enabled === 0) {
-      console.log(`[dispatchEnrichmentFeed] ${name}: disabled — skipping`);
-      return;
-    }
-
-    // Respect the circuit breaker: if a prior failure stamped a future
-    // next_retry_at, stay backed off until the window opens.
-    const status = await env.DB.prepare(
-      "SELECT next_retry_at FROM feed_status WHERE feed_name = ?",
-    ).bind(name).first<{ next_retry_at: string | null }>();
-    if (status?.next_retry_at) {
-      const r = status.next_retry_at;
-      const retryMs = new Date(r.includes("Z") || r.includes("+") ? r : r + "Z").getTime();
-      if (Date.now() < retryMs) {
-        console.log(`[dispatchEnrichmentFeed] ${name}: in backoff until ${r} — skipping`);
-        return;
-      }
-    }
-
+    const config = await loadDispatchableFeed(env, name, "dispatchEnrichmentFeed");
+    if (!config) return;
     await runFeed(env, config, mod);
   } catch (err) {
     console.error(`[dispatchEnrichmentFeed] ${name} failed:`, err instanceof Error ? err.message : String(err));
   }
+}
+
+/**
+ * Ingest feeds (feedModules) that run on their OWN cron instead of inside
+ * runAllFeeds' pool in the hourly `7 * * * *` tick. runAllFeeds skips them;
+ * handleScheduled (cron/orchestrator.ts) dispatches each by exact
+ * event.cron match via dispatchDedicatedIngestFeed.
+ *
+ *   nrd_hagezi — the 29-past every-2h cron (`29 *\/2 * * *`) (owner decision 2026-11-10). Its once-a-day
+ *   diff streams a ~51 MB list against a ~17 MB R2 snapshot and runs ~23
+ *   large D1 batches; on 2026-11-09 five consecutive diff pulls were reaped
+ *   while sharing the hourly invocation's CPU/memory/connection budget with
+ *   the rest of the feed pool. Own invocation = fresh budget. The cron
+ *   matches its feed_configs interval (every 2h).
+ */
+export const DEDICATED_INGEST_FEEDS = new Set<string>(["nrd_hagezi"]);
+
+/**
+ * Dispatch one DEDICATED_INGEST_FEEDS feed from its own cron. Same gates as
+ * dispatchEnrichmentFeed — feed_configs row present + enabled, and the
+ * per-feed circuit breaker (next_retry_at) — and, as there, NOT the
+ * schedule-interval check: the cron is the schedule (and is set to the
+ * feed's interval). Runs through the same per-pull timeout runAllFeeds uses
+ * (feedRunTimeoutMs, incl. FEED_RUN_TIMEOUT_OVERRIDES_MS), unclipped, so
+ * feed_pull_history / breaker / reaper semantics are unchanged and a hung
+ * pull is finalized and penalized at its timeout instead of waiting for the
+ * invocation to die and Navigator's reaper. Never throws.
+ */
+export async function dispatchDedicatedIngestFeed(
+  env: Env,
+  name: string,
+  mod: FeedModule,
+): Promise<void> {
+  try {
+    const config = await loadDispatchableFeed(env, name, "dispatchDedicatedIngestFeed");
+    if (!config) return;
+    await runFeedWithTimeout(env, config, mod, feedRunTimeoutMs(name), null);
+  } catch (err) {
+    console.error(`[dispatchDedicatedIngestFeed] ${name} failed:`, err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * The shared gate for cron-dispatched feeds: the feed_configs row when the
+ * feed exists, is enabled, and is not in circuit-breaker backoff; else null.
+ */
+async function loadDispatchableFeed(env: Env, name: string, tag: string): Promise<FeedConfigRow | null> {
+  const config = await env.DB.prepare(
+    `SELECT feed_name, display_name, source_url, schedule_cron, rate_limit,
+            batch_size, retry_count, enabled, consecutive_failure_threshold
+       FROM feed_configs WHERE feed_name = ?`,
+  ).bind(name).first<FeedConfigRow>();
+  if (!config) {
+    console.warn(`[${tag}] ${name}: no feed_configs row — skipping`);
+    return null;
+  }
+  if (config.enabled === 0) {
+    console.log(`[${tag}] ${name}: disabled — skipping`);
+    return null;
+  }
+
+  // Respect the circuit breaker: if a prior failure stamped a future
+  // next_retry_at, stay backed off until the window opens.
+  const status = await env.DB.prepare(
+    "SELECT next_retry_at FROM feed_status WHERE feed_name = ?",
+  ).bind(name).first<{ next_retry_at: string | null }>();
+  if (status?.next_retry_at) {
+    const r = status.next_retry_at;
+    const retryMs = new Date(r.includes("Z") || r.includes("+") ? r : r + "Z").getTime();
+    if (Date.now() < retryMs) {
+      console.log(`[${tag}] ${name}: in backoff until ${r} — skipping`);
+      return null;
+    }
+  }
+  return config;
 }
 
 // ─── Bounded concurrency ─────────────────────────────────────────
@@ -467,6 +516,17 @@ export const FEED_RUN_TIMEOUT_OVERRIDES_MS: Readonly<Record<string, number>> = {
   c2_intel_feeds: 240_000,    // p95 / max 187s
   ct_logs: 180_000,           // p95 31s / max 162s
   otx_alienvault: 180_000,    // p95 52s / max 160s
+  // Applied by dispatchDedicatedIngestFeed (own `29 */2 * * *` cron, not
+  // the runAllFeeds pool). 14-day max 66s, but the module now bounds new-domain processing to
+  // NRD_PROCESS_BUDGET_MS (45s) and must then finish the snapshot scan + R2
+  // puts (NRD_TAIL_ALLOWANCE_MS, 120s). A deferring run is progress and must
+  // not be timed out and penalized. ≥ budget + tail is pinned by
+  // test/nrd-hagezi-budget.test.ts (no import here: feeds/nrd_hagezi
+  // imports this module). Its own cron invocation does nothing else and has a
+  // 15-min wall limit, so the cap is generous (420s) — a slow-D1 day whose
+  // tail runs past budget + tail must still reach the snapshot put; real
+  // hangs are caught by the readers' idle timeouts.
+  nrd_hagezi: 420_000,
 
   // Enrichment feeds (runAllEnrichmentFeeds, sequential). Same 14-day
   // data; spamhaus_dbl (max 68s), abuseipdb (max 25s) and circl_pdns
@@ -1376,6 +1436,11 @@ export async function runAllFeeds(
   const toRun: Array<{ config: FeedConfigRow; mod: FeedModule }> = [];
 
   for (const config of configs.results) {
+    // Own cron (DEDICATED_INGEST_FEEDS) — never run inline in this pool.
+    if (DEDICATED_INGEST_FEEDS.has(config.feed_name)) {
+      feedsSkipped++;
+      continue;
+    }
     const mod = feedModules[config.feed_name];
     if (!mod) {
       feedsSkipped++;

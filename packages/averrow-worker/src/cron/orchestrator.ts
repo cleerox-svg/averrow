@@ -271,6 +271,30 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
     return;
   }
 
+  // ─── NRD Hagezi ingest feed: dedicated cron (29 */2 * * *) ───
+  //
+  // Owner decision 2026-11-10. nrd_hagezi's once-a-day diff (~51 MB list
+  // merge-diffed against a ~17 MB R2 snapshot, ~23 large D1 batches) shared
+  // the hourly `7 * * * *` invocation with the whole feed pool; on
+  // 2026-11-09 five consecutive diff pulls were reaped mid-run. Own
+  // invocation = fresh budget. runAllFeeds skips it (DEDICATED_INGEST_FEEDS,
+  // lib/feedRunner.ts); dispatchDedicatedIngestFeed applies enabled + the
+  // circuit breaker + the feed's per-pull timeout and runs it through
+  // runFeed, so feed_pull_history / breaker / reaper semantics are
+  // unchanged. Every 2h = the feed's feed_configs interval. Minute 29 is off
+  // the */5 and */10 grids and distinct from every other cron. Exact
+  // event.cron match, no minute/hour gates — cron-audit-safe. MUST stay
+  // above the `event.cron !== '7 * * * *'` mesh guard below.
+  if (event.cron === '29 */2 * * *') {
+    try {
+      const { dispatchDedicatedIngestFeed } = await import('../lib/feedRunner');
+      await dispatchDedicatedIngestFeed(env, 'nrd_hagezi', feedModules['nrd_hagezi']!);
+    } catch (err) {
+      logger.error('nrd_hagezi_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ─── Detection scanners on dedicated crons (S0.1 — CT / lookalike / trademark) ───
   //
   // Assessment 2026-07 §3.4 R1/R2. These three ran inline at the tail of the

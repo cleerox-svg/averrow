@@ -282,14 +282,26 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
 
     const first = await ingestNrdHagezi(ctxOf(envOf(db, r2)), { maxNewPerRun: 2, flushEvery: 1 });
 
-    expect(first).toEqual({ itemsFetched: 5, itemsNew: 2, itemsDuplicate: 0, itemsError: 0 });
+    expect(first).toEqual({
+      itemsFetched: 5, itemsNew: 2, itemsDuplicate: 0, itemsError: 0,
+      warning: "resumable: processed 2 of 4 new domains (per-run cap); 2 deferred to the next run",
+    });
     expect(nrdRows().map((x) => x.domain)).toEqual(["acmebank-1.example", "acmebank-2.example"]);
     // Old + flushed only — the capped tail is NOT recorded as seen.
     let snap = r2.store.get(NRD_SNAPSHOT_KEY)!;
     expect(await gunzipText(snap.bytes)).toBe("acmebank-0.example\nacmebank-1.example\nacmebank-2.example\n");
     // Incomplete image of this version → no etag/version, so the next run
     // neither 304s nor takes the same-version shortcut.
-    expect(snap.customMetadata).toEqual({ deferred: "2", list_modified: MODIFIED });
+    // resume_after: the next run continues after the last processed domain
+    // (rotation, test/nrd-hagezi-budget.test.ts).
+    expect(snap.customMetadata).toEqual({
+      deferred: "2",
+      deferred_runs: "1",
+      deferred_since: "2026-10-04",
+      deferred_version: VERSION,
+      resume_after: "acmebank-2.example",
+      list_modified: MODIFIED,
+    });
 
     // Next run, SAME list: re-diffs and picks up the deferred tail.
     const second = await ingestNrdHagezi(ctxOf(envOf(db, r2)), { maxNewPerRun: 2, flushEvery: 1 });
