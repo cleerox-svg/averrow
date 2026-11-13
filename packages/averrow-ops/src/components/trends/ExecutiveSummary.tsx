@@ -67,9 +67,12 @@ interface ExecutiveSummaryProps {
 export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
   const { data: briefings, isLoading: briefingsLoading, isError: briefingsError, refetch: refetchBriefings } = useIntelligenceBriefings(1);
   const { data: volume, isLoading: volumeLoading, isError: volumeError, refetch: refetchVolume } = useThreatVolume(period);
-  const { data: brands, isLoading: brandsLoading } = useBrandMomentum();
+  const { data: brands, isLoading: brandsLoading, isError: brandsError, refetch: refetchBrands } = useBrandMomentum();
 
-  const isLoading = briefingsLoading || volumeLoading || brandsLoading;
+  // Brand momentum only feeds the "Most Targeted Brand" tile, which has its
+  // own loading / error state below. Gating the whole summary on it made a
+  // brand failure invisible and a brand-panel Retry blank the summary.
+  const isLoading = briefingsLoading || volumeLoading;
 
   if (isLoading) {
     return (
@@ -164,14 +167,31 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
             </p>
             <p className="text-white/55 text-[10px]">Top Threat Type</p>
           </div>
-          {topBrand && (
+          {topBrand ? (
             <div className="min-w-0">
               <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--text-primary)' }}>
                 {topBrand.brand_name}
               </p>
               <p className="text-white/55 text-[10px]">Most Targeted Brand</p>
             </div>
-          )}
+          ) : brandsLoading ? (
+            <div className="min-w-0" aria-label="Loading most targeted brand">
+              <Skeleton className="h-6 w-24 rounded mb-1" />
+              <p className="text-white/55 text-[10px]">Most Targeted Brand</p>
+            </div>
+          ) : brandsError ? (
+            <div className="min-w-0">
+              <button
+                type="button"
+                onClick={() => { void refetchBrands(); }}
+                className="font-mono font-bold text-base sm:text-lg hover:underline"
+                style={{ color: 'var(--text-tertiary)' }}
+              >
+                Unavailable · Retry
+              </button>
+              <p className="text-white/55 text-[10px]">Most Targeted Brand</p>
+            </div>
+          ) : null}
         </div>
       )}
     </div>

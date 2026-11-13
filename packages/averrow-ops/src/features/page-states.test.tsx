@@ -265,6 +265,64 @@ describe('Trends (infinite refetch loop)', () => {
   });
 });
 
+describe('Trends panels (D1-overload 500s)', () => {
+  const volumeOk = {
+    success: true,
+    data: [{ day: '2026-11-12', threat_type: 'phishing', count: 10 }],
+  };
+
+  it('a failed brand-momentum query shows errors, never "No brand data" or a silently missing tile', async () => {
+    routeApi([
+      { match: '/api/trends/threat-volume', result: volumeOk },
+      { match: '/api/trends/brand-momentum', result: 'reject' },
+    ]);
+    renderWithProviders(<Trends />);
+
+    await waitFor(() => expect(errorAlert(/couldn't load brand momentum/i)).toBeTruthy());
+    expect(screen.queryByText('No brand data')).not.toBeInTheDocument();
+    // The summary still renders (it no longer waits on brand momentum) and
+    // the brand tile says it is unavailable instead of disappearing.
+    expect(screen.getByText('Intelligence Summary')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /unavailable · retry/i })).toBeInTheDocument();
+  });
+
+  it('the summary brand tile Retry recovers to the top brand', async () => {
+    routeApi([
+      { match: '/api/trends/threat-volume', result: volumeOk },
+      { match: '/api/trends/brand-momentum', result: 'reject' },
+    ]);
+    renderWithProviders(<Trends />);
+    const retry = await screen.findByRole('button', { name: /unavailable · retry/i });
+
+    routeApi([
+      { match: '/api/trends/threat-volume', result: volumeOk },
+      {
+        match: '/api/trends/brand-momentum',
+        result: { success: true, data: [{ target_brand_id: 'b1', brand_name: 'Acme', this_week: 5, last_week: 1, change_pct: 400 }] },
+      },
+    ]);
+    await userEvent.setup().click(retry);
+    await waitFor(() => expect(screen.getByText('Most Targeted Brand').previousElementSibling?.textContent).toBe('Acme'));
+    expect(screen.getByText('Intelligence Summary')).toBeInTheDocument();
+  });
+
+  it('failed provider / NEXUS / briefings queries each show their own error', async () => {
+    routeApi([
+      { match: '/api/trends/threat-volume', result: volumeOk },
+      { match: '/api/trends/provider-momentum', result: 'reject' },
+      { match: '/api/trends/nexus-active', result: 'reject' },
+      { match: '/api/trends/intelligence?limit=6', result: 'reject' },
+    ]);
+    renderWithProviders(<Trends />);
+    await waitFor(() => expect(errorAlert(/couldn't load provider momentum/i)).toBeTruthy());
+    expect(errorAlert(/couldn't load nexus clusters/i)).toBeTruthy();
+    expect(errorAlert(/couldn't load briefings/i)).toBeTruthy();
+    for (const copy of ['No provider data', 'No active clusters', 'No intelligence briefings available']) {
+      expect(screen.queryByText(copy)).not.toBeInTheDocument();
+    }
+  });
+});
+
 describe('NotificationSettingsPage', () => {
   const v1 = '/api/notifications/preferences';
   const v2 = '/api/notifications/preferences/v2';
