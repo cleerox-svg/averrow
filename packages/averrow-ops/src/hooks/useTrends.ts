@@ -75,6 +75,7 @@ export function useThreatVolume(window = '30d') {
       const res = await api.get<Array<{ day: string; threat_type: string; count: number }>>(
         `/api/trends/threat-volume?window=${window}`
       );
+      if (res.success === false) throw new Error(res.error ?? 'Failed to load threat volume');
       const flat = res.data ?? [];
       // Pivot flat rows into VolumePoint[] keyed by date
       const byDate = new Map<string, VolumePoint>();

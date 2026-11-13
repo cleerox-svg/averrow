@@ -24,6 +24,11 @@ function cachedTrend<T>(
   compute: () => Promise<T>,
 ): Promise<T> {
   return cachedValue(env, `trends.${key}`, TREND_CACHE_TTL_S, compute, {
+    // Past the 1h servable window the entry still sits in KV (2× TTL);
+    // single-flight serves it to everyone but the lock holder, so an
+    // overload after an idle hour doesn't blank the page and concurrent
+    // loads don't each re-run the heavy threat-volume scan.
+    singleFlight: { lockTtlSeconds: 60, waitMs: 0 },
     staleWhileRevalidate: {
       freshSeconds: TREND_CACHE_FRESH_S,
       waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
