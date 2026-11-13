@@ -283,7 +283,7 @@ describe('Trends panels (D1-overload 500s)', () => {
     // The summary still renders (it no longer waits on brand momentum) and
     // the brand tile says it is unavailable instead of disappearing.
     expect(screen.getByText('Intelligence Summary')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /unavailable · retry/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^retry$/i })).toBeInTheDocument();
   });
 
   it('the summary brand tile Retry recovers to the top brand', async () => {
@@ -292,7 +292,7 @@ describe('Trends panels (D1-overload 500s)', () => {
       { match: '/api/trends/brand-momentum', result: 'reject' },
     ]);
     renderWithProviders(<Trends />);
-    const retry = await screen.findByRole('button', { name: /unavailable · retry/i });
+    const retry = await screen.findByRole('button', { name: /^retry$/i });
 
     routeApi([
       { match: '/api/trends/threat-volume', result: volumeOk },

@@ -67,7 +67,7 @@ interface ExecutiveSummaryProps {
 export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
   const { data: briefings, isLoading: briefingsLoading, isError: briefingsError, refetch: refetchBriefings } = useIntelligenceBriefings(1);
   const { data: volume, isLoading: volumeLoading, isError: volumeError, refetch: refetchVolume } = useThreatVolume(period);
-  const { data: brands, isLoading: brandsLoading, isError: brandsError, refetch: refetchBrands } = useBrandMomentum();
+  const { data: brands, isLoading: brandsLoading, isError: brandsError, isFetching: brandsFetching, refetch: refetchBrands } = useBrandMomentum();
 
   // Brand momentum only feeds the "Most Targeted Brand" tile, which has its
   // own loading / error state below. Gating the whole summary on it made a
@@ -175,20 +175,24 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
               <p className="text-white/55 text-[10px]">Most Targeted Brand</p>
             </div>
           ) : brandsLoading ? (
-            <div className="min-w-0" aria-label="Loading most targeted brand">
-              <Skeleton className="h-6 w-24 rounded mb-1" />
+            <div className="min-w-0" role="status" aria-label="Loading most targeted brand">
+              <Skeleton className="h-6 sm:h-7 w-24 rounded" />
               <p className="text-white/55 text-[10px]">Most Targeted Brand</p>
             </div>
           ) : brandsError ? (
-            <div className="min-w-0">
-              <button
-                type="button"
-                onClick={() => { void refetchBrands(); }}
-                className="font-mono font-bold text-base sm:text-lg hover:underline"
-                style={{ color: 'var(--text-tertiary)' }}
-              >
-                Unavailable · Retry
-              </button>
+            <div className="min-w-0" aria-live="polite">
+              <p className="text-xs font-medium min-h-[24px] sm:min-h-[28px] flex items-center flex-wrap gap-x-1.5" style={{ color: 'var(--text-secondary)' }}>
+                <span>Unavailable</span>
+                <button
+                  type="button"
+                  onClick={() => { void refetchBrands(); }}
+                  disabled={brandsFetching}
+                  className="underline underline-offset-2 rounded disabled:no-underline disabled:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
+                  style={{ color: 'var(--primary-text)' }}
+                >
+                  {brandsFetching ? 'Retrying…' : 'Retry'}
+                </button>
+              </p>
               <p className="text-white/55 text-[10px]">Most Targeted Brand</p>
             </div>
           ) : null}
