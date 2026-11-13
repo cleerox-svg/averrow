@@ -360,30 +360,30 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   });
 
   // ─── Trend Intelligence ───────────────────────────────────────────
-  router.get("/api/trends/intelligence", async (request: Request, env: Env) => {
+  router.get("/api/trends/intelligence", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleTrendIntelligence(request, env);
+    return handleTrendIntelligence(request, env, execCtx);
   });
-  router.get("/api/trends/threat-volume", async (request: Request, env: Env) => {
+  router.get("/api/trends/threat-volume", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleTrendThreatVolume(request, env);
+    return handleTrendThreatVolume(request, env, execCtx);
   });
-  router.get("/api/trends/brand-momentum", async (request: Request, env: Env) => {
+  router.get("/api/trends/brand-momentum", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleTrendBrandMomentum(request, env);
+    return handleTrendBrandMomentum(request, env, execCtx);
   });
-  router.get("/api/trends/provider-momentum", async (request: Request, env: Env) => {
+  router.get("/api/trends/provider-momentum", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleTrendProviderMomentum(request, env);
+    return handleTrendProviderMomentum(request, env, execCtx);
   });
-  router.get("/api/trends/nexus-active", async (request: Request, env: Env) => {
+  router.get("/api/trends/nexus-active", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleTrendNexusActive(request, env);
+    return handleTrendNexusActive(request, env, execCtx);
   });
 
   // ─── Internet bot traffic (Cloudflare Radar, feed cf_radar_bots) ──

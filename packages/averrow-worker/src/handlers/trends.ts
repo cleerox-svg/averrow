@@ -3,7 +3,40 @@
 
 import { json } from "../lib/cors";
 import { notRetiredClusterSql } from "../lib/cluster-status";
+import { cachedValue } from "../lib/cached-value";
 import type { Env } from "../types";
+
+type WaitUntilCtx = Pick<ExecutionContext, "waitUntil">;
+
+/** Trends page-load endpoints: served from KV for up to an hour, refreshed
+ *  in the background once an entry is older than 5 minutes. Without the
+ *  cache every page load ran ~800K D1 row reads, and when D1 was in an
+ *  overload window (it rejects every statement for ~10 s) four of the
+ *  page's panels came back 500 and rendered as "No data". A stale entry
+ *  keeps serving while a background refill fails. */
+export const TREND_CACHE_TTL_S = 3600;
+export const TREND_CACHE_FRESH_S = 300;
+
+function cachedTrend<T>(
+  env: Env,
+  execCtx: WaitUntilCtx | undefined,
+  key: string,
+  compute: () => Promise<T>,
+): Promise<T> {
+  return cachedValue(env, `trends.${key}`, TREND_CACHE_TTL_S, compute, {
+    staleWhileRevalidate: {
+      freshSeconds: TREND_CACHE_FRESH_S,
+      waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
+    },
+  });
+}
+
+/** Clamp an integer query param; NaN / missing → fallback. */
+function clampInt(raw: string | null, fallback: number, min: number, max: number): number {
+  const n = parseInt(raw ?? "", 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
 
 function periodClause(period: string): { since: string; bucket: string; hourly: boolean } {
   switch (period) {
@@ -195,12 +228,12 @@ export async function handleTrendTypes(request: Request, env: Env): Promise<Resp
 // we surface them so the inline detail panel can render recommendations,
 // per-category counts, and clickable links to the referenced brands /
 // campaign / providers.
-export async function handleTrendIntelligence(request: Request, env: Env): Promise<Response> {
+export async function handleTrendIntelligence(request: Request, env: Env, execCtx?: WaitUntilCtx): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const limit = Math.min(20, parseInt(new URL(request.url).searchParams.get("limit") ?? "6", 10));
+    const limit = clampInt(new URL(request.url).searchParams.get("limit"), 6, 1, 20);
 
-    const rows = await env.DB.prepare(`
+    const rows = await cachedTrend(env, execCtx, `intelligence:${limit}`, async () => (await env.DB.prepare(`
       SELECT id, type, summary, severity, details,
              related_brand_ids, related_campaign_id, related_provider_ids,
              created_at
@@ -217,37 +250,37 @@ export async function handleTrendIntelligence(request: Request, env: Env): Promi
       related_campaign_id: string | null;
       related_provider_ids: string | null;
       created_at: string;
-    }>();
+    }>()).results);
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    return json({ success: true, data: rows }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }
 
 // GET /api/trends/threat-volume
-export async function handleTrendThreatVolume(request: Request, env: Env): Promise<Response> {
+export async function handleTrendThreatVolume(request: Request, env: Env, execCtx?: WaitUntilCtx): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const windowParam = new URL(request.url).searchParams.get("window") ?? "30d";
-    const days = parseInt(windowParam.replace("d", ""), 10) || 30;
+    const days = clampInt(windowParam.replace("d", ""), 30, 1, 90);
 
-    const rows = await env.DB.prepare(`
+    const rows = await cachedTrend(env, execCtx, `threat_volume:${days}`, async () => (await env.DB.prepare(`
       SELECT date(first_seen) as day, threat_type, COUNT(*) as count
       FROM threats
       WHERE first_seen >= datetime('now', '-' || ? || ' days')
       GROUP BY date(first_seen), threat_type
       ORDER BY day ASC
-    `).bind(days).all<{ day: string; threat_type: string; count: number }>();
+    `).bind(days).all<{ day: string; threat_type: string; count: number }>()).results);
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    return json({ success: true, data: rows }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }
 
 // GET /api/trends/brand-momentum
-export async function handleTrendBrandMomentum(request: Request, env: Env): Promise<Response> {
+export async function handleTrendBrandMomentum(request: Request, env: Env, execCtx?: WaitUntilCtx): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     // CLAUDE.md §8 hot-path (T1): was a full-table GROUP BY
@@ -260,7 +293,7 @@ export async function handleTrendBrandMomentum(request: Request, env: Env): Prom
     // active-only, and buckets by created_at rather than first_seen) —
     // both are immaterial to a top-10 momentum ranking of recent
     // inflow, where newly-created threats are effectively all active.
-    const rows = await env.DB.prepare(`
+    const rows = await cachedTrend(env, execCtx, "brand_momentum", async () => (await env.DB.prepare(`
       WITH inflow AS (
         SELECT target_brand_id,
           SUM(CASE WHEN hour_bucket >= datetime('now','-7 days')
@@ -279,16 +312,16 @@ export async function handleTrendBrandMomentum(request: Request, env: Env): Prom
       LEFT JOIN brands b ON b.id = i.target_brand_id
       WHERE i.this_week > 0
       ORDER BY i.this_week DESC LIMIT 10
-    `).all<{ target_brand_id: string; brand_name: string; canonical_domain: string; this_week: number; last_week: number }>();
+    `).all<{ target_brand_id: string; brand_name: string; canonical_domain: string; this_week: number; last_week: number }>()).results);
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    return json({ success: true, data: rows }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }
 
 // GET /api/trends/provider-momentum
-export async function handleTrendProviderMomentum(request: Request, env: Env): Promise<Response> {
+export async function handleTrendProviderMomentum(request: Request, env: Env, execCtx?: WaitUntilCtx): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     // CLAUDE.md §8 hot-path (T1): was a full-table GROUP BY
@@ -297,7 +330,7 @@ export async function handleTrendProviderMomentum(request: Request, env: Env): P
     // shipped by handleProviderMovers. Approximate vs the old query on
     // two axes (cube is active-only, and buckets by created_at rather
     // than first_seen); immaterial to a top-8 recent-inflow ranking.
-    const rows = await env.DB.prepare(`
+    const rows = await cachedTrend(env, execCtx, "provider_momentum", async () => (await env.DB.prepare(`
       WITH inflow AS (
         SELECT hosting_provider_id,
           SUM(CASE WHEN hour_bucket >= datetime('now', '-7 days') THEN threat_count ELSE 0 END) AS count
@@ -312,9 +345,9 @@ export async function handleTrendProviderMomentum(request: Request, env: Env): P
       LEFT JOIN hosting_providers hp ON hp.id = i.hosting_provider_id
       WHERE i.count > 0
       ORDER BY i.count DESC LIMIT 8
-    `).all<{ provider_id: string; provider: string; count: number }>();
+    `).all<{ provider_id: string; provider: string; count: number }>()).results);
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    return json({ success: true, data: rows }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
@@ -328,10 +361,10 @@ export async function handleTrendProviderMomentum(request: Request, env: Env): P
 // `status = 'active'` equality + retired_reason IS NULL seeks the live-rows
 // partial index idx_clusters_live_status_threat_count already in
 // threat_count order (plan pinned in test/cluster-list-plans.test.ts).
-export async function handleTrendNexusActive(request: Request, env: Env): Promise<Response> {
+export async function handleTrendNexusActive(request: Request, env: Env, execCtx?: WaitUntilCtx): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const rows = await env.DB.prepare(`
+    const rows = await cachedTrend(env, execCtx, "nexus_active", async () => (await env.DB.prepare(`
       SELECT id, cluster_name AS label, threat_count,
         CASE
           WHEN agent_notes LIKE '%ACCELERATING%' THEN 'high'
@@ -343,9 +376,9 @@ export async function handleTrendNexusActive(request: Request, env: Env): Promis
       WHERE status = 'active'
         AND ${notRetiredClusterSql()}
       ORDER BY threat_count DESC LIMIT 5
-    `).all<{ id: string; label: string; threat_count: number; severity: string; created_at: string }>();
+    `).all<{ id: string; label: string; threat_count: number; severity: string; created_at: string }>()).results);
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    return json({ success: true, data: rows }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }

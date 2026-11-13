@@ -283,7 +283,7 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
 }
 
 function IntelligenceBriefings() {
-  const { data: briefings, isLoading } = useIntelligenceBriefings(6);
+  const { data: briefings, isLoading, isError, refetch } = useIntelligenceBriefings(6);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   return (
@@ -296,6 +296,10 @@ function IntelligenceBriefings() {
             <Skeleton key={i} className="h-28 rounded-xl" />
           ))}
         </div>
+      ) : isError && !briefings ? (
+        <Card>
+          <PageState kind="error" compact title="Couldn't load briefings" onRetry={() => { void refetch(); }} />
+        </Card>
       ) : !briefings?.length ? (
         <Card>
           <p className="text-sm text-white/55">No intelligence briefings available</p>
@@ -373,7 +377,7 @@ function ThreatVolumeChart({ window }: { window: string }) {
 /* ── Section 3 Left: Brand Risk Momentum ── */
 
 function BrandRiskMomentum() {
-  const { data: brands, isLoading } = useBrandMomentum();
+  const { data: brands, isLoading, isError, refetch } = useBrandMomentum();
 
   function changeGlow(pct: number): CSSProperties {
     if (pct > 100) return { color: 'var(--sev-critical-text)', textShadow: '0 0 20px rgba(200,60,60,0.8)' };
@@ -386,6 +390,8 @@ function BrandRiskMomentum() {
       <SectionLabel className="mb-4">Brand Risk Momentum</SectionLabel>
       {isLoading ? (
         <Skeleton className="h-48 rounded-lg" />
+      ) : isError && !brands ? (
+        <PageState kind="error" compact title="Couldn't load brand momentum" onRetry={() => { void refetch(); }} />
       ) : !brands?.length ? (
         <p className="text-sm text-white/55">No brand data</p>
       ) : (
@@ -435,8 +441,8 @@ function BrandRiskMomentum() {
 /* ── Section 3 Right: Provider Momentum + NEXUS Clusters ── */
 
 function ProviderMomentumPanel() {
-  const { data: providers, isLoading: provLoading } = useProviderMomentum();
-  const { data: clusters, isLoading: nexusLoading } = useNexusActive();
+  const { data: providers, isLoading: provLoading, isError: provError, refetch: refetchProv } = useProviderMomentum();
+  const { data: clusters, isLoading: nexusLoading, isError: nexusError, refetch: refetchNexus } = useNexusActive();
 
   const maxCount = providers?.length
     ? Math.max(...providers.map((p) => p.count ?? 0), 1)
@@ -455,6 +461,8 @@ function ProviderMomentumPanel() {
         <SectionLabel className="mb-4">Provider Momentum</SectionLabel>
         {provLoading ? (
           <Skeleton className="h-36 rounded-lg" />
+        ) : provError && !providers ? (
+          <PageState kind="error" compact title="Couldn't load provider momentum" onRetry={() => { void refetchProv(); }} />
         ) : !providers?.length ? (
           <p className="text-sm text-white/55">No provider data</p>
         ) : (
@@ -491,6 +499,8 @@ function ProviderMomentumPanel() {
         <AgentAttribution agent="Nexus" />
         {nexusLoading ? (
           <Skeleton className="h-24 rounded-lg" />
+        ) : nexusError && !clusters ? (
+          <PageState kind="error" compact title="Couldn't load NEXUS clusters" onRetry={() => { void refetchNexus(); }} />
         ) : !clusters?.length ? (
           <p className="text-sm text-white/55">No active clusters</p>
         ) : (
