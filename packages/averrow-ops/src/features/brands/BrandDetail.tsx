@@ -49,6 +49,7 @@ import {
   EmailPostureCard,
   SocialRiskCard,
 } from './components/HeroCards';
+import { DmarcSensorCard, DMARC_SENSOR_ANCHOR_ID } from './components/DmarcSensorCard';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#C83C3C', high: '#E8923C', medium: '#DCAA32', low: '#78A0C8', info: '#5A80A8',
@@ -84,6 +85,20 @@ export function BrandDetailV3() {
   })();
 
   const [activeTab, setActiveTab] = useState<V3Tab>(initialTab);
+
+  // `?tab=email` / `social` / `apps` / `dark-web` are not V3 tabs, so navigating
+  // to them silently landed on the default tab. Email detail lives in the DMARC
+  // sensor card on Surface: switch to it and scroll there.
+  const jumpTo = (tab: string) => {
+    if (tab === 'email') {
+      setActiveTab('surface');
+      setTimeout(() => {
+        document.getElementById(DMARC_SENSOR_ANCHOR_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 0);
+      return;
+    }
+    navigate(`/brands/${id}?tab=${tab}`);
+  };
 
   const { data, isLoading, isError, refetch } = useBrandFullDetail(id);
   useBrandTimeline(id, '7d'); // primes cache; not rendered in v3 yet
@@ -227,7 +242,7 @@ export function BrandDetailV3() {
           appListings={appListings}
           brandDomains={brandDomains}
           firmographics={firmographics}
-          onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
+          onJumpV2={jumpTo}
         />
       )}
 
@@ -245,7 +260,7 @@ export function BrandDetailV3() {
           alerts={alerts}
           scoreHistory={scoreHistory}
           narratives={narratives}
-          onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
+          onJumpV2={jumpTo}
           onScanSocials={() => scanProfiles.mutate(id)}
           onDiscoverSocials={() => discoverProfiles.mutate(id)}
           onAiDeepScan={() => triggerAnalysis.mutate(id)}
@@ -659,6 +674,8 @@ function SurfaceTab({
           </div>
         </Card>
       </div>
+
+      <DmarcSensorCard brandId={brand.id} />
     </div>
   );
 }
