@@ -1,16 +1,21 @@
 /**
- * Hosted DMARC aggregate reporting — the receiver, parser, enrollment gate,
- * source rollup, schema and staff read endpoints, against the
- * migration-derived schema (openMigratedDb) with NO error swallowing.
+ * Hosted DMARC aggregate reporting — the receiver, parser, provenance,
+ * intake gates, rate caps, source rollup (+ Navigator catch-up), retention,
+ * schema and staff read endpoints, against the migration-derived schema
+ * (openMigratedDb) with NO error swallowing.
  *
- * Fixtures: a Google-style ZIP, a Microsoft-style GZIP and a namespaced
- * RFC 9990 (DMARCbis) report; a resent duplicate; a forged report for an
- * unenrolled domain; a subdomain report.
+ * Fixtures: a Google-style ZIP and a Microsoft-style GZIP (both from a
+ * known reporter with a trusted Authentication-Results header → verified),
+ * a namespaced RFC 9990 report and plain-XML mail from an unknown sender
+ * (unverified); a resent duplicate; forged reports for unenrolled /
+ * ineligible brands; a subdomain report.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { deflateRawSync, gzipSync } from "node:zlib";
-import { hasSqlite, openMigratedDb, d1FromSqlite, fakeKv, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
+import { hasSqlite, openMigratedDb, d1FromSqlite, fakeKv, sqlContaining, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
 import { PROD_DMARC_REPORT_RECORDS_DDL } from "./dmarc-prod-ddl";
 import type { Env } from "../src/types";
 
@@ -19,12 +24,15 @@ vi.mock("../src/lib/notifications", () => ({
   createNotification: (env: unknown, opts: Record<string, unknown>) => notify(env, opts),
 }));
 
-import { handleDmarcEmail, dmarcReportDay, type EmailMessage } from "../src/dmarc-receiver";
+import { handleDmarcEmail, dmarcReportDay, clampReportVolume, type EmailMessage } from "../src/dmarc-receiver";
 import {
   parseDmarcAggregateXml,
   normalizeSourceIp,
   xmlElements,
   stripXmlComments,
+  dmarcReportEpochIso,
+  encodeRecordAuth,
+  decodeRecordAuth,
 } from "../src/lib/dmarc-aggregate-xml";
 import {
   ruaIncludesAverrow,
@@ -34,8 +42,32 @@ import {
   isRuaAuthorizationRequired,
   ruaAuthorizationRecordName,
 } from "../src/lib/dmarc-rua";
-import { brandDomainCandidates, readDmarcDrops24h } from "../src/lib/dmarc-enrollment";
-import { recordDmarcPassed, runDmarcSourceRollup, clusterIdForIp } from "../src/lib/dmarc-source-rollup";
+import {
+  brandDomainCandidates,
+  readDmarcDrops24h,
+  isDmarcEligibleBrand,
+  DMARC_BRAND_DAILY_CAP,
+  DMARC_GLOBAL_HOURLY_CAP,
+} from "../src/lib/dmarc-enrollment";
+import { readDmarcProvenance } from "../src/lib/dmarc-provenance";
+import {
+  recordDmarcPassed,
+  runDmarcSourceRollup,
+  runDmarcRollupCatchUp,
+  rollupStoredDmarcReport,
+  clusterIdForIp,
+  isReservedForGeo,
+  pickDkimDomain,
+  DMARC_ROLLUP_LIMITS,
+  DMARC_ROLLUP_PENDING_SQL,
+} from "../src/lib/dmarc-source-rollup";
+import {
+  purgeExpiredDmarcData,
+  DMARC_RECORDS_PURGE_SQL,
+  DMARC_REPORTS_PURGE_SQL,
+  DMARC_SOURCES_PURGE_SQL,
+  DMARC_SEEN_PURGE_SQL,
+} from "../src/lib/dmarc-retention";
 import {
   handleGetDmarcSetup,
   handleGetDmarcSpoofSources,
@@ -69,6 +101,8 @@ function reportXml(opts: {
 }): string {
   const p = opts.prefix ? `${opts.prefix}:` : "";
   const t = (name: string, inner: string) => `<${p}${name}>${inner}</${p}${name}>`;
+  // Dates are attacker-chosen: these 2025 fixtures fall outside the 60-day
+  // window and are clamped to the wall-clock day.
   const begin = opts.begin ?? 1_763_078_400; // 2025-11-14 00:00:00Z
   const end = opts.end ?? begin + 86_399;
   const ns = opts.dmarcbis
@@ -113,10 +147,10 @@ function zipOne(name: string, data: Buffer): Buffer {
   return Buffer.concat([h, nameB, comp, Buffer.from("PK\x01\x02central-directory-stub")]);
 }
 
-function mimeEmail(from: string, contentType: string, filename: string, body: Buffer): Uint8Array {
-  const b64 = body.toString("base64").replace(/(.{76})/g, "$1\r\n");
+function mimeEmail(from: string, contentType: string, filename: string, body: Buffer, extraHeaders = "", b64Override?: string): Uint8Array {
+  const b64 = b64Override ?? body.toString("base64").replace(/(.{76})/g, "$1\r\n");
   return new TextEncoder().encode(
-    `From: ${from}\r\nTo: ${DMARC_RUA_PRIMARY}\r\nSubject: Report domain\r\nMIME-Version: 1.0\r\n` +
+    `${extraHeaders}From: ${from}\r\nTo: ${DMARC_RUA_PRIMARY}\r\nSubject: Report domain\r\nMIME-Version: 1.0\r\n` +
     `Content-Type: multipart/mixed; boundary="BOUND_1"\r\n\r\n` +
     `--BOUND_1\r\nContent-Type: text/plain\r\n\r\nThis is a DMARC aggregate report.\r\n` +
     `--BOUND_1\r\nContent-Type: ${contentType}; name="${filename}"\r\n` +
@@ -139,26 +173,36 @@ function emailMessage(from: string, raw: Uint8Array): EmailMessage {
   };
 }
 
+/** What our receiving MTA would prepend for an authenticated reporter. */
+const trustedAr = (d: string) =>
+  `Authentication-Results: mx.cloudflare.net; dkim=pass header.d=${d} header.s=s1; spf=pass smtp.mailfrom=${d}; dmarc=pass header.from=${d}\r\n`;
+
+const GOOGLE = "noreply-dmarc-support@google.com";
+const MICROSOFT = "dmarcreport@microsoft.com";
 const googleZip = (xml: string) =>
-  emailMessage("noreply-dmarc-support@google.com",
-    mimeEmail("noreply-dmarc-support@google.com", "application/zip", "google.com!acme.example!1!2.zip", zipOne("google.com!acme.example!1!2.xml", Buffer.from(xml))));
+  emailMessage(GOOGLE, mimeEmail(GOOGLE, "application/zip", "google.com!acme.example!1!2.zip",
+    zipOne("google.com!acme.example!1!2.xml", Buffer.from(xml)), trustedAr("google.com")));
 const microsoftGzip = (xml: string) =>
-  emailMessage("dmarcreport@microsoft.com",
-    mimeEmail("dmarcreport@microsoft.com", "application/gzip", "enterprise.protection.outlook.com!acme.example!1!2.xml.gz", gzipSync(Buffer.from(xml))));
+  emailMessage(MICROSOFT, mimeEmail(MICROSOFT, "application/gzip", "enterprise.protection.outlook.com!acme.example!1!2.xml.gz",
+    gzipSync(Buffer.from(xml)), trustedAr("microsoft.com")));
 const plainXml = (xml: string) =>
   emailMessage("dmarc@reporter.example", mimeEmail("dmarc@reporter.example", "text/xml", "report.xml", Buffer.from(xml)));
+
+/** A public, non-reserved IP unknown to the threats table (ipinfo → Cloudflare). */
+const GEO_IP = "45.155.205.6";
 
 // Four records: two DMARC passes (one aligned check each), two failures.
 const ACME_RECORDS: FixtureRecord[] = [
   { ip: "198.51.100.10", count: 50, dkim: "pass", spf: "fail", dkimAuth: [{ d: "acme.example", r: "pass" }], spfAuth: { d: "fwd.example", r: "pass" } },
   { ip: "198.51.100.20", count: 30, dkim: "fail", spf: "pass", spfAuth: { d: "acme.example", r: "pass" } },
-  { ip: "203.0.113.5", count: 40, dkim: "fail", spf: "fail", dkimAuth: [{ d: "evil.test", r: "pass" }], spfAuth: { d: "evil.test", r: "pass" } },
-  { ip: "203.0.113.6", count: 30, dkim: "fail", spf: "fail", spfAuth: { d: "acme.example", r: "fail" } },
+  { ip: "203.0.113.5", count: 40, dkim: "fail", spf: "fail", dkimAuth: [{ d: "x.test", r: "fail" }, { d: "evil.test", r: "pass" }], spfAuth: { d: "evil.test", r: "pass" } },
+  { ip: GEO_IP, count: 30, dkim: "fail", spf: "fail", spfAuth: { d: "acme.example", r: "fail" } },
 ];
 
 // ─── fetch stub: DoH + ipinfo ────────────────────────────────────────
 
 const dnsTxt: Record<string, string[]> = {};
+const dnsFail = new Set<string>();
 const geoOrg: Record<string, string> = {};
 const fetchCalls: string[] = [];
 
@@ -168,6 +212,7 @@ function stubFetch(): void {
     fetchCalls.push(url);
     if (url.startsWith("https://cloudflare-dns.com/dns-query")) {
       const name = new URL(url).searchParams.get("name") ?? "";
+      if (dnsFail.has(name)) return Response.json({ Status: 2 });
       const recs = dnsTxt[name];
       return Response.json(recs
         ? { Status: 0, Answer: recs.map((r) => ({ name, type: 16, TTL: 300, data: `"${r}"` })) }
@@ -180,6 +225,8 @@ function stubFetch(): void {
     throw new Error(`unexpected fetch ${url}`);
   });
 }
+
+const today = () => new Date().toISOString().slice(0, 10);
 
 // ─── Unit: rua helpers ──────────────────────────────────────────────
 
@@ -221,7 +268,7 @@ describe("ruaIncludesAverrow / routing helpers", () => {
   });
 });
 
-// ─── Unit: parser ───────────────────────────────────────────────────
+// ─── Unit: parser, clamps ───────────────────────────────────────────
 
 describe("parseDmarcAggregateXml", () => {
   it("DMARC pass = dkim OR spf (aligned)", () => {
@@ -241,13 +288,18 @@ describe("parseDmarcAggregateXml", () => {
     const r = parseDmarcAggregateXml(xml);
     expect(r?.domain).toBe("acme.example");
     expect(r?.dmarc_policy).toBe("reject");
-    expect(r?.records).toHaveLength(1);
     const rec = r!.records[0]!;
     expect(rec.source_ip).toBe("2001:db8::1");
     expect(rec.disposition).toBe("pass");
     expect(rec.reasons).toEqual(["policy_test_mode", "forwarded", "other"]);
     expect(rec.dkim_auth).toEqual([{ domain: "acme.example", selector: "s1", result: "fail" }]);
     expect(rec.spf_auth).toEqual([{ domain: "list.example", scope: "mfrom", result: "pass" }]);
+    // auth_json round-trip (what the Navigator catch-up re-classifies from).
+    const back = decodeRecordAuth(encodeRecordAuth(rec));
+    expect(back.reasons).toEqual(rec.reasons);
+    expect(back.dkim_auth.map((d) => [d.domain, d.result])).toEqual([["acme.example", "fail"]]);
+    expect(back.spf_auth).toEqual(rec.spf_auth);
+    expect(decodeRecordAuth("{not json")).toEqual({ reasons: [], dkim_auth: [], spf_auth: [] });
   });
 
   it("drops invalid IPs and non-positive counts, decodes and caps text", () => {
@@ -262,7 +314,7 @@ describe("parseDmarcAggregateXml", () => {
     });
     const r = parseDmarcAggregateXml(xml)!;
     expect(r.records.map((x) => x.source_ip)).toEqual(["203.0.113.10"]);
-    expect(r.records[0]!.message_count).toBe(1_000_000_000);
+    expect(r.records[0]!.message_count).toBe(10_000_000);
     expect(r.reporter_org.startsWith("Evil & Co")).toBe(true);
     expect(r.reporter_org).not.toMatch(/[\x00-\x1f]/);
     expect(normalizeSourceIp("::ffff:192.0.2.1")).toBe("::ffff:c000:201");
@@ -280,41 +332,142 @@ describe("parseDmarcAggregateXml", () => {
     expect(xmlElements("<a>1</a><x:a>2</x:a><a/><ab>no</ab>", "a").items).toEqual(["1", "2", ""]);
   });
 
-  it("report day uses end − 1 s and clamps absurd dates", () => {
+  it("report day and timestamps use the same clamp window (S2)", () => {
     const now = Date.parse("2026-11-14T12:00:00Z");
     const begin = Date.parse("2026-11-13T00:00:00Z") / 1000;
     expect(dmarcReportDay(begin, begin + 86_400, now)).toBe("2026-11-13");
     expect(dmarcReportDay(begin, begin + 86_399, now)).toBe("2026-11-13");
     expect(dmarcReportDay(1, 2, now)).toBe("2026-11-14");
+    expect(dmarcReportEpochIso(begin, now)).toBe("2026-11-13T00:00:00.000Z");
+    // A 12-digit epoch used to yield "+033658-…" and win MIN()/MAX() forever.
+    expect(dmarcReportEpochIso(999_999_999_999, now)).toBe("2026-11-14T12:00:00.000Z");
+    expect(dmarcReportEpochIso(0, now)).toBe("2026-11-14T12:00:00.000Z");
+  });
+
+  it("clamps absurd per-report totals, keeping the fail rate (B3c)", () => {
+    const rec = (ip: string, n: number, pass: boolean) => ({
+      source_ip: ip, message_count: n, disposition: "none", dkim_result: pass ? "pass" : "fail", spf_result: "fail",
+      reasons: [], header_from: "acme.example", envelope_from: "", envelope_to: "", dkim_auth: [], spf_auth: [],
+    });
+    const { records, clamped } = clampReportVolume([rec("1.1.1.1", 10_000_000, true), ...Array.from({ length: 9 }, (_, i) => rec(`1.1.1.${i + 2}`, 10_000_000, false))]);
+    expect(clamped).toBe(true);
+    const total = records.reduce((n, r) => n + r.message_count, 0);
+    expect(total).toBeLessThanOrEqual(50_000_000);
+    expect(records[0]!.message_count / total).toBeCloseTo(0.1, 3);
+    expect(clampReportVolume([rec("1.1.1.1", 5, false)]).clamped).toBe(false);
+  });
+
+  it("S6: dkim_domain prefers a passing, then a brand-related signature", () => {
+    const base = { header_from: "acme.example" };
+    expect(pickDkimDomain({ ...base, dkim_auth: [{ domain: "x.test", selector: "", result: "fail" }, { domain: "esp.test", selector: "", result: "pass" }] })).toBe("esp.test");
+    expect(pickDkimDomain({ ...base, dkim_auth: [{ domain: "x.test", selector: "", result: "fail" }, { domain: "mail.acme.example", selector: "", result: "fail" }] })).toBe("mail.acme.example");
+    expect(pickDkimDomain({ ...base, dkim_auth: [] })).toBeNull();
+  });
+
+  it("S9: reserved / private / documentation ranges never go to ipinfo", () => {
+    for (const ip of ["10.1.1.1", "100.64.0.1", "0.1.2.3", "127.0.0.1", "192.0.2.1", "198.18.0.1", "198.19.255.1", "198.51.100.4", "203.0.113.4", "2001:db8::1"]) {
+      expect(isReservedForGeo(ip), ip).toBe(true);
+    }
+    expect(isReservedForGeo(GEO_IP)).toBe(false);
+  });
+});
+
+// ─── Unit: provenance + eligibility ─────────────────────────────────
+
+describe("readDmarcProvenance (B3a)", () => {
+  const msg = (headers: string) => `${headers}Subject: x\r\n\r\nbody`;
+
+  it("verified: known reporter + trusted topmost header with an aligned pass", () => {
+    const p = readDmarcProvenance(msg(`${trustedAr("google.com")}From: Google <noreply-dmarc-support@google.com>\r\n`), "bounce@google.com");
+    expect(p).toMatchObject({ senderDomain: "google.com", verified: true });
+    expect(p.senderAuth).toContain("dkim=pass(google.com)");
+    // Exchange Online reporters: protection.outlook.com → outlook.com org.
+    expect(readDmarcProvenance(msg(`${trustedAr("protection.outlook.com")}From: dmarc@eur.protection.outlook.com\r\n`), "").verified).toBe(true);
+  });
+
+  it("unverified: absent header, untrusted authserv, a forged lower header, unknown org, failed auth", () => {
+    expect(readDmarcProvenance(msg("From: noreply-dmarc-support@google.com\r\n"), "").verified).toBe(false);
+    expect(readDmarcProvenance(msg(`Authentication-Results: mx.evil.example; dkim=pass header.d=google.com\r\nFrom: x@google.com\r\n`), "").verified).toBe(false);
+    // The attacker's own header sits BELOW the (untrusting) topmost one.
+    expect(readDmarcProvenance(msg(`Authentication-Results: mx.cloudflare.net; dkim=fail header.d=google.com; dmarc=fail header.from=google.com\r\n${trustedAr("google.com")}From: x@google.com\r\n`), "").verified).toBe(false);
+    expect(readDmarcProvenance(msg(`${trustedAr("reporter.example")}From: x@reporter.example\r\n`), "").verified).toBe(false);
+    // Pass for a different org than the From domain.
+    expect(readDmarcProvenance(msg(`${trustedAr("evil.example")}From: x@google.com\r\n`), "").verified).toBe(false);
+    // Envelope fallback for the sender domain.
+    expect(readDmarcProvenance(msg(""), "bounces@Mailer.Example").senderDomain).toBe("mailer.example");
+  });
+});
+
+describe("isDmarcEligibleBrand (B1a)", () => {
+  it("only monitored / customer brands from trusted sources, never shared hosting", () => {
+    expect(isDmarcEligibleBrand({ canonical_domain: "acme.example", tier: "customer", source: "manual" })).toBe(true);
+    expect(isDmarcEligibleBrand({ canonical_domain: "acme.example", tier: "monitored", source: null })).toBe(true);
+    expect(isDmarcEligibleBrand({ canonical_domain: "acme.example", tier: "tracked", source: "manual" })).toBe(false);
+    for (const source of ["public_assess", "self_service", "ai_attributed"]) {
+      expect(isDmarcEligibleBrand({ canonical_domain: "acme.example", tier: "monitored", source }), source).toBe(false);
+    }
+    expect(isDmarcEligibleBrand({ canonical_domain: "acme.github.io", tier: "monitored", source: "manual" })).toBe(false);
   });
 });
 
 // ─── Schema ─────────────────────────────────────────────────────────
 
 describe.skipIf(!hasSqlite())("migration 0329 schema", () => {
-  it("dmarc_report_records matches the prod DDL exactly (columns + indexes)", () => {
+  it("dmarc_report_records = the prod DDL + 0329's additive column and partial index", () => {
     const migrated = openMigratedDb();
     const prod = openMigratedDb({ exclude: ["0329_dmarc_sensor.sql"] });
     for (const stmt of PROD_DMARC_REPORT_RECORDS_DDL) prod.exec(stmt);
+    prod.exec("ALTER TABLE dmarc_report_records ADD COLUMN auth_json TEXT");
+    prod.exec("CREATE INDEX idx_drr_geo_pending ON dmarc_report_records(source_ip) WHERE country_code IS NULL");
     const cols = (db: SqliteDb) => db.prepare("PRAGMA table_info(dmarc_report_records)").all();
     expect(cols(migrated)).toEqual(cols(prod));
     const idx = (db: SqliteDb) =>
-      (db.prepare("PRAGMA index_list(dmarc_report_records)").all() as Array<{ name: string; unique: number }>)
-        .map((i) => ({ name: i.name, unique: i.unique, cols: db.prepare(`PRAGMA index_info(${i.name})`).all() }))
+      (db.prepare("PRAGMA index_list(dmarc_report_records)").all() as Array<{ name: string; unique: number; partial: number }>)
+        .map((i) => ({ name: i.name, unique: i.unique, partial: i.partial, cols: db.prepare(`PRAGMA index_info(${i.name})`).all() }))
         .sort((a, b) => a.name.localeCompare(b.name));
     expect(idx(migrated)).toEqual(idx(prod));
   });
 
-  it("is idempotent over a prod-shaped database (re-applying 0329 is a no-op)", () => {
+  const plan = (db: SqliteDb, sql: string, binds: unknown[]): string =>
+    (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...binds) as Array<{ detail: string }>).map((p) => p.detail).join(" | ");
+
+  it("B1d: Cartographer Phase 4's read and update ride the partial geo-pending index", () => {
     const db = openMigratedDb();
-    const { readFileSync } = require("node:fs") as typeof import("node:fs");
-    const { resolve } = require("node:path") as typeof import("node:path");
-    const sql = readFileSync(resolve(__dirname, "..", "migrations", "0329_dmarc_sensor.sql"), "utf8");
-    expect(() => db.exec(sql)).not.toThrow();
+    const carto = readFileSync(resolve(__dirname, "..", "src", "agents", "cartographer.ts"), "utf8");
+    const read = sqlContaining(carto, ["SELECT DISTINCT source_ip FROM dmarc_report_records", "country_code IS NULL"]);
+    expect(plan(db, read, [])).toMatch(/idx_drr_geo_pending/);
+    expect(plan(db, read, [])).not.toMatch(/SCAN dmarc_report_records\b(?! USING)/);
+    const upd = "UPDATE dmarc_report_records SET country_code = 'PRIV' WHERE source_ip = ? AND country_code IS NULL";
+    expect(plan(db, upd, ["1.2.3.4"])).toMatch(/idx_drr_geo_pending|idx_drr_ip/);
+  });
+
+  it("the catch-up probe and every retention DELETE are index-driven", () => {
+    const db = openMigratedDb();
+    expect(plan(db, DMARC_ROLLUP_PENDING_SQL, ["-5 minutes", 3])).toMatch(/idx_dmarc_reports_rollup_pending/);
+    expect(plan(db, DMARC_RECORDS_PURGE_SQL, ["-180 days", 500])).toMatch(/idx_dmarc_reports_received[\s\S]*idx_drr_report/);
+    expect(plan(db, DMARC_REPORTS_PURGE_SQL, ["-180 days", 500])).toMatch(/idx_dmarc_reports_received/);
+    expect(plan(db, DMARC_SOURCES_PURGE_SQL, ["-180 days", 500])).toMatch(/idx_dmarc_source_daily_date/);
+    expect(plan(db, DMARC_SEEN_PURGE_SQL, ["-61 days", 500])).toMatch(/idx_dmarc_report_seen_first_seen/);
   });
 });
 
 // ─── Receiver end-to-end ───────────────────────────────────────────
+
+/** D1 wrapper that injects batch failures for statements matching `re`. */
+function faultyDb(db: D1Database, re: RegExp, opts: { times: number; message: string; after?: boolean }): D1Database {
+  let left = opts.times;
+  return {
+    prepare: (sql: string) => db.prepare(sql),
+    batch: async (stmts: D1PreparedStatement[]) => {
+      const hit = left > 0 && stmts.some((s) => re.test((s as unknown as { __sql?: string }).__sql ?? ""));
+      if (hit) left--;
+      if (hit && !opts.after) throw new Error(opts.message);
+      const r = await db.batch(stmts);
+      if (hit && opts.after) throw new Error(opts.message);
+      return r;
+    },
+  } as unknown as D1Database;
+}
 
 describe.skipIf(!hasSqlite())("DMARC receiver (migrated schema)", () => {
   let raw: SqliteDb;
@@ -323,6 +476,7 @@ describe.skipIf(!hasSqlite())("DMARC receiver (migrated schema)", () => {
   let env: Env;
 
   const count = (sql: string): number => (raw.prepare(sql).all()[0] as { n: number }).n;
+  const ipinfoCalls = () => fetchCalls.filter((u) => u.startsWith("https://ipinfo.io/"));
 
   beforeEach(() => {
     raw = openMigratedDb();
@@ -331,21 +485,28 @@ describe.skipIf(!hasSqlite())("DMARC receiver (migrated schema)", () => {
     env = { DB: d1FromSqlite(raw, { log }), CACHE: kv } as unknown as Env;
     notify.mockClear();
     fetchCalls.length = 0;
+    dnsFail.clear();
     for (const k of Object.keys(dnsTxt)) delete dnsTxt[k];
     for (const k of Object.keys(geoOrg)) delete geoOrg[k];
     stubFetch();
-    // 203.0.113.6 is unknown to threats; ipinfo puts it on Cloudflare
+    // GEO_IP is unknown to threats; ipinfo puts it on Cloudflare
     // (multi-tenant) → unaligned_shared_esp, not a spoof candidate.
-    geoOrg["203.0.113.6"] = "AS13335 Cloudflare, Inc.";
+    geoOrg[GEO_IP] = "AS13335 Cloudflare, Inc.";
 
-    const brand = raw.prepare("INSERT INTO brands (id, name, canonical_domain, tier) VALUES (?, ?, ?, ?)");
-    brand.run("b_acme", "Acme", "acme.example", "customer");
-    brand.run("b_other", "Other", "other.example", "monitored");
+    const brand = raw.prepare("INSERT INTO brands (id, name, canonical_domain, tier, source) VALUES (?, ?, ?, ?, ?)");
+    brand.run("b_acme", "Acme", "acme.example", "customer", "manual");
+    brand.run("b_other", "Other", "other.example", "monitored", null);
+    brand.run("b_public", "Public", "public.example", "monitored", "public_assess");
+    brand.run("b_tracked", "Tracked", "tracked.example", "tracked", null);
+    brand.run("b_pages", "Pages", "acme.github.io", "monitored", "manual");
     // Acme publishes rua=mailto:dmarc_rua@averrow.ca — seen by a fresh scan.
     raw.prepare(
       `INSERT INTO email_security_scans (brand_id, domain, dmarc_exists, dmarc_policy, dmarc_rua, scanned_at)
        VALUES ('b_acme', 'acme.example', 1, 'none', 'mailto:ops@acme.example,mailto:dmarc_rua@averrow.ca!10m', datetime('now'))`,
     ).run();
+    for (const d of ["public.example", "tracked.example", "acme.github.io"]) {
+      dnsTxt[`_dmarc.${d}`] = ["v=DMARC1; p=none; rua=mailto:dmarc_rua@averrow.ca"];
+    }
     // 203.0.113.5 is known: two threat rows. The rollup picks the first in
     // (source_feed, rowid) order — the 'a_feed' row, inserted second.
     const threat = raw.prepare(
@@ -361,7 +522,7 @@ describe.skipIf(!hasSqlite())("DMARC receiver (migrated schema)", () => {
     ).run();
     raw.prepare("INSERT INTO infrastructure_clusters (id, cluster_name) VALUES (?, 'op')").run(clusterIdForIp("203.0.113.5"));
     raw.prepare("INSERT INTO infrastructure_clusters (id, cluster_name, retired_reason) VALUES (?, 'old', 'shared_infra')")
-      .run(clusterIdForIp("203.0.113.6"));
+      .run(clusterIdForIp(GEO_IP));
   });
 
   afterEach(() => {
@@ -371,73 +532,95 @@ describe.skipIf(!hasSqlite())("DMARC receiver (migrated schema)", () => {
   const acme = (org: string, reportId: string, extra: Partial<Parameters<typeof reportXml>[0]> = {}) =>
     reportXml({ org, reportId, domain: "acme.example", records: ACME_RECORDS, ...extra });
 
-  it("Google-style ZIP: stores with OR pass semantics, notifies, rolls up sources", async () => {
+  it("verified Google ZIP: stored with OR semantics + provenance, staff notification, atomic rollup with ipinfo", async () => {
     const out = await handleDmarcEmail(googleZip(acme("google.com", "g-1")), env);
     expect(log.filter((l) => l.error)).toEqual([]);
-    expect(out).toMatchObject({ status: "stored", brandId: "b_acme", pass: 80, fail: 70, storedRecords: 4 });
+    expect(out).toMatchObject({ status: "stored", brandId: "b_acme", pass: 80, fail: 70, storedRecords: 4, complete: true, verified: true });
 
-    const rep = raw.prepare("SELECT brand_id, total_messages, total_pass, total_fail, processed, process_error FROM dmarc_reports").all();
-    expect(rep).toEqual([{ brand_id: "b_acme", total_messages: 150, total_pass: 80, total_fail: 70, processed: 1, process_error: null }]);
-    const recs = raw.prepare("SELECT source_ip, dmarc_result, dkim_domain, spf_domain FROM dmarc_report_records ORDER BY source_ip").all();
-    expect(recs).toEqual([
+    expect(raw.prepare(
+      "SELECT brand_id, total_messages, total_pass, total_fail, processed, raw_xml, sender_domain, verified, rolled_up_at IS NOT NULL AS rolled FROM dmarc_reports",
+    ).all()).toEqual([{
+      brand_id: "b_acme", total_messages: 150, total_pass: 80, total_fail: 70, processed: 1,
+      raw_xml: null, sender_domain: "google.com", verified: 1, rolled: 1,
+    }]);
+    expect(raw.prepare("SELECT source_ip, dmarc_result, dkim_domain, spf_domain FROM dmarc_report_records ORDER BY source_ip").all()).toEqual([
       { source_ip: "198.51.100.10", dmarc_result: "pass", dkim_domain: "acme.example", spf_domain: "fwd.example" },
       { source_ip: "198.51.100.20", dmarc_result: "pass", dkim_domain: null, spf_domain: "acme.example" },
       { source_ip: "203.0.113.5", dmarc_result: "fail", dkim_domain: "evil.test", spf_domain: "evil.test" },
-      { source_ip: "203.0.113.6", dmarc_result: "fail", dkim_domain: null, spf_domain: "acme.example" },
+      { source_ip: GEO_IP, dmarc_result: "fail", dkim_domain: null, spf_domain: "acme.example" },
     ]);
-    const stats = raw.prepare("SELECT domain, brand_id, date, total_messages, passed, failed, top_fail_ips, reporters FROM dmarc_daily_stats").all() as Array<Record<string, unknown>>;
-    expect(stats).toHaveLength(1);
-    expect(stats[0]).toMatchObject({ domain: "acme.example", brand_id: "b_acme", total_messages: 150, passed: 80, failed: 70 });
-    expect(JSON.parse(String(stats[0]!.top_fail_ips))).toEqual([{ ip: "203.0.113.5", count: 40 }, { ip: "203.0.113.6", count: 30 }]);
-    expect(raw.prepare("SELECT verified_via FROM dmarc_enrollment WHERE brand_id = 'b_acme' AND last_report_at IS NOT NULL").all())
-      .toEqual([{ verified_via: "scan" }]);
+    const stats = raw.prepare("SELECT domain, date, total_messages, passed, failed, top_fail_ips FROM dmarc_daily_stats").all() as Array<Record<string, unknown>>;
+    expect(stats[0]).toMatchObject({ domain: "acme.example", date: today(), total_messages: 150, passed: 80, failed: 70 });
+    expect(JSON.parse(String(stats[0]!.top_fail_ips))).toEqual([{ ip: "203.0.113.5", count: 40 }, { ip: GEO_IP, count: 30 }]);
 
-    // Notification: corrected rate (70/150 = 47%), no reporter free text.
+    // Staff/team notification (B3b): high, never critical, no reporter text.
     expect(notify).toHaveBeenCalledTimes(1);
     const opts = notify.mock.calls[0]![1];
-    expect(opts).toMatchObject({ audience: "tenant", brandId: "b_acme", type: "email_security_change", severity: "high" });
+    expect(opts).toMatchObject({ audience: "team", brandId: "b_acme", type: "email_security_change", severity: "high" });
     expect(String(opts.message)).toContain("47%");
     expect(`${String(opts.title)} ${String(opts.message)}`).not.toContain("google.com");
 
-    // Rollup: failing IPs only, joined against platform intel.
     const src = raw.prepare(
-      `SELECT source_ip, messages, fail_messages, source_class, source_rule, asn, as_org, country_code,
-              hosting_provider_id, cluster_id, asn_drop_listed, reporters
+      `SELECT source_ip, messages, fail_messages, verified_fail_messages, source_class, source_rule, asn, as_org,
+              country_code, hosting_provider_id, cluster_id, asn_drop_listed
        FROM dmarc_source_daily ORDER BY source_ip`,
     ).all() as Array<Record<string, unknown>>;
-    expect(src).toHaveLength(2);
-    expect(src[0]).toMatchObject({
-      source_ip: "203.0.113.5", messages: 40, fail_messages: 40, source_class: "spoof_candidate",
-      source_rule: "R7_no_legitimacy_evidence", asn: "AS64500", as_org: "Bad Host LLC", country_code: "RU",
-      hosting_provider_id: "hp_AS64500", cluster_id: clusterIdForIp("203.0.113.5"), asn_drop_listed: 1,
-      reporters: JSON.stringify(["google.com"]),
-    });
-    // 203.0.113.6: unknown to threats → ipinfo; its cluster is retired → none.
-    expect(src[1]).toMatchObject({
-      source_ip: "203.0.113.6", source_class: "unaligned_shared_esp", source_rule: "R6_shared_sending_asn",
-      asn: "AS13335", as_org: "Cloudflare, Inc.", country_code: "NL", cluster_id: null, asn_drop_listed: 0,
-    });
-    // Write-back onto the report's records (keeps Cartographer Phase 4 off them).
-    expect(raw.prepare("SELECT asn, country_code FROM dmarc_report_records WHERE source_ip = '203.0.113.6'").all())
-      .toEqual([{ asn: "AS13335", country_code: "NL" }]);
+    expect(src).toEqual([
+      {
+        source_ip: "203.0.113.5", messages: 40, fail_messages: 40, verified_fail_messages: 40,
+        source_class: "spoof_candidate", source_rule: "R7_no_legitimacy_evidence", asn: "AS64500", as_org: "Bad Host LLC",
+        country_code: "RU", hosting_provider_id: "hp_AS64500", cluster_id: clusterIdForIp("203.0.113.5"), asn_drop_listed: 1,
+      },
+      {
+        source_ip: GEO_IP, messages: 30, fail_messages: 30, verified_fail_messages: 30,
+        source_class: "unaligned_shared_esp", source_rule: "R6_shared_sending_asn", asn: "AS13335", as_org: "Cloudflare, Inc.",
+        country_code: "NL", hosting_provider_id: null, cluster_id: null, asn_drop_listed: 0,
+      },
+    ]);
+    // S4: nothing written back onto the records (Cartographer owns them).
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_report_records WHERE asn IS NOT NULL OR country_code IS NOT NULL")).toBe(0);
+    // B2: the ipinfo allowance is keyed on the WALL-CLOCK day, not the
+    // (2025, attacker-chosen) report dates.
+    expect(ipinfoCalls()).toHaveLength(1);
+    expect(kv.store.get(`dmarc:geo_used:${today()}`)).toBe("1");
+    expect([...kv.store.keys()].filter((k) => k.startsWith("dmarc:geo_used:2025"))).toEqual([]);
     // Enrolled via the scan: no DoH lookup was needed.
     expect(fetchCalls.filter((u) => u.includes("cloudflare-dns.com"))).toEqual([]);
   });
 
-  it("Microsoft-style GZIP from a second reporter merges the day; a resend changes nothing", async () => {
+  it("unverified report: stored as metadata, no notification, no ipinfo, evidence marked unverified", async () => {
+    const out = await handleDmarcEmail(plainXml(acme("Tiny Receiver", "u-1")), env);
+    expect(out).toMatchObject({ status: "stored", verified: false });
+    expect(notify).not.toHaveBeenCalled();
+    expect(ipinfoCalls()).toEqual([]);
+    expect(raw.prepare("SELECT verified, sender_domain, sender_auth FROM dmarc_reports").all())
+      .toEqual([{ verified: 0, sender_domain: "reporter.example", sender_auth: null }]);
+    expect(raw.prepare("SELECT source_ip, asn, verified_fail_messages FROM dmarc_source_daily ORDER BY source_ip").all()).toEqual([
+      { source_ip: "203.0.113.5", asn: "AS64500", verified_fail_messages: 0 },
+      { source_ip: GEO_IP, asn: null, verified_fail_messages: 0 },
+    ]);
+  });
+
+  it("daily ipinfo cap (150) is respected", async () => {
+    kv.store.set(`dmarc:geo_used:${today()}`, String(DMARC_ROLLUP_LIMITS.maxGeoPerDay));
+    await handleDmarcEmail(googleZip(acme("google.com", "g-cap")), env);
+    expect(ipinfoCalls()).toEqual([]);
+    expect(raw.prepare(`SELECT asn FROM dmarc_source_daily WHERE source_ip = '${GEO_IP}'`).all()).toEqual([{ asn: null }]);
+  });
+
+  it("Microsoft GZIP from a second reporter merges the day; a resend changes nothing", async () => {
     await handleDmarcEmail(googleZip(acme("google.com", "g-1")), env);
     const ms = await handleDmarcEmail(microsoftGzip(acme("Enterprise Outlook", "ms-1")), env);
-    expect(ms.status).toBe("stored");
+    expect(ms).toMatchObject({ status: "stored", verified: true });
 
     const statsOf = () => raw.prepare("SELECT total_messages, passed, failed, top_fail_ips, reporters FROM dmarc_daily_stats").all() as Array<Record<string, unknown>>;
     const after2 = statsOf();
     expect(after2[0]).toMatchObject({ total_messages: 300, passed: 160, failed: 140 });
-    expect(JSON.parse(String(after2[0]!.top_fail_ips))).toEqual([{ ip: "203.0.113.5", count: 80 }, { ip: "203.0.113.6", count: 60 }]);
+    expect(JSON.parse(String(after2[0]!.top_fail_ips))).toEqual([{ ip: "203.0.113.5", count: 80 }, { ip: GEO_IP, count: 60 }]);
     expect(JSON.parse(String(after2[0]!.reporters)).sort()).toEqual(["Enterprise Outlook", "google.com"]);
     expect(raw.prepare("SELECT messages, reporters FROM dmarc_source_daily WHERE source_ip = '203.0.113.5'").all())
       .toEqual([{ messages: 80, reporters: JSON.stringify(["Enterprise Outlook", "google.com"]) }]);
 
-    // Resend of the Microsoft report: dropped before any write.
     notify.mockClear();
     const dup = await handleDmarcEmail(microsoftGzip(acme("Enterprise Outlook", "ms-1")), env);
     expect(dup).toEqual({ status: "dropped", reason: "duplicate" });
@@ -458,32 +641,161 @@ describe.skipIf(!hasSqlite())("DMARC receiver (migrated schema)", () => {
     ]);
   });
 
-  it("forged report for an unenrolled brand / non-brand: nothing stored, nothing notified, counted", async () => {
+  it("forged / ineligible / unenrolled / non-brand reports: nothing stored, nothing notified, counted", async () => {
     dnsTxt["_dmarc.other.example"] = ["v=DMARC1; p=reject; rua=mailto:reports@other.example"];
-    const forged = reportXml({ org: "Attacker", reportId: "f-1", domain: "other.example", records: ACME_RECORDS });
-    expect(await handleDmarcEmail(plainXml(forged), env)).toEqual({ status: "dropped", reason: "unenrolled" });
-    const nobody = reportXml({ org: "Attacker", reportId: "f-2", domain: "nobody.example", records: ACME_RECORDS });
-    expect(await handleDmarcEmail(plainXml(nobody), env)).toEqual({ status: "dropped", reason: "no_brand" });
+    const send = (domain: string, id: string) =>
+      handleDmarcEmail(plainXml(reportXml({ org: "Attacker", reportId: id, domain, records: ACME_RECORDS })), env);
+    expect(await send("other.example", "f-1")).toEqual({ status: "dropped", reason: "unenrolled" });
+    expect(await send("nobody.example", "f-2")).toEqual({ status: "dropped", reason: "no_brand" });
+    // B1a: an anonymous user's public_assess brand, a tracked brand and a
+    // shared-hosting domain all publish our rua — still never stored.
+    expect(await send("public.example", "f-3")).toEqual({ status: "dropped", reason: "ineligible_brand" });
+    expect(await send("tracked.example", "f-4")).toEqual({ status: "dropped", reason: "ineligible_brand" });
+    expect(await send("acme.github.io", "f-5")).toEqual({ status: "dropped", reason: "ineligible_brand" });
 
     for (const t of ["dmarc_reports", "dmarc_report_records", "dmarc_daily_stats", "dmarc_report_seen", "dmarc_source_daily", "dmarc_enrollment"]) {
       expect(count(`SELECT COUNT(*) AS n FROM ${t}`), t).toBe(0);
     }
     expect(notify).not.toHaveBeenCalled();
-    const drops = await readDmarcDrops24h(env);
-    expect(drops).toMatchObject({ unenrolled: 1, no_brand: 1 });
-    // The negative live verdict is cached: a second forged report does no DoH.
+    expect(await readDmarcDrops24h(env)).toMatchObject({ unenrolled: 1, no_brand: 1, ineligible_brand: 3 });
+    // Ineligible brands never cost a DNS lookup; the negative live verdict
+    // for other.example is cached per brand for a second forged report.
     const before = fetchCalls.length;
-    await handleDmarcEmail(plainXml(reportXml({ org: "Attacker", reportId: "f-3", domain: "other.example", records: ACME_RECORDS })), env);
+    expect(await send("other.example", "f-6")).toEqual({ status: "dropped", reason: "unenrolled" });
     expect(fetchCalls.length).toBe(before);
-    // Brand lookup is the indexed IN-list only — never LOWER(name).
+    expect(kv.store.get("dmarc:rua_live:b_other")).toBe("other_rua");
     expect(log.some((l) => /LOWER\(name\)/i.test(l.sql))).toBe(false);
   });
 
-  it("live DNS enrollment: a brand whose _dmarc names us is accepted without a scan", async () => {
+  it("S1: enrollment reads only the CANONICAL domain's record", async () => {
+    // A subdomain names us, the canonical domain does not → not enrolled.
+    dnsTxt["_dmarc.mail.other.example"] = ["v=DMARC1; p=none; rua=mailto:dmarc_rua@averrow.ca"];
+    dnsTxt["_dmarc.other.example"] = ["v=DMARC1; p=none"];
+    const sub = reportXml({ org: "R", reportId: "s-1", domain: "mail.other.example", records: ACME_RECORDS.slice(0, 1) });
+    expect(await handleDmarcEmail(plainXml(sub), env)).toEqual({ status: "dropped", reason: "unenrolled" });
+    expect(fetchCalls.some((u) => u.includes("mail.other.example"))).toBe(false);
+
+    // The canonical domain names us → enrolled, domain stored = canonical.
+    kv.store.clear();
     dnsTxt["_dmarc.other.example"] = ["v=DMARC1; p=none; rua=mailto:dmarc_rua@averrow.ca"];
-    const out = await handleDmarcEmail(plainXml(reportXml({ org: "R", reportId: "o-1", domain: "other.example", records: ACME_RECORDS.slice(0, 1) })), env);
+    expect((await handleDmarcEmail(plainXml(reportXml({ org: "R", reportId: "s-2", domain: "mail.other.example", records: ACME_RECORDS.slice(0, 1) })), env)).status)
+      .toBe("stored");
+    expect(raw.prepare("SELECT domain, verified_via FROM dmarc_enrollment WHERE brand_id = 'b_other'").all())
+      .toEqual([{ domain: "other.example", verified_via: "live_dns" }]);
+  });
+
+  it("S1: a DoH failure is not 'no record' — not cached; a lapsed enrollment keeps working", async () => {
+    dnsFail.add("_dmarc.other.example");
+    const send = (id: string) =>
+      handleDmarcEmail(plainXml(reportXml({ org: "R", reportId: id, domain: "other.example", records: ACME_RECORDS.slice(0, 1) })), env);
+    expect(await send("d-1")).toEqual({ status: "dropped", reason: "unenrolled" });
+    expect(kv.store.has("dmarc:rua_live:b_other")).toBe(false);
+
+    raw.prepare(
+      "INSERT INTO dmarc_enrollment (brand_id, domain, rua_verified_at, verified_via) VALUES ('b_other', 'other.example', datetime('now', '-45 days'), 'live_dns')",
+    ).run();
+    expect((await send("d-2")).status).toBe("stored");
+    // Not refreshed on a failed lookup.
+    expect(raw.prepare("SELECT rua_verified_at < datetime('now', '-40 days') AS lapsed FROM dmarc_enrollment").all()).toEqual([{ lapsed: 1 }]);
+  });
+
+  it("B1b: per-brand daily cap (separate for verified / unverified) and global hourly cap", async () => {
+    const iso = new Date().toISOString();
+    kv.store.set(`dmarc:rate:brand:b_acme:${iso.slice(0, 10)}:u`, String(DMARC_BRAND_DAILY_CAP));
+    expect(await handleDmarcEmail(plainXml(acme("R", "r-1")), env)).toEqual({ status: "dropped", reason: "rate_limited" });
+    // Forged (unverified) mail can't starve a verified reporter.
+    expect((await handleDmarcEmail(googleZip(acme("google.com", "r-2")), env)).status).toBe("stored");
+    expect(kv.store.get(`dmarc:rate:brand:b_acme:${iso.slice(0, 10)}:v`)).toBe("1");
+
+    kv.store.set(`dmarc:rate:global:${iso.slice(0, 13)}`, String(DMARC_GLOBAL_HOURLY_CAP));
+    expect(await handleDmarcEmail(googleZip(acme("google.com", "r-3")), env)).toEqual({ status: "dropped", reason: "rate_limited" });
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_reports")).toBe(1);
+    expect((await readDmarcDrops24h(env)).rate_limited).toBe(2);
+  });
+
+  it("KV degraded: stored without inline rollup; the Navigator catch-up rolls it up from stored records", async () => {
+    const brokenKv = { get: async () => { throw new Error("KV down"); }, put: async () => { throw new Error("KV down"); } };
+    const out = await handleDmarcEmail(googleZip(acme("google.com", "k-1")), { ...env, CACHE: brokenKv } as unknown as Env);
     expect(out.status).toBe("stored");
-    expect(raw.prepare("SELECT verified_via FROM dmarc_enrollment WHERE brand_id = 'b_other'").all()).toEqual([{ verified_via: "live_dns" }]);
+    expect(ipinfoCalls()).toEqual([]);
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_source_daily")).toBe(0);
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_reports WHERE rolled_up_at IS NULL")).toBe(1);
+
+    // Too fresh for the catch-up (the inline rollup may still be running).
+    expect(await runDmarcRollupCatchUp(env)).toEqual({ pending: 0, rolledUp: 0, error: null });
+    raw.prepare("UPDATE dmarc_reports SET received_at = datetime('now', '-10 minutes')").run();
+    expect(await runDmarcRollupCatchUp(env)).toEqual({ pending: 1, rolledUp: 1, error: null });
+    // Re-classified from auth_json: same classes as the inline path.
+    expect(raw.prepare("SELECT source_ip, source_class, verified_fail_messages FROM dmarc_source_daily ORDER BY source_ip").all()).toEqual([
+      { source_ip: "203.0.113.5", source_class: "spoof_candidate", verified_fail_messages: 40 },
+      { source_ip: GEO_IP, source_class: "spoof_candidate", verified_fail_messages: 30 }, // no ipinfo in catch-up → asn unknown
+    ]);
+    expect(await runDmarcRollupCatchUp(env)).toEqual({ pending: 0, rolledUp: 0, error: null });
+  });
+
+  it("B4c: the rollup is atomic and re-runnable — a second run changes nothing", async () => {
+    await handleDmarcEmail(plainXml(acme("R", "a-1")), env);
+    const before = raw.prepare("SELECT * FROM dmarc_source_daily ORDER BY source_ip").all();
+    const id = (raw.prepare("SELECT id FROM dmarc_reports").all()[0] as { id: number }).id;
+    expect(await rollupStoredDmarcReport(env, id)).toBeNull(); // already rolled up
+    raw.prepare("UPDATE dmarc_reports SET rolled_up_at = NULL").run();
+    raw.prepare("UPDATE dmarc_reports SET rolled_up_at = datetime('now')").run();
+    // A racing run (stamp set between its reads and its batch) is a no-op.
+    const records = parseDmarcAggregateXml(acme("R", "a-1"))!.records;
+    const r = await runDmarcSourceRollup(env, {
+      reportRowId: id, brandId: "b_acme", date: today(), reporterOrg: "R", verified: false,
+      firstSeen: new Date().toISOString(), lastSeen: new Date().toISOString(), records,
+    }, { geo: false });
+    expect(r.applied).toBe(false);
+    expect(raw.prepare("SELECT * FROM dmarc_source_daily ORDER BY source_ip").all()).toEqual(before);
+  });
+
+  it("B4c: a failed rollup batch writes nothing and leaves the report pending", async () => {
+    env = { ...env, DB: faultyDb(env.DB, /INSERT INTO dmarc_source_daily/, { times: 1, message: "SQLITE_CONSTRAINT: simulated" }) } as unknown as Env;
+    expect((await handleDmarcEmail(plainXml(acme("R", "b-1")), env)).status).toBe("stored");
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_source_daily")).toBe(0);
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_reports WHERE processed = 1 AND rolled_up_at IS NULL")).toBe(1);
+  });
+
+  it("B4a/e: the claim batch retries a transient error without double-counting, even when the first attempt committed", async () => {
+    env = { ...env, DB: faultyDb(env.DB, /INSERT INTO dmarc_report_seen/, { times: 1, message: "Network connection lost.", after: true }) } as unknown as Env;
+    const out = await handleDmarcEmail(googleZip(acme("google.com", "t-1")), env);
+    expect(out).toMatchObject({ status: "stored", pass: 80, fail: 70 });
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_reports")).toBe(1);
+    expect(raw.prepare("SELECT total_messages FROM dmarc_daily_stats").all()).toEqual([{ total_messages: 150 }]);
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_report_records")).toBe(4);
+  });
+
+  it("B4b: records that fail are reported honestly and a resend completes the report without re-counting", async () => {
+    const failing = faultyDb(env.DB, /INSERT INTO dmarc_report_records/, { times: 1, message: "SQLITE_TOOBIG: simulated" });
+    const first = await handleDmarcEmail(googleZip(acme("google.com", "rec-1")), { ...env, DB: failing } as unknown as Env);
+    expect(first).toMatchObject({ status: "stored", complete: false, storedRecords: 0 });
+    expect(raw.prepare("SELECT processed, rolled_up_at FROM dmarc_reports").all()).toEqual([{ processed: 0, rolled_up_at: null }]);
+    expect(notify).not.toHaveBeenCalled();
+
+    const again = await handleDmarcEmail(googleZip(acme("google.com", "rec-1")), env);
+    expect(again).toMatchObject({ status: "stored", complete: true, recovered: true, storedRecords: 4 });
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_reports")).toBe(1);
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_report_records")).toBe(4);
+    expect(raw.prepare("SELECT total_messages, failed FROM dmarc_daily_stats").all()).toEqual([{ total_messages: 150, failed: 70 }]);
+    expect(raw.prepare("SELECT processed, rolled_up_at IS NOT NULL AS rolled FROM dmarc_reports").all()).toEqual([{ processed: 1, rolled: 1 }]);
+    expect(notify).toHaveBeenCalledTimes(1);
+    // A third copy is now a plain duplicate.
+    expect(await handleDmarcEmail(googleZip(acme("google.com", "rec-1")), env)).toEqual({ status: "dropped", reason: "duplicate" });
+  });
+
+  it("B4b: a records retry after an ambiguous commit does not duplicate rows", async () => {
+    env = { ...env, DB: faultyDb(env.DB, /INSERT INTO dmarc_report_records/, { times: 1, message: "Network connection lost.", after: true }) } as unknown as Env;
+    expect(await handleDmarcEmail(googleZip(acme("google.com", "amb-1")), env)).toMatchObject({ status: "stored", complete: true, storedRecords: 4 });
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_report_records")).toBe(4);
+  });
+
+  it("B4d: undecodable mail is `unparseable`; a thrown error is counted as `error`", async () => {
+    const bad = emailMessage(GOOGLE, mimeEmail(GOOGLE, "application/zip", "x.zip", Buffer.alloc(0), "", "@@@@not-base64@@@@"));
+    expect(await handleDmarcEmail(bad, env)).toEqual({ status: "dropped", reason: "unparseable" });
+    const boomEnv = { ...env, DB: { prepare: () => { throw new Error("SQLITE_ERROR: boom"); } } } as unknown as Env;
+    expect((await handleDmarcEmail(googleZip(acme("google.com", "e-1")), boomEnv)).status).toBe("error");
+    expect(await readDmarcDrops24h(env)).toMatchObject({ unparseable: 1, error: 1 });
   });
 
   it("subdomain report rolls into the parent brand; RFC 9990 namespaced shape parses", async () => {
@@ -492,80 +804,95 @@ describe.skipIf(!hasSqlite())("DMARC receiver (migrated schema)", () => {
       records: [{ ip: "203.0.113.5", count: 12, dkim: "fail", spf: "fail", headerFrom: "mail.acme.example", reasons: ["mailing_list"],
         dkimAuth: [{ d: "acme.example", r: "fail" }], spfAuth: { d: "lists.example", r: "pass" } }],
     });
-    const out = await handleDmarcEmail(plainXml(xml), env);
-    expect(out).toMatchObject({ status: "stored", brandId: "b_acme", pass: 0, fail: 12 });
+    expect(await handleDmarcEmail(plainXml(xml), env)).toMatchObject({ status: "stored", brandId: "b_acme", pass: 0, fail: 12 });
     expect(raw.prepare("SELECT domain, brand_id FROM dmarc_reports").all()).toEqual([{ domain: "mail.acme.example", brand_id: "b_acme" }]);
     expect(raw.prepare("SELECT domain FROM dmarc_daily_stats").all()).toEqual([{ domain: "acme.example" }]);
     expect(raw.prepare("SELECT source_class, source_rule FROM dmarc_source_daily").all())
       .toEqual([{ source_class: "forwarder_likely", source_rule: "R2_receiver_forwarding_override" }]);
-    // < 100 messages → no notification.
-    expect(notify).not.toHaveBeenCalled();
   });
 
   it("the rollup's class merge keeps the most suspicious class across reports", async () => {
-    await handleDmarcEmail(plainXml(reportXml({
-      org: "A", reportId: "m-1", domain: "acme.example",
-      records: [{ ip: "203.0.113.5", count: 5, dkim: "fail", spf: "fail", reasons: ["forwarded"] }],
+    const one = (id: string, n: number, reasons: string[]) => handleDmarcEmail(plainXml(reportXml({
+      org: id, reportId: id, domain: "acme.example", records: [{ ip: "203.0.113.5", count: n, dkim: "fail", spf: "fail", reasons }],
     })), env);
-    await handleDmarcEmail(plainXml(reportXml({
-      org: "B", reportId: "m-2", domain: "acme.example",
-      records: [{ ip: "203.0.113.5", count: 7, dkim: "fail", spf: "fail" }],
-    })), env);
-    await handleDmarcEmail(plainXml(reportXml({
-      org: "C", reportId: "m-3", domain: "acme.example",
-      records: [{ ip: "203.0.113.5", count: 1, dkim: "fail", spf: "fail", reasons: ["trusted_forwarder"] }],
-    })), env);
+    await one("m-1", 5, ["forwarded"]);
+    await one("m-2", 7, []);
+    await one("m-3", 1, ["trusted_forwarder"]);
     expect(raw.prepare("SELECT messages, fail_messages, source_class, source_rule FROM dmarc_source_daily").all())
       .toEqual([{ messages: 13, fail_messages: 13, source_class: "spoof_candidate", source_rule: "R7_no_legitimacy_evidence" }]);
   });
 
   it("threats lookup: one deterministic row per IP, one index seek, no sort", async () => {
-    await runDmarcSourceRollup(env, {
-      brandId: "b_acme", date: "2026-11-14", reporterOrg: "x", reportRowId: 0,
-      firstSeen: "2026-11-14T00:00:00.000Z", lastSeen: "2026-11-14T23:59:59.000Z",
-      records: [{ source_ip: "203.0.113.5", message_count: 1, disposition: "none", dkim_result: "fail", spf_result: "fail",
-        reasons: [], header_from: "acme.example", envelope_from: "", envelope_to: "", dkim_auth: [], spf_auth: [] }],
-    });
+    await handleDmarcEmail(plainXml(acme("R", "p-1")), env);
     const q = log.find((l) => /FROM v JOIN threats t/.test(l.sql))!;
-    const plan = raw.prepare(`EXPLAIN QUERY PLAN ${q.sql}`).all(...(q.binds ?? [])) as Array<{ detail: string }>;
-    const details = plan.map((p) => p.detail).join(" | ");
-    expect(details).toMatch(/SEARCH t2 USING (COVERING )?INDEX idx_threats_ip_source_feed \(ip_address=\?\)/);
-    expect(details).not.toMatch(/TEMP B-TREE|SCAN t2\b|SCAN threats/);
-    expect(raw.prepare("SELECT asn FROM dmarc_source_daily").all()).toEqual([{ asn: "AS64500" }]);
+    const plan = (raw.prepare(`EXPLAIN QUERY PLAN ${q.sql}`).all(...(q.binds ?? [])) as Array<{ detail: string }>).map((p) => p.detail).join(" | ");
+    expect(plan).toMatch(/SEARCH t2 USING (COVERING )?INDEX idx_threats_ip_source_feed \(ip_address=\?\)/);
+    expect(plan).not.toMatch(/TEMP B-TREE|SCAN t2\b|SCAN threats/);
   });
 
-  it("staff endpoints: setup state and spoof-sources read the rollup", async () => {
+  it("B1c retention: deletes expired rows in bounded batches and keeps fresh ones", async () => {
+    await handleDmarcEmail(plainXml(acme("R", "fresh")), env);
+    raw.prepare(
+      `INSERT INTO dmarc_reports (id, brand_id, domain, report_id, received_at, processed) VALUES (900, 'b_acme', 'acme.example', 'old', datetime('now', '-200 days'), 1)`,
+    ).run();
+    const rec = raw.prepare("INSERT INTO dmarc_report_records (report_id, source_ip, count) VALUES (900, ?, 1)");
+    for (let i = 0; i < 7; i++) rec.run(`192.0.2.${i}`);
+    raw.prepare(
+      `INSERT INTO dmarc_source_daily (brand_id, date, source_ip, source_class, first_seen, last_seen)
+       VALUES ('b_acme', date('now', '-200 days'), '192.0.2.1', 'spoof_candidate', 'x', 'x')`,
+    ).run();
+    raw.prepare("INSERT INTO dmarc_report_seen (domain, reporter_org, report_id, claim_id, first_seen_at) VALUES ('a', 'b', 'c', 'd', datetime('now', '-62 days'))").run();
+
+    const r1 = await purgeExpiredDmarcData(env, { batchSize: 3, maxBatches: 2 });
+    expect(r1).toMatchObject({ records_deleted: 6, batches: 2, more_remaining: true, error: null });
+    const r2 = await purgeExpiredDmarcData(env, { batchSize: 3 });
+    expect(r2).toMatchObject({ records_deleted: 1, reports_deleted: 1, sources_deleted: 1, seen_deleted: 1, more_remaining: false, error: null });
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_reports")).toBe(1);
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_report_records")).toBe(4);
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_source_daily")).toBe(2);
+    expect(count("SELECT COUNT(*) AS n FROM dmarc_report_seen")).toBe(1);
+  });
+
+  it("staff endpoints: setup reflects current validity; spoof-sources exposes provenance", async () => {
     await handleDmarcEmail(googleZip(acme("google.com", "g-1")), env);
+    await handleDmarcEmail(plainXml(reportXml({
+      org: "Forger", reportId: "u-9", domain: "acme.example", records: [{ ip: "198.51.100.77", count: 9, dkim: "fail", spf: "fail" }],
+    })), env);
     // D1 Sessions API shim: the handlers read through getReadSession.
     const session = Object.assign(Object.create(env.DB) as object, { getBookmark: () => null });
     const sessionEnv = { ...env, DB: Object.assign(env.DB, { withSession: () => session }) } as unknown as Env;
     dnsTxt["acme.example._report._dmarc.averrow.ca"] = ["v=DMARC1;"];
 
-    const setupRes = await handleGetDmarcSetup(new Request("https://x.test/api/dmarc-reports/b_acme/setup"), sessionEnv, "b_acme");
-    const setup = (await setupRes.json()) as { data: Record<string, unknown>; error?: string };
+    const setup = (await (await handleGetDmarcSetup(new Request("https://x.test/api/dmarc-reports/b_acme/setup"), sessionEnv, "b_acme")).json()) as {
+      data: Record<string, unknown>; error?: string;
+    };
     expect(setup.error).toBeUndefined();
     expect(setup.data).toMatchObject({
       state: "receiving", rua_value: "rua=mailto:dmarc_rua@averrow.ca", rua_includes_averrow: true,
       authorization_required: true, authorization_record_ok: true,
-      authorization_record_name: "acme.example._report._dmarc.averrow.ca", enrolled: true,
+      authorization_record_name: "acme.example._report._dmarc.averrow.ca", enrolled: true, eligible: true,
+      verified_via: "scan", reverify_after_days: 30,
     });
+    // A lapsed enrollment reads as not enrolled even though the row exists.
+    raw.prepare("UPDATE dmarc_enrollment SET rua_verified_at = datetime('now', '-31 days')").run();
+    const lapsed = (await (await handleGetDmarcSetup(new Request("https://x.test/s"), sessionEnv, "b_acme")).json()) as { data: Record<string, unknown> };
+    expect(lapsed.data.enrolled).toBe(false);
 
     const bad = await handleGetDmarcSpoofSources(new Request("https://x.test/api/dmarc-reports/b_acme/spoof-sources?days=9"), sessionEnv, "b_acme");
     expect(bad.status).toBe(400);
-    // Report dates are fixtures in 2025 → use rows dated today for the window.
-    raw.prepare("UPDATE dmarc_source_daily SET date = ?").run(new Date().toISOString().slice(0, 10));
-    raw.prepare("UPDATE dmarc_daily_stats SET date = ?").run(new Date().toISOString().slice(0, 10));
-    const res = await handleGetDmarcSpoofSources(new Request("https://x.test/api/dmarc-reports/b_acme/spoof-sources?days=30"), sessionEnv, "b_acme");
+    // S8: an empty days= defaults to 7.
+    const res = await handleGetDmarcSpoofSources(new Request("https://x.test/api/dmarc-reports/b_acme/spoof-sources?days="), sessionEnv, "b_acme");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: { sources: Array<Record<string, unknown>>; daily: unknown[]; summary: Record<string, unknown> } };
+    const body = (await res.json()) as { data: { days: number; sources: Array<Record<string, unknown>>; daily: unknown[]; summary: Record<string, unknown> } };
+    expect(body.data.days).toBe(7);
     expect(body.data.sources[0]).toMatchObject({
-      source_ip: "203.0.113.5", source_class: "spoof_candidate", fail_messages: 40,
+      source_ip: "203.0.113.5", source_class: "spoof_candidate", fail_messages: 40, verified_fail_messages: 40, unverified_only: false,
       provider: { id: "hp_AS64500", name: "Bad Host LLC" }, asn_drop_listed: true,
     });
-    expect(body.data.daily).toEqual([{ date: expect.any(String) as unknown as string, total: 150, passed: 80, failed: 70 }]);
-    expect(body.data.summary).toMatchObject({ sources: 2, spoof_candidate_sources: 1 });
-    // KV-cached for 300s.
-    expect(kv.store.has("dmarc:spoof_sources:v1:b_acme:30")).toBe(true);
+    expect(body.data.sources.find((s) => s.source_ip === "198.51.100.77")).toMatchObject({ verified_fail_messages: 0, unverified_only: true });
+    expect(body.data.daily).toEqual([{ date: today(), total: 159, passed: 80, failed: 79 }]);
+    expect(body.data.summary).toMatchObject({ sources: 3, unverified_only_sources: 1 });
+    expect(kv.store.has("dmarc:spoof_sources:v2:b_acme:7")).toBe(true);
     // No request-time aggregation over dmarc_report_records.
     expect(log.some((l) => /FROM dmarc_report_records[\s\S]*GROUP BY/i.test(l.sql))).toBe(false);
   });
@@ -584,5 +911,15 @@ describe("setup state machine / class list", () => {
     expect(mergeClassList("forwarder_likely,spoof_candidate,aligned_pass")).toBe("spoof_candidate");
     expect(mergeClassList("forwarder_likely,bogus")).toBe("forwarder_likely");
     expect(mergeClassList(null)).toBe("aligned_pass");
+  });
+});
+
+describe("Navigator wiring (cron-audit rule)", () => {
+  const nav = readFileSync(resolve(__dirname, "..", "src", "cron", "navigator.ts"), "utf8");
+  it("retention runs behind the hour-only gate; catch-up on every tick; no minute gates", () => {
+    expect(nav).toMatch(/if \(scheduledTime\.getUTCHours\(\) === 0 && !isOverCap\(\)\) \{\s*dmarcPurgeResult = await purgeExpiredDmarcData\(/);
+    expect(nav).toMatch(/if \(!isOverCap\(\)\) \{\s*dmarcRollupCatchUpResult = await runDmarcRollupCatchUp\(env\);/);
+    const dmarcBlock = nav.slice(nav.indexOf("2g. DMARC"), nav.indexOf("dmarcRollupCatchUpResult = await"));
+    expect(dmarcBlock).not.toMatch(/getUTCMinutes|minute\s*===/);
   });
 });

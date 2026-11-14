@@ -36,8 +36,12 @@ export const DMARC_XML_LIMITS = {
   maxSpfPerRecord: 3,
   /** Override reasons kept per record. */
   maxReasonsPerRecord: 5,
-  /** Upper bound for one record's message count. */
-  maxCount: 1_000_000_000,
+  /** Upper bound for one record's message count (B3c). The largest real
+   *  aggregate rows are well under a million messages a day. */
+  maxCount: 10_000_000,
+  /** Upper bound for one report's total messages; larger totals are scaled
+   *  down proportionally (the pass/fail RATE is kept). */
+  maxReportMessages: 50_000_000,
 } as const;
 
 /** Override reason types: RFC 7489 ∪ RFC 9990. Anything else → 'other'. */
@@ -292,4 +296,77 @@ export function parseDmarcAggregateXml(input: string): DmarcAggregateReport | nu
     records,
     truncated: overflow,
   };
+}
+
+// ─── Report time (shared by the receiver and the rollup) ──────────────
+
+const DAY_MS = 86_400_000;
+/** Report dates further back / ahead than this are not believed. */
+export const DMARC_REPORT_DATE_WINDOW = { pastDays: 60, futureDays: 2 } as const;
+
+function clampReportMs(ms: number, nowMs: number): number {
+  if (!Number.isFinite(ms) || ms < nowMs - DMARC_REPORT_DATE_WINDOW.pastDays * DAY_MS || ms > nowMs + DMARC_REPORT_DATE_WINDOW.futureDays * DAY_MS) {
+    return nowMs;
+  }
+  return ms;
+}
+
+/**
+ * UTC report day. The range end is exclusive in practice (Google sends
+ * 00:00:00–23:59:59, others end at the next midnight), so take end − 1 s.
+ * A date outside the window (hostile or broken) is replaced by `nowMs`'s
+ * day so it can't scatter rows across arbitrary days.
+ */
+export function dmarcReportDay(begin: number, end: number, nowMs: number): string {
+  const t = end > 0 ? Math.max(end - 1, begin) : begin;
+  return new Date(clampReportMs(t > 0 ? t * 1000 : nowMs, nowMs)).toISOString().slice(0, 10);
+}
+
+/** ISO timestamp of a report epoch, clamped to the same window as
+ *  dmarcReportDay (a 12-digit epoch would otherwise yield year +33658 and
+ *  win MIN()/MAX() forever). */
+export function dmarcReportEpochIso(sec: number, nowMs: number): string {
+  return new Date(clampReportMs(sec > 0 ? sec * 1000 : nowMs, nowMs)).toISOString();
+}
+
+// ─── Per-record evidence for storage (dmarc_report_records.auth_json) ──
+
+interface StoredAuth {
+  r?: string[];
+  d?: Array<[string, string]>;
+  s?: Array<[string, string, string]>;
+}
+
+/** Compact JSON of the evidence the classifier reads, ≤ ~1.5 KB. */
+export function encodeRecordAuth(r: Pick<DmarcAggregateRecord, "reasons" | "dkim_auth" | "spf_auth">): string {
+  const v: StoredAuth = {};
+  if (r.reasons.length > 0) v.r = r.reasons;
+  if (r.dkim_auth.length > 0) v.d = r.dkim_auth.map((d) => [d.domain, d.result]);
+  if (r.spf_auth.length > 0) v.s = r.spf_auth.map((x) => [x.domain, x.scope, x.result]);
+  return JSON.stringify(v);
+}
+
+const isStr = (x: unknown): x is string => typeof x === "string";
+
+/** Inverse of encodeRecordAuth; tolerant of NULL / corrupt values. */
+export function decodeRecordAuth(raw: string | null): Pick<DmarcAggregateRecord, "reasons" | "dkim_auth" | "spf_auth"> {
+  const out: Pick<DmarcAggregateRecord, "reasons" | "dkim_auth" | "spf_auth"> = { reasons: [], dkim_auth: [], spf_auth: [] };
+  if (!raw) return out;
+  try {
+    const v = JSON.parse(raw) as StoredAuth;
+    if (Array.isArray(v.r)) out.reasons = v.r.filter(isStr).slice(0, DMARC_XML_LIMITS.maxReasonsPerRecord);
+    if (Array.isArray(v.d)) {
+      out.dkim_auth = v.d.filter((x) => Array.isArray(x) && isStr(x[0]) && isStr(x[1]))
+        .slice(0, DMARC_XML_LIMITS.maxDkimPerRecord)
+        .map((x) => ({ domain: x[0], selector: "", result: x[1] }));
+    }
+    if (Array.isArray(v.s)) {
+      out.spf_auth = v.s.filter((x) => Array.isArray(x) && isStr(x[0]) && isStr(x[1]) && isStr(x[2]))
+        .slice(0, DMARC_XML_LIMITS.maxSpfPerRecord)
+        .map((x) => ({ domain: x[0], scope: x[1], result: x[2] }));
+    }
+  } catch {
+    // corrupt → no evidence
+  }
+  return out;
 }

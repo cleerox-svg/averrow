@@ -156,7 +156,9 @@ export async function correlateBrandThreats(
   // pass NEITHER check — the same DMARC-failure definition (a forwarder that
   // breaks SPF but keeps DKIM is not counted). Written against the
   // policy_evaluated columns rather than dmarc_result so pre-2026-11-14 rows
-  // (dmarc_result NULL) still count. Note it still counts forwarders and
+  // (dmarc_result NULL) still count; COALESCE so a record with a missing
+  // result counts as not-passing, exactly as the receiver's
+  // recordDmarcPassed treats it. Note it still counts forwarders and
   // shared-ESP misconfiguration; dmarc_source_daily.source_class separates
   // those from spoof candidates.
   // Both seek idx_dmarc_reports_brand_received (migration 0325); CROSS JOIN pins
@@ -174,7 +176,7 @@ export async function correlateBrandThreats(
     CROSS JOIN dmarc_report_records rr ON rr.report_id = dr.id
     WHERE dr.brand_id = ?
       AND dr.received_at >= datetime('now', '-30 days')
-      AND rr.spf_result <> 'pass' AND rr.dkim_result <> 'pass'
+      AND COALESCE(rr.spf_result, '') <> 'pass' AND COALESCE(rr.dkim_result, '') <> 'pass'
   `).bind(brandId).first<{ count: number }>().catch(() => ({ count: 0 }));
 
   // 7. Compute composite risk score

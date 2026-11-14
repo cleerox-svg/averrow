@@ -1105,33 +1105,47 @@ export async function buildNrdRetentionDiag(env: Env): Promise<NrdRetentionDiag>
 }
 
 /** `dmarc_ingest` block — hosted DMARC aggregate reporting (2026-11-14).
- *  Two small indexed main-DB reads (dmarc_reports by received_at,
+ *  Three small indexed main-DB reads (dmarc_reports by received_at,
  *  idx_dmarc_reports_received; the dmarc_enrollment table, one row per
- *  enrolled brand) plus the 24 hourly KV drop buckets written by the
- *  receiver (lib/dmarc-enrollment.ts recordDmarcDrop). `dropped_24h`
- *  splits drops by reason; unenrolled/no_brand reports are never stored. */
+ *  enrolled brand; the rollup-pending partial index) plus the 24 hourly KV
+ *  drop buckets the receiver writes (lib/dmarc-enrollment.ts
+ *  recordDmarcDrop). Every drop reason is reported, including `error`, so
+ *  a receiver that fails every message does not read as a quiet day. */
 export interface DmarcIngestDiag {
   reports_24h: number;
+  verified_reports_24h: number;
+  incomplete_reports_24h: number;
   last_report_at: string | null;
   enrolled_brands: number;
+  rollup_pending: number;
   dropped_unenrolled_24h: number;
+  dropped_no_brand_24h: number;
   dropped_24h: DmarcDropCounts;
 }
 
 export async function buildDmarcIngestDiag(env: Env): Promise<DmarcIngestDiag> {
   const recent = await env.DB.prepare(
-    "SELECT COUNT(*) AS n, MAX(received_at) AS last FROM dmarc_reports WHERE received_at >= datetime('now', '-24 hours')",
-  ).first<{ n: number; last: string | null }>();
+    `SELECT COUNT(*) AS n, SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS v,
+            SUM(CASE WHEN processed <> 1 THEN 1 ELSE 0 END) AS incomplete, MAX(received_at) AS last
+     FROM dmarc_reports WHERE received_at >= datetime('now', '-24 hours')`,
+  ).first<{ n: number; v: number | null; incomplete: number | null; last: string | null }>();
   const enrolled = await env.DB.prepare(
     "SELECT COUNT(*) AS n, MAX(last_report_at) AS last FROM dmarc_enrollment",
   ).first<{ n: number; last: string | null }>();
+  const pending = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM dmarc_reports WHERE processed = 1 AND rolled_up_at IS NULL",
+  ).first<{ n: number }>();
   const drops = await readDmarcDrops24h(env);
   const lasts = [recent?.last ?? null, enrolled?.last ?? null].filter((x): x is string => !!x).sort();
   return {
     reports_24h: recent?.n ?? 0,
+    verified_reports_24h: recent?.v ?? 0,
+    incomplete_reports_24h: recent?.incomplete ?? 0,
     last_report_at: lasts.length > 0 ? lasts[lasts.length - 1]! : null,
     enrolled_brands: enrolled?.n ?? 0,
-    dropped_unenrolled_24h: drops.unenrolled + drops.no_brand,
+    rollup_pending: pending?.n ?? 0,
+    dropped_unenrolled_24h: drops.unenrolled,
+    dropped_no_brand_24h: drops.no_brand,
     dropped_24h: drops,
   };
 }
@@ -2673,8 +2687,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // sequentially; enrichment_pipeline (10 min), platform_totals and
           // alerts.by_tier (15 min) are KV-cached. No field removed.
           // 18: additive `dmarc_ingest` block (hosted DMARC aggregate
-          // reporting: reports_24h, last_report_at, enrolled_brands,
-          // dropped_unenrolled_24h, dropped_24h by reason). No field removed.
+          // reporting: reports_24h, verified_reports_24h,
+          // incomplete_reports_24h, last_report_at, enrolled_brands,
+          // rollup_pending, dropped_unenrolled_24h, dropped_no_brand_24h,
+          // dropped_24h by reason incl. ineligible_brand / rate_limited /
+          // error). No field removed.
           endpoint_version: 18,
         },
 
@@ -2801,10 +2818,12 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         nrd_retention: nrdRetention,
 
         // Hosted DMARC aggregate reporting (lib/dmarc-enrollment.ts).
-        // reports_24h = stored reports; dropped_unenrolled_24h = reports for
-        // non-brand or unenrolled domains (dropped, never stored, never
-        // notified — includes no_brand); dropped_24h splits every drop
-        // reason incl. duplicate resends and unparseable mail.
+        // reports_24h = stored reports (verified_reports_24h of them from a
+        // known, authenticated reporter); dropped_* = never stored, never
+        // notified; dropped_24h splits every reason incl. ineligible_brand,
+        // rate_limited, duplicate, unparseable and error (receiver threw).
+        // rollup_pending = stored reports whose source rollup has not landed
+        // (Navigator catches up ≤3 per tick).
         dmarc_ingest: dmarcIngest,
 
         alerts: {

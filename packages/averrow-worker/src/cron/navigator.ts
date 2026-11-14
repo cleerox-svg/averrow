@@ -42,6 +42,8 @@ import {
 } from '../lib/nrd-retention';
 import { purgeExpiredBrandScans, type BrandScanPurgeResult } from '../lib/brand-scan-retention';
 import { purgeExpiredContactRate, type ContactRatePurgeResult } from '../lib/contact-rate';
+import { runDmarcRollupCatchUp, type DmarcRollupCatchUpResult } from '../lib/dmarc-source-rollup';
+import { purgeExpiredDmarcData, type DmarcPurgeResult } from '../lib/dmarc-retention';
 import { reconcileDarkWeb } from '../lib/dark-web-reconciler';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
@@ -493,6 +495,10 @@ interface NavigatorImplResult {
   /** brand_scans 90-day retention outcome — hour-0 ticks only. */
   brandScanPurgeResult: BrandScanPurgeResult | null;
   contactRatePurgeResult: ContactRatePurgeResult | null;
+  /** DMARC rollup catch-up — every tick; null when skipped (soft cap). */
+  dmarcRollupCatchUpResult: DmarcRollupCatchUpResult | null;
+  /** DMARC aggregate-report retention — hour-0 ticks only. */
+  dmarcPurgeResult: DmarcPurgeResult | null;
 }
 
 async function runNavigatorImpl(
@@ -516,6 +522,8 @@ async function runNavigatorImpl(
   let nrdRetentionResult: NrdRetentionResult | null = null;
   let brandScanPurgeResult: BrandScanPurgeResult | null = null;
   let contactRatePurgeResult: ContactRatePurgeResult | null = null;
+  let dmarcRollupCatchUpResult: DmarcRollupCatchUpResult | null = null;
+  let dmarcPurgeResult: DmarcPurgeResult | null = null;
   let status: 'success' | 'partial' | 'failed' = 'success';
   let errorMessage: string | undefined;
 
@@ -701,6 +709,26 @@ async function runNavigatorImpl(
     // CONTACT_RATE_PURGE_MAX_BATCHES bounded DELETEs otherwise. Never throws.
     if (scheduledTime.getUTCHours() === 0 && !isOverCap()) {
       contactRatePurgeResult = await purgeExpiredContactRate(env);
+    }
+
+    // ── 2g. DMARC aggregate-report retention (records/sources 180d, seen 61d) ──
+    // Hour-only gate (cron-audit rule). Four indexed reads when nothing is
+    // due; a backlog over the batch cap drains on the next hour-0 tick.
+    // Never throws.
+    if (scheduledTime.getUTCHours() === 0 && !isOverCap()) {
+      dmarcPurgeResult = await purgeExpiredDmarcData(env, {
+        softCapMs: Math.max(0, NAVIGATOR_SOFT_CAP_MS - (Date.now() - start)),
+      });
+    }
+
+    // ── 2h. DMARC source-rollup catch-up (every tick) ──
+    // Stored reports whose rollup never landed (receiver's waitUntil killed,
+    // KV degraded, D1 overload). One read of the partial
+    // idx_dmarc_reports_rollup_pending — a no-op when nothing is pending —
+    // and at most DMARC_ROLLUP_CATCHUP_LIMIT (3) rollups, no ipinfo.
+    // Never throws.
+    if (!isOverCap()) {
+      dmarcRollupCatchUpResult = await runDmarcRollupCatchUp(env);
     }
   } catch (err) {
     status = 'failed';
@@ -1121,6 +1149,8 @@ async function runNavigatorImpl(
     nrdRetentionResult,
     brandScanPurgeResult,
     contactRatePurgeResult,
+    dmarcRollupCatchUpResult,
+    dmarcPurgeResult,
   };
 }
 
@@ -1371,6 +1401,27 @@ export const navigatorAgent: AgentModule = {
         summary: `contact-rate-expiry: deleted=${cp.deleted} batches=${cp.batches} more=${cp.more_remaining ? 'yes' : 'no'}${cp.error ? ` err="${cp.error.slice(0, 120)}"` : ''}`,
         severity: cp.error ? 'medium' : 'info',
         details: { ...cp },
+      });
+    }
+
+    // DMARC retention / rollup catch-up — only when they did something or
+    // failed, so empty ticks add no noise.
+    const dp = result.dmarcPurgeResult;
+    if (dp && (dp.records_deleted + dp.reports_deleted + dp.sources_deleted + dp.seen_deleted > 0 || dp.error)) {
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary: `dmarc-retention: records=${dp.records_deleted} reports=${dp.reports_deleted} sources=${dp.sources_deleted} seen=${dp.seen_deleted} batches=${dp.batches} more=${dp.more_remaining ? 'yes' : 'no'}${dp.error ? ` err="${dp.error.slice(0, 120)}"` : ''}`,
+        severity: dp.error ? 'medium' : 'info',
+        details: { ...dp },
+      });
+    }
+    const dc = result.dmarcRollupCatchUpResult;
+    if (dc && (dc.pending > 0 || dc.error)) {
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary: `dmarc-rollup-catchup: pending=${dc.pending} rolled_up=${dc.rolledUp}${dc.error ? ` err="${dc.error.slice(0, 120)}"` : ''}`,
+        severity: dc.error ? 'medium' : 'info',
+        details: { ...dc },
       });
     }
 

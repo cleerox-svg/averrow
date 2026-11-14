@@ -22,7 +22,13 @@ import {
   DMARC_RUA_TAG_VALUE,
   ruaIncludesAverrow,
 } from "../lib/dmarc-rua";
-import { liveDmarcRuaState, ruaAuthorizationRecordOk } from "../lib/dmarc-enrollment";
+import {
+  ENROLLMENT_REVERIFY_DAYS,
+  isDmarcEligibleBrand,
+  liveDmarcRuaState,
+  ruaAuthorizationRecordOk,
+  sqliteTsAgeDays,
+} from "../lib/dmarc-enrollment";
 import { mergeDmarcSourceClass, type DmarcSourceClass } from "../lib/dmarc-source-classify";
 
 // GET /api/dmarc-reports/overview — Admin: global summary (last 30 days)
@@ -262,8 +268,8 @@ export async function handleGetDmarcSetup(request: Request, env: Env, brandId: s
   const origin = request.headers.get("Origin");
   const session = getReadSession(env, getDbContext(request));
   try {
-    const brand = await session.prepare("SELECT id, canonical_domain FROM brands WHERE id = ?")
-      .bind(brandId).first<{ id: string; canonical_domain: string }>();
+    const brand = await session.prepare("SELECT id, canonical_domain, tier, source FROM brands WHERE id = ?")
+      .bind(brandId).first<{ id: string; canonical_domain: string; tier: string | null; source: string | null }>();
     if (!brand) return json({ success: false, error: "Brand not found" }, 404, origin);
 
     const scan = await session.prepare(
@@ -277,23 +283,23 @@ export async function handleGetDmarcSetup(request: Request, env: Env, brandId: s
     ).bind(brand.id).first<{ last: string | null }>();
 
     // The scan answers when it already shows our address; otherwise ask
-    // DNS (KV-cached 6h / 30 min when empty) so a just-published rua shows
-    // up without waiting for the next posture scan.
+    // DNS for the CANONICAL domain's own record. The cache is read but
+    // this route never writes a negative into it (S1), and a resolver
+    // failure is reported as such rather than as "no DMARC record".
     let ruaOurs = ruaIncludesAverrow(scan?.dmarc_rua ?? null);
-    let ruaSource: "scan" | "live_dns" = "scan";
+    let ruaSource: "scan" | "live_dns" | "live_dns_failed" = "scan";
     let dmarcExists = !!scan?.dmarc_exists;
     if (!ruaOurs) {
-      const live = await liveDmarcRuaState(env, brand.canonical_domain);
-      ruaSource = "live_dns";
+      const live = await liveDmarcRuaState(env, brand, { cacheNegative: false });
+      ruaSource = live === "lookup_failed" ? "live_dns_failed" : "live_dns";
       ruaOurs = live === "averrow";
-      // A failed lookup reads as no_dmarc; don't let it override a scan
-      // that saw a record.
-      dmarcExists = live !== "no_dmarc" || dmarcExists;
+      if (live !== "lookup_failed") dmarcExists = live !== "no_dmarc" || dmarcExists;
     }
 
     const lastReportAt = lastReport?.last ?? enrollment?.last_report_at ?? null;
     const state = deriveDmarcSetupState({ lastReportAt, ruaIncludesAverrow: ruaOurs, dmarcRecordExists: dmarcExists, nowMs: Date.now() });
     const auth = await ruaAuthorizationRecordOk(env, brand.canonical_domain);
+    const enrollmentValid = !!enrollment && sqliteTsAgeDays(enrollment.rua_verified_at, Date.now()) <= ENROLLMENT_REVERIFY_DAYS;
 
     return attachBookmark(json({
       success: true,
@@ -309,9 +315,13 @@ export async function handleGetDmarcSetup(request: Request, env: Env, brandId: s
         authorization_record_ok: auth.ok,
         authorization_record_name: auth.record_name,
         authorization_record_value: "v=DMARC1;",
-        enrolled: !!enrollment,
+        // Current validity, not row existence: verified within the
+        // re-verify window (the receiver re-checks DNS after it lapses).
+        enrolled: enrollmentValid,
+        eligible: isDmarcEligibleBrand(brand),
         verified_via: enrollment?.verified_via ?? null,
-        rua_verified_at: enrollment?.rua_verified_at ?? null,
+        verified_at: enrollment?.rua_verified_at ?? null,
+        reverify_after_days: ENROLLMENT_REVERIFY_DAYS,
         last_report_at: lastReportAt,
         last_scan_at: scan?.scanned_at ?? null,
       },
@@ -326,7 +336,7 @@ export const DMARC_SPOOF_SOURCES_TTL_S = 300;
 export const DMARC_SPOOF_SOURCES_LIMIT = 200;
 
 export function dmarcSpoofSourcesCacheKey(brandId: string, days: number): string {
-  return `dmarc:spoof_sources:v1:${brandId}:${days}`;
+  return `dmarc:spoof_sources:v2:${brandId}:${days}`;
 }
 
 /** Merge a `group_concat(DISTINCT source_class)` list with the classifier's
@@ -346,7 +356,7 @@ export function mergeClassList(list: string | null): DmarcSourceClass {
 export async function handleGetDmarcSpoofSources(request: Request, env: Env, brandId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   const rawDays = new URL(request.url).searchParams.get("days");
-  if (rawDays !== null && rawDays !== "7" && rawDays !== "30") {
+  if (rawDays !== null && rawDays !== "" && rawDays !== "7" && rawDays !== "30") {
     return json({ success: false, error: "days must be 7 or 30" }, 400, origin);
   }
   const days = rawDays === "30" ? 30 : 7;
@@ -369,12 +379,13 @@ export async function handleGetDmarcSpoofSources(request: Request, env: Env, bra
     // PK (brand_id, date, source_ip) range. Per-IP attributes are stable
     // across days; MAX picks the non-null value deterministically.
     const rows = await session.prepare(
-      `SELECT d.source_ip, d.messages, d.fail_messages, d.classes, d.rules, d.asn, d.as_org,
+      `SELECT d.source_ip, d.messages, d.fail_messages, d.verified_fail_messages, d.classes, d.rules, d.asn, d.as_org,
               d.country_code, d.hosting_provider_id, hp.name AS provider_name, d.cluster_id,
               d.asn_drop_listed, d.first_seen, d.last_seen, d.days_seen
        FROM (
          SELECT source_ip,
                 SUM(messages) AS messages, SUM(fail_messages) AS fail_messages,
+                SUM(verified_fail_messages) AS verified_fail_messages,
                 group_concat(DISTINCT source_class) AS classes,
                 group_concat(DISTINCT source_rule) AS rules,
                 MAX(asn) AS asn, MAX(as_org) AS as_org, MAX(country_code) AS country_code,
@@ -390,7 +401,7 @@ export async function handleGetDmarcSpoofSources(request: Request, env: Env, bra
        ORDER BY d.fail_messages DESC, d.source_ip
        LIMIT ${DMARC_SPOOF_SOURCES_LIMIT}`,
     ).bind(brand.id, since).all<{
-      source_ip: string; messages: number; fail_messages: number; classes: string | null; rules: string | null;
+      source_ip: string; messages: number; fail_messages: number; verified_fail_messages: number; classes: string | null; rules: string | null;
       asn: string | null; as_org: string | null; country_code: string | null;
       hosting_provider_id: string | null; provider_name: string | null; cluster_id: string | null;
       asn_drop_listed: number; first_seen: string; last_seen: string; days_seen: number;
@@ -407,6 +418,11 @@ export async function handleGetDmarcSpoofSources(request: Request, env: Env, bra
       source_rules: (r.rules ?? "").split(",").filter((x) => x !== ""),
       messages: r.messages,
       fail_messages: r.fail_messages,
+      // B3d: how much of the failing volume came from verified reports;
+      // unverified_only = every report behind this source is unverified
+      // (forgeable) evidence.
+      verified_fail_messages: r.verified_fail_messages,
+      unverified_only: r.verified_fail_messages === 0,
       asn: r.asn,
       as_org: r.as_org,
       country_code: r.country_code,
@@ -427,6 +443,7 @@ export async function handleGetDmarcSpoofSources(request: Request, env: Env, bra
       summary: {
         sources: sources.length,
         spoof_candidate_sources: sources.filter((s) => s.source_class === "spoof_candidate").length,
+        unverified_only_sources: sources.filter((s) => s.unverified_only).length,
         fail_messages: sources.reduce((n, s) => n + s.fail_messages, 0),
         truncated: sources.length >= DMARC_SPOOF_SOURCES_LIMIT,
       },
