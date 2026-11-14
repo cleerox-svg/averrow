@@ -118,6 +118,10 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - `0327_spamhaus_drop_json_asn_drop.sql` — creates `spamhaus_asn_drop` + partial index `idx_spamhaus_asn_drop_listed`, updates the `spamhaus_drop` `feed_configs` description/source URL (`drop_v4.json`), and seeds the `spamhaus_asn_drop` feed (`0 5 * * *`, i.e. a 24h interval) and its `feed_status` row.
 - `0328_email_security_dmarcbis_tags.sql` — `ALTER TABLE email_security_scans ADD COLUMN` `dmarc_sp`, `dmarc_np`, `dmarc_t`, `dmarc_psd` (nullable TEXT, no backfill) plus `score_rubric_version` (nullable INTEGER; NULL = pre-RFC 9989 rubric, current `EMAIL_SCORE_RUBRIC_VERSION` = 2 — the first rescan after deploy updates each brand's grade without a grade-change alert). The Worker writes them on every scan, so apply 0328 before (or with) the Worker deploy.
 
+### Migration 0329 — hosted DMARC aggregate reporting (2026-11-14)
+
+`0329_dmarc_sensor.sql` is additive (`CREATE TABLE/INDEX IF NOT EXISTS` only): `dmarc_report_records` (prod has it out of band, so a no-op there; a fresh DB gets the prod shape), `dmarc_report_seen` (report de-dup), `dmarc_source_daily` (per brand x day x source IP rollup), `dmarc_enrollment` (brands whose `rua=` names Averrow) and `idx_dmarc_reports_received`. Apply before (or with) the Worker deploy: the receiver and `GET /api/dmarc-reports/:brandId/{setup,spoof-sources}` read the new tables. No report arrives until the manual owner steps in `docs/EMAIL_ROUTING_RUNBOOK.md` (DMARC section) are done: the `*._report._dmarc.averrow.ca` TXT and the Email Routing rule for `dmarc_rua@averrow.ca`.
+
 ### Migration 0316 — AI spend ceiling lowered to $80 (2026-11)
 
 `0316_budget_config_free_credit.sql` is a non-destructive `UPDATE budget_config SET monthly_limit_usd = 80 WHERE id = 1 AND monthly_limit_usd > 80` (prod was $150; a lower operator-set value is kept; no row is a no-op). It ships with the change that sets prod `AI_MODE = "enabled"` + `AI_CLAUDE_TASKS`. Deploy order is not critical, but until it applies the throttle ceiling stays at the old limit. Verify: `SELECT monthly_limit_usd FROM budget_config WHERE id = 1` returns 80.

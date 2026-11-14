@@ -377,20 +377,22 @@ Same `requireStaff` gate; handler `handlers/observatoryEvents.ts`. Feeds the Int
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/email-security/stats` | User | Email security statistics |
+| GET | `/api/email-security/stats` | Staff | Email security statistics |
 | GET | `/api/email-security/scan-all` | Admin | Scan all monitored brands |
-| GET | `/api/email-security/:brandId` | User | Get brand email security posture (latest `email_security_scans` row, `SELECT *`; since migration 0328 also `dmarc_sp`, `dmarc_np`, `dmarc_t`, `dmarc_psd`, NULL on older rows) |
-| GET | `/api/email-security/:brandId/history?limit=N` | User | Up to N most-recent scans with per-scan `protocols_passing` (0–4) for the brand-detail Surface tab posture sparkline |
+| GET | `/api/email-security/:brandId` | Staff | Get brand email security posture (latest `email_security_scans` row, `SELECT *`; since migration 0328 also `dmarc_sp`, `dmarc_np`, `dmarc_t`, `dmarc_psd`, NULL on older rows) |
+| GET | `/api/email-security/:brandId/history?limit=N` | Staff | Up to N most-recent scans with per-scan `protocols_passing` (0–4) for the brand-detail Surface tab posture sparkline |
 | POST | `/api/email-security/scan/:brandId` | Staff (mutation) | Trigger email security scan (result `dmarc` object has the same RFC 9989 additions as the public check); persists brand state (incl. `dmarc_sp/np/t/psd`) and may raise `bimi_removed` / `dmarc_downgraded` (each ≤1 per brand per 24h) and `vmc_expiring` (≤1 per brand per certificate expiry per 7 days) |
 
 ## DMARC Reports
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/dmarc-reports/overview` | User | DMARC overview |
-| GET | `/api/dmarc-reports/:brandId` | User | Brand DMARC reports |
-| GET | `/api/dmarc-reports/:brandId/stats` | User | Brand DMARC statistics |
-| GET | `/api/dmarc-reports/:brandId/sources` | User | DMARC sending sources |
+| GET | `/api/dmarc-reports/overview` | Admin | Global summary, last 30 days: `totals`, `top_domains` (10), `recent_reports` (20) |
+| GET | `/api/dmarc-reports/:brandId` | Staff | Brand DMARC reports (`?limit`, max 100, default 50) + `totals` |
+| GET | `/api/dmarc-reports/:brandId/stats` | Staff | Brand DMARC statistics (30 daily rows from `dmarc_daily_stats` + totals); 404 unknown brand |
+| GET | `/api/dmarc-reports/:brandId/sources` | Staff | Top source IPs (`?limit` max 50, default 20; `fail_only` default true). A message fails only when NEITHER the DKIM nor the SPF result is `pass` (was: any single failure, before 2026-11-14). Counts every non-passing source, including forwarders; use `/spoof-sources` for the classified view |
+| GET | `/api/dmarc-reports/:brandId/setup` | Staff | Hosted-RUA onboarding state: `state` (`no_dmarc` / `rua_missing` / `awaiting_reports` / `receiving` / `stale`; `receiving` = a report in the last 7 days), `rua_address` + `rua_value` (what to publish), `rua_includes_averrow`, `rua_checked_via` (`scan` or `live_dns`), `authorization_required` / `authorization_record_ok` / `authorization_record_name` / `authorization_record_value` (RFC 7489 §7.1 record), `enrolled`, `verified_via`, `rua_verified_at`, `last_report_at`, `last_scan_at`. Reads latest scan, `dmarc_enrollment`, `dmarc_reports`; live DNS lookups are KV-cached. 404 unknown brand |
+| GET | `/api/dmarc-reports/:brandId/spoof-sources` | Staff | Classified non-passing sending sources from the `dmarc_source_daily` rollup (`?days=7` default or `30`, else 400). Per source IP: `source_class` (`aligned_pass` / `forwarder_likely` / `unaligned_shared_esp` / `spoof_candidate`, most suspicious class seen), `source_rules`, `messages`, `fail_messages`, `asn`, `as_org`, `country_code`, `provider`, `cluster_id`, `asn_drop_listed`, `first_seen`, `last_seen`, `days_seen`; plus `daily` series and `summary` (`truncated` at 200 sources). Evidence only: `spoof_candidate` is a lead for an analyst, never a confirmed finding, and never raises an alert. KV-cached 5 min. 404 unknown brand |
 
 ## Lookalike Domains
 

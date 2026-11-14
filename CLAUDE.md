@@ -1663,6 +1663,9 @@ bot_traffic_snapshots     ← Cloudflare Radar internet bot-vs-human share, top 
 radar_country_snapshots   ← Radar per-country daily metrics (migration 0292): `attack_origin`, `attack_target`
                             (7d L7 attack shares) and derived `bot_density`. Not threats; written only by
                             `cf_radar_bots`; read by `GET /api/bot-traffic` (Observatory BOT DENSITY view)
+dmarc_enrollment          ← Brands whose `_dmarc` rua= names Averrow (migration 0329); a DMARC aggregate report is stored only for an enrolled brand
+dmarc_report_seen         ← DMARC report de-dup key (domain, reporter_org, report_id) (migration 0329)
+dmarc_source_daily        ← Brand x day x source-IP rollup of non-passing DMARC sources with class (aligned_pass / forwarder_likely / unaligned_shared_esp / spoof_candidate); metadata only, never alerts (migration 0329; `lib/dmarc-source-rollup.ts`)
 org_executives            ← Org-scoped executive identity registry (migration 0244); watched
                             by the executive_monitor agent (Doppelganger) for name→handle
                             impersonation, raising executive_impersonation alerts
@@ -1885,6 +1888,7 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `cron_health[]` | `navigator` (+ historical `fast_tick`), `flight_control`, `orchestrator` run counts + success rate |
 | `backlog_trends` | Per-pipeline: `current`, `previous`, `trend` (negative = draining) |
 | `ai_spend_24h` | Per-agent: `calls`, `input_tokens`, `output_tokens`, `cost_usd`. Says what AI *cost*, not whether it *works* — a zero-cost window is identical for "nothing to classify" and "every call HTTP 400". Read `ai_health` for that. |
+| `dmarc_ingest` | Hosted DMARC aggregate reporting (endpoint_version 18, additive): `reports_24h` (stored `dmarc_reports`), `last_report_at`, `enrolled_brands` (`dmarc_enrollment` rows), `dropped_unenrolled_24h` (= `unenrolled` + `no_brand`), `dropped_24h{no_brand,unenrolled,duplicate,unparseable}` (hourly KV buckets, best-effort). All zeros until the `*._report._dmarc.averrow.ca` TXT and the Email Routing rule exist — see `docs/EMAIL_ROUTING_RUNBOOK.md`. |
 | `ai_health` | Is AI *working* (`ai_spend_24h` only says what it cost): `last_ledger_row_at`, `hours_since_last_call` (newest `budget_ledger` row = last SUCCESSFUL call; `null` = empty), `window_hours`, `per_agent[]` (`attempted`, `succeeded`, `skipped`, `last_run_at`, `first_failure_kind`, `first_error`), `agents_all_failing[]` (`attempted > 0`, `succeeded = 0`). Only counter-instrumented agents appear (analyst, observer, narrator, campaign_hunter) — absent ≠ healthy. Under `AI_MODE=rules_only` every call is a skip, so `attempted` stays 0 and `hours_since_last_call` grows without it being an outage. See §6 "AI-call health". |
 | `platform_totals` | `brands`, `providers`, `campaigns`, `clusters`, `feeds_enabled`, `feeds_disabled` |
 | `brand_count_drift` | Last cube_healer reconciliation of `brands.threat_count` AND `brands.active_threat_count` in one pass (`brandsChecked`, `drifted`, `fixed`, `checked_at`). Persistent large `drifted` = a brand-link writer is skipping the counter bump — see `lib/brand-count-reconciler.ts`. |
@@ -1893,7 +1897,7 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `d1_hourly` / `d1_attribution_hourly` | Spike-hour attribution (endpoint_version 16). `d1_hourly[]`: per-UTC-hour account-wide `rows_read` / `rows_written` across every D1 database (+ `per_database[]`), window = `hours` capped at 48. `d1_attribution_hourly.hours[]`: the same hours' top Analytics Engine endpoints from `lib/d1-meter.ts` — `agent:<id>` (every `executeAgent` run) + `agent:<id>:bg` (its waitUntil tail), `cron:<expr>` (scheduled invocation) + `cron:<expr>:bg` (its waitUntil tail), `workflow:<name>` (per step; not `geoip_refresh`, deliberately unmetered). Meter layers are exclusive — an agent dispatched by a cron invocation, by Flight Control or by a Workflow is counted only in its own `agent:` rows, so `cron:` / `workflow:` rows hold only non-agent work and all per-job rows are disjoint and can be summed; that hour's `d1_hourly.rows_read` minus the sum is unmetered traffic (HTTP handlers, the GeoIP import). The inline-vs-`:bg` split of one layer is by time, not by job. Metering needs the `AE` binding; it is a no-op without it. `d1_attribution_24h` (24h top 40, sample-interval-weighted) carries the same labels next to the per-handler ones. `d1_top_queries_24h` is SAMPLED per-query data — see `d1_top_queries_note`; confirm a rare query's frequency before acting on it. |
 | `_meta` | `db_clock_utc` (verify timezone), `window_hours`, `generated_at` |
 
-**Overload-safe (endpoint_version 17, 2026-11-08):** main-DB reads run one at a
+**Overload-safe (endpoint_version 17, 2026-11-08; 18 on 2026-11-14 only adds `dmarc_ingest`, which is one of the sequential soft sections):** main-DB reads run one at a
 time, and a section whose read fails falls back to empty/zero/null and adds a
 top-level `<section>_error` key (e.g. `agent_mesh_error`) instead of a 500 —
 check for `*_error` keys before trusting a zero. Full-table sections are

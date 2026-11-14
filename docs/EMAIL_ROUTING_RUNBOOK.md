@@ -102,6 +102,45 @@ wrangler d1 execute trust-radar-v2 --remote --command \
 
 A **determination email** with the verdict arrives at the original submitter.
 
+## DMARC aggregate reports (`dmarc_rua@averrow.ca`)
+
+The same Email Routing setup carries DMARC aggregate (RUA) reports. The
+address customers publish is `dmarc_rua@averrow.ca` (`DMARC_RUA_PRIMARY`,
+`src/lib/dmarc-rua.ts`). It must be on averrow.ca: `averrow.com`'s MX is Google
+Workspace, which answers 550, so `dmarc_rua@averrow.com` has never delivered a
+report. `dmarc_rua@averrow.com` and `dmarc_rua@trustradar.ca` are still routed
+to the receiver if mail ever reaches them. The `email()` handler matches the
+recipient case-insensitively; before this, an averrow.ca RUA message fell
+through to the spam trap.
+
+Both steps below are manual and required before any report can arrive:
+
+1. **External-destination authorization (RFC 7489 section 7.1).** Receivers
+   will not send a customer's reports to an address outside the customer's
+   domain unless this record exists. Publish in the averrow.ca zone:
+   `TXT  *._report._dmarc.averrow.ca  =  v=DMARC1`
+   (a wildcard authorizes every customer; the per-domain form is
+   `<customer-domain>._report._dmarc.averrow.ca`, shown by `GET
+   /api/dmarc-reports/:brandId/setup` as `authorization_record_name`).
+2. **Routing rule.** In Email Routing for averrow.ca, confirm the rule for
+   `dmarc_rua@averrow.ca` (or the `*@averrow.ca` catch-all) is
+   "Send to Worker -> averrow-worker". Renaming the Worker unbinds it (see above).
+
+A customer then publishes `rua=mailto:dmarc_rua@averrow.ca` in their
+`_dmarc` TXT. Reports are stored only for brands whose `_dmarc` record names
+our address (enrollment gate); other mail is dropped and counted.
+
+**Canary test.**
+1. Confirm the authorization record: `dig TXT test._report._dmarc.averrow.ca +short` returns `"v=DMARC1"`.
+2. Pick a brand whose `_dmarc` names our address (or publish it on a test brand), then send a minimal aggregate report (plain XML, or gzip) to `dmarc_rua@averrow.ca` with `<policy_published><domain>` set to that brand's domain.
+3. Check `GET /api/dmarc-reports/:brandId/setup` shows `enrolled: true`, and:
+   ```bash
+   wrangler d1 execute trust-radar-v2 --remote --command \
+     "SELECT id, domain, reporter_org, total_messages, total_fail, received_at
+      FROM dmarc_reports ORDER BY received_at DESC LIMIT 1"
+   ```
+4. Platform diagnostics `dmarc_ingest`: `reports_24h` rises on success. If the report is missing, `dropped_24h` says why (`no_brand`, `unenrolled`, `duplicate`, `unparseable`). If neither moves, mail never reached the Worker: check the routing rule. A resend of the same report counts `duplicate` and writes nothing.
+
 ## What this does to averrow.com
 
 Nothing. Google Workspace keeps owning the MX records for averrow.com. Your `claude.leroux@averrow.com` Gmail inbox is unaffected. The previously-seeded `abuse@averrow.com` rows in `org_abuse_aliases` from migration 0180 are now dead aliases — they exist in DB but no mail can reach them (Workspace returns 550 NoSuchUser, the Worker never sees them). Harmless — they're idempotent placeholders.

@@ -49,11 +49,11 @@ Add in **CF Dashboard → averrow.com → DNS → Records → Add record**:
 
 | Type | Name | Content | TTL |
 |---|---|---|---|
-| TXT | `_dmarc` | `v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc_rua@averrow.com; ruf=mailto:dmarc_rua@averrow.com; fo=1` | Auto |
+| TXT | `_dmarc` | `v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc_rua@averrow.ca; ruf=mailto:dmarc_rua@averrow.ca; fo=1` | Auto |
 
 Same on averrow.ca, trustradar.ca, lrxradar.com (any domain you intend to send email from).
 
-The averrow Worker is configured to receive DMARC reports at `dmarc_rua@averrow.com` and `dmarc_rua@trustradar.ca` per `src/index.ts:117` — that wiring already works.
+**Do not use `dmarc_rua@averrow.com`: it cannot receive.** `averrow.com`'s MX is Google Workspace, which answers 550 to that address, so reports sent there bounce. The Worker receives DMARC reports at **`dmarc_rua@averrow.ca`** (Cloudflare Email Routing; routing in `src/index.ts`, addresses in `src/lib/dmarc-rua.ts`), and each sending domain needs the `*._report._dmarc.averrow.ca` authorization TXT before receivers deliver cross-domain. Use `rua=mailto:dmarc_rua@averrow.ca` in the record above. Setup and canary test: `docs/EMAIL_ROUTING_RUNBOOK.md`.
 
 ### Starting more conservatively
 
@@ -123,7 +123,7 @@ Plus DMARC at p=quarantine/p=reject prevents spoofed mail from impersonating you
 
 - `packages/averrow-worker/public/bimi.svg` — the hosted BIMI SVG
 - `packages/averrow-worker/public/favicon.svg` — same artwork, regular SVG
-- `src/handlers/dmarc-email.ts` — DMARC report receiver (already wired)
+- `src/dmarc-receiver.ts` — DMARC report receiver (routing: `src/lib/dmarc-rua.ts`; needs the authorization TXT, see EMAIL_ROUTING_RUNBOOK.md)
 - `src/lib/abuse-mailbox-responder.ts` — the abuse-mailbox emails that benefit from BIMI
 - BIMI spec: https://bimigroup.org/
 - VMC info: https://www.digicert.com/tls-ssl/verified-mark-certificates

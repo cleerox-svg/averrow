@@ -185,3 +185,49 @@ Results are stored in `email_security_scans` with full record details:
 - MX fields (exists, providers as JSON)
 - Composite score and grade
 - Scan duration in milliseconds
+
+## Hosted DMARC Aggregate Reporting (RUA sensor)
+
+Separate from the outside-in scan above: a brand can publish
+`rua=mailto:dmarc_rua@averrow.ca` and Averrow receives the aggregate reports
+mailbox providers send. Setup and routing: `docs/EMAIL_ROUTING_RUNBOOK.md`.
+The scan only reads the brand's `rua=` (and no longer scores it); the data
+below comes from the report receiver.
+
+**Address.** `DMARC_RUA_PRIMARY` = `dmarc_rua@averrow.ca` (`lib/dmarc-rua.ts`).
+`averrow.com` cannot receive (its MX is Google Workspace, which answers 550).
+`dmarc_rua@averrow.com` and `dmarc_rua@trustradar.ca` stay in
+`DMARC_RUA_ADDRESSES`: still routed to the receiver and still recognised as
+"reports to Averrow", but only zones on Cloudflare Email Routing deliver. The
+`email()` handler in `src/index.ts` matches the recipient case-insensitively.
+
+**Pipeline** (`dmarc-receiver.ts`, `handleDmarcEmail`):
+1. MIME to XML (zip / gzip / plain). Raw mail capped at 5 MB, decompressed XML at 10 MB.
+2. Parse (`lib/dmarc-aggregate-xml.ts`): RFC 7489 and RFC 9990 shapes, with caps on records and fields. `<auth_results>` (DKIM/SPF) are parsed.
+3. Brand match: `brands.canonical_domain` equal to the policy domain or a parent.
+4. Enrollment gate (`lib/dmarc-enrollment.ts`): a report is stored only for a brand whose own `_dmarc` record names one of our addresses. Evidence, cheapest first: a `dmarc_enrollment` row verified within 30 days, the latest posture scan (within 7 days, `verified_via='scan'`), or a KV-cached live DoH lookup (`'live_dns'`). Anything else is dropped and counted (`no_brand`, `unenrolled`, `duplicate`, `unparseable`; hourly KV buckets surfaced as diagnostics `dmarc_ingest`). Aggregate reports are unauthenticated, so everything derived from them is metadata.
+5. One atomic batch: claim `(domain, reporter_org, report_id)` in `dmarc_report_seen` (a resent report changes nothing), insert `dmarc_reports`, upsert `dmarc_daily_stats`. Per-source rows go to `dmarc_report_records` (at most 1000 per report, failing first).
+6. Tenant notification (`email_security_change`) and the source rollup run afterwards.
+
+**DMARC pass = aligned DKIM pass OR aligned SPF pass.** Before 2026-11-14 the
+receiver required both, which over-counted `total_fail`,
+`dmarc_daily_stats.failed` and the notification (existing rows keep the old
+counts; `dmarc_report_records.dmarc_result` is NULL on them).
+
+**Source classification** (`lib/dmarc-source-classify.ts`, pure) and rollup
+(`lib/dmarc-source-rollup.ts`, table `dmarc_source_daily`, one row per brand x
+UTC day x source IP, non-passing sources only, up to 200 per report):
+`aligned_pass`, `forwarder_likely`, `unaligned_shared_esp`, `spoof_candidate`
+(ranked in that order; the most suspicious class seen wins). Metadata only: it
+never creates alerts or threats and never gates triage. The rollup resolves
+ASN/country (daily ipinfo cap), the hosting provider, a NEXUS cluster and
+Spamhaus ASN-DROP listing. Read via `GET /api/dmarc-reports/:brandId/spoof-sources`;
+onboarding state via `/setup` (see `docs/API_REFERENCE.md`).
+
+**Limits of the signal.** RUA only shows mail using the brand's exact
+header-from domain, from receivers that send reports; lookalike-domain mail
+never appears.
+
+**Migration 0329** creates `dmarc_report_records` (a no-op in prod, which has it
+out of band), `dmarc_report_seen`, `dmarc_source_daily`, `dmarc_enrollment` and
+`idx_dmarc_reports_received`.

@@ -22,6 +22,15 @@ Feed licence and honesty audit (2026-11-14). No version bump yet.
 - An invalid or missing DMARC `p=` is stored as `none`, flagged invalid (recommendation added) and scored as no enforcement; free text from the record is never stored.
 - **Scoring rubric version:** `EMAIL_SCORE_RUBRIC_VERSION` (= 2) is stamped on each scan (`email_security_scans.score_rubric_version`, migration 0328; NULL = pre-RFC 9989). Grade-change alerts (`lib/email-grade-change.ts`) and Cartographer's band-crossing notification skip a scan whose previous scan was graded under a different/NULL version, so this rubric change causes no spurious "grade changed" alerts. Any future scoring change must bump the constant.
 
+### Email security: hosted DMARC aggregate reporting (2026-11-14, migration 0329)
+- **Reporting address:** `dmarc_rua@averrow.ca` (`lib/dmarc-rua.ts`). `dmarc_rua@averrow.com` never delivered (averrow.com's MX is Google Workspace, 550); it and `dmarc_rua@trustradar.ca` stay routed. Recipient matching in `src/index.ts` is case-insensitive; an averrow.ca RUA message previously fell through to the spam trap. **Manual owner steps before any report arrives:** publish TXT `*._report._dmarc.averrow.ca` = `v=DMARC1` (RFC 7489 section 7.1) and confirm the Email Routing rule sends `dmarc_rua@averrow.ca` to the Worker (`docs/EMAIL_ROUTING_RUNBOOK.md`).
+- **Receiver rewrite** (`dmarc-receiver.ts`, `lib/dmarc-aggregate-xml.ts`): RFC 7489 and RFC 9990 report shapes, size caps, `<auth_results>` parsed. DMARC pass is now aligned DKIM OR aligned SPF (was both), so `total_fail`, `dmarc_daily_stats.failed`, the tenant notification and `GET /api/dmarc-reports/:brandId/sources` no longer over-count; old rows keep their old counts.
+- **Enrollment gate** (`lib/dmarc-enrollment.ts`, `dmarc_enrollment`): reports are stored only for brands whose `_dmarc` record names our address; others are dropped and counted. Duplicates are dropped via `dmarc_report_seen`.
+- **Source classes** (`lib/dmarc-source-classify.ts`, rollup `lib/dmarc-source-rollup.ts` into `dmarc_source_daily`): `aligned_pass` / `forwarder_likely` / `unaligned_shared_esp` / `spoof_candidate`. Metadata only, never alerts.
+- **API:** new staff routes `GET /api/dmarc-reports/:brandId/setup` and `/spoof-sources`.
+- **Diagnostics:** `dmarc_ingest` block, `endpoint_version` 18.
+- No public changelog entry or version bump (no customer-visible surface yet).
+
 ### Security
 - `GET /api/v1/agents/outputs` and `/api/v1/agents/activity` now require staff (`requireStaff`, was any authenticated user): agent outputs are platform-wide and can carry other orgs' brand names and Cloudflare Radar-derived (CC BY-NC) summaries. `limit` on activity is clamped to 1-200.
 
