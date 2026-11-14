@@ -1136,7 +1136,8 @@ export async function handleTenantBrandThreats(
 
     return json({
       success: true,
-      data: threats.results || [],
+      // SURBL / DBL "not listed" is not evidence (lib/dnsbl-verdict.ts).
+      data: (threats.results || []).map(withDnsblVerdicts),
       total: countResult?.total ?? 0,
     }, 200, origin);
   } catch (err) {

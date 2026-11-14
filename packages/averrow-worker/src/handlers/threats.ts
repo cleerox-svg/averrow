@@ -242,7 +242,7 @@ export async function handleGetThreat(request: Request, env: Env, id: string): P
   try {
     const threat = await session.prepare("SELECT * FROM threats WHERE id = ?").bind(id).first();
     if (!threat) return attachBookmark(json({ success: false, error: "Threat not found" }, 404, origin), session);
-    return attachBookmark(json({ success: true, data: threat }, 200, origin), session);
+    return attachBookmark(json({ success: true, data: withDnsblVerdicts(threat) }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
   }

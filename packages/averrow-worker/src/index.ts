@@ -1120,7 +1120,7 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         const { requireStaff: reqAuth2, isAuthContext: isAuth2 } = await import('./middleware/auth');
         const authResult2 = await reqAuth2(request, env);
         if (!isAuth2(authResult2)) return authResult2;
-        const limit = Math.min(50, parseInt(url.searchParams.get('limit') ?? '10'));
+        const limit = Math.min(50, Math.max(1, parseInt(url.searchParams.get('limit') ?? '10') || 10));
         const severityParam = url.searchParams.get('severity');
         const allowed = ['critical', 'high', 'medium', 'low', 'info'];
         const severities = severityParam
