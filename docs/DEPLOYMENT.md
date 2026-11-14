@@ -114,9 +114,9 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 
 ### Migrations 0326 / 0327 / 0328 — feed licence fixes and DMARCbis columns (2026-11-14)
 
-- `0326_disable_noncommercial_feeds.sql` — `UPDATE`s only: `feed_configs` `enabled = 0` + `manual:licence_noncommercial …` `paused_reason` for `spamhaus_dbl` and `dshield`, and `feed_status` reset to `disabled` (failures 0, `next_retry_at` NULL). Re-enable conditions are in the migration header.
+- `0326_disable_noncommercial_feeds.sql` — `UPDATE`s only: `feed_configs` `enabled = 0` + `manual:licence_noncommercial …` `paused_reason` for `spamhaus_dbl` and `dshield` (`manual:licence_noncommercial …`) and `surbl` (`manual:blind_resolver …`: SERVFAIL through the public resolver), and `feed_status` reset to `disabled` (failures 0, `next_retry_at` NULL). Re-enable conditions are in the migration header.
 - `0327_spamhaus_drop_json_asn_drop.sql` — creates `spamhaus_asn_drop` + partial index `idx_spamhaus_asn_drop_listed`, updates the `spamhaus_drop` `feed_configs` description/source URL (`drop_v4.json`), and seeds the `spamhaus_asn_drop` feed (`0 5 * * *`, i.e. a 24h interval) and its `feed_status` row.
-- `0328_email_security_dmarcbis_tags.sql` — `ALTER TABLE email_security_scans ADD COLUMN` `dmarc_sp`, `dmarc_np`, `dmarc_t`, `dmarc_psd` (nullable TEXT, no backfill). The Worker writes them on every scan, so apply 0328 before (or with) the Worker deploy.
+- `0328_email_security_dmarcbis_tags.sql` — `ALTER TABLE email_security_scans ADD COLUMN` `dmarc_sp`, `dmarc_np`, `dmarc_t`, `dmarc_psd` (nullable TEXT, no backfill) plus `score_rubric_version` (nullable INTEGER; NULL = pre-RFC 9989 rubric, current `EMAIL_SCORE_RUBRIC_VERSION` = 2 — the first rescan after deploy updates each brand's grade without a grade-change alert). The Worker writes them on every scan, so apply 0328 before (or with) the Worker deploy.
 
 ### Migration 0316 — AI spend ceiling lowered to $80 (2026-11)
 
