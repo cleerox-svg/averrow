@@ -2,7 +2,7 @@
  * RFC 9989 (DMARCbis) tag parsing + posture scoring.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   parseDmarcRecord,
   isDmarcTestingMode,
@@ -16,6 +16,7 @@ import {
   type EmailSecurityScanInput,
 } from "../src/email-security";
 import { parseDmarcPolicy } from "../src/lib/doh";
+import { computePublicPosture } from "../src/handlers/brandScan";
 
 function scanFor(record: string | null): EmailSecurityScanInput {
   return {
@@ -54,10 +55,11 @@ describe("parseDmarcRecord", () => {
     expect(parseDmarcRecord("")).toBeNull();
   });
 
-  it("nulls invalid tag values but keeps the raw p", () => {
+  it("nulls invalid tag values; an invalid p is stored as 'none'", () => {
     const r = parseDmarcRecord("v=DMARC1; p=rejct; t=maybe; psd=x; pct=abc; np=block")!;
     expect(r.p).toBeNull();
-    expect(r.pRaw).toBe("rejct");
+    expect(r.policyForStorage).toBe("none");
+    expect(r.pInvalid).toBe(true);
     expect(r.t).toBeNull();
     expect(r.psd).toBeNull();
     expect(r.pct).toBeNull();
@@ -155,5 +157,53 @@ describe("generateRecommendations — RFC 9989", () => {
   it("no DMARCbis notes for a clean record", () => {
     const recs = generateRecommendations(scanFor("v=DMARC1; p=reject; rua=mailto:a@b.example")).join("\n");
     expect(recs).not.toMatch(/testing|pct|non-existent/);
+  });
+});
+
+// ─── Invalid p= never stored as free text, scored as no enforcement ─
+
+describe("invalid p= handling", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("parser stores 'none' for an invalid p and flags it", () => {
+    const r = parseDmarcRecord("v=DMARC1; p=<script>alert(1)</script>")!;
+    expect(r.p).toBeNull();
+    expect(r.policyForStorage).toBe("none");
+    expect(r.pInvalid).toBe(true);
+    const absent = parseDmarcRecord("v=DMARC1; rua=mailto:a@b.example")!;
+    expect(absent.policyForStorage).toBe("none");
+    expect(absent.pInvalid).toBe(false);
+    expect(parseDmarcRecord("v=DMARC1; p=Reject")!.policyForStorage).toBe("reject");
+  });
+
+  it("posture engine: invalid p stores 'none', scores as none, and explains why", () => {
+    const d = dmarcResultFromRecord("v=DMARC1; p=rejct; rua=mailto:a@b.example");
+    expect(d.policy).toBe("none");
+    expect(d.policyInvalid).toBe(true);
+    expect(score("v=DMARC1; p=rejct; rua=mailto:a@b.example")).toBe(score("v=DMARC1; p=none; rua=mailto:a@b.example"));
+    expect(generateRecommendations(scanFor("v=DMARC1; p=rejct")).join("\n")).toMatch(/p= value is invalid/);
+  });
+
+  it("public brand scan: an attacker-controlled p is stored as 'none' and takes the no-enforcement penalty", async () => {
+    const dmarcTxt = (txt: string) => vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      const body = u.includes("_dmarc.") ? { Answer: [{ data: `"${txt}"` }] } : {};
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    vi.stubGlobal("fetch", dmarcTxt("v=DMARC1; p=<img src=x onerror=alert(1)>"));
+    expect((await computePublicPosture("victim.example")).dmarcPolicy).toBe("none");
+
+    // A typo'd p used to be stored verbatim and skip the −25 penalty.
+    vi.stubGlobal("fetch", dmarcTxt("v=DMARC1; p=rejectx"));
+    const bad = await computePublicPosture("victim.example");
+    expect(bad.dmarcPolicy).toBe("none");
+
+    vi.stubGlobal("fetch", dmarcTxt("v=DMARC1; p=none"));
+    const none = await computePublicPosture("victim.example");
+    expect(bad.trustScore).toBe(none.trustScore);
+
+    vi.stubGlobal("fetch", dmarcTxt("v=DMARC1; p=reject"));
+    const reject = await computePublicPosture("victim.example");
+    expect(reject.trustScore - bad.trustScore).toBe(25);
   });
 });

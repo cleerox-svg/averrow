@@ -49,8 +49,11 @@ export const spamhaus_drop: FeedModule = {
     const warnings: string[] = [];
     if (parsed.malformed > 0) warnings.push(`${parsed.malformed} malformed/non-IPv4 lines skipped`);
     if (!parsed.metadata) warnings.push("metadata line missing");
-    else if (parsed.metadata.records !== null && unique.length < parsed.metadata.records) {
-      warnings.push(`parsed ${unique.length} of ${parsed.metadata.records} records`);
+    // Completeness uses the PRE-dedupe parsed count: metadata.records counts
+    // lines, and the live list carries a duplicate CIDR (1759 lines, 1758
+    // unique), which made the deduped count warn on every pull.
+    else if (parsed.metadata.records !== null && parsed.records.length < parsed.metadata.records) {
+      warnings.push(`parsed ${parsed.records.length} of ${parsed.metadata.records} records`);
     }
 
     let itemsNew = 0;

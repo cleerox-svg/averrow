@@ -77,7 +77,9 @@ async function checkDNS(domain: string): Promise<{
         if (data.startsWith("v=DMARC1")) {
           result.dmarc.record = data;
           // Shared RFC 9989 tag parser — `/p=(\w+)/` also matched `sp=` / `np=`.
-          result.dmarc.policy = parseDmarcRecord(data)?.pRaw ?? "none";
+          // Validated value only — never free text from the TXT record; an
+          // invalid p= stores 'none' and takes the no-enforcement penalty.
+          result.dmarc.policy = parseDmarcRecord(data)?.policyForStorage ?? "none";
         }
       }
     }

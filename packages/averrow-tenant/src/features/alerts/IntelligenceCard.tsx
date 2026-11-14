@@ -296,7 +296,8 @@ function ReputationGrid({ threat: t }: { threat: ThreatRow }) {
   const items: Array<{ label: string; value: string; bad: boolean } | null> = [
     t.vt_checked ? { label: 'VirusTotal', value: `${t.vt_malicious ?? 0} malicious`, bad: (t.vt_malicious ?? 0) > 0 } : null,
     t.gsb_checked ? { label: 'Safe Browsing', value: t.gsb_flagged ? (t.gsb_threat_type ?? 'flagged') : 'clean', bad: !!t.gsb_flagged } : null,
-    t.surbl_checked ? { label: 'SURBL', value: t.surbl_listed ? 'listed' : 'clean', bad: !!t.surbl_listed } : null,
+    // Only a positive listing is a verdict; a non-listing is unknown (the lookup was blind), so omit it.
+    t.surbl_listed ? { label: 'SURBL', value: 'listed', bad: true } : null,
     t.greynoise_checked ? { label: 'GreyNoise', value: t.greynoise_classification ?? 'unknown', bad: t.greynoise_classification === 'malicious' } : null,
     t.seclookup_checked && t.seclookup_risk_score != null ? { label: 'SecLookup risk', value: `${t.seclookup_risk_score}`, bad: (t.seclookup_risk_score ?? 0) >= 30 } : null,
     t.abuseipdb_checked && t.abuseipdb_score != null ? { label: 'AbuseIPDB', value: `${t.abuseipdb_score}% · ${t.abuseipdb_reports ?? 0} reports`, bad: (t.abuseipdb_score ?? 0) >= 25 } : null,

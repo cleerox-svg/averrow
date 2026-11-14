@@ -3,7 +3,15 @@ import type { Env } from "../types";
 import { logger } from "../lib/logger";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { SURBL_WORK_SELECT_SQL } from "../lib/threat-rescan-predicates";
-import { DnsblLookupError, dohLookupA, dnsblRunShouldFail, type DohAnswer } from "../lib/dnsbl-doh";
+import {
+  DnsblLookupError,
+  dohLookupA,
+  dnsblQueryName,
+  dnsblRunShouldFail,
+  markDnsblRetry,
+  pickDnsblBatch,
+  type DohAnswer,
+} from "../lib/dnsbl-doh";
 
 /**
  * SURBL — DNS-based domain reputation checks.
@@ -28,6 +36,11 @@ import { DnsblLookupError, dohLookupA, dnsblRunShouldFail, type DohAnswer } from
  * test point and fails the pull if it is not listed; a refused lookup
  * mid-run, or every lookup erroring, also fails the pull, so the feed
  * circuit breaker backs off and auto-pauses.
+ *
+ * DISABLED in prod by migration 0326: through public DoH resolvers SURBL
+ * answers SERVFAIL ("No Reachable Authority"), so the feed is blind, and
+ * SURBL's commercial terms are unverified. Re-enable only with a working
+ * SURBL access route (the self-test must pass) and a licence check.
  */
 
 export interface SURBLResult {
@@ -67,6 +80,9 @@ export const SURBL_TEST_POINT = "surbl-org-permanent-test-point.com";
  * answers (listed / NXDOMAIN) are cached now — errors throw before put().
  */
 const SURBL_CACHE_PREFIX = "surbl:v2:";
+/** KV backoff marker for names whose lookup failed (lib/dnsbl-doh.ts). */
+const SURBL_RETRY_PREFIX = "surbl:v2:retry:";
+const SURBL_ZONE = "multi.surbl.org";
 
 /**
  * Inline SURBL check — call from other feeds for immediate domain validation.
@@ -74,6 +90,9 @@ const SURBL_CACHE_PREFIX = "surbl:v2:";
  * lookup failed or was refused; that is never a clean verdict.
  */
 export async function checkSURBL(domain: string, env: Env): Promise<SURBLResult> {
+  const name = dnsblQueryName(domain, SURBL_ZONE);
+  if (name === null) throw new DnsblLookupError("row", `not a valid DNSBL query name: ${domain}`);
+  domain = name;
   const cacheKey = `${SURBL_CACHE_PREFIX}${domain}`;
   const cached = await env.CACHE.get(cacheKey);
   if (cached !== null) {
@@ -111,7 +130,7 @@ export function decodeSURBLAnswer(domain: string, answer: DohAnswer): SURBLResul
 }
 
 async function dnsLookupSURBL(domain: string): Promise<SURBLResult> {
-  return decodeSURBLAnswer(domain, await dohLookupA(`${domain}.multi.surbl.org`));
+  return decodeSURBLAnswer(domain, await dohLookupA(`${domain}.${SURBL_ZONE}`));
 }
 
 /**
@@ -162,20 +181,44 @@ export const surbl: FeedModule = {
     const unchecked = await withIndexHintFallback(SURBL_WORK_SELECT_SQL, (q) =>
       env.DB.prepare(q).all<{ malicious_domain: string }>());
 
-    const domains = unchecked.results;
     let itemsFetched = 0;
     let itemsNew = 0;
     let itemsDuplicate = 0;
     let itemsError = 0;
+    let lookups = 0;
 
-    // Rate limit: max 50 DNS lookups per cron run
+    // Invalid names (IP literals, bad labels, over-long query names) can
+    // never be answered: stamp them checked / not-applicable so they leave
+    // the work set for good. surbl_listed stays 0, which readers surface
+    // as "unknown", not "clean" (lib/dnsbl-verdict.ts).
+    const valid: Array<{ malicious_domain: string; name: string }> = [];
+    for (const row of unchecked.results) {
+      const name = dnsblQueryName(row.malicious_domain, SURBL_ZONE);
+      if (name === null) {
+        await env.DB.prepare(`
+          UPDATE threats SET surbl_checked = 1
+          WHERE malicious_domain = ?
+            AND surbl_checked = 0
+        `).bind(row.malicious_domain).run();
+        itemsFetched++;
+        itemsDuplicate++;
+        logger.warn("surbl_invalid_name", { domain: row.malicious_domain });
+      } else {
+        valid.push({ malicious_domain: row.malicious_domain, name });
+      }
+    }
+
+    // Rate limit: max 50 DNS lookups per cron run. Names that failed
+    // transiently in the last 6h go behind fresh work (pickDnsblBatch), so
+    // a stubborn name cannot pin the head of the queue.
     const maxLookups = 50;
-    const batch = domains.slice(0, maxLookups);
+    const batch = await pickDnsblBatch(valid, (r) => r.name, env.CACHE, SURBL_RETRY_PREFIX, maxLookups);
 
     for (const row of batch) {
       itemsFetched++;
+      lookups++;
       try {
-        const result = await checkSURBL(row.malicious_domain, env);
+        const result = await checkSURBL(row.name, env);
 
         if (result.listed) {
           const surblType = result.types.join(",") || "UNKNOWN";
@@ -232,11 +275,15 @@ export const surbl: FeedModule = {
           itemsDuplicate++; // "duplicate" in the sense of no new finding
         }
       } catch (err) {
-        // A refused lookup means SURBL stopped answering mid-run: abort so
-        // the pull is recorded failed. The row stays surbl_checked = 0.
+        // A refused lookup (SURBL's 127.0.0.1 "blocked", resolver REFUSED)
+        // means SURBL stopped answering us: abort so the pull is recorded
+        // failed. Transient and per-row errors (SERVFAIL / FORMERR for one
+        // name) affect only this row: it stays surbl_checked = 0 and is
+        // backed off for 6h.
         if (err instanceof DnsblLookupError && err.kind === "refused") {
-          throw new Error(`SURBL lookups refused after ${itemsFetched - 1} checked: ${err.message}`);
+          throw new Error(`SURBL lookups refused after ${lookups - 1} checked: ${err.message}`);
         }
+        await markDnsblRetry(env.CACHE, SURBL_RETRY_PREFIX, row.name);
         logger.error("surbl_lookup_error", {
           domain: row.malicious_domain,
           error: err instanceof Error ? err.message : String(err),
@@ -245,8 +292,8 @@ export const surbl: FeedModule = {
       }
     }
 
-    if (dnsblRunShouldFail(itemsFetched, itemsError)) {
-      throw new Error(`SURBL: all ${itemsFetched} lookups failed — no domains checked`);
+    if (dnsblRunShouldFail(lookups, itemsError)) {
+      throw new Error(`SURBL: all ${lookups} lookups failed — no domains checked`);
     }
 
     return { itemsFetched, itemsNew, itemsDuplicate, itemsError };

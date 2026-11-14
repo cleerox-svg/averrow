@@ -47,17 +47,20 @@ export function sqliteUtcStamp(d: Date): string {
 
 /**
  * True when the delisting sweep is safe: the list's own metadata says how
- * many records it holds and we parsed (and stored) all of them.
+ * many records it holds, we parsed all of them, and every upsert batch
+ * landed. `parsedCount` is the PRE-dedupe parsed count — metadata.records
+ * counts lines, so a list carrying one duplicate ASN would otherwise never
+ * look complete and the sweep would be disabled forever.
  */
 export function asnDropSweepAllowed(
-  storedCount: number,
+  parsedCount: number,
   malformed: number,
   metadata: SpamhausDropMetadata | null,
   batchFailures: number,
 ): boolean {
   if (batchFailures > 0 || malformed > 0) return false;
   if (!metadata || metadata.records === null) return false;
-  return storedCount >= metadata.records;
+  return parsedCount >= metadata.records;
 }
 
 const UPSERT_SQL = `INSERT INTO spamhaus_asn_drop
@@ -126,10 +129,12 @@ export const spamhaus_asn_drop: FeedModule = {
     if (batchFailures > 0) warnings.push(`${batchFailures} upsert batch(es) failed: ${firstError}`);
     if (!parsed.metadata) warnings.push("metadata line missing");
 
-    if (asnDropSweepAllowed(stored, parsed.malformed, parsed.metadata, batchFailures)) {
+    // Completeness = every parsed line (pre-dedupe) vs the list's own count;
+    // batchFailures === 0 guarantees every unique ASN was stored.
+    if (asnDropSweepAllowed(parsed.records.length, parsed.malformed, parsed.metadata, batchFailures)) {
       await db.prepare(SWEEP_SQL).bind(stamp).run();
     } else {
-      warnings.push(`delisting sweep skipped (stored ${stored}, list claims ${parsed.metadata?.records ?? "unknown"})`);
+      warnings.push(`delisting sweep skipped (parsed ${parsed.records.length}, stored ${stored}, list claims ${parsed.metadata?.records ?? "unknown"})`);
     }
 
     return {

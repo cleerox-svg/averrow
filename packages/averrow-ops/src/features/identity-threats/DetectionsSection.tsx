@@ -56,8 +56,9 @@ function ts(v: string | null): ReactNode {
   return <span title={formatDateTime(v)}>{relativeTime(v)}</span>;
 }
 
+// Only a positive listing is a verdict; a non-listing is unknown (blind-era lookups), never "Not listed".
 function yesNo(v: boolean | null): string {
-  return v === null ? DASH : v ? 'Listed' : 'Not listed';
+  return v ? 'Listed' : DASH;
 }
 
 function DetailBody({ d }: { d: IdentityDetectionDetail }) {

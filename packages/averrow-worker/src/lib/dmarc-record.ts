@@ -32,8 +32,17 @@ export interface ParsedDmarcRecord {
   tags: Map<string, string>;
   /** `p=` (lowercased) when it is a valid policy value, else null. */
   p: DmarcPolicyValue | null;
-  /** Raw lowercased `p=` value, even when invalid (e.g. a typo). */
-  pRaw: string | null;
+  /**
+   * Policy to STORE / score for the domain. Never free text from the TXT
+   * record (brandScan.ts runs on unauthenticated public input):
+   *   valid p      → that value
+   *   invalid p    → 'none' (RFC 7489 §6.6.3 / RFC 9989: an invalid p with
+   *                  a usable record is treated as p=none — no enforcement)
+   *   p absent     → 'none' (the long-standing stored default)
+   */
+  policyForStorage: DmarcPolicyValue;
+  /** True when a `p=` tag is present but not none / quarantine / reject. */
+  pInvalid: boolean;
   sp: DmarcPolicyValue | null;
   np: DmarcPolicyValue | null;
   /** `t=` — 'y' | 'n'; null when absent or invalid. */
@@ -84,7 +93,8 @@ export function parseDmarcRecord(record: string | null | undefined): ParsedDmarc
   return {
     tags,
     p: asPolicy(pRawValue),
-    pRaw: pRawValue ? pRawValue.toLowerCase() : null,
+    policyForStorage: asPolicy(pRawValue) ?? 'none',
+    pInvalid: pRawValue !== undefined && asPolicy(pRawValue) === null,
     sp: asPolicy(tags.get('sp')),
     np: asPolicy(tags.get('np')),
     t: tRaw === 'y' || tRaw === 'n' ? tRaw : null,

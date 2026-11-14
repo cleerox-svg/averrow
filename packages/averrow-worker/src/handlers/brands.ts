@@ -24,6 +24,7 @@ import { countExposureLookalikes } from "../lib/lookalike-exposure";
 import { persistSocialAssessment } from "../lib/social-assessment-persist";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
+import { withDnsblVerdicts } from "../lib/dnsbl-verdict";
 
 // GET /api/brands/movers
 //
@@ -1076,7 +1077,8 @@ export async function handleBrandThreats(request: Request, env: Env, brandId: st
       `SELECT COUNT(*) AS n FROM threats t ${where}`
     ).bind(...params).first<{ n: number }>();
 
-    return attachBookmark(json({ success: true, data: rows.results, total: total?.n ?? 0 }, 200, origin), session);
+    // SURBL "not listed" is not evidence (lib/dnsbl-verdict.ts).
+    return attachBookmark(json({ success: true, data: (rows.results ?? []).map(withDnsblVerdicts), total: total?.n ?? 0 }, 200, origin), session);
   } catch {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
   }

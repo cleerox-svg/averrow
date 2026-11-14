@@ -120,11 +120,12 @@ function DetailPanel({ row: r, colSpan, extra }: { row: ThreatRow; colSpan: numb
               <div className="tt-sect-label">Reputation</div>
               {r.vt_checked != null && <KV k="VirusTotal" v={`${r.vt_malicious ?? 0} malicious · rep ${r.vt_reputation ?? 0}`} />}
               {r.gsb_checked != null && <KV k="Safe Browsing" v={r.gsb_flagged ? (r.gsb_threat_type ?? 'flagged') : 'clean'} />}
-              {r.surbl_checked != null && <KV k="SURBL" v={r.surbl_listed ? 'listed' : 'clean'} />}
+              {/* Only a positive listing is a verdict; a non-listing is unknown, so KV renders nothing. */}
+              <KV k="SURBL" v={r.surbl_listed ? 'listed' : null} />
               {r.greynoise_checked != null && <KV k="GreyNoise" v={r.greynoise_classification ?? 'seen'} />}
               {r.seclookup_checked != null && <KV k="SecLookup" v={`risk ${r.seclookup_risk_score ?? 0}`} />}
               {r.abuseipdb_checked != null && <KV k="AbuseIPDB" v={`${r.abuseipdb_score ?? 0}% · ${r.abuseipdb_reports ?? 0} reports`} />}
-              {!r.vt_checked && !r.gsb_checked && !r.surbl_checked && !r.greynoise_checked && !r.abuseipdb_checked && (
+              {!r.vt_checked && !r.gsb_checked && !r.surbl_listed && !r.greynoise_checked && !r.abuseipdb_checked && (
                 <div className="tt-dim" style={{ fontSize: 11 }}>No reputation enrichment on file.</div>
               )}
             </div>

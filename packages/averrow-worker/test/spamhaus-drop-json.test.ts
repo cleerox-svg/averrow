@@ -218,7 +218,21 @@ describe("spamhaus_drop ingest (drop_v4.json)", () => {
     const r = await spamhaus_drop.ingest(ctx(h, "spamhaus_drop"));
     expect(r.itemsFetched).toBe(1);
     expect(r.warning).toContain("1 malformed");
-    expect(r.warning).toContain("parsed 1 of 5");
+    // completeness counts parsed lines (pre-dedupe), as metadata.records does
+    expect(r.warning).toContain("parsed 2 of 5");
+  });
+
+  it("a duplicate CIDR in an otherwise complete list does not warn (live list: 1759 lines, 1758 unique)", async () => {
+    const body = [
+      `{"cidr":"1.2.3.0/24","sblid":"SBL1"}`,
+      `{"cidr":"1.2.3.0/24","sblid":"SBL1"}`,
+      `{"cidr":"5.6.7.0/24","sblid":"SBL2"}`,
+      META(3),
+    ].join("\n");
+    const h = makeHarness({ [DROP_V4_URL]: { status: 200, body } });
+    const r = await spamhaus_drop.ingest(ctx(h, "spamhaus_drop"));
+    expect(r.itemsFetched).toBe(2);
+    expect(r.warning).toBeUndefined();
   });
 
   it("fails the pull on HTTP error", async () => {
@@ -263,6 +277,17 @@ describe("spamhaus_asn_drop ingest", () => {
     expect(h.runs[0]!.binds[0]).toBe(upserts[0]!.binds[6]); // same run stamp
   });
 
+  it("still sweeps when the complete list carries a duplicate ASN", async () => {
+    const dup = `{"asn":245,"rir":"arin","domain":"planningresearchcorp.com","cc":"US","asname":"PRC-AS"}`;
+    const body = ASN_DROP.replace(META(3), `${dup}\n${META(4)}`);
+    const h = makeHarness({ [ASN_DROP_URL]: { status: 200, body } });
+    const r = await spamhaus_asn_drop.ingest(ctx(h, "spamhaus_asn_drop"));
+    expect(r.itemsFetched).toBe(3);
+    expect(r.warning).toBeUndefined();
+    expect(h.runs).toHaveLength(1);
+    expect(h.runs[0]!.sql).toContain("SET removed_at = ?1");
+  });
+
   it("skips the delisting sweep when the pull is truncated", async () => {
     const h = makeHarness({ [ASN_DROP_URL]: { status: 200, body: ASN_DROP.replace(META(3), META(455)) } });
     const r = await spamhaus_asn_drop.ingest(ctx(h, "spamhaus_asn_drop"));
@@ -284,8 +309,14 @@ describe("spamhaus_asn_drop ingest", () => {
 
 // ─── Consumer: staff provider detail ────────────────────────────
 
-function providerEnv(provider: { asn: string | null } | null, asnDropRow: Record<string, unknown> | null, asnDropThrows = false) {
+function providerEnv(
+  provider: { asn: string | null } | null,
+  asnDropRow: Record<string, unknown> | null,
+  asnDropThrows = false,
+  asnDropGate?: Promise<void>,
+) {
   const asnDropBinds: unknown[][] = [];
+  const threatReads: string[] = [];
   const DB = {
     prepare(sql: string) {
       return {
@@ -295,19 +326,20 @@ function providerEnv(provider: { asn: string | null } | null, asnDropRow: Record
               if (sql.includes("FROM hosting_providers")) return provider ? { id: "hp_x", name: "X Hosting", country: "US", reputation_score: null, avg_response_time: null, ...provider } : null;
               if (sql.includes("FROM spamhaus_asn_drop")) {
                 asnDropBinds.push(a);
+                if (asnDropGate) await asnDropGate;
                 if (asnDropThrows) throw new Error("no such table: spamhaus_asn_drop");
                 return asnDropRow;
               }
-              if (sql.includes("FROM threats")) return { total_threats: 0 };
+              if (sql.includes("FROM threats")) { threatReads.push(sql); return { total_threats: 0 }; }
               return null;
             },
-            all: async () => ({ results: [] }),
+            all: async () => { if (sql.includes("threat")) threatReads.push(sql); return { results: [] }; },
           };
         },
       };
     },
   };
-  return { env: { DB } as unknown as Env, asnDropBinds };
+  return { env: { DB } as unknown as Env, asnDropBinds, threatReads };
 }
 
 async function providerData(env: Env): Promise<Record<string, unknown>> {
@@ -339,5 +371,17 @@ describe("GET /api/providers/:id — spamhaus_asn_drop evidence field", () => {
     expect((await providerData(noAsn.env))["spamhaus_asn_drop"]).toBeNull();
     expect(noAsn.asnDropBinds).toEqual([]);
     expect((await providerData(providerEnv({ asn: "AS403005" }, row, true).env))["spamhaus_asn_drop"]).toBeNull();
+  });
+
+  it("issues the ASN-DROP lookup in the same Promise.all as the threat reads", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const { env, threatReads } = providerEnv({ asn: "403005" }, row, false, gate);
+    const pending = providerData(env);
+    await new Promise((r) => setTimeout(r, 0));
+    // ASN-DROP read is still pending, yet all three threat reads have gone out.
+    expect(threatReads).toHaveLength(3);
+    release();
+    expect((await pending)["spamhaus_asn_drop"]).not.toBeNull();
   });
 });

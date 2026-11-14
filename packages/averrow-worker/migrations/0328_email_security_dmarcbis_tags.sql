@@ -16,3 +16,10 @@ ALTER TABLE email_security_scans ADD COLUMN dmarc_sp TEXT;
 ALTER TABLE email_security_scans ADD COLUMN dmarc_np TEXT;
 ALTER TABLE email_security_scans ADD COLUMN dmarc_t TEXT;
 ALTER TABLE email_security_scans ADD COLUMN dmarc_psd TEXT;
+
+-- Scoring rubric version (EMAIL_SCORE_RUBRIC_VERSION in email-security.ts).
+-- The RFC 9989 rubric (version 2) grades testing-mode and np-gap records
+-- lower. Grade-change alerting compares two scans only when both carry the
+-- current version, so the first rescan under a new rubric updates the
+-- stored grade silently instead of alerting. NULL = pre-version rubric (1).
+ALTER TABLE email_security_scans ADD COLUMN score_rubric_version INTEGER;

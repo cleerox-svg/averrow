@@ -16,6 +16,46 @@
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 
+/** Subset of runDarkWebMonitorBatch's return the summary needs. */
+export interface DarkWebMonitorStats {
+  brands_processed: number;
+  rows_upserted: number;
+  alerts_created: number;
+  ai_processed: number;
+  ai_upgraded: number;
+  ransomware_inserted: number;
+  ransomware_alerts: number;
+  ransomware_upstream_error: string | null;
+}
+
+/**
+ * At most ONE agent_outputs row per run. A failed ransomware leak-site pull
+ * (RansomLook down, shape changed, ingest threw) is folded into that row
+ * at severity 'high' — and the run is marked degraded ('partial') — instead
+ * of a silent 'success' with zero ransomware rows.
+ */
+export function buildDarkWebMonitorOutputs(stats: DarkWebMonitorStats): AgentOutputEntry[] {
+  const failed = stats.ransomware_upstream_error;
+  const didWork =
+    stats.brands_processed > 0 ||
+    stats.ransomware_inserted > 0 ||
+    stats.ransomware_alerts > 0;
+  if (!didWork && !failed) return [];
+  const ransomNote = failed
+    ? ` | ransomware DLS FAILED: ${failed}`
+    : stats.ransomware_inserted > 0 || stats.ransomware_alerts > 0
+      ? ` | ransomware DLS: ${stats.ransomware_inserted} new (${stats.ransomware_alerts} alerts)`
+      : "";
+  return [{
+    type: "diagnostic",
+    summary: `Dark-web scan: ${stats.brands_processed} brands, ${stats.rows_upserted} mentions upserted, ${stats.alerts_created} alerts, ${stats.ai_processed} AI-reviewed (${stats.ai_upgraded} promoted)${ransomNote}`,
+    severity: failed
+      ? "high"
+      : stats.alerts_created > 0 || stats.ransomware_alerts > 0 ? "medium" : "info",
+    details: { ...stats },
+  }];
+}
+
 export const darkWebMonitorAgent: AgentModule = {
   name: "dark_web_monitor",
   displayName: "Sounder",
@@ -41,34 +81,7 @@ export const darkWebMonitorAgent: AgentModule = {
 
     const stats = await runDarkWebMonitorBatch(env);
 
-    const outputs: AgentOutputEntry[] = [];
-    const didWork =
-      stats.brands_processed > 0 ||
-      stats.ransomware_inserted > 0 ||
-      stats.ransomware_alerts > 0;
-    // Ransomware leak-site pull failed (RansomLook down, shape changed,
-    // or the ingest threw): finish 'partial' with a high-severity output
-    // instead of a silent 'success' with zero ransomware rows.
-    if (stats.ransomware_upstream_error) {
-      outputs.push({
-        type: "diagnostic",
-        summary: `Ransomware leak-site ingest failed: ${stats.ransomware_upstream_error}`,
-        severity: "high",
-        details: { ransomware_upstream_error: stats.ransomware_upstream_error },
-      });
-    }
-    if (didWork) {
-      const ransomNote = stats.ransomware_inserted > 0 || stats.ransomware_alerts > 0
-        ? ` | ransomware DLS: ${stats.ransomware_inserted} new (${stats.ransomware_alerts} alerts)`
-        : "";
-      outputs.push({
-        type: "diagnostic",
-        summary: `Dark-web scan: ${stats.brands_processed} brands, ${stats.rows_upserted} mentions upserted, ${stats.alerts_created} alerts, ${stats.ai_processed} AI-reviewed (${stats.ai_upgraded} promoted)${ransomNote}`,
-        severity:
-          stats.alerts_created > 0 || stats.ransomware_alerts > 0 ? "medium" : "info",
-        details: stats,
-      });
-    }
+    const outputs = buildDarkWebMonitorOutputs(stats);
 
     return {
       itemsProcessed: stats.brands_processed,

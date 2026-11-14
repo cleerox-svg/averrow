@@ -10,10 +10,14 @@ import {
   matchVictimsToBrands,
   groupKey,
   runDarkWebRansomwareIngest,
+  titleCorroboratesDomain,
+  validDiscovered,
+  MAX_RESPONSE_BYTES,
   RANSOMLOOK_RECENT_URL,
   RANSOMLOOK_ATTRIBUTION,
 } from "../src/lib/dark-web-ransomware-ingest";
 import type { Env } from "../src/types";
+import { buildDarkWebMonitorOutputs, type DarkWebMonitorStats } from "../src/agents/darkWebMonitor";
 
 const LIVE_SHAPE = [
   {
@@ -147,6 +151,90 @@ describe("matchVictimsToBrands", () => {
   });
 });
 
+describe("link-derived victim domains are conservative", () => {
+  const post = (title: string, link: string) =>
+    parseRansomLookPosts([{ post_title: title, group_name: "g", link, misp_uuid: title }]).victims;
+
+  it("marks where the domain came from", () => {
+    expect(post("acme.example", "https://other.example/")[0]!.victim_domain_source).toBe("title");
+    expect(post("Kadick", "https://kadickintegrated.com/")[0]!.victim_domain_source).toBe("link");
+    expect(post("Kadick", "/blog/x")[0]!.victim_domain_source).toBeNull();
+  });
+
+  it("ignores a link host the title does not corroborate (news/file-share link to a brand apex)", () => {
+    const victims = post("Paragon Mechanical", "https://www.reuters.com/article/x");
+    const m = matchVictimsToBrands(victims, [{ id: "b_r", name: "Reuters", canonical_domain: "reuters.com" }]);
+    expect(m).toHaveLength(0);
+  });
+
+  it("accepts a link host when the title names the brand or the registrable label", () => {
+    const byName = matchVictimsToBrands(post("Kadick Integrated Ltd", "https://kadickintegrated.com/"), [
+      { id: "b_k", name: "Kadick Integrated", canonical_domain: "kadickintegrated.com" },
+    ]);
+    expect(byName).toHaveLength(1);
+    const byLabel = matchVictimsToBrands(post("ACME Corp (acme)", "https://shop.acme.co.uk/"), [
+      { id: "b_a", name: "Acme Holdings PLC", canonical_domain: "shop.acme.co.uk" },
+    ]);
+    expect(byLabel).toHaveLength(1);
+  });
+
+  it("title-derived domains match without corroboration (unchanged behaviour)", () => {
+    const m = matchVictimsToBrands(post("sportsmansguide.com", "/post/1"), [
+      { id: "b1", name: "Unrelated Name", canonical_domain: "sportsmansguide.com" },
+    ]);
+    expect(m).toHaveLength(1);
+  });
+
+  it("titleCorroboratesDomain ignores tokens shorter than 4 characters", () => {
+    expect(titleCorroboratesDomain("One Line Solutions", "One", "one.com")).toBe(false);
+    expect(titleCorroboratesDomain("Tesla Motors", "Tesla", "tesla.com")).toBe(true);
+    expect(titleCorroboratesDomain("x", "Kadick", "kadickintegrated.com")).toBe(false);
+  });
+});
+
+describe("validDiscovered", () => {
+  it("keeps ISO-ish dates and drops anything else", () => {
+    expect(validDiscovered("2026-11-13 18:25:57.040381")).toBe("2026-11-13 18:25:57.040381");
+    expect(validDiscovered("2026-11-11 19:21:24")).toBe("2026-11-11 19:21:24");
+    expect(validDiscovered("2026-11-11T19:21:24Z")).toBe("2026-11-11T19:21:24Z");
+    expect(validDiscovered("2026-11-11")).toBe("2026-11-11");
+    expect(validDiscovered("yesterday")).toBeNull();
+    expect(validDiscovered("2026-11-11 19:21:24<script>")).toBeNull();
+    expect(validDiscovered("2026-11-11 " + "1".repeat(40))).toBeNull();
+    expect(validDiscovered(1700000000)).toBeNull();
+  });
+
+  it("an invalid discovered value becomes posted_at null, the post still parses", () => {
+    const r = parseRansomLookPosts([{ post_title: "a.example", group_name: "g", discovered: "x".repeat(500) }]);
+    expect(r.invalid).toBe(0);
+    expect(r.victims[0]!.posted_at).toBeNull();
+  });
+});
+
+describe("buildDarkWebMonitorOutputs", () => {
+  const base: DarkWebMonitorStats = {
+    brands_processed: 3, rows_upserted: 1, alerts_created: 0, ai_processed: 0, ai_upgraded: 0,
+    ransomware_inserted: 0, ransomware_alerts: 0, ransomware_upstream_error: null,
+  };
+
+  it("writes exactly one high-severity row when the ransomware pull failed", () => {
+    const out = buildDarkWebMonitorOutputs({ ...base, ransomware_upstream_error: "ransomlook fetch failed: HTTP 503" });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.severity).toBe("high");
+    expect(out[0]!.summary).toMatch(/ransomware DLS FAILED: ransomlook fetch failed: HTTP 503/);
+  });
+
+  it("one row even when nothing else happened", () => {
+    const out = buildDarkWebMonitorOutputs({ ...base, brands_processed: 0, rows_upserted: 0, ransomware_upstream_error: "x" });
+    expect(out).toHaveLength(1);
+  });
+
+  it("healthy runs are unchanged: info, or nothing when idle", () => {
+    expect(buildDarkWebMonitorOutputs(base)[0]!.severity).toBe("info");
+    expect(buildDarkWebMonitorOutputs({ ...base, brands_processed: 0 })).toEqual([]);
+  });
+});
+
 describe("groupKey", () => {
   it("matches the SQL normalisation (lower, strip space/hyphen/underscore)", () => {
     expect(groupKey("Inc Ransom")).toBe("incransom");
@@ -227,11 +315,28 @@ describe("runDarkWebRansomwareIngest", () => {
     expect(r.ransomlook_invalid).toBe(1);
   });
 
-  it("an empty array is a quiet run, not a failure", async () => {
+  it("an empty array from /api/recent/300 is an upstream failure, not a quiet run", async () => {
     stubFetch(async () => new Response("[]", { status: 200 }));
+    const { env, calls } = mockEnv();
+    const r = await runDarkWebRansomwareIngest(env);
+    expect(r.upstream_error).toMatch(/empty array/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("all-private posts are a quiet run", async () => {
+    stubFetch(async () => new Response(JSON.stringify([{ post_title: "a.example", group_name: "x", private: true }]), { status: 200 }));
     const r = await runDarkWebRansomwareIngest(mockEnv().env);
     expect(r.upstream_error).toBeNull();
     expect(r.victims_total).toBe(0);
+  });
+
+  it("rejects a body over the size cap (declared or streamed)", async () => {
+    stubFetch(async () => new Response("[]", { status: 200, headers: { "content-length": String(MAX_RESPONSE_BYTES + 1) } }));
+    expect((await runDarkWebRansomwareIngest(mockEnv().env)).upstream_error).toMatch(/too large/);
+
+    const big = "[" + " ".repeat(MAX_RESPONSE_BYTES) + "]";
+    stubFetch(async () => new Response(new Blob([big]).stream(), { status: 200 }));
+    expect((await runDarkWebRansomwareIngest(mockEnv().env)).upstream_error).toMatch(/too large/);
   });
 
   it("inserts a matched victim with RansomLook attribution and the legacy-overlap guard", async () => {

@@ -132,8 +132,9 @@ const PIPELINE_META: Record<string, PipelineMeta> = {
     schedule: 'hourly',
     feed_name: 'surbl',
     why_grows:
-      'Grows when the SURBL feed pull fails (DNS, HTTP) or when the agent ' +
-      'is paused by Flight Control. Re-pulls on the next hourly cron tick.',
+      'Feed disabled (migration 0326): SURBL answers SERVFAIL to public ' +
+      'DNS resolvers, so every lookup failed. Re-enable only with a working ' +
+      'SURBL access route (its self-test must pass) and a licence check.',
   },
   virustotal: {
     label: 'VirusTotal',

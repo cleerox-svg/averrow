@@ -245,7 +245,9 @@ describe.skipIf(!hasSqlite())("IdP detections drill-down (real SQLite)", () => {
       registration: { domain_created_at: "2026-10-01T00:00:00Z", domain_age_days: 9, weaponization_hours: 12, weaponization_flag: "fast" },
       reputation: { vt_checked: true, vt_malicious: 4, gsb_checked: true, gsb_flagged: true, gsb_threat_type: "SOCIAL_ENGINEERING",
         greynoise_checked: false, greynoise_classification: null, seclookup_checked: false, seclookup_risk_score: null,
-        surbl_listed: false, dbl_listed: null },
+        // checked + not listed surfaces as null (unknown), never false —
+        // lib/dnsbl-verdict.ts.
+        surbl_listed: null, dbl_listed: null },
       timeline: { first_seen: "2026-10-10T09:00:00Z", last_seen: "2026-10-10T09:00:00Z", created_at: "2026-10-10T09:00:00Z", enriched_at: "2026-10-10T10:00:00Z" },
       // Latest threat-sourced takedown; the alert-sourced row is not this threat's link.
       takedown: { id: "td_new", status: "submitted", updated_at: "2026-10-10T11:00:00Z" },

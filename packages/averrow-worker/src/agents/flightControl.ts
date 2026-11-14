@@ -2165,6 +2165,13 @@ export const flightControlAgent: AgentModule = {
  * Feeds disabled on purpose (`manual:` paused_reason). One small read of
  * feed_configs (~100 rows) per FC tick. Fails soft to an empty set so a
  * read error never hides a real backlog.
+ *
+ * The exemption is deliberately limited to MIGRATION-retired feeds: their
+ * reason is `manual:<cause> — …` WITH a colon (e.g. migration 0326's
+ * `manual:licence_noncommercial`, `manual:blind_resolver`). An admin-UI
+ * pause (handlers/feeds.ts) writes a bare `manual` with no colon, does
+ * not match `LIKE 'manual:%'`, and is still counted: a temporarily paused
+ * feed's growing backlog is something an operator should keep seeing.
  */
 export async function loadManuallyDisabledFeeds(db: D1Database): Promise<Set<string>> {
   try {
