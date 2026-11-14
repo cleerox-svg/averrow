@@ -32,6 +32,7 @@ Feed licence and honesty audit (2026-11-14). No version bump yet.
 - **API:** new staff routes `GET /api/dmarc-reports/:brandId/setup` (`enrolled`, `eligible`, `verified_at`, `reverify_after_days`) and `/spoof-sources` (`?days` 7 default or 30; `verified_fail_messages`, `unverified_only`, `summary.unverified_only_sources`).
 - **Diagnostics:** `dmarc_ingest` block (`reports_24h`, `verified_reports_24h`, `incomplete_reports_24h`, `last_report_at`, `enrolled_brands`, `rollup_pending`, `dropped_unenrolled_24h`, `dropped_no_brand_24h`, `dropped_24h` per reason), `endpoint_version` 18.
 - **Migration 0329** also creates `dmarc_rate_counters` and ADDs columns to `dmarc_reports` (incl. `processing_at`, `rollup_attempts`) and `dmarc_report_records`: not re-appliable.
+- **Staff UI:** DMARC sensor card on the brand page Surface tab (`features/brands/components/DmarcSensorCard.tsx`, hooks `useDmarcSensor.ts`): enrolment state, the `rua=` value to copy, authorisation-record check (missing / could not check), 7 or 30 day pass/fail chart, failing sources by class with a visible Spamhaus ASN-DROP credit. `/brands/:id?tab=email` and the email "view details" jump scroll to it. Staff-only.
 - No public changelog entry or version bump (no customer-visible surface yet).
 
 ### Security

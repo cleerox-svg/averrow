@@ -13,7 +13,7 @@
 // and deep-links back to the v2 tabs for full lists. The v3 file
 // concerns itself only with the outcome-shaped IA.
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
@@ -49,6 +49,7 @@ import {
   EmailPostureCard,
   SocialRiskCard,
 } from './components/HeroCards';
+import { DmarcSensorCard, DMARC_SENSOR_ANCHOR_ID } from './components/DmarcSensorCard';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#C83C3C', high: '#E8923C', medium: '#DCAA32', low: '#78A0C8', info: '#5A80A8',
@@ -85,6 +86,21 @@ export function BrandDetailV3() {
 
   const [activeTab, setActiveTab] = useState<V3Tab>(initialTab);
 
+  // `?tab=email` is not a V3 tab (only surface/risk/threats/signals/workflow are), so
+  // email "view details" and notification deep links scroll to the DMARC sensor card on
+  // Surface instead. `?tab=social|apps|dark-web` are still no-ops (they land on Surface).
+  const scrollToSensor = () => {
+    document.getElementById(DMARC_SENSOR_ANCHOR_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const jumpTo = (tab: string) => {
+    if (tab === 'email') {
+      setActiveTab('surface');
+      setTimeout(scrollToSensor, 0);
+      return;
+    }
+    navigate(`/brands/${id}?tab=${tab}`);
+  };
+
   const { data, isLoading, isError, refetch } = useBrandFullDetail(id);
   useBrandTimeline(id, '7d'); // primes cache; not rendered in v3 yet
   const { data: darkWebData } = useDarkWebMentions(id);
@@ -104,6 +120,17 @@ export function BrandDetailV3() {
   const discoverProfiles = useDiscoverSocialProfiles();
 
   const brand = data?.brand;
+
+  // Deep link /brands/:id?tab=email: scroll once, after the brand has loaded and the card is mounted.
+  const deepLinked = useRef(false);
+  const wantsEmail = searchParams.get('tab') === 'email';
+  useEffect(() => {
+    if (wantsEmail && brand && !deepLinked.current) {
+      deepLinked.current = true;
+      scrollToSensor();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsEmail, brand]);
   const threats = data?.threats || [];
   const brandProviders = data?.providers || [];
   const brandCampaigns = data?.campaigns || [];
@@ -227,7 +254,7 @@ export function BrandDetailV3() {
           appListings={appListings}
           brandDomains={brandDomains}
           firmographics={firmographics}
-          onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
+          onJumpV2={jumpTo}
         />
       )}
 
@@ -245,7 +272,7 @@ export function BrandDetailV3() {
           alerts={alerts}
           scoreHistory={scoreHistory}
           narratives={narratives}
-          onJumpV2={(tab: string) => navigate(`/brands/${id}?tab=${tab}`)}
+          onJumpV2={jumpTo}
           onScanSocials={() => scanProfiles.mutate(id)}
           onDiscoverSocials={() => discoverProfiles.mutate(id)}
           onAiDeepScan={() => triggerAnalysis.mutate(id)}
@@ -659,6 +686,8 @@ function SurfaceTab({
           </div>
         </Card>
       </div>
+
+      <DmarcSensorCard brandId={brand.id} />
     </div>
   );
 }
