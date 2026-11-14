@@ -27,10 +27,11 @@ The engine uses Cloudflare DNS-over-HTTPS (DoH) at `https://cloudflare-dns.com/d
 Queries `_dmarc.{domain}` for TXT records containing `v=DMARC1`.
 
 Extracted fields:
-- `policy` — `none`, `quarantine`, or `reject`
-- `pct` — Percentage of messages the policy applies to
+- `policy` — `none`, `quarantine`, or `reject`. A missing or invalid `p=` (a typo, free text) is stored as `none`, flagged `policyInvalid` (recommendation: "DMARC p= value is invalid — receivers treat it as none"), and scored as no enforcement (`lib/dmarc-record.ts` `policyForStorage` / `pInvalid`); free text from the record is never stored in the policy column
+- `pct` — Percentage of messages the policy applies to (deprecated by RFC 9989; read only as the old spelling of testing mode)
 - `rua` — Aggregate report URI (indicates reporting is configured)
 - `ruf` — Forensic report URI
+- `sp`, `np`, `t`, `psd` — RFC 9989 tags (migration 0328, columns `dmarc_sp/np/t/psd`); `psd` is stored, never scored
 
 ### SPF Check
 
@@ -91,6 +92,10 @@ scores 95, still A+, and only domains reporting to Averrow lost 5 points.)
 | Policy = `quarantine` | +12 |
 | Policy = `none` | +4 |
 | Aggregate reporting (`rua`) configured, any destination | +5 |
+| Testing mode (`t=y`, or legacy `pct` < 100) | enforcing policy scores one level lower (reject earns 12, quarantine earns 4) |
+| `np=none` (or `sp=none` with no `np`) under quarantine / reject | -5 |
+
+**Rubric version.** `EMAIL_SCORE_RUBRIC_VERSION` (`src/email-security.ts`, currently 2; 1 = the pre-RFC 9989 rubric, stored as NULL) is stamped on every `email_security_scans` row as `score_rubric_version` (migration 0328). Grade-change detection compares two scans only when the previous scan was graded under the current version: the orchestrator's alert pass (`findEmailGradeChanges`, `lib/email-grade-change.ts`) requires `score_rubric_version = <current>` on the previous row, and Cartographer's band-crossing notification skips a previous scan with a different or NULL version (`isRubricOnlyGradeChange`). The first rescan after a rubric change therefore updates the stored grade silently instead of telling a customer their protection changed when their DNS did not. **Every future change to `calculateEmailSecurityScore` must bump the constant.**
 
 ### SPF (30 points max)
 
