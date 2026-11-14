@@ -46,6 +46,17 @@ export const darkWebMonitorAgent: AgentModule = {
       stats.brands_processed > 0 ||
       stats.ransomware_inserted > 0 ||
       stats.ransomware_alerts > 0;
+    // Ransomware leak-site pull failed (RansomLook down, shape changed,
+    // or the ingest threw): finish 'partial' with a high-severity output
+    // instead of a silent 'success' with zero ransomware rows.
+    if (stats.ransomware_upstream_error) {
+      outputs.push({
+        type: "diagnostic",
+        summary: `Ransomware leak-site ingest failed: ${stats.ransomware_upstream_error}`,
+        severity: "high",
+        details: { ransomware_upstream_error: stats.ransomware_upstream_error },
+      });
+    }
     if (didWork) {
       const ransomNote = stats.ransomware_inserted > 0 || stats.ransomware_alerts > 0
         ? ` | ransomware DLS: ${stats.ransomware_inserted} new (${stats.ransomware_alerts} alerts)`
@@ -65,6 +76,9 @@ export const darkWebMonitorAgent: AgentModule = {
       itemsUpdated: 0,
       output: stats,
       agentOutputs: outputs,
+      ...(stats.ransomware_upstream_error
+        ? { degraded: { reason: stats.ransomware_upstream_error } }
+        : {}),
     };
   },
 };
