@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -18,7 +18,7 @@ const SETUP: DmarcSetup = {
   domain: 'acme.com',
   state: 'receiving',
   rua_address: 'dmarc_rua@averrow.ca',
-  rua_value: 'mailto:dmarc_rua@averrow.ca',
+  rua_value: 'rua=mailto:dmarc_rua@averrow.ca',
   rua_includes_averrow: true,
   rua_checked_via: 'scan',
   authorization_required: true,
@@ -91,15 +91,17 @@ function route(setup: unknown, spoof: unknown | 'reject' = sources([])) {
   });
 }
 
-function renderCard() {
+function renderCard(brandId = 'b1') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return render(
+  const ui = (id: string) => (
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <DmarcSensorCard brandId="b1" />
+        <DmarcSensorCard brandId={id} />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const r = render(ui(brandId));
+  return { ...r, switchTo: (id: string) => r.rerender(ui(id)) };
 }
 
 beforeEach(() => {
@@ -133,10 +135,23 @@ describe('DmarcSensorCard setup states', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     route(SETUP);
     renderCard();
-    expect(await screen.findByText('rua=mailto:dmarc_rua@averrow.ca')).toBeInTheDocument();
+    const code = await screen.findByText('rua=mailto:dmarc_rua@averrow.ca');
+    expect(code.textContent).not.toMatch(/rua=rua=/);
     fireEvent.click(screen.getByRole('button', { name: 'Copy rua value' }));
+    expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenCalledWith('rua=mailto:dmarc_rua@averrow.ca');
     expect(await screen.findByText('Copied')).toBeInTheDocument();
+  });
+
+  it('reports a clipboard failure', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    route(SETUP);
+    renderCard();
+    await screen.findByText('rua=mailto:dmarc_rua@averrow.ca');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy rua value' }));
+    expect(await screen.findByText('Copy failed')).toBeInTheDocument();
+    expect(screen.getByText(/Select and copy the value manually/)).toBeInTheDocument();
   });
 
   it('shows last report and verified time when present, "none yet" otherwise', async () => {
@@ -150,6 +165,14 @@ describe('DmarcSensorCard setup states', () => {
     expect(await screen.findByText('none yet')).toBeInTheDocument();
   });
 
+  it('does not present a lapsed enrollment as currently verified', async () => {
+    route({ ...SETUP, enrolled: false });
+    renderCard();
+    expect(await screen.findByText('rua= last verified')).toBeInTheDocument();
+    expect(screen.getByText(/Verification lapsed \(older than 30 days\)/)).toBeInTheDocument();
+    expect(screen.queryByText('Enrolled')).not.toBeInTheDocument();
+  });
+
   it('explains an ineligible brand and hides the rua value and sources', async () => {
     route({ ...SETUP, eligible: false, enrolled: false });
     renderCard();
@@ -159,20 +182,31 @@ describe('DmarcSensorCard setup states', () => {
     expect(get.mock.calls.some(([u]) => String(u).includes('/spoof-sources'))).toBe(false);
   });
 
-  it('warns staff when the authorisation DNS record is missing', async () => {
+  it('warns staff when the authorisation DNS record is missing (false)', async () => {
     route({ ...SETUP, authorization_record_ok: false });
     renderCard();
-    const alert = await screen.findByRole('alert');
-    expect(within(alert).getByText('Authorisation DNS record missing')).toBeInTheDocument();
-    expect(alert).toHaveTextContent(/not something the customer publishes/);
-    expect(within(alert).getByText('acme.com._report._dmarc.averrow.ca')).toBeInTheDocument();
+    const title = await screen.findByText('Authorisation DNS record missing');
+    const box = title.parentElement as HTMLElement;
+    expect(box).toHaveTextContent(/may not send/);
+    expect(box).toHaveTextContent(/\*\._report\._dmarc\.averrow\.ca/);
+    expect(box).toHaveTextContent(/not something the customer publishes/);
+    expect(within(box).getByText('acme.com._report._dmarc.averrow.ca')).toBeInTheDocument();
+    expect(screen.queryByText(/Could not check the authorisation record/)).not.toBeInTheDocument();
   });
 
-  it('shows no authorisation warning when the record exists', async () => {
+  it('shows only a muted "could not check" note when the lookup failed (null)', async () => {
+    route({ ...SETUP, authorization_record_ok: null });
+    renderCard();
+    expect(await screen.findByText('Could not check the authorisation record just now.')).toBeInTheDocument();
+    expect(screen.queryByText('Authorisation DNS record missing')).not.toBeInTheDocument();
+  });
+
+  it('shows no authorisation notice when the record exists', async () => {
     route(SETUP);
     renderCard();
     await screen.findByText('Receiving reports');
     expect(screen.queryByText('Authorisation DNS record missing')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Could not check the authorisation record/)).not.toBeInTheDocument();
   });
 
   it('notes a failed live DNS lookup instead of implying no record', async () => {
@@ -183,28 +217,58 @@ describe('DmarcSensorCard setup states', () => {
 });
 
 describe('DmarcSensorCard sources', () => {
-  it('renders classes with honest labels, unverified-only marker and ASN-DROP badge', async () => {
-    route(SETUP, sources([
-      source(),
-      source({ source_ip: '198.51.100.9', source_class: 'unaligned_shared_esp', unverified_only: false, verified_fail_messages: 5, asn_drop_listed: true, provider: null, cluster_id: null }),
-      source({ source_ip: '192.0.2.1', source_class: 'forwarder_likely', unverified_only: false }),
-      source({ source_ip: '192.0.2.2', source_class: 'aligned_pass', unverified_only: false }),
-    ]));
+  const MIXED = () => sources([
+    source(),
+    source({ source_ip: '198.51.100.9', source_class: 'unaligned_shared_esp', unverified_only: false, verified_fail_messages: 5, asn_drop_listed: true, provider: null, cluster_id: null }),
+    source({ source_ip: '192.0.2.1', source_class: 'forwarder_likely', unverified_only: true }),
+    source({ source_ip: '192.0.2.2', source_class: 'aligned_pass', unverified_only: true }),
+  ]);
+
+  it('renders class labels, ASN-DROP badge, visible legend with Spamhaus credit and a provider link', async () => {
+    route(SETUP, MIXED());
     renderCard();
     expect(await screen.findByText('203.0.113.7')).toBeInTheDocument();
-    expect(screen.getByText('Spoofing candidate')).toBeInTheDocument();
-    expect(screen.getByText('Shared mail service (unattributed)')).toBeInTheDocument();
-    expect(screen.getByText("Brand's own mail (forwarded / alignment)")).toBeInTheDocument();
-    expect(screen.getByText('Aligned pass')).toBeInTheDocument();
-    // Only the first source is unverified-only.
-    expect(screen.getAllByText('Unverified only')).toHaveLength(1);
-    expect(screen.getByText('Unverified only').parentElement).toHaveAttribute('title', expect.stringMatching(/verification is not enabled yet/));
-    // ASN-DROP badge carries Spamhaus attribution.
-    const drop = screen.getByText('ASN-DROP');
-    expect(drop.parentElement).toHaveAttribute('title', expect.stringMatching(/The Spamhaus Project/));
-    // Provider links to the providers workspace; nothing is called "attacker" or "confirmed".
+    for (const l of ['Spoofing candidate', 'Shared mail service (unattributed)', 'Likely forwarded or own mail', 'Aligned pass']) {
+      expect(screen.getAllByText(l).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByText('ASN-DROP', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText(/Source: The Spamhaus Project/)).toBeVisible();
+    expect(screen.getByText(/shows none of the evidence that the brand's own or shared-service mail leaves behind/)).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'Example Hosting LLC' })[0]).toHaveAttribute('href', '/explore?tab=providers&focus=prov_1');
+    expect(screen.queryByText('Cluster')).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/attacker|confirmed (attack|spoof)/i);
+  });
+
+  it('formats seen dates, not raw ISO', async () => {
+    route(SETUP, sources([source()]));
+    renderCard();
+    expect(await screen.findByText('8 Nov to 13 Nov')).toBeInTheDocument();
+  });
+
+  it('all unverified: shows only the banner, no per-row badge', async () => {
+    route(SETUP, sources([source(), source({ source_ip: '192.0.2.5' })]));
+    renderCard();
+    await screen.findByText('203.0.113.7');
+    expect(screen.getByText(/None of the reports behind these sources came from a verified reporter/)).toBeInTheDocument();
+    expect(screen.queryByText('Verified')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unverified only')).not.toBeInTheDocument();
+  });
+
+  it('mixed: banner plus a Verified badge only on verified rows', async () => {
+    route(SETUP, MIXED());
+    renderCard();
+    await screen.findByText('203.0.113.7');
+    expect(screen.getByText(/3 of 4 sources are unverified/)).toBeInTheDocument();
+    const verified = screen.getAllByText('Verified');
+    expect(verified).toHaveLength(1);
+    expect(verified[0].closest('tr')).toHaveTextContent('198.51.100.9');
+  });
+
+  it('all verified: no banner and no badges', async () => {
+    route(SETUP, sources([source({ unverified_only: false, verified_fail_messages: 9 })]));
+    renderCard();
+    await screen.findByText('203.0.113.7');
+    expect(screen.queryByText(/verified reporter/)).not.toBeInTheDocument();
   });
 
   it('puts the most suspicious class first', async () => {
@@ -214,32 +278,87 @@ describe('DmarcSensorCard sources', () => {
     ]));
     renderCard();
     await screen.findByText('203.0.113.7');
-    const rows = screen.getAllByRole('row').slice(1);
-    expect(rows[0]).toHaveTextContent('203.0.113.7');
+    expect(within(screen.getByRole('region', { name: 'DMARC sending sources' })).getAllByRole('row')[1]).toHaveTextContent('203.0.113.7');
   });
 
-  it('exposes the daily pass/fail series with an accessible summary', async () => {
-    route(SETUP, sources([source()]));
-    renderCard();
-    expect(await screen.findByRole('img', { name: /2 days: 100 passed, 80 failed/ })).toBeInTheDocument();
+  it('exposes the daily figures in an sr-only table, and draws no bar for a zero-message day', async () => {
+    const data = sources([source()]);
+    data.daily = [
+      { date: '2026-11-11', total: 0, passed: 0, failed: 0 },
+      { date: '2026-11-12', total: 80, passed: 60, failed: 20 },
+      { date: '2026-11-13', total: 100, passed: 40, failed: 60 },
+    ];
+    route(SETUP, data);
+    const { container } = renderCard();
+    const t = await screen.findByRole('table', { name: 'Daily DMARC results' });
+    expect(within(t).getAllByRole('row')).toHaveLength(4);
+    expect(container.querySelectorAll('[title^="2026-11-"]')).toHaveLength(2);
   });
 
-  it('shows an informative (non-error) empty state before any reports exist', async () => {
-    route({ ...SETUP, state: 'awaiting_reports', last_report_at: null }, sources([]));
+  it('renders a stacked list instead of a table on a narrow screen', async () => {
+    const orig = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true });
+    try {
+      route(SETUP, sources([source()]));
+      renderCard();
+      await screen.findByText('203.0.113.7');
+      expect(screen.queryByRole('columnheader', { name: 'IP' })).not.toBeInTheDocument();
+      expect(screen.getByRole('list', { name: 'DMARC sending sources' })).toBeInTheDocument();
+      expect(screen.getByText('AS64500')).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: orig, configurable: true });
+    }
+  });
+
+  it.each([
+    ['awaiting_reports', /The rua= record is in place\. Sources appear once a mail provider sends its first daily report; each report is processed as soon as it arrives\./],
+    ['receiving', /Try the 30 day window/],
+    ['stale', /Try the 30 day window/],
+  ] as const)('empty state copy for %s', async (state, re) => {
+    route({ ...SETUP, state, last_report_at: state === 'awaiting_reports' ? null : SETUP.last_report_at }, sources([]));
     renderCard();
     expect(await screen.findByText('No sending sources in the last 7 days')).toBeInTheDocument();
-    expect(screen.getByText(/normal until reports arrive/)).toBeInTheDocument();
+    expect(screen.getByText(re)).toBeInTheDocument();
+    expect(screen.queryByText(/nightly|Nothing is wrong/)).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('refetches with days=30 when the toggle is switched', async () => {
+  it.each([
+    ['no_dmarc', 'No reports can arrive until the domain publishes a DMARC record with the rua= value above.'],
+    ['rua_missing', "No reports can arrive until the rua= value above is added to the domain's DMARC record."],
+  ] as const)('%s shows its own empty copy and does not fetch sources', async (state, copy) => {
+    route({ ...SETUP, state, last_report_at: null, rua_includes_averrow: false });
+    renderCard();
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(get.mock.calls.some(([u]) => String(u).includes('/spoof-sources'))).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Last 30 days' })).not.toBeInTheDocument();
+  });
+
+  it('refetches with days=30 when the toggle is switched, labelling the window from the data', async () => {
     route(SETUP, sources([source()]));
     renderCard();
     await screen.findByText('203.0.113.7');
-    expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.click(screen.getByRole('button', { name: '30d' }));
+    expect(screen.getByRole('button', { name: 'Last 7 days' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Last 30 days' }));
     await waitFor(() => expect(get.mock.calls.some(([u]) => String(u).endsWith('/spoof-sources?days=30'))).toBe(true));
-    expect(screen.getByRole('button', { name: '30d' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Last 30 days' })).toHaveAttribute('aria-pressed', 'true');
+    await screen.findByText(/in the last 30 days\./);
+  });
+
+  it('never shows the previous brand\'s sources after switching brand', async () => {
+    let releaseB2: (v: unknown) => void = () => {};
+    get.mockImplementation((url: string) => {
+      if (url.includes('/b1/setup') || url.includes('/b2/setup')) return Promise.resolve({ success: true, data: SETUP });
+      if (url.includes('/b1/spoof-sources')) return Promise.resolve({ success: true, data: sources([source({ source_ip: '203.0.113.7' })]) });
+      return new Promise((r) => { releaseB2 = r; });
+    });
+    const { switchTo } = renderCard('b1');
+    await screen.findByText('203.0.113.7');
+    switchTo('b2');
+    await waitFor(() => expect(get.mock.calls.some(([u]) => String(u).includes('/b2/spoof-sources'))).toBe(true));
+    expect(screen.queryByText('203.0.113.7')).not.toBeInTheDocument();
+    await act(async () => { releaseB2({ success: true, data: sources([source({ source_ip: '192.0.2.99' })]) }); });
+    expect(await screen.findByText('192.0.2.99')).toBeInTheDocument();
   });
 
   it('shows a card-level error with retry when sources fail, keeping setup visible', async () => {

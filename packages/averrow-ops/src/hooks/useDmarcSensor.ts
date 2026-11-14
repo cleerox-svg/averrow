@@ -5,7 +5,7 @@
 //   GET /api/dmarc-reports/:brandId/setup
 //   GET /api/dmarc-reports/:brandId/spoof-sources?days=7|30
 
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 export type DmarcSetupState =
@@ -17,13 +17,14 @@ export interface DmarcSetup {
   state: DmarcSetupState;
   /** Mailbox only, e.g. dmarc_rua@averrow.ca. */
   rua_address: string;
-  /** The exact `rua=` tag value to publish, e.g. `mailto:dmarc_rua@averrow.ca`. */
+  /** The full tag to publish, already prefixed: `rua=mailto:dmarc_rua@averrow.ca`. */
   rua_value: string;
   rua_includes_averrow: boolean;
   /** `live_dns_failed` = the resolver could not answer (not "no record"). */
   rua_checked_via: 'scan' | 'live_dns' | 'live_dns_failed';
   authorization_required: boolean;
-  authorization_record_ok: boolean;
+  /** null = the DNS lookup failed (unknown, not "missing"). */
+  authorization_record_ok: boolean | null;
   authorization_record_name: string | null;
   authorization_record_value: string;
   /** Verified within the re-verify window (current validity, not row existence). */
@@ -129,6 +130,8 @@ export function useDmarcSpoofSources(
     },
     enabled: !!brandId && (options.enabled ?? true),
     staleTime: 5 * 60_000,
-    placeholderData: keepPreviousData,
+    // Keep the previous window while toggling 7d/30d, but never another brand's rows.
+    // queryKey = ['dmarc-sensor', 'spoof-sources', brandId, days].
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === brandId ? prev : undefined),
   });
 }

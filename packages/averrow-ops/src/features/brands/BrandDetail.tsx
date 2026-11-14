@@ -13,7 +13,7 @@
 // and deep-links back to the v2 tabs for full lists. The v3 file
 // concerns itself only with the outcome-shaped IA.
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
@@ -86,15 +86,16 @@ export function BrandDetailV3() {
 
   const [activeTab, setActiveTab] = useState<V3Tab>(initialTab);
 
-  // `?tab=email` / `social` / `apps` / `dark-web` are not V3 tabs, so navigating
-  // to them silently landed on the default tab. Email detail lives in the DMARC
-  // sensor card on Surface: switch to it and scroll there.
+  // `?tab=email` is not a V3 tab (only surface/risk/threats/signals/workflow are), so
+  // email "view details" and notification deep links scroll to the DMARC sensor card on
+  // Surface instead. `?tab=social|apps|dark-web` are still no-ops (they land on Surface).
+  const scrollToSensor = () => {
+    document.getElementById(DMARC_SENSOR_ANCHOR_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const jumpTo = (tab: string) => {
     if (tab === 'email') {
       setActiveTab('surface');
-      setTimeout(() => {
-        document.getElementById(DMARC_SENSOR_ANCHOR_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 0);
+      setTimeout(scrollToSensor, 0);
       return;
     }
     navigate(`/brands/${id}?tab=${tab}`);
@@ -119,6 +120,17 @@ export function BrandDetailV3() {
   const discoverProfiles = useDiscoverSocialProfiles();
 
   const brand = data?.brand;
+
+  // Deep link /brands/:id?tab=email: scroll once, after the brand has loaded and the card is mounted.
+  const deepLinked = useRef(false);
+  const wantsEmail = searchParams.get('tab') === 'email';
+  useEffect(() => {
+    if (wantsEmail && brand && !deepLinked.current) {
+      deepLinked.current = true;
+      scrollToSensor();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsEmail, brand]);
   const threats = data?.threats || [];
   const brandProviders = data?.providers || [];
   const brandCampaigns = data?.campaigns || [];

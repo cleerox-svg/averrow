@@ -6,7 +6,7 @@
 // for an analyst, never a confirmed attacker. Source of truth for the shapes:
 // worker handlers/dmarcReports.ts (see hooks/useDmarcSensor.ts).
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Card, PageState, Table, Th, Td } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
@@ -21,6 +21,7 @@ import {
   type DmarcSpoofSource,
 } from '@/hooks/useDmarcSensor';
 import { parseUtc, timeAgo } from '@/lib/time';
+import { useWindowWidth } from '@/hooks/useWindowWidth';
 
 export const DMARC_SENSOR_ANCHOR_ID = 'dmarc-sensor';
 
@@ -62,7 +63,7 @@ const CLASS_COPY: Record<DmarcSourceClass, { label: string; severity: 'high' | '
   spoof_candidate: {
     label: 'Spoofing candidate',
     severity: 'high',
-    hint: 'Fails DMARC, is not a known sender for the brand and is not a shared mail service. A lead for an analyst, not a confirmed finding.',
+    hint: "Fails DMARC and shows none of the evidence that the brand's own or shared-service mail leaves behind. A lead, not a finding.",
   },
   unaligned_shared_esp: {
     label: 'Shared mail service (unattributed)',
@@ -70,7 +71,7 @@ const CLASS_COPY: Record<DmarcSourceClass, { label: string; severity: 'high' | '
     hint: 'Fails DMARC from a shared mail service. It could be the brand using a vendor without alignment or someone abusing the same service; the data cannot tell which.',
   },
   forwarder_likely: {
-    label: "Brand's own mail (forwarded / alignment)",
+    label: 'Likely forwarded or own mail',
     severity: 'low',
     hint: "Looks like the brand's own mail failing because of forwarding or alignment settings, not an outside sender.",
   },
@@ -83,8 +84,30 @@ const CLASS_COPY: Record<DmarcSourceClass, { label: string; severity: 'high' | '
 
 const CLASS_ORDER: DmarcSourceClass[] = ['spoof_candidate', 'unaligned_shared_esp', 'forwarder_likely', 'aligned_pass'];
 
-const UNVERIFIED_HINT =
-  'Unverified evidence: report-sender verification is not enabled yet, so every report is currently unverified and could be forged by anyone who can email the reporting address.';
+const ASN_DROP_HINT =
+  "the source's network is on Spamhaus's list of networks that should not be routed. Source: The Spamhaus Project.";
+
+const EMPTY_COPY: Record<DmarcSetupState, string> = {
+  no_dmarc: 'No reports can arrive until the domain publishes a DMARC record with the rua= value above.',
+  rua_missing: "No reports can arrive until the rua= value above is added to the domain's DMARC record.",
+  awaiting_reports:
+    'The rua= record is in place. Sources appear once a mail provider sends its first daily report; each report is processed as soon as it arrives.',
+  receiving: 'Reports arrived but none showed a non-passing source in this window. Try the 30 day window.',
+  stale: 'Reports arrived but none showed a non-passing source in this window. Try the 30 day window.',
+};
+
+/** States where the domain's DNS can deliver reports, so sources are worth fetching. */
+const FETCH_STATES: ReadonlySet<DmarcSetupState> = new Set(['awaiting_reports', 'receiving', 'stale']);
+
+function fmtDate(ts: string): string {
+  const d = parseUtc(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
+
+function seenRange(s: DmarcSpoofSource): string {
+  return s.first_seen === s.last_seen ? fmtDate(s.first_seen) : `${fmtDate(s.first_seen)} to ${fmtDate(s.last_seen)}`;
+}
 
 function formatTs(ts: string | null): string | null {
   if (!ts) return null;
@@ -96,10 +119,13 @@ function formatTs(ts: string | null): string | null {
 
 function CopyButton({ value, label }: { value: string; label: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
   const copy = () => {
-    const done = (s: 'copied' | 'failed') => {
-      setState(s);
-      setTimeout(() => setState('idle'), 2000);
+    const done = (st: 'copied' | 'failed') => {
+      setState(st);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setState('idle'), 2000);
     };
     try {
       navigator.clipboard.writeText(value).then(() => done('copied')).catch(() => done('failed'));
@@ -108,9 +134,14 @@ function CopyButton({ value, label }: { value: string; label: string }) {
     }
   };
   return (
-    <Button size="sm" variant="secondary" onClick={copy} aria-label={label}>
-      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : 'Copy'}
-    </Button>
+    <>
+      <Button size="sm" variant="secondary" onClick={copy} aria-label={label}>
+        {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : 'Copy'}
+      </Button>
+      <span role="status" className="sr-only">
+        {state === 'copied' ? 'Copied to clipboard' : state === 'failed' ? 'Copy failed. Select and copy the value manually.' : ''}
+      </span>
+    </>
   );
 }
 
@@ -124,13 +155,13 @@ function Mono({ children }: { children: React.ReactNode }) {
 
 // ── Daily pass/fail series ────────────────────────────────────────────────
 // Stacked bars (CSS only): height = that day's share of the busiest day,
-// failing portion on top in the critical colour.
+// failing segment on top. The bars are decorative; the figures are in an
+// sr-only table.
 function DailySeries({ daily }: { daily: DmarcDailyPoint[] }) {
   if (daily.length === 0) return null;
   const max = Math.max(1, ...daily.map((d) => d.total));
   const passed = daily.reduce((n, d) => n + d.passed, 0);
   const failed = daily.reduce((n, d) => n + d.failed, 0);
-  const summary = `Daily DMARC results over ${daily.length} day${daily.length === 1 ? '' : 's'}: ${passed.toLocaleString()} passed, ${failed.toLocaleString()} failed`;
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-1.5">
@@ -146,102 +177,151 @@ function DailySeries({ daily }: { daily: DmarcDailyPoint[] }) {
           </span>
         </span>
       </div>
-      <div role="img" aria-label={summary} className="flex items-end gap-[3px] h-14">
+      <div aria-hidden className="flex items-end gap-[3px] h-14">
         {daily.map((d) => {
+          if (d.total <= 0) return <div key={d.date} className="flex-1 min-w-[3px] max-w-[48px]" />;
           const h = Math.max(4, Math.round((d.total / max) * 100));
-          const failPct = d.total > 0 ? (d.failed / d.total) * 100 : 0;
           return (
             <div
               key={d.date}
               title={`${d.date}: ${d.passed.toLocaleString()} passed, ${d.failed.toLocaleString()} failed`}
-              className="flex-1 min-w-[3px] max-w-[24px] flex flex-col justify-end overflow-hidden rounded-sm bg-[var(--green)]"
+              className="flex-1 min-w-[3px] max-w-[48px] flex flex-col justify-end gap-px"
               style={{ height: `${h}%` }}
             >
-              <div className="bg-[var(--sev-critical)]" style={{ height: `${failPct}%` }} />
+              {d.failed > 0 && (
+                <div className="rounded-t-sm bg-[var(--sev-critical)]" style={{ flex: `${d.failed} 1 0`, minHeight: 2 }} />
+              )}
+              {d.passed > 0 && <div className="rounded-sm bg-[var(--green)]" style={{ flex: `${d.passed} 1 0` }} />}
             </div>
           );
         })}
       </div>
+      <table className="sr-only">
+        <caption>Daily DMARC results</caption>
+        <thead><tr><th scope="col">Date</th><th scope="col">Messages</th><th scope="col">Passed</th><th scope="col">Failed</th></tr></thead>
+        <tbody>
+          {daily.map((d) => (
+            <tr key={d.date}><td>{d.date}</td><td>{d.total}</td><td>{d.passed}</td><td>{d.failed}</td></tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-// ── Sources table ─────────────────────────────────────────────────────────
-function AsnDropBadge() {
+// ── Sources ───────────────────────────────────────────────────────────────
+type VerifyMode = 'all_unverified' | 'mixed' | 'none';
+
+function SourceBadges({ s, mode }: { s: DmarcSpoofSource; mode: VerifyMode }) {
+  const cls = CLASS_COPY[s.source_class];
   return (
-    <span title="Listed on the Spamhaus ASN-DROP list (networks Spamhaus advises not to route). Source: The Spamhaus Project.">
-      <Badge severity="high" size="xs">ASN-DROP</Badge>
-    </span>
+    <>
+      <Badge severity={cls.severity} size="xs" font="sans">{cls.label}</Badge>
+      {mode === 'mixed' && !s.unverified_only && (
+        <span className="ml-1.5"><Badge status="healthy" size="xs" font="sans">Verified</Badge></span>
+      )}
+    </>
   );
 }
 
-function SourceRow({ s }: { s: DmarcSpoofSource }) {
-  const cls = CLASS_COPY[s.source_class];
+function ProviderLink({ s }: { s: DmarcSpoofSource }) {
+  if (!s.provider) return <>—</>;
   return (
-    <tr>
+    <Link
+      to={`/explore?tab=providers&focus=${encodeURIComponent(s.provider.id)}`}
+      className="hover:underline [color:var(--primary-as-text)]"
+    >
+      {s.provider.name ?? s.provider.id}
+    </Link>
+  );
+}
+
+function SourceRow({ s, mode }: { s: DmarcSpoofSource; mode: VerifyMode }) {
+  return (
+    <tr title={s.cluster_id ? `Cluster ${s.cluster_id}` : undefined}>
       <Td className="font-mono text-xs whitespace-nowrap">{s.source_ip}</Td>
-      <Td>
-        <span title={cls.hint}>
-          <Badge severity={cls.severity} size="xs" font="sans">{cls.label}</Badge>
-        </span>
-        {s.unverified_only && (
-          <span className="ml-1.5" title={UNVERIFIED_HINT}>
-            <Badge status="inactive" size="xs" font="sans">Unverified only</Badge>
-          </span>
-        )}
-      </Td>
+      <Td><SourceBadges s={s} mode={mode} /></Td>
       <Td className="font-mono text-xs text-right whitespace-nowrap">
         {s.fail_messages.toLocaleString()} <span className="text-[var(--text-muted)]">/ {s.messages.toLocaleString()}</span>
       </Td>
       <Td className="text-xs">
         <div className="font-mono">{s.asn ?? '—'}</div>
         {s.as_org && <div className="text-[var(--text-secondary)] max-w-[200px] truncate" title={s.as_org}>{s.as_org}</div>}
-        {s.asn_drop_listed && <div className="mt-1"><AsnDropBadge /></div>}
+        {s.asn_drop_listed && <div className="mt-1"><Badge severity="high" size="xs">ASN-DROP</Badge></div>}
       </Td>
       <Td className="font-mono text-xs">{s.country_code ?? '—'}</Td>
-      <Td className="text-xs">
-        {s.provider ? (
-          <Link
-            to={`/explore?tab=providers&focus=${encodeURIComponent(s.provider.id)}`}
-            className="hover:underline [color:var(--primary-as-text)]"
-          >
-            {s.provider.name ?? s.provider.id}
-          </Link>
-        ) : '—'}
-      </Td>
-      <Td className="font-mono text-[11px] text-[var(--text-secondary)]">
-        {/* Ops has no operation/cluster detail route yet, so the id is shown as text. */}
-        {s.cluster_id ? <span title={s.cluster_id}>{s.cluster_id.length > 14 ? `${s.cluster_id.slice(0, 14)}…` : s.cluster_id}</span> : '—'}
-      </Td>
-      <Td className="font-mono text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
-        {s.first_seen === s.last_seen ? s.first_seen : `${s.first_seen} → ${s.last_seen}`}
-      </Td>
+      <Td className="text-xs"><ProviderLink s={s} /></Td>
+      <Td className="font-mono text-[11px] text-[var(--text-secondary)] whitespace-nowrap">{seenRange(s)}</Td>
     </tr>
   );
 }
 
-function SourcesTable({ sources }: { sources: DmarcSpoofSource[] }) {
+function SourceCard({ s, mode }: { s: DmarcSpoofSource; mode: VerifyMode }) {
+  return (
+    <li className="py-2.5 border-b border-[var(--border-base)] space-y-1" title={s.cluster_id ? `Cluster ${s.cluster_id}` : undefined}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-xs break-all">{s.source_ip}</span>
+        <span className="font-mono text-xs whitespace-nowrap">
+          {s.fail_messages.toLocaleString()} <span className="text-[var(--text-muted)]">/ {s.messages.toLocaleString()} failing</span>
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-1"><SourceBadges s={s} mode={mode} /></div>
+      <div className="text-xs text-[var(--text-secondary)]">
+        <span className="font-mono">{s.asn ?? '—'}</span>
+        {s.as_org ? ` ${s.as_org}` : ''}
+        {s.country_code ? ` · ${s.country_code}` : ''}
+        {s.asn_drop_listed && <span className="ml-1.5"><Badge severity="high" size="xs">ASN-DROP</Badge></span>}
+      </div>
+      {s.provider && <div className="text-xs"><ProviderLink s={s} /></div>}
+      <div className="font-mono text-[11px] text-[var(--text-muted)]">{seenRange(s)}</div>
+    </li>
+  );
+}
+
+function SourcesLegend({ sources }: { sources: DmarcSpoofSource[] }) {
+  const present = CLASS_ORDER.filter((c) => sources.some((s) => s.source_class === c));
+  const anyDrop = sources.some((s) => s.asn_drop_listed);
+  return (
+    <ul className="space-y-1 text-[11px] text-[var(--text-muted)]">
+      {present.map((c) => (
+        <li key={c}><span className="text-[var(--text-secondary)]">{CLASS_COPY[c].label}:</span> {CLASS_COPY[c].hint}</li>
+      ))}
+      {anyDrop && <li><span className="text-[var(--text-secondary)]">ASN-DROP:</span> {ASN_DROP_HINT}</li>}
+    </ul>
+  );
+}
+
+function SourcesTable({ sources, mode }: { sources: DmarcSpoofSource[]; mode: VerifyMode }) {
+  const narrow = useWindowWidth() < 640;
   const sorted = [...sources].sort(
     (a, b) => CLASS_ORDER.indexOf(a.source_class) - CLASS_ORDER.indexOf(b.source_class) || b.fail_messages - a.fail_messages,
   );
   return (
-    <Table label="DMARC sending sources" wrapperClassName="-mx-1">
-      <thead>
-        <tr>
-          <Th>IP</Th>
-          <Th>Class</Th>
-          <Th className="text-right">Failing / total</Th>
-          <Th>ASN</Th>
-          <Th>Country</Th>
-          <Th>Provider</Th>
-          <Th>Cluster</Th>
-          <Th>Seen</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {sorted.map((s) => <SourceRow key={s.source_ip} s={s} />)}
-      </tbody>
-    </Table>
+    <div className="space-y-3">
+      {narrow ? (
+        <ul aria-label="DMARC sending sources">
+          {sorted.map((s) => <SourceCard key={s.source_ip} s={s} mode={mode} />)}
+        </ul>
+      ) : (
+        <Table label="DMARC sending sources" wrapperClassName="-mx-1">
+          <thead>
+            <tr>
+              <Th>IP</Th>
+              <Th>Class</Th>
+              <Th className="text-right whitespace-nowrap">Failing / total</Th>
+              <Th>ASN</Th>
+              <Th>Country</Th>
+              <Th>Provider</Th>
+              <Th className="whitespace-nowrap">Seen</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((s) => <SourceRow key={s.source_ip} s={s} mode={mode} />)}
+          </tbody>
+        </Table>
+      )}
+      <SourcesLegend sources={sources} />
+    </div>
   );
 }
 
@@ -284,8 +364,15 @@ function SetupBlock({ setup }: { setup: DmarcSetup }) {
         <div className="flex gap-2"><dt className="text-[var(--text-tertiary)]">Last report</dt><dd className="text-[var(--text-primary)]">{lastReport ?? 'none yet'}</dd></div>
         {verifiedAt && (
           <div className="flex gap-2">
-            <dt className="text-[var(--text-tertiary)]">rua= verified</dt>
-            <dd className="text-[var(--text-primary)]">{verifiedAt}{setup.verified_via ? ` via ${setup.verified_via === 'scan' ? 'scan' : 'live DNS'}` : ''}</dd>
+            <dt className="text-[var(--text-tertiary)]">{setup.enrolled ? 'rua= verified' : 'rua= last verified'}</dt>
+            <dd className="text-[var(--text-primary)]">
+              {verifiedAt}{setup.verified_via ? ` via ${setup.verified_via === 'scan' ? 'scan' : 'live DNS'}` : ''}
+              {!setup.enrolled && (
+                <span className="block text-[var(--text-muted)]">
+                  Verification lapsed (older than {setup.reverify_after_days} days); it is re-checked when the next report arrives.
+                </span>
+              )}
+            </dd>
           </div>
         )}
       </dl>
@@ -295,24 +382,25 @@ function SetupBlock({ setup }: { setup: DmarcSetup }) {
           rua= value to publish on {setup.domain}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Mono>rua={setup.rua_value}</Mono>
-          <CopyButton value={`rua=${setup.rua_value}`} label="Copy rua value" />
+          <Mono>{setup.rua_value}</Mono>
+          <CopyButton value={setup.rua_value} label="Copy rua value" />
         </div>
         <p className="mt-1 text-[11px] text-[var(--text-muted)]">
           Goes in the domain's existing <span className="font-mono">_dmarc</span> TXT record; add it to the rua= list if there already is one.
         </p>
       </div>
 
-      {!setup.authorization_record_ok && (
+      {setup.authorization_required && setup.authorization_record_ok === false && (
         <div
-          role="alert"
           className="rounded-lg border p-3 text-xs"
           style={{ background: 'var(--sev-medium-bg)', borderColor: 'var(--sev-medium-border)', color: 'var(--text-primary)' }}
         >
           <div className="font-semibold [color:var(--sev-medium-text)]">Authorisation DNS record missing</div>
           <p className="mt-1 text-[var(--text-secondary)]">
-            Mail providers will not send this domain's reports to Averrow until the platform-side authorisation record exists
-            (RFC 7489 §7.1). This is an Averrow DNS step, not something the customer publishes.
+            Mail providers may not send this domain's reports to Averrow until an authorisation record exists (RFC 7489 §7.1).
+            The check found no <span className="font-mono">v=DMARC1</span> TXT answer for the per-domain name below. A single
+            platform wildcard, <span className="font-mono">*._report._dmarc.averrow.ca</span>, would cover every customer; either
+            the wildcard or the per-domain record fixes this. It is an Averrow DNS step, not something the customer publishes.
           </p>
           {setup.authorization_record_name && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -324,6 +412,9 @@ function SetupBlock({ setup }: { setup: DmarcSetup }) {
           )}
         </div>
       )}
+      {setup.authorization_required && setup.authorization_record_ok === null && (
+        <p className="text-xs text-[var(--text-muted)]">Could not check the authorisation record just now.</p>
+      )}
     </div>
   );
 }
@@ -333,7 +424,8 @@ export function DmarcSensorCard({ brandId }: { brandId: string }) {
   const [days, setDays] = useState<DmarcSpoofDays>(7);
   const setupQ = useDmarcSetup(brandId);
   const setup = setupQ.data;
-  const sourcesQ = useDmarcSpoofSources(brandId, days, { enabled: !!setup?.eligible });
+  const fetchSources = !!setup && setup.eligible && FETCH_STATES.has(setup.state);
+  const sourcesQ = useDmarcSpoofSources(brandId, days, { enabled: fetchSources });
   const sources = sourcesQ.data;
 
   let body: React.ReactNode;
@@ -356,6 +448,7 @@ export function DmarcSensorCard({ brandId }: { brandId: string }) {
         <SetupBlock setup={setup} />
         {setup.eligible && (
           <SourcesSection
+            fetching={fetchSources}
             days={days}
             onDays={setDays}
             state={setup.state}
@@ -370,7 +463,7 @@ export function DmarcSensorCard({ brandId }: { brandId: string }) {
   }
 
   return (
-    <Card id={DMARC_SENSOR_ANCHOR_ID} className="scroll-mt-24">
+    <Card id={DMARC_SENSOR_ANCHOR_ID} className="scroll-mt-16">
       <SectionLabel>DMARC report sensor</SectionLabel>
       <div className="mt-3">{body}</div>
     </Card>
@@ -378,8 +471,9 @@ export function DmarcSensorCard({ brandId }: { brandId: string }) {
 }
 
 function SourcesSection({
-  days, onDays, state, loading, error, onRetry, data,
+  fetching, days, onDays, state, loading, error, onRetry, data,
 }: {
+  fetching: boolean;
   days: DmarcSpoofDays;
   onDays: (d: DmarcSpoofDays) => void;
   state: DmarcSetupState;
@@ -389,32 +483,43 @@ function SourcesSection({
   data: ReturnType<typeof useDmarcSpoofSources>['data'];
 }) {
   const hasSources = !!data && data.sources.length > 0;
-  const allUnverified = hasSources && data.summary.unverified_only_sources === data.summary.sources;
+  const unverified = hasSources ? data.sources.filter((s) => s.unverified_only).length : 0;
+  const total = hasSources ? data.sources.length : 0;
+  const mode: VerifyMode = unverified === 0 ? 'none' : unverified === total ? 'all_unverified' : 'mixed';
+  // Label from what was loaded, not what was asked for (the toggle may be mid-fetch).
+  const windowDays = data?.days ?? days;
 
   return (
     <div className="space-y-3 border-t border-[var(--border-base)] pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-tertiary)]">Non-passing sending sources</div>
-        <div role="group" aria-label="Window" className="inline-flex rounded-md border border-[var(--border-base)] overflow-hidden">
-          {([7, 30] as const).map((d) => (
-            <button
-              key={d}
-              type="button"
-              aria-pressed={days === d}
-              onClick={() => onDays(d)}
-              className={`px-3 py-1 font-mono text-[11px] transition-colors ${
-                days === d ? 'bg-[var(--primary-tint)] [color:var(--primary-text)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              {d}d
-            </button>
-          ))}
-        </div>
+        {fetching && (
+          <div role="group" aria-label="Window" className="inline-flex rounded-md border border-[var(--border-base)] overflow-hidden">
+            {([7, 30] as const).map((d) => (
+              <button
+                key={d}
+                type="button"
+                aria-pressed={days === d}
+                aria-label={`Last ${d} days`}
+                onClick={() => onDays(d)}
+                className={`px-3 py-1 font-mono text-[11px] transition-colors ${
+                  days === d ? 'bg-[var(--primary-tint)] [color:var(--primary-text)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {loading && <PageState kind="loading" layout="inline" title="Loading sources…" />}
+      {!fetching && (
+        <PageState kind="empty" layout="card" compact title="No sending sources yet" description={EMPTY_COPY[state]} />
+      )}
 
-      {!loading && error && (
+      {fetching && loading && <PageState kind="loading" layout="inline" title="Loading sources…" />}
+
+      {fetching && !loading && error && (
         <PageState
           kind="error"
           layout="card"
@@ -425,7 +530,7 @@ function SourcesSection({
         />
       )}
 
-      {!loading && !error && data && (
+      {fetching && !loading && !error && data && (
         <>
           <DailySeries daily={data.daily} />
 
@@ -434,25 +539,25 @@ function SourcesSection({
               kind="empty"
               layout="card"
               compact
-              title={`No sending sources in the last ${days} days`}
-              description={
-                state === 'receiving' || state === 'stale'
-                  ? 'Reports arrived but none showed a non-passing source in this window. Try the 30 day window.'
-                  : 'This is normal until reports arrive. Sources appear after (1) the domain publishes a DMARC record with the rua= value above, (2) mail providers send their daily aggregate reports, and (3) the nightly rollup processes them. Nothing is wrong yet.'
-              }
+              title={`No sending sources in the last ${windowDays} days`}
+              description={EMPTY_COPY[state]}
             />
           ) : (
             <>
               <p className="text-[11px] text-[var(--text-muted)]">
                 {data.summary.sources.toLocaleString()} source{data.summary.sources === 1 ? '' : 's'},{' '}
                 {data.summary.spoof_candidate_sources.toLocaleString()} spoofing candidate{data.summary.spoof_candidate_sources === 1 ? '' : 's'},{' '}
-                {data.summary.fail_messages.toLocaleString()} failing messages. Classes are leads for an analyst, not confirmed findings.
+                {data.summary.fail_messages.toLocaleString()} failing messages in the last {windowDays} days. Classes are leads for an analyst, not confirmed findings.
                 {data.summary.truncated && ' Showing the top 200 by failing messages.'}
               </p>
-              {allUnverified && (
-                <p className="text-[11px] text-[var(--text-secondary)]">{UNVERIFIED_HINT}</p>
+              {mode !== 'none' && (
+                <p className="text-[11px] text-[var(--text-secondary)]">
+                  {mode === 'all_unverified'
+                    ? 'None of the reports behind these sources came from a verified reporter. Report-sender verification is not enabled yet, so this evidence could be forged by anyone who can email the reporting address.'
+                    : `${unverified} of ${total} sources are unverified: none of the reports behind them came from a verified reporter, so that evidence could be forged. Sources marked Verified have verified reports behind them.`}
+                </p>
               )}
-              <SourcesTable sources={data.sources} />
+              <SourcesTable sources={data.sources} mode={mode} />
             </>
           )}
         </>
