@@ -320,7 +320,6 @@ export const cartographerAgent: AgentModule = {
   reads: [
     { kind: "kv", namespace: "CACHE" },
     { kind: "d1_table", name: "brands" },
-    { kind: "d1_table", name: "dmarc_report_records" },
     { kind: "d1_table", name: "email_security_scans" },
     { kind: "d1_table", name: "geopolitical_campaign_links" },
     { kind: "d1_table", name: "geopolitical_campaigns" },
@@ -332,7 +331,6 @@ export const cartographerAgent: AgentModule = {
     { kind: "d1_table", name: "agent_events" },
     { kind: "d1_table", name: "alerts" },
     { kind: "d1_table", name: "brands" },
-    { kind: "d1_table", name: "dmarc_report_records" },
     { kind: "d1_table", name: "hosting_providers" },
     { kind: "d1_table", name: "merges" },
     { kind: "d1_table", name: "provider_threat_stats" },
