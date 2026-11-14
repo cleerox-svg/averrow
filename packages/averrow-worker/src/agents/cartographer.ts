@@ -321,6 +321,7 @@ export const cartographerAgent: AgentModule = {
     { kind: "kv", namespace: "CACHE" },
     { kind: "d1_table", name: "brands" },
     { kind: "d1_table", name: "dmarc_report_records" },
+    { kind: "d1_table", name: "email_security_scans" },
     { kind: "d1_table", name: "geopolitical_campaign_links" },
     { kind: "d1_table", name: "geopolitical_campaigns" },
     { kind: "d1_table", name: "hosting_providers" },

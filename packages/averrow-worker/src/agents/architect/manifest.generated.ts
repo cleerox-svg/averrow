@@ -194,6 +194,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "DB",
         "brands",
         "dmarc_report_records",
+        "email_security_scans",
         "geopolitical_campaign_links",
         "geopolitical_campaigns",
         "hosting_providers",
@@ -211,8 +212,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 1776,
-      "last_modified": "2026-11-14T05:51:52.173Z"
+      "loc": 1797,
+      "last_modified": "2026-11-14T07:22:31.826Z"
     },
     {
       "name": "ct-monitor",
@@ -284,8 +285,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "reads": [],
       "writes": [],
       "ai_models_referenced": [],
-      "loc": 85,
-      "last_modified": "2026-11-14T06:53:58.778Z"
+      "loc": 98,
+      "last_modified": "2026-11-14T07:09:16.453Z"
     },
     {
       "name": "evidence-assembler",
@@ -356,8 +357,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "push_subscriptions"
       ],
       "ai_models_referenced": [],
-      "loc": 3732,
-      "last_modified": "2026-11-14T05:58:25.170Z"
+      "loc": 3739,
+      "last_modified": "2026-11-14T07:08:10.688Z"
     },
     {
       "name": "geo-campaign-assessment",
@@ -1153,24 +1154,24 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/averrow-worker/src/feeds/spamhausAsnDrop.ts",
       "source_type": "http",
       "schedule": null,
-      "loc": 145,
-      "last_modified": "2026-11-14T05:58:58.889Z"
+      "loc": 150,
+      "last_modified": "2026-11-14T07:10:24.844Z"
     },
     {
       "name": "spamhausDbl",
       "path": "packages/averrow-worker/src/feeds/spamhausDbl.ts",
       "source_type": "unknown",
       "schedule": null,
-      "loc": 301,
-      "last_modified": "2026-11-14T05:57:42.395Z"
+      "loc": 346,
+      "last_modified": "2026-11-14T07:09:56.053Z"
     },
     {
       "name": "spamhausDrop",
       "path": "packages/averrow-worker/src/feeds/spamhausDrop.ts",
       "source_type": "http",
       "schedule": null,
-      "loc": 169,
-      "last_modified": "2026-11-14T05:58:21.098Z"
+      "loc": 172,
+      "last_modified": "2026-11-14T07:10:24.847Z"
     },
     {
       "name": "sslbl",
@@ -1185,8 +1186,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/averrow-worker/src/feeds/surbl.ts",
       "source_type": "unknown",
       "schedule": null,
-      "loc": 255,
-      "last_modified": "2026-11-14T05:57:42.395Z"
+      "loc": 302,
+      "last_modified": "2026-11-14T07:09:33.335Z"
     },
     {
       "name": "taxii",
