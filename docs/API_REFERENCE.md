@@ -298,8 +298,8 @@ Same `requireStaff` gate; handler `handlers/observatoryEvents.ts`. Feeds the Int
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/v1/agents/health` | User | Flight Control health snapshot (per-agent status + last run) |
-| GET | `/api/v1/agents/outputs` | User | Agent outputs ticker feed |
-| GET | `/api/v1/agents/activity` | User | Flight Control activity log (scaling decisions, circuit events) |
+| GET | `/api/v1/agents/outputs` | Staff | Agent outputs ticker feed |
+| GET | `/api/v1/agents/activity` | Staff | Flight Control activity log (scaling decisions, circuit events) |
 
 ## Trustbot
 
