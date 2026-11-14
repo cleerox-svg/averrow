@@ -1408,21 +1408,10 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   // intended: a change is no longer re-detected for up to 7 days (until the
   // next scan), so it stops re-alerting once the 24h dedupe lapses.
   try {
-    const gradeChanges = await env.DB.prepare(`
-      SELECT b.id AS brand_id, b.name, b.email_security_grade AS current_grade,
-             ess.email_security_grade AS previous_grade
-      FROM brands b
-      JOIN email_security_scans ess ON ess.brand_id = b.id
-      WHERE b.email_security_scanned_at >= datetime('now', '-23 hours')
-        AND b.email_security_grade IS NOT NULL
-        AND ess.email_security_grade IS NOT NULL
-        AND b.email_security_grade != ess.email_security_grade
-        AND ess.scanned_at < b.email_security_scanned_at
-        AND ess.scanned_at = (
-          SELECT MAX(e2.scanned_at) FROM email_security_scans e2
-          WHERE e2.brand_id = b.id AND e2.scanned_at < b.email_security_scanned_at
-        )
-    `).all<{ brand_id: string; name: string; current_grade: string; previous_grade: string }>();
+    // Only pairs graded under the current scoring rubric count — a rubric
+    // change updates stored grades silently (lib/email-grade-change.ts).
+    const { findEmailGradeChanges } = await import('../lib/email-grade-change');
+    const gradeChanges = { results: await findEmailGradeChanges(env.DB) };
 
     for (const change of gradeChanges.results) {
       // Check if we already created an alert for this grade transition recently

@@ -8,6 +8,9 @@ const DSHIELD_URL = "https://isc.sans.edu/api/topips/records/100?json";
  * SANS DShield — Top attacking IPs from Internet Storm Center honeypots.
  * Enriches existing threats with known-attacker data and adds new scanning threats.
  * Schedule: every 6 hours.
+ *
+ * DISABLED in prod by migration 0326: the ISC API data is CC BY-NC-SA 4.0
+ * (non-commercial). Re-enable only with written permission from SANS.
  */
 export const dshield: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {

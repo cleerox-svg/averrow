@@ -1,9 +1,22 @@
 // Dark Web — Ransomware Leak Site (DLS) Ingest
 //
-// Global-pull → SQL brand-match → insert-matches. One external
-// fetch per source per run, matched against the monitored-brand
-// catalog in JS, inserts only the brand-matched victims directly
-// into dark_web_mentions with source='ransomware_leak'.
+// Global-pull → brand-match → insert-matches. One external fetch per
+// run, matched against the monitored-brand catalog in JS, inserts only
+// the brand-matched victims directly into dark_web_mentions with
+// source='ransomware_leak'.
+//
+// Source: RansomLook (https://www.ransomlook.io) — the maintained
+// successor of ransomwatch. All RansomLook content, API responses
+// included, is CC BY 4.0 ("share and adapt for any purpose, even
+// commercially, provided that appropriate credit is given" —
+// ransomlook.io/about). Every stored row and alert names RansomLook and
+// the licence (RANSOMLOOK_ATTRIBUTION below); UI that shows these rows
+// must show the credit too.
+//
+// Replaced (2026-11): ransomwatch `posts.json` (repo archived, newest
+// entry 2025-06-16) and `api.ransomware.live/recentvictims` (deprecated
+// v1; ransomware.live terms §5.2 prohibit commercial use without written
+// approval). Neither is fetched any more.
 //
 // Why this path (not feeds/ + insertThreat):
 //   - threats.threat_type has a CHECK constraint that does NOT
@@ -15,47 +28,77 @@
 //     monitor, just a victim brand to alert on. Direct landing in
 //     dark_web_mentions is semantically correct.
 //
+// Scheduling: called at the top of runDarkWebMonitorBatch
+// (scanners/dark-web-monitor.ts), dispatched by the dedicated dark_web
+// cron `14 */6 * * *` through executeAgent('dark_web_monitor'). An
+// upstream failure (HTTP error, timeout, body > 5 MB, non-JSON, an empty
+// array, or a non-empty body that parses to zero posts) is returned as
+// `upstream_error` and the
+// agent finishes the run 'partial' (AgentResult.degraded) instead of a
+// silent 'success' with zero rows.
+//
 // D1 cost per run:
-//   - 1 SELECT of monitored brands (canonical_domain + name) — KV-
-//     cacheable in a later iteration; current call is hourly-bound
-//     by the orchestrator so we leave it bare.
-//   - N INSERT ... ON CONFLICT DO UPDATE where N = brand-matched
+//   - 1 SELECT of monitored brands (canonical_domain + name).
+//   - N INSERT ... SELECT ... WHERE NOT EXISTS where N = brand-matched
 //     victim count this run (single digits in steady state).
-// External calls: 2 (one per source). Both are public, no auth.
-// AI tokens: 0.
+// External calls: 1. Public, no auth. AI tokens: 0.
 
 import { createAlert } from './alerts';
 import { logger } from './logger';
+import { registrableDomain } from './registrable-domain';
 import type { Env } from '../types';
 
-interface RansomwatchPost {
-  post_title: string;
-  group_name: string;
-  discovered: string;
-  description?: string;
-  website?: string;
-  post_url?: string;
+// ─── RansomLook source definition ─────────────────────────────────
+// The ONE place the endpoint and field mapping live. Shape verified
+// live from this codebase's sandbox on 2026-11-14 against
+// https://www.ransomlook.io/api/recent/300 (swagger 2.1.0 at
+// /swagger.json, operationId get_recent_post): a JSON array of
+//   { post_title: string, group_name: string, discovered: string
+//     ("YYYY-MM-DD HH:MM:SS[.ffffff]", UTC, no zone), description:
+//     string|null, link: string|null (relative path on the group's site,
+//     an .onion URL, a fragment, or occasionally the victim's own
+//     website), magnet: string|null, screen: string|null, private:
+//     boolean, misp_uuid: string (UUIDv5 — deterministic per post) }.
+// There is NO dedicated victim-website field: the victim domain comes
+// from post_title when the title is a domain/URL (~10% of posts), else
+// from a clearnet (non-.onion) absolute `link` — and a link-derived
+// domain only matches when the title names the brand or the domain's
+// registrable label (titleCorroboratesDomain). `discovered` is kept only
+// when it is an ISO-ish date ≤ 40 chars (else posted_at is NULL).
+// `/api/recent/<n>` returns the n most recent posts across all groups;
+// 300 ≈ 4-5 days at current volume, so the 6-hourly run overlaps
+// itself many times over and survives several missed runs.
+
+export const RANSOMLOOK_SOURCE_NAME = 'ransomlook';
+export const RANSOMLOOK_RECENT_URL = 'https://www.ransomlook.io/api/recent/300';
+export const RANSOMLOOK_LICENSE = 'CC-BY-4.0';
+export const RANSOMLOOK_ATTRIBUTION =
+  'Source: RansomLook (https://www.ransomlook.io), licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)';
+
+/** Public RansomLook group page; the fragment makes the URL unique per post. */
+function ransomLookPostUrl(group: string, postKey: string): string {
+  return `https://www.ransomlook.io/group/${encodeURIComponent(group)}#${encodeURIComponent(postKey)}`;
 }
 
-interface RansomwareLiveVictim {
-  victim?: string;
-  group?: string;
-  group_name?: string;
-  discovered?: string;
-  published?: string;
-  website?: string;
-  domain?: string;
-  url?: string;
-  description?: string;
-}
+/** Hosts a `link` may point at that are never a victim's own website. */
+const NON_VICTIM_LINK_HOSTS = new Set([
+  'ransomlook.io', 't.me', 'telegram.me', 'telegram.org', 'x.com', 'twitter.com',
+  'mega.nz', 'mega.io', 'gofile.io', 'mediafire.com', 'anonfiles.com', 'pixeldrain.com',
+  'github.com', 'pastebin.com', 'tox.chat', 'bit.ly',
+]);
 
-interface NormalizedVictim {
-  source_name: 'ransomwatch' | 'ransomware_live';
+export interface NormalizedVictim {
+  source_name: typeof RANSOMLOOK_SOURCE_NAME;
   group_name: string;
-  victim_label: string;          // human title (post or company name)
+  victim_label: string;          // human title (post title)
   victim_domain: string | null;  // extracted hostname when available
+  /** Where victim_domain came from: a domain-shaped post title, or a
+   *  clearnet `link` (weaker — only trusted when the title corroborates
+   *  it, see matchVictimsToBrands). */
+  victim_domain_source: 'title' | 'link' | null;
   posted_at: string | null;
-  post_url: string | null;
+  /** Stable per-post URL on ransomlook.io — the dedup key (source_url). */
+  post_url: string;
   description: string | null;
 }
 
@@ -68,39 +111,149 @@ interface BrandRow {
 export interface RansomwareIngestResult {
   skipped: boolean;
   reason?: string;
-  ransomwatch_fetched: number;
-  ransomware_live_fetched: number;
+  ransomlook_fetched: number;
+  /** Items in the response that could not be parsed into a post. */
+  ransomlook_invalid: number;
   victims_total: number;
   brand_matches: number;
   inserted: number;
   alerts_created: number;
   durationMs: number;
   errors: string[];
+  /** Set when the upstream pull failed — the run is degraded, not quiet. */
+  upstream_error: string | null;
 }
 
-const RANSOMWATCH_URL =
-  'https://raw.githubusercontent.com/joshhighet/ransomwatch/main/posts.json';
-const RANSOMWARE_LIVE_URL = 'https://api.ransomware.live/recentvictims';
 const FETCH_TIMEOUT_MS = 20_000;
+/** Largest response body read. /api/recent/300 is ~370 KB; anything far
+ *  larger is not the documented shape (or an upstream fault). */
+export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+/** `discovered` is "YYYY-MM-DD HH:MM:SS[.ffffff]"; accept ISO-ish dates only. */
+const DISCOVERED_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+const MAX_DISCOVERED_LEN = 40;
+/** Minimum normalised length of a brand name / domain label used to
+ *  corroborate a link-derived victim domain (rejects "one", "line"). */
+const MIN_CORROBORATION_LEN = 4;
 const MAX_VICTIMS_PER_SOURCE = 500;
+/** One-time overlap guard window for rows ingested from the retired sources. */
+const LEGACY_OVERLAP_DAYS = 30;
 
-function hostnameOf(input: string | null | undefined): string | null {
+const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** Hostname from a URL or bare domain; null unless it is a dotted DNS name. */
+export function hostnameOf(input: string | null | undefined): string | null {
   if (!input) return null;
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-  try {
-    const url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
-    const host = url.hostname.toLowerCase();
-    // Strip www. for matching against canonical_domain.
-    return host.startsWith('www.') ? host.slice(4) : host;
-  } catch {
-    // Bare hostname-ish string — try as-is.
-    const bare = trimmed.toLowerCase().replace(/^www\./, '');
-    return /^[a-z0-9.-]+\.[a-z]{2,}$/.test(bare) ? bare : null;
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  let host: string;
+  if (/^https?:\/\//.test(trimmed)) {
+    try {
+      host = new URL(trimmed).hostname;
+    } catch {
+      return null;
+    }
+  } else {
+    host = trimmed.split(/[/?#]/, 1)[0] ?? '';
   }
+  host = host.replace(/\.$/, '').replace(/^www\./, '');
+  return DOMAIN_RE.test(host) ? host : null;
 }
 
-async function fetchJson<T>(url: string): Promise<T | null> {
+/** Victim domain from a RansomLook `link` — absolute clearnet URLs only. */
+function victimDomainFromLink(link: string | null): string | null {
+  if (!link || !/^https?:\/\//i.test(link.trim())) return null;
+  const host = hostnameOf(link);
+  if (!host || host.endsWith('.onion')) return null;
+  for (const h of NON_VICTIM_LINK_HOSTS) {
+    if (host === h || host.endsWith(`.${h}`)) return null;
+  }
+  return host;
+}
+
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
+/** `discovered` if it is an ISO-ish date of ≤40 chars, else null. */
+export function validDiscovered(v: unknown): string | null {
+  const d = str(v);
+  if (!d || d.length > MAX_DISCOVERED_LEN || !DISCOVERED_RE.test(d)) return null;
+  return d;
+}
+
+export interface RansomLookParseResult {
+  victims: NormalizedVictim[];
+  /** Array items that were not usable posts (missing title/group, wrong type). */
+  invalid: number;
+  /** Total array items seen (before the per-run cap). */
+  total: number;
+  /** Set when the body is not an array at all. */
+  error: string | null;
+}
+
+/**
+ * Parse a RansomLook `/api/recent` body defensively. Unknown fields are
+ * ignored, missing optional fields tolerated; an item without a
+ * post_title or group_name is counted invalid. Posts flagged
+ * `private: true` are skipped (RansomLook withholds them publicly) and
+ * are not counted invalid.
+ */
+export function parseRansomLookPosts(body: unknown): RansomLookParseResult {
+  if (!Array.isArray(body)) {
+    return { victims: [], invalid: 0, total: 0, error: 'response is not a JSON array' };
+  }
+  const victims: NormalizedVictim[] = [];
+  let invalid = 0;
+  for (const item of body.slice(0, MAX_VICTIMS_PER_SOURCE)) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) { invalid++; continue; }
+    const rec = item as Record<string, unknown>;
+    const title = str(rec.post_title);
+    const group = str(rec.group_name);
+    if (!title || !group) { invalid++; continue; }
+    if (rec.private === true) continue;
+    const link = str(rec.link);
+    const mispUuid = str(rec.misp_uuid);
+    const titleDomain = hostnameOf(title);
+    const linkDomain = titleDomain ? null : victimDomainFromLink(link);
+    victims.push({
+      source_name: RANSOMLOOK_SOURCE_NAME,
+      group_name: group.slice(0, 120),
+      victim_label: title.slice(0, 200),
+      victim_domain: titleDomain ?? linkDomain,
+      victim_domain_source: titleDomain ? 'title' : linkDomain ? 'link' : null,
+      posted_at: validDiscovered(rec.discovered),
+      post_url: ransomLookPostUrl(group, mispUuid ?? title),
+      description: str(rec.description),
+    });
+  }
+  return { victims, invalid, total: body.length, error: null };
+}
+
+/** Read a body as text, giving up (null) once it exceeds maxBytes. */
+async function readCappedText(res: Response, maxBytes: number): Promise<string | null> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(size);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return new TextDecoder().decode(buf);
+}
+
+type FetchOutcome = { ok: true; body: unknown } | { ok: false; error: string };
+
+async function fetchRansomLook(url: string): Promise<FetchOutcome> {
   try {
     const init: RequestInit = {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -109,54 +262,41 @@ async function fetchJson<T>(url: string): Promise<T | null> {
         'User-Agent': 'Averrow/1.0 (+https://averrow.com)',
       },
     };
-    // Edge cache for 10 min — both sources publish at slow cadence
-    // (ransomwatch: ~hourly commits; ransomware.live: ~hourly).
+    // Edge cache for 10 min — RansomLook scrapes leak sites roughly hourly.
     (init as RequestInit & { cf?: unknown }).cf = {
       cacheTtl: 600,
       cacheEverything: true,
     };
     const res = await fetch(url, init);
     if (!res.ok) {
-      logger.warn('dark_web_ransomware_fetch_http', { url, status: res.status });
-      return null;
+      return { ok: false, error: `HTTP ${res.status}` };
     }
-    return await res.json() as T;
+    const declared = Number(res.headers.get('content-length') ?? '');
+    if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+      await res.body?.cancel().catch(() => {});
+      return { ok: false, error: `response too large (${declared} bytes > ${MAX_RESPONSE_BYTES})` };
+    }
+    const text = await readCappedText(res, MAX_RESPONSE_BYTES);
+    if (text === null) {
+      return { ok: false, error: `response too large (> ${MAX_RESPONSE_BYTES} bytes)` };
+    }
+    try {
+      return { ok: true, body: JSON.parse(text) as unknown };
+    } catch {
+      return { ok: false, error: `non-JSON response (${text.length} bytes)` };
+    }
   } catch (err) {
-    logger.warn('dark_web_ransomware_fetch_error', {
-      url,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-function normalizeRansomwatch(posts: RansomwatchPost[]): NormalizedVictim[] {
-  return posts.slice(0, MAX_VICTIMS_PER_SOURCE).map((p) => ({
-    source_name: 'ransomwatch',
-    group_name: p.group_name,
-    victim_label: p.post_title.slice(0, 200),
-    victim_domain: hostnameOf(p.website),
-    posted_at: p.discovered ?? null,
-    post_url: p.post_url ?? null,
-    description: p.description ?? null,
-  }));
-}
-
-function normalizeRansomwareLive(victims: RansomwareLiveVictim[]): NormalizedVictim[] {
-  return victims.slice(0, MAX_VICTIMS_PER_SOURCE).map((v) => {
-    const group = v.group_name ?? v.group ?? 'unknown';
-    const label = v.victim ?? v.domain ?? v.website ?? 'unnamed victim';
-    const domain = hostnameOf(v.domain ?? v.website ?? v.victim ?? null);
-    return {
-      source_name: 'ransomware_live',
-      group_name: group,
-      victim_label: label.slice(0, 200),
-      victim_domain: domain,
-      posted_at: v.published ?? v.discovered ?? null,
-      post_url: v.url ?? null,
-      description: v.description ?? null,
-    } satisfies NormalizedVictim;
-  });
+/**
+ * Group-name key that survives spacing/hyphen differences between trackers
+ * ("inc ransom" vs "incransom"). Must match the SQL expression in the
+ * legacy-overlap guard below: lower() with ' ', '-', '_' removed.
+ */
+export function groupKey(group: string): string {
+  return group.toLowerCase().replace(/[ _-]/g, '');
 }
 
 interface MatchedVictim extends NormalizedVictim {
@@ -164,7 +304,26 @@ interface MatchedVictim extends NormalizedVictim {
   brand_name: string;
 }
 
-function matchVictimsToBrands(
+function alnum(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * True when the post title contains the brand name or the victim domain's
+ * registrable label (case-insensitive, ignoring punctuation/spacing).
+ * Tokens shorter than MIN_CORROBORATION_LEN never corroborate.
+ */
+export function titleCorroboratesDomain(title: string, brandName: string, domain: string): boolean {
+  const t = alnum(title);
+  if (!t) return false;
+  const name = alnum(brandName);
+  if (name.length >= MIN_CORROBORATION_LEN && t.includes(name)) return true;
+  const reg = registrableDomain(domain) ?? domain;
+  const label = alnum(reg.split('.')[0] ?? '');
+  return label.length >= MIN_CORROBORATION_LEN && t.includes(label);
+}
+
+export function matchVictimsToBrands(
   victims: NormalizedVictim[],
   brands: BrandRow[],
 ): MatchedVictim[] {
@@ -177,8 +336,10 @@ function matchVictimsToBrands(
   // merge cron produced ~94% false-positive CRITICAL alerts. Audit
   // confirmed only domain-exact matches survived.
   //
-  // DLS posts always carry a victim website (`website` / `domain`
-  // field per source), so domain-exact is the right precision/recall
+  // RansomLook posts carry no victim-website field; the domain comes
+  // from a domain-shaped post_title or a clearnet `link` (see
+  // parseRansomLookPosts), so recall is lower than with the retired
+  // ransomware.live feed. Domain-exact stays the right precision/recall
   // tradeoff for unattended CRITICAL alerting. A stricter name
   // matcher (require token boundaries + name length >= 5 + stoplist +
   // demote severity from CRITICAL to MEDIUM) can be added later if
@@ -196,7 +357,14 @@ function matchVictimsToBrands(
     if (!v.victim_domain) continue;
     const brand = byDomain.get(v.victim_domain) ?? null;
     if (!brand) continue;
-    const dedupKey = `${brand.id}:${v.source_name}:${v.post_url ?? v.victim_label}`;
+    // A link-derived domain is weaker evidence: a post can link to a
+    // news article, file share or vendor site whose apex happens to be a
+    // monitored brand. Trust it only when the post title names the brand
+    // or the domain's registrable label.
+    if (v.victim_domain_source === 'link' && !titleCorroboratesDomain(v.victim_label, brand.name, v.victim_domain)) {
+      continue;
+    }
+    const dedupKey = `${brand.id}:${v.post_url}`;
     if (seenPerBrand.has(dedupKey)) continue;
     seenPerBrand.add(dedupKey);
     matched.push({ ...v, brand_id: brand.id, brand_name: brand.name });
@@ -205,49 +373,70 @@ function matchVictimsToBrands(
 }
 
 /**
- * Pull ransomwatch + ransomware.live victim feeds, brand-match
- * against the monitored-brand catalog, insert matches directly
- * into dark_web_mentions with source='ransomware_leak'. Creates a
- * CRITICAL alert on each genuinely new insert. Idempotent via the
+ * Pull RansomLook's recent leak-site posts, brand-match against the
+ * monitored-brand catalog, insert matches directly into
+ * dark_web_mentions with source='ransomware_leak'. Creates a CRITICAL
+ * alert on each genuinely new insert. Idempotent via the
  * dark_web_mentions unique index (brand_id, source, source_url).
  */
 export async function runDarkWebRansomwareIngest(env: Env): Promise<RansomwareIngestResult> {
   const start = Date.now();
   const base: RansomwareIngestResult = {
     skipped: false,
-    ransomwatch_fetched: 0,
-    ransomware_live_fetched: 0,
+    ransomlook_fetched: 0,
+    ransomlook_invalid: 0,
     victims_total: 0,
     brand_matches: 0,
     inserted: 0,
     alerts_created: 0,
     durationMs: 0,
     errors: [],
+    upstream_error: null,
   };
 
   try {
-    // ── 1. Pull both sources in parallel ──
-    const [rwRaw, rlRaw] = await Promise.all([
-      fetchJson<RansomwatchPost[]>(RANSOMWATCH_URL),
-      fetchJson<RansomwareLiveVictim[]>(RANSOMWARE_LIVE_URL),
-    ]);
+    // ── 1. Pull RansomLook ──
+    const fetched = await fetchRansomLook(RANSOMLOOK_RECENT_URL);
+    if (!fetched.ok) {
+      const upstreamError = `ransomlook fetch failed: ${fetched.error}`;
+      logger.warn('dark_web_ransomware_fetch_failed', { url: RANSOMLOOK_RECENT_URL, error: fetched.error });
+      return { ...base, upstream_error: upstreamError, errors: [upstreamError], durationMs: Date.now() - start };
+    }
 
-    const rwPosts = Array.isArray(rwRaw) ? rwRaw : [];
-    const rlVictims = Array.isArray(rlRaw) ? rlRaw : [];
-
-    const rwNormalized = normalizeRansomwatch(rwPosts);
-    const rlNormalized = normalizeRansomwareLive(rlVictims);
-    const allVictims = [...rwNormalized, ...rlNormalized];
-
-    if (allVictims.length === 0) {
-      logger.info('dark_web_ransomware_empty', {
-        ransomwatch: rwPosts.length,
-        ransomware_live: rlVictims.length,
-      });
+    const parsed = parseRansomLookPosts(fetched.body);
+    if (parsed.error || (parsed.total > 0 && parsed.victims.length === 0 && parsed.invalid > 0)) {
+      // A non-empty body that yields zero posts means the upstream shape
+      // changed — a failed pull, never a quiet "nothing new".
+      const upstreamError = parsed.error
+        ? `ransomlook response unusable: ${parsed.error}`
+        : `ransomlook response unusable: 0 of ${parsed.total} items parsed`;
+      logger.warn('dark_web_ransomware_parse_failed', { error: upstreamError, total: parsed.total, invalid: parsed.invalid });
       return {
         ...base,
-        ransomwatch_fetched: rwPosts.length,
-        ransomware_live_fetched: rlVictims.length,
+        ransomlook_fetched: parsed.total,
+        ransomlook_invalid: parsed.invalid,
+        upstream_error: upstreamError,
+        errors: [upstreamError],
+        durationMs: Date.now() - start,
+      };
+    }
+
+    // `/api/recent/300` always returns the 300 newest posts across every
+    // tracked group — an empty array is an upstream fault, not a quiet day.
+    if (parsed.total === 0) {
+      const upstreamError = 'ransomlook response unusable: empty array from /api/recent';
+      logger.warn('dark_web_ransomware_parse_failed', { error: upstreamError, total: 0, invalid: 0 });
+      return { ...base, upstream_error: upstreamError, errors: [upstreamError], durationMs: Date.now() - start };
+    }
+
+    const allVictims = parsed.victims;
+    if (allVictims.length === 0) {
+      // Every post was private — legitimate, if unlikely.
+      logger.info('dark_web_ransomware_empty', { ransomlook: parsed.total });
+      return {
+        ...base,
+        ransomlook_fetched: parsed.total,
+        ransomlook_invalid: parsed.invalid,
         durationMs: Date.now() - start,
       };
     }
@@ -288,24 +477,29 @@ export async function runDarkWebRansomwareIngest(env: Env): Promise<RansomwareIn
       }
     }
 
-    // ── 5. INSERT ... ON CONFLICT DO UPDATE + per-new-insert alert ──
+    // ── 5. INSERT (guarded) + per-new-insert alert ──
     let inserted = 0;
     let alertsCreated = 0;
     const errors: string[] = [];
 
     for (const m of matched) {
-      const sourceUrl = m.post_url ?? `ransomware://${m.source_name}/${m.group_name}/${m.victim_label}`;
+      const sourceUrl = m.post_url;
       const mentionId = crypto.randomUUID();
       const matchedTerms = JSON.stringify(
         m.victim_domain ? [m.victim_domain] : [m.brand_name],
       );
-      const reason = `Ransomware leak post — group "${m.group_name}" listed ${m.victim_label} on ${m.source_name}`;
+      const reason =
+        `Ransomware leak post — group "${m.group_name}" listed ${m.victim_label} ` +
+        `(via RansomLook, ransomlook.io, CC BY 4.0)`;
 
       try {
-        // INSERT OR IGNORE — meta.changes>0 is the clean
-        // "genuinely new" signal. Ransomware leak posts don't
-        // get republished, so a stale last_seen on existing rows
-        // costs nothing.
+        // INSERT OR IGNORE on the (brand_id, source, source_url) unique
+        // index — meta.changes>0 is the clean "genuinely new" signal.
+        // The NOT EXISTS clause is a one-time transition guard: a victim
+        // already stored from the retired ransomwatch / ransomware.live
+        // feeds (different source_url) for the same brand + group in the
+        // last LEGACY_OVERLAP_DAYS days is not re-inserted or re-alerted.
+        // It expires on its own once those rows age out of the window.
         const res = await env.DB.prepare(`
           INSERT OR IGNORE INTO dark_web_mentions (
             id, brand_id, source, source_url, source_channel, source_author,
@@ -313,18 +507,27 @@ export async function runDarkWebRansomwareIngest(env: Env): Promise<RansomwareIn
             classification, classified_by, classification_confidence,
             classification_reason, severity, status,
             first_seen, last_seen, last_checked
-          ) VALUES (
+          )
+          SELECT
             ?, ?, 'ransomware_leak', ?, ?, ?,
             ?, ?, ?, ?,
             'confirmed', 'system', 0.95,
             ?, 'CRITICAL', 'active',
             datetime('now'), datetime('now'), datetime('now')
+          WHERE NOT EXISTS (
+            SELECT 1 FROM dark_web_mentions
+            WHERE brand_id = ?
+              AND source = 'ransomware_leak'
+              AND source_author IN ('ransomwatch', 'ransomware_live')
+              AND lower(replace(replace(replace(source_channel, ' ', ''), '-', ''), '_', '')) = ?
+              AND first_seen >= datetime('now', ?)
           )
         `).bind(
           mentionId, m.brand_id, sourceUrl, m.group_name, m.source_name,
           m.posted_at, (m.description ?? m.victim_label).slice(0, 500),
           matchedTerms, m.victim_domain ? 'domain' : 'brand_name',
           reason,
+          m.brand_id, groupKey(m.group_name), `-${LEGACY_OVERLAP_DAYS} days`,
         ).run();
 
         const isNew = (res.meta?.changes ?? 0) > 0;
@@ -340,7 +543,7 @@ export async function runDarkWebRansomwareIngest(env: Env): Promise<RansomwareIn
                 alertType: 'dark_web_mention',
                 severity: 'CRITICAL',
                 title: `Ransomware leak: ${m.brand_name} listed by ${m.group_name}`,
-                summary: `${m.source_name} reports ${m.brand_name} on the ${m.group_name} leak site.`,
+                summary: `RansomLook reports ${m.brand_name} on the ${m.group_name} leak site.`,
                 details: {
                   source: 'ransomware_leak',
                   source_name: m.source_name,
@@ -349,6 +552,8 @@ export async function runDarkWebRansomwareIngest(env: Env): Promise<RansomwareIn
                   victim_domain: m.victim_domain,
                   post_url: m.post_url,
                   posted_at: m.posted_at,
+                  attribution: RANSOMLOOK_ATTRIBUTION,
+                  license: RANSOMLOOK_LICENSE,
                 },
                 sourceType: 'dark_web_monitor',
                 sourceId: mentionId,
@@ -369,8 +574,8 @@ export async function runDarkWebRansomwareIngest(env: Env): Promise<RansomwareIn
     }
 
     logger.info('dark_web_ransomware_ingest_complete', {
-      ransomwatch_fetched: rwPosts.length,
-      ransomware_live_fetched: rlVictims.length,
+      ransomlook_fetched: parsed.total,
+      ransomlook_invalid: parsed.invalid,
       victims_total: allVictims.length,
       brand_matches: matched.length,
       inserted,
@@ -380,14 +585,15 @@ export async function runDarkWebRansomwareIngest(env: Env): Promise<RansomwareIn
 
     return {
       skipped: false,
-      ransomwatch_fetched: rwPosts.length,
-      ransomware_live_fetched: rlVictims.length,
+      ransomlook_fetched: parsed.total,
+      ransomlook_invalid: parsed.invalid,
       victims_total: allVictims.length,
       brand_matches: matched.length,
       inserted,
       alerts_created: alertsCreated,
       durationMs: Date.now() - start,
       errors,
+      upstream_error: null,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

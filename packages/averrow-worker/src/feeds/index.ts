@@ -100,6 +100,10 @@ import { circl_osint } from "./circl_osint";
 // (migration 0290), served by GET /api/bot-traffic. Writes no threats and
 // always reports itemsNew = 0 so it never triggers Sentinel.
 import { cf_radar_bots } from "./cf_radar_bots";
+// Spamhaus ASN-DROP → spamhaus_asn_drop reference table (migration 0327).
+// ASN-level "criminal-operated / hijacked network" metadata; writes no
+// threats and always reports itemsNew = 0 (never triggers Sentinel).
+import { spamhaus_asn_drop } from "./spamhausAsnDrop";
 
 /**
  * Registry mapping feed_name → FeedModule.
@@ -158,6 +162,9 @@ export const feedModules: Record<string, FeedModule> = {
 
   // Platform context — Cloudflare Radar bot traffic (no threats).
   cf_radar_bots,
+
+  // Reference data — Spamhaus ASN-DROP (no threats).
+  spamhaus_asn_drop,
 };
 
 /**

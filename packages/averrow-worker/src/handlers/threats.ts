@@ -1,6 +1,7 @@
 // TODO: Refactor to use handler-utils (Phase 6 continuation)
 // Wave 2A: migrated read handlers to D1 Sessions API (read replicas)
 import { json } from "../lib/cors";
+import { withDnsblVerdicts } from "../lib/dnsbl-verdict";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { enrichThreatsGeo } from "../lib/geoip";
 import { scopeCacheSegment } from "../lib/scope-cache-key";
@@ -195,7 +196,8 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
           return r?.n ?? 0;
         });
 
-    const data = { success: true, data: { threats: rows.results, total } };
+    // SURBL / DBL "not listed" is not evidence (lib/dnsbl-verdict.ts).
+    const data = { success: true, data: { threats: (rows.results ?? []).map(withDnsblVerdicts), total } };
     await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -240,7 +242,7 @@ export async function handleGetThreat(request: Request, env: Env, id: string): P
   try {
     const threat = await session.prepare("SELECT * FROM threats WHERE id = ?").bind(id).first();
     if (!threat) return attachBookmark(json({ success: false, error: "Threat not found" }, 404, origin), session);
-    return attachBookmark(json({ success: true, data: threat }, 200, origin), session);
+    return attachBookmark(json({ success: true, data: withDnsblVerdicts(threat) }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
   }

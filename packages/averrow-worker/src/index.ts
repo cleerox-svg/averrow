@@ -1115,10 +1115,12 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
 
       // Agent outputs endpoint (ticker feed)
       if (url.pathname === '/api/v1/agents/outputs' && request.method === 'GET') {
-        const { requireAuth: reqAuth2, isAuthContext: isAuth2 } = await import('./middleware/auth');
+        // Staff only: agent_outputs is platform-wide (other orgs' brand names,
+        // Cloudflare Radar-derived summaries that are CC BY-NC).
+        const { requireStaff: reqAuth2, isAuthContext: isAuth2 } = await import('./middleware/auth');
         const authResult2 = await reqAuth2(request, env);
         if (!isAuth2(authResult2)) return authResult2;
-        const limit = Math.min(50, parseInt(url.searchParams.get('limit') ?? '10'));
+        const limit = Math.min(50, Math.max(1, parseInt(url.searchParams.get('limit') ?? '10') || 10));
         const severityParam = url.searchParams.get('severity');
         const allowed = ['critical', 'high', 'medium', 'low', 'info'];
         const severities = severityParam
@@ -1142,10 +1144,10 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
 
       // Agent activity log endpoint
       if (url.pathname === '/api/v1/agents/activity' && request.method === 'GET') {
-        const { requireAuth: reqAuth3, isAuthContext: isAuth3 } = await import('./middleware/auth');
+        const { requireStaff: reqAuth3, isAuthContext: isAuth3 } = await import('./middleware/auth');
         const authResult3 = await reqAuth3(request, env);
         if (!isAuth3(authResult3)) return authResult3;
-        const limit = parseInt(url.searchParams.get('limit') ?? '50');
+        const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') ?? '50') || 50));
         const agentId = url.searchParams.get('agent_id');
 
         const query = agentId

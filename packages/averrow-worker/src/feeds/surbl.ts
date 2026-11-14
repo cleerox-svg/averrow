@@ -3,6 +3,15 @@ import type { Env } from "../types";
 import { logger } from "../lib/logger";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { SURBL_WORK_SELECT_SQL } from "../lib/threat-rescan-predicates";
+import {
+  DnsblLookupError,
+  dohLookupA,
+  dnsblQueryName,
+  dnsblRunShouldFail,
+  markDnsblRetry,
+  pickDnsblBatch,
+  type DohAnswer,
+} from "../lib/dnsbl-doh";
 
 /**
  * SURBL — DNS-based domain reputation checks.
@@ -20,6 +29,18 @@ import { SURBL_WORK_SELECT_SQL } from "../lib/threat-rescan-predicates";
  *
  * Rate limit: max 50 DNS lookups per cron run (SURBL fair use).
  * Results cached in KV with 24h TTL to avoid repeat lookups.
+ *
+ * Lookup errors are never "clean" (lib/dnsbl-doh.ts): SERVFAIL/REFUSED,
+ * SURBL's 127.0.0.1 "blocked" answer and transport failures leave the row
+ * surbl_checked = 0. Each run starts with a self-test on SURBL's permanent
+ * test point and fails the pull if it is not listed; a refused lookup
+ * mid-run, or every lookup erroring, also fails the pull, so the feed
+ * circuit breaker backs off and auto-pauses.
+ *
+ * DISABLED in prod by migration 0326: through public DoH resolvers SURBL
+ * answers SERVFAIL ("No Reachable Authority"), so the feed is blind, and
+ * SURBL's commercial terms are unverified. Re-enable only with a working
+ * SURBL access route (the self-test must pass) and a licence check.
  */
 
 export interface SURBLResult {
@@ -45,58 +66,88 @@ function decodeSURBLBitmask(lastOctet: number): string[] {
 }
 
 /**
+ * SURBL's permanent test point — listed on every SURBL list, forever. Each
+ * ingest run resolves it first; if it does not come back listed, the
+ * resolver path is blind (e.g. SURBL refuses public resolvers: SERVFAIL
+ * "No Reachable Authority", live test 2026-11-14) and the run fails loudly
+ * instead of stamping every domain clean.
+ */
+export const SURBL_TEST_POINT = "surbl-org-permanent-test-point.com";
+
+/**
+ * KV cache prefix. `v2`: entries written before 2026-11 could be a refused
+ * lookup cached as "clean"; the new prefix never reads them. Only real
+ * answers (listed / NXDOMAIN) are cached now — errors throw before put().
+ */
+const SURBL_CACHE_PREFIX = "surbl:v2:";
+/** KV backoff marker for names whose lookup failed (lib/dnsbl-doh.ts). */
+const SURBL_RETRY_PREFIX = "surbl:v2:retry:";
+const SURBL_ZONE = "multi.surbl.org";
+
+/**
  * Inline SURBL check — call from other feeds for immediate domain validation.
- * Results are cached in KV with 24h TTL.
+ * Results are cached in KV with 24h TTL. Throws `DnsblLookupError` when the
+ * lookup failed or was refused; that is never a clean verdict.
  */
 export async function checkSURBL(domain: string, env: Env): Promise<SURBLResult> {
-  // Check KV cache first
-  const cacheKey = `surbl:${domain}`;
+  const name = dnsblQueryName(domain, SURBL_ZONE);
+  if (name === null) throw new DnsblLookupError("row", `not a valid DNSBL query name: ${domain}`);
+  domain = name;
+  const cacheKey = `${SURBL_CACHE_PREFIX}${domain}`;
   const cached = await env.CACHE.get(cacheKey);
   if (cached !== null) {
     return JSON.parse(cached) as SURBLResult;
   }
 
   const result = await dnsLookupSURBL(domain);
-
-  // Cache result for 24h
   await env.CACHE.put(cacheKey, JSON.stringify(result), { expirationTtl: 86400 });
-
   return result;
 }
 
-async function dnsLookupSURBL(domain: string): Promise<SURBLResult> {
-  const queryDomain = `${domain}.multi.surbl.org`;
-  const dohUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(queryDomain)}&type=A`;
-
-  const res = await fetch(dohUrl, {
-    signal: AbortSignal.timeout(30_000), headers: { Accept: "application/dns-json" },
-  });
-
-  if (!res.ok) {
+/**
+ * Decode a SURBL DoH answer. Exported for tests.
+ *
+ *   NXDOMAIN / empty NOERROR    → not listed
+ *   127.0.0.1                   → SURBL "access blocked" → refused error
+ *   127.0.0.X (X > 1)           → listed, X is the list bitmask
+ *   anything else               → unexpected answer → refused error
+ *                                 (e.g. a resolver rewriting NXDOMAIN)
+ */
+export function decodeSURBLAnswer(domain: string, answer: DohAnswer): SURBLResult {
+  if (answer.status === 3 || answer.addresses.length === 0) {
     return { listed: false, types: [], raw: null };
   }
-
-  const data = await res.json() as {
-    Status: number;
-    Answer?: Array<{ data: string }>;
-  };
-
-  // Status 3 = NXDOMAIN (not listed)
-  if (data.Status === 3 || !data.Answer || data.Answer.length === 0) {
-    return { listed: false, types: [], raw: null };
-  }
-
-  // Parse the response IP — 127.0.0.X where X is the bitmask
-  for (const answer of data.Answer) {
-    const ip = answer.data;
+  for (const ip of answer.addresses) {
+    if (ip === "127.0.0.1") {
+      throw new DnsblLookupError("refused", `SURBL refused the query for ${domain} (127.0.0.1 = access blocked)`);
+    }
     if (ip.startsWith("127.0.0.")) {
       const lastOctet = parseInt(ip.split(".")[3] ?? "0", 10);
-      const types = decodeSURBLBitmask(lastOctet);
-      return { listed: true, types, raw: lastOctet };
+      return { listed: true, types: decodeSURBLBitmask(lastOctet), raw: lastOctet };
     }
   }
+  throw new DnsblLookupError("refused", `SURBL returned an unexpected answer for ${domain}: ${answer.addresses.join(",")}`);
+}
 
-  return { listed: false, types: [], raw: null };
+async function dnsLookupSURBL(domain: string): Promise<SURBLResult> {
+  return decodeSURBLAnswer(domain, await dohLookupA(`${domain}.${SURBL_ZONE}`));
+}
+
+/**
+ * Resolve the permanent test point (uncached). Throws a plain Error naming
+ * the cause when it is not listed, so runFeed records the pull as failed and
+ * the circuit breaker backs off / auto-pauses.
+ */
+export async function assertSURBLResolverWorks(): Promise<void> {
+  let result: SURBLResult;
+  try {
+    result = await dnsLookupSURBL(SURBL_TEST_POINT);
+  } catch (err) {
+    throw new Error(`SURBL self-test failed: test point lookup errored (${err instanceof Error ? err.message : String(err)}) — lookups are not being answered; no domains checked`);
+  }
+  if (!result.listed) {
+    throw new Error("SURBL self-test failed: permanent test point is not listed — resolver path is blind; no domains checked");
+  }
 }
 
 /** Map SURBL type to severity escalation threshold */
@@ -118,6 +169,10 @@ export const surbl: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const { env } = ctx;
 
+    // Self-test first: a blind resolver must fail the pull, not stamp
+    // every domain checked-clean.
+    await assertSURBLResolverWorks();
+
     // Query recent threats with unchecked domains (last 7 days, limit 200)
     // Seeks the partial index idx_threats_surbl_pending (migration 0322)
     // over unchecked rows only; was ~426K rows/call through
@@ -126,20 +181,44 @@ export const surbl: FeedModule = {
     const unchecked = await withIndexHintFallback(SURBL_WORK_SELECT_SQL, (q) =>
       env.DB.prepare(q).all<{ malicious_domain: string }>());
 
-    const domains = unchecked.results;
     let itemsFetched = 0;
     let itemsNew = 0;
     let itemsDuplicate = 0;
     let itemsError = 0;
+    let lookups = 0;
 
-    // Rate limit: max 50 DNS lookups per cron run
+    // Invalid names (IP literals, bad labels, over-long query names) can
+    // never be answered: stamp them checked / not-applicable so they leave
+    // the work set for good. surbl_listed stays 0, which readers surface
+    // as "unknown", not "clean" (lib/dnsbl-verdict.ts).
+    const valid: Array<{ malicious_domain: string; name: string }> = [];
+    for (const row of unchecked.results) {
+      const name = dnsblQueryName(row.malicious_domain, SURBL_ZONE);
+      if (name === null) {
+        await env.DB.prepare(`
+          UPDATE threats SET surbl_checked = 1
+          WHERE malicious_domain = ?
+            AND surbl_checked = 0
+        `).bind(row.malicious_domain).run();
+        itemsFetched++;
+        itemsDuplicate++;
+        logger.warn("surbl_invalid_name", { domain: row.malicious_domain });
+      } else {
+        valid.push({ malicious_domain: row.malicious_domain, name });
+      }
+    }
+
+    // Rate limit: max 50 DNS lookups per cron run. Names that failed
+    // transiently in the last 6h go behind fresh work (pickDnsblBatch), so
+    // a stubborn name cannot pin the head of the queue.
     const maxLookups = 50;
-    const batch = domains.slice(0, maxLookups);
+    const batch = await pickDnsblBatch(valid, (r) => r.name, env.CACHE, SURBL_RETRY_PREFIX, maxLookups);
 
     for (const row of batch) {
       itemsFetched++;
+      lookups++;
       try {
-        const result = await checkSURBL(row.malicious_domain, env);
+        const result = await checkSURBL(row.name, env);
 
         if (result.listed) {
           const surblType = result.types.join(",") || "UNKNOWN";
@@ -196,12 +275,25 @@ export const surbl: FeedModule = {
           itemsDuplicate++; // "duplicate" in the sense of no new finding
         }
       } catch (err) {
+        // A refused lookup (SURBL's 127.0.0.1 "blocked", resolver REFUSED)
+        // means SURBL stopped answering us: abort so the pull is recorded
+        // failed. Transient and per-row errors (SERVFAIL / FORMERR for one
+        // name) affect only this row: it stays surbl_checked = 0 and is
+        // backed off for 6h.
+        if (err instanceof DnsblLookupError && err.kind === "refused") {
+          throw new Error(`SURBL lookups refused after ${lookups - 1} checked: ${err.message}`);
+        }
+        await markDnsblRetry(env.CACHE, SURBL_RETRY_PREFIX, row.name);
         logger.error("surbl_lookup_error", {
           domain: row.malicious_domain,
           error: err instanceof Error ? err.message : String(err),
         });
         itemsError++;
       }
+    }
+
+    if (dnsblRunShouldFail(lookups, itemsError)) {
+      throw new Error(`SURBL: all ${lookups} lookups failed — no domains checked`);
     }
 
     return { itemsFetched, itemsNew, itemsDuplicate, itemsError };

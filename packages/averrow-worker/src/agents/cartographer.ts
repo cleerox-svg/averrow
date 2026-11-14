@@ -23,6 +23,7 @@
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
 import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
+import { isRubricOnlyGradeChange } from "../lib/email-grade-change";
 import { createNotification } from "../lib/notifications";
 import { emitIntelNotification, renderIntelRecommendedAction } from "../lib/intel-templates";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
@@ -320,6 +321,7 @@ export const cartographerAgent: AgentModule = {
     { kind: "kv", namespace: "CACHE" },
     { kind: "d1_table", name: "brands" },
     { kind: "d1_table", name: "dmarc_report_records" },
+    { kind: "d1_table", name: "email_security_scans" },
     { kind: "d1_table", name: "geopolitical_campaign_links" },
     { kind: "d1_table", name: "geopolitical_campaigns" },
     { kind: "d1_table", name: "hosting_providers" },
@@ -1063,6 +1065,22 @@ export const cartographerAgent: AgentModule = {
         LIMIT 50
       `).all<{ id: number; domain: string; existing_grade: string | null }>();
 
+      // Rubric version of each selected brand's latest scan (one statement,
+      // ≤50 binds; seeks idx_ess_brand_scanned per brand). Selected
+      // separately so the ORDER BY over the brand catalog above doesn't
+      // evaluate a per-row subquery for every candidate brand.
+      const rubricByBrand = new Map<string, number | null>();
+      if (brandsToScan.results.length > 0) {
+        const ids = brandsToScan.results.map((b) => b.id);
+        const rv = await env.DB.prepare(`
+          SELECT e.brand_id, e.score_rubric_version
+          FROM email_security_scans e
+          WHERE e.brand_id IN (${ids.map(() => '?').join(',')})
+            AND e.scanned_at = (SELECT MAX(e2.scanned_at) FROM email_security_scans e2 WHERE e2.brand_id = e.brand_id)
+        `).bind(...ids).all<{ brand_id: string | number; score_rubric_version: number | null }>();
+        for (const r of rv.results) rubricByBrand.set(String(r.brand_id), r.score_rubric_version);
+      }
+
       for (const [i, brand] of brandsToScan.results.entries()) {
         // Each scan is several sequential DoH lookups (5s timeout each);
         // stop starting new ones once the run budget is spent.
@@ -1086,7 +1104,10 @@ export const cartographerAgent: AgentModule = {
           // metadata.brand_id is required for the dedup key in
           // createNotification — without it we got 3× duplicate rows
           // per brand before this fix.
-          if (brand.existing_grade && brand.existing_grade !== result.grade) {
+          // A grade computed under an older scoring rubric is not a
+          // baseline — the stored grade was updated above, silently.
+          if (brand.existing_grade && brand.existing_grade !== result.grade
+              && !isRubricOnlyGradeChange(rubricByBrand.get(String(brand.id)))) {
             const prev = gradeBand(brand.existing_grade);
             const next = gradeBand(result.grade);
             const crossed =

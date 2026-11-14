@@ -180,6 +180,10 @@ describe('IdentityThreatsPage drill-down', () => {
     expect(screen.getByText('Not flagged')).toBeInTheDocument();
     expect(screen.queryByText('null')).not.toBeInTheDocument();
     expect(screen.getAllByText('—').length).toBeGreaterThan(3);
+    // Unknown SURBL / DBL never reads as a clean verdict.
+    expect(screen.queryByText('Not listed')).not.toBeInTheDocument();
+    expect(screen.getByText('SURBL').nextElementSibling).toHaveTextContent('—');
+    expect(screen.getByText('Spamhaus DBL').nextElementSibling).toHaveTextContent('—');
     expect(screen.getByRole('button', { name: 'Copy URL' })).toBeInTheDocument();
   });
 

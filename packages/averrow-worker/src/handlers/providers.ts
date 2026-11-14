@@ -172,7 +172,14 @@ export async function handleGetProvider(request: Request, env: Env, providerId: 
        WHERE LOWER(provider_name) = LOWER(?) LIMIT 1`
     ).bind(displayName).first();
 
-    const [stats, brandBreakdown, typeBreakdown] = await Promise.all([
+    // Spamhaus ASN-DROP (migration 0327, feeds/spamhausAsnDrop.ts): one PK
+    // lookup on the canonical ASN key. Evidence metadata only — it does not
+    // feed scoring, triage or alerts. Null when the provider has no ASN, the
+    // ASN is not listed, or the table is unreadable (best-effort).
+    const asnDropKey = asnKey(providerInfo?.asn ?? null);
+
+    // The ASN-DROP lookup runs alongside the threat reads (one Promise.all).
+    const [stats, brandBreakdown, typeBreakdown, asnDropRow] = await Promise.all([
       env.DB.prepare(`
         SELECT COUNT(*) AS total_threats,
                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_threats,
@@ -196,7 +203,31 @@ export async function handleGetProvider(request: Request, env: Env, providerId: 
          WHERE hosting_provider_id = ? AND threat_type != ''
          GROUP BY threat_type ORDER BY count DESC
       `).bind(decoded).all(),
+      asnDropKey
+        ? env.DB.prepare(
+            `SELECT asn, as_name, as_domain, country_code, first_seen, last_seen, list_copyright
+               FROM spamhaus_asn_drop WHERE asn = ? AND removed_at IS NULL`
+          ).bind(asnDropKey).first<{
+            asn: string; as_name: string | null; as_domain: string | null; country_code: string | null;
+            first_seen: string; last_seen: string; list_copyright: string | null;
+          }>().catch(() => null)
+        : Promise.resolve(null),
     ]);
+
+    const spamhausAsnDrop = asnDropRow
+      ? {
+          listed: true as const,
+          asn: asnDropRow.asn,
+          as_name: asnDropRow.as_name,
+          as_domain: asnDropRow.as_domain,
+          country_code: asnDropRow.country_code,
+          first_seen: asnDropRow.first_seen,
+          last_seen: asnDropRow.last_seen,
+          // Spamhaus requires credit when its data is used in a product.
+          attribution: asnDropRow.list_copyright ?? "Spamhaus ASN-DROP List - (c) The Spamhaus Project SLU",
+        }
+      : null;
+
 
     return json({
       success: true,
@@ -208,6 +239,7 @@ export async function handleGetProvider(request: Request, env: Env, providerId: 
         reputation_score: providerInfo?.reputation_score ?? null,
         avg_response_time: providerInfo?.avg_response_time ?? null,
         abuse_contact: abuseContact ?? null,
+        spamhaus_asn_drop: spamhausAsnDrop,
         ...stats,
         brand_breakdown: brandBreakdown.results,
         type_breakdown: typeBreakdown.results,

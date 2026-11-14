@@ -10,6 +10,7 @@ import type { Env, MonitoringConfigBody } from "../types";
 import { verifyOrgAccess, canPerformHITL, isPlatformStaff, ORG_ROLE_HIERARCHY } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 import { refuseReadOnlyGlobalWrite } from "../lib/tenant-staff-guard";
+import { withDnsblVerdicts } from "../lib/dnsbl-verdict";
 
 // ─── Helpers ─────────────────────────────────────────────────
 // canPerformHITL + ORG_ROLE_HIERARCHY are the shared org-role gates from
@@ -666,7 +667,8 @@ export async function handleTenantOrgThreats(
       `).bind(...bindings).all();
 
       return {
-        data: threatsResult.results || [],
+        // SURBL "not listed" is not evidence (lib/dnsbl-verdict.ts).
+        data: (threatsResult.results || []).map(withDnsblVerdicts),
         total: countResult?.total ?? 0,
         severity_breakdown: severityBreakdown.results || [],
         type_breakdown: typeBreakdown.results || [],
@@ -739,7 +741,7 @@ export async function handleTenantThreatDetail(
       return json({ success: false, error: "Threat not found" }, 404, origin);
     }
 
-    return json({ success: true, data: threat }, 200, origin);
+    return json({ success: true, data: withDnsblVerdicts(threat) }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
@@ -1134,7 +1136,8 @@ export async function handleTenantBrandThreats(
 
     return json({
       success: true,
-      data: threats.results || [],
+      // SURBL / DBL "not listed" is not evidence (lib/dnsbl-verdict.ts).
+      data: (threats.results || []).map(withDnsblVerdicts),
       total: countResult?.total ?? 0,
     }, 200, origin);
   } catch (err) {

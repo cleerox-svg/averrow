@@ -4,6 +4,29 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [Unreleased]
+
+Feed licence and honesty audit (2026-11-14). No version bump yet.
+
+### Feeds
+- **Disabled (migration 0326):** `spamhaus_dbl` (free DBL tiers are non-commercial; Spamhaus also answers public resolvers with `127.255.255.254`), `dshield` (SANS ISC API is CC BY-NC-SA 4.0) and `surbl` (`manual:blind_resolver`: Cloudflare's public resolver answers every name SERVFAIL, and SURBL's commercial terms were never verified). `manual:` `paused_reason`; re-enable conditions are in the migration.
+- **DNSBL honesty and robustness (`lib/dnsbl-doh.ts`):** SURBL and DBL never read a refused or failed lookup as "clean" (row stays unchecked). Errors fall in three classes: run-level refusal (fails the pull), transient per-row (HTTP failure, timeout, SERVFAIL on one name) and per-row (other RCODEs). Query names are validated (invalid ones are stamped not-applicable), transient names get 6h KV retry markers and move behind fresh work, and each run self-tests on the list's test point. KV cache prefixes bumped to `surbl:v2:` / `dbl:v2:`.
+- **DNSBL verdicts in APIs/UI:** rows already stamped clean by the old decoder are not rewritten; `surbl_listed` / `dbl_listed` are returned as listed or null (unknown), never false/0 (`lib/dnsbl-verdict.ts`: identity detections, tenant threats, brand and threat reads), and the UI shows a verdict only for a positive listing.
+- **Flight Control:** enrichment backlogs of feeds disabled with a `manual:` `paused_reason` are reported as 0 and not stall-tracked.
+- **Spamhaus DROP** now reads `drop_v4.json`; eDROP removed (merged into DROP 2024-04-10). New context-only feed `spamhaus_asn_drop` (daily, table `spamhaus_asn_drop`, migration 0327): never writes threats, `itemsNew = 0`, delisting stamped only on a complete pull. `GET /api/providers/:id` gains `spamhaus_asn_drop`. Credit The Spamhaus Project in-product; the Spamhaus name must not be used in marketing material.
+- **Ransomware leak ingest** reads RansomLook only (CC BY 4.0, attribution stored on rows and alerts); ransomwatch and ransomware.live removed. A link-derived victim domain only matches a brand when the post title contains the brand name or the domain label (>= 4 chars); an empty `[]` or a body over 5 MB counts as an upstream failure, which ends the dark-web monitor run `partial`; each run writes one `agent_outputs` row (high severity on failure).
+- **Shodan InternetDB enrichment removed** (`enrichment/shodan.ts` deleted; commercial use needs an enterprise licence).
+
+### Email security
+- Shared RFC 9989 DMARC parser (`lib/dmarc-record.ts`) used by the posture scanner, Flight Control's own-domain check (`lib/doh.ts`) and the free-scan handler; fixes `p=` being matched inside `sp=` / `np=`. Tags `np`, `t`, `psd` (and `sp`) parsed; `t=y` or `pct` < 100 scores an enforcing policy one level lower; an `np=none` (or `sp=none` with no `np`) gap under quarantine/reject costs 5 points. Migration 0328 adds `email_security_scans.dmarc_sp/np/t/psd`; scan results carry the new `dmarc` fields.
+- An invalid or missing DMARC `p=` is stored as `none`, flagged invalid (recommendation added) and scored as no enforcement; free text from the record is never stored.
+- **Scoring rubric version:** `EMAIL_SCORE_RUBRIC_VERSION` (= 2) is stamped on each scan (`email_security_scans.score_rubric_version`, migration 0328; NULL = pre-RFC 9989). Grade-change alerts (`lib/email-grade-change.ts`) and Cartographer's band-crossing notification skip a scan whose previous scan was graded under a different/NULL version, so this rubric change causes no spurious "grade changed" alerts. Any future scoring change must bump the constant.
+
+### Security
+- `GET /api/v1/agents/outputs` and `/api/v1/agents/activity` now require staff (`requireStaff`, was any authenticated user): agent outputs are platform-wide and can carry other orgs' brand names and Cloudflare Radar-derived (CC BY-NC) summaries. `limit` on activity is clamped to 1-200.
+
+---
+
 ## [v4.10.0] — 2026-11-09
 
 Facelift Phase 6 (per-screen redesign): the indigo-on-graphite identity now

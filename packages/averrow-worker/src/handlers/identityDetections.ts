@@ -51,6 +51,7 @@ import {
 } from "./identityThreats";
 import { notRetiredClusterSql } from "../lib/cluster-status";
 import type { Env } from "../types";
+import { dnsblListedFlag } from "../lib/dnsbl-verdict";
 
 export const DETECTIONS_DEFAULT_LIMIT = 25;
 export const DETECTIONS_MAX_LIMIT = 100;
@@ -508,9 +509,11 @@ export async function getIdentityDetection(
       greynoise_classification: row.greynoise_classification,
       seclookup_checked: row.seclookup_checked === 1,
       seclookup_risk_score: row.seclookup_risk_score,
-      // Listed flags default to 0 before the check runs — null until checked.
-      surbl_listed: row.surbl_checked === 1 ? flag(row.surbl_listed) : null,
-      dbl_listed: row.dbl_checked === 1 ? flag(row.dbl_listed) : null,
+      // true when listed, otherwise null (unknown) — never false: "not
+      // listed" stamps from the blind 2026 runs are not evidence
+      // (lib/dnsbl-verdict.ts).
+      surbl_listed: dnsblListedFlag(row.surbl_listed),
+      dbl_listed: dnsblListedFlag(row.dbl_listed),
     },
     timeline: {
       first_seen: isoOrNull(row.first_seen),

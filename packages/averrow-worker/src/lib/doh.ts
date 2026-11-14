@@ -7,6 +7,7 @@
 // ticks don't hammer the resolver (FC fires every minute).
 
 import type { Env } from '../types';
+import { parseDmarcRecord } from './dmarc-record';
 
 interface DohAnswer {
   name: string;
@@ -106,8 +107,7 @@ export function stripDohQuotes(raw: string): string {
  * policy. Lowercased.
  */
 export function parseDmarcPolicy(txt: string): 'none' | 'quarantine' | 'reject' | null {
-  if (!/v\s*=\s*DMARC1/i.test(txt)) return null;
-  const m = /p\s*=\s*(none|quarantine|reject)/i.exec(txt);
-  if (!m || !m[1]) return null;
-  return m[1].toLowerCase() as 'none' | 'quarantine' | 'reject';
+  // Shared RFC 9989 tag parser — the old `/p\s*=/` regex also matched
+  // inside `np=` / `sp=` (e.g. `v=DMARC1; np=none; p=reject` read 'none').
+  return parseDmarcRecord(txt.trim())?.p ?? null;
 }

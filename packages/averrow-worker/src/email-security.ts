@@ -5,6 +5,12 @@
  * Uses Cloudflare DoH (DNS over HTTPS) — free, no API key, works from Workers.
  */
 
+import {
+  parseDmarcRecord,
+  isDmarcTestingMode,
+  hasNonExistentSubdomainGap,
+} from './lib/dmarc-record';
+
 // ─── DNS over HTTPS ─────────────────────────────────────────────────────────
 
 const DOH_URL = 'https://cloudflare-dns.com/dns-query';
@@ -41,29 +47,68 @@ async function dnsLookup(name: string, type: string = 'TXT'): Promise<string[]> 
 }
 
 // ─── DMARC ─────────────────────────────────────────────────────────────────
+//
+// RFC 9989 (DMARCbis) tag handling lives in lib/dmarc-record.ts. `pct` is
+// deprecated but still parsed and stored; scoring treats pct<100 and t=y
+// identically ("testing / not fully enforced").
 
 export interface DmarcResult {
   exists: boolean;
+  /** Validated `p=` — 'none' | 'quarantine' | 'reject'; 'none' when p= is
+   *  absent or invalid. Never raw TXT text. */
   policy: string | null;
+  /** Legacy `pct` (RFC 7489, deprecated by RFC 9989). 100 when absent. */
   pct: number | null;
   rua: string | null;
   ruf: string | null;
   raw: string | null;
+  /** `sp=` — existing-subdomain policy. Optional so stored-row callers compile. */
+  sp?: string | null;
+  /** `np=` (RFC 9989) — non-existent-subdomain policy. */
+  np?: string | null;
+  /** `t=` (RFC 9989) — 'y' | 'n'. */
+  t?: string | null;
+  /** `psd=` (RFC 9989) — 'y' | 'n' | 'u'. Stored, never scored. */
+  psd?: string | null;
+  /** A `p=` tag was present but invalid; `policy` is then 'none'. */
+  policyInvalid?: boolean;
+}
+
+/**
+ * Version of the score/grade rubric in calculateEmailSecurityScore. Stamped
+ * on every email_security_scans row (score_rubric_version, migration 0328).
+ * Grade-change alerting only compares two scans graded under the SAME
+ * version, so a rubric change never tells a customer their protection
+ * changed when their DNS did not. Bump on any scoring change.
+ *   1 (implicit, stored NULL) — pre-RFC 9989 rubric
+ *   2 — RFC 9989: t=y / pct<100 testing, np/sp=none gap (2026-11)
+ */
+export const EMAIL_SCORE_RUBRIC_VERSION = 2;
+
+/** Build a DmarcResult from a raw TXT record (pure; exported for tests). */
+export function dmarcResultFromRecord(dmarcRecord: string | null | undefined): DmarcResult {
+  const parsed = dmarcRecord && dmarcRecord.startsWith('v=DMARC1') ? parseDmarcRecord(dmarcRecord) : null;
+  if (!dmarcRecord || !parsed) {
+    return { exists: false, policy: null, pct: null, rua: null, ruf: null, raw: null, sp: null, np: null, t: null, psd: null, policyInvalid: false };
+  }
+  return {
+    exists: true,
+    policy: parsed.policyForStorage,
+    policyInvalid: parsed.pInvalid,
+    pct: parsed.pct ?? 100,
+    rua: parsed.rua,
+    ruf: parsed.ruf,
+    raw: dmarcRecord,
+    sp: parsed.sp,
+    np: parsed.np,
+    t: parsed.t,
+    psd: parsed.psd,
+  };
 }
 
 export async function checkDmarc(domain: string): Promise<DmarcResult> {
   const records = await dnsLookup(`_dmarc.${domain}`, 'TXT');
-  const dmarcRecord = records.find(r => r.startsWith('v=DMARC1'));
-  if (!dmarcRecord) {
-    return { exists: false, policy: null, pct: null, rua: null, ruf: null, raw: null };
-  }
-
-  const policy = dmarcRecord.match(/[;]\s*p=(\w+)/)?.[1] ?? dmarcRecord.match(/^v=DMARC1\s*;\s*p=(\w+)/)?.[1] ?? 'none';
-  const pct = parseInt(dmarcRecord.match(/[;]\s*pct=(\d+)/)?.[1] ?? '100', 10);
-  const rua = dmarcRecord.match(/[;]\s*rua=([^;]+)/)?.[1]?.trim() ?? null;
-  const ruf = dmarcRecord.match(/[;]\s*ruf=([^;]+)/)?.[1]?.trim() ?? null;
-
-  return { exists: true, policy, pct, rua, ruf, raw: dmarcRecord };
+  return dmarcResultFromRecord(records.find(r => r.startsWith('v=DMARC1')));
 }
 
 // ─── SPF ───────────────────────────────────────────────────────────────────
@@ -212,11 +257,24 @@ export function calculateEmailSecurityScore(scan: EmailSecurityScanInput): { sco
   // affect the grade — any rua destination scores the same (G30: the old
   // +5 for reporting to an Averrow address was removed so the grade stays
   // neutral and comparable). Max total is therefore 95, still A+.
+  //
+  // RFC 9989 (DMARCbis):
+  //   - Testing mode — `t=y`, or a legacy `pct` below 100 (pct is deprecated
+  //     and is NOT scored on its own; it is read only as the old spelling of
+  //     "testing") — scores an enforcing policy one level lower
+  //     (reject → quarantine credit, quarantine → none credit). Before this,
+  //     neither pct nor t was scored, so `p=reject; pct=0` graded like a
+  //     fully enforced reject.
+  //   - Non-existent-subdomain gap — apex at quarantine/reject but `np`
+  //     (or its `sp` fallback) is `none` — costs 5 points. A missing `np`
+  //     that falls back to an enforcing sp/p is fine.
   if (scan.dmarc.exists) {
     score += 10; // Has DMARC record
-    if (scan.dmarc.policy === 'reject') score += 20;
-    else if (scan.dmarc.policy === 'quarantine') score += 12;
+    const testing = isDmarcTestingMode(scan.dmarc);
+    if (scan.dmarc.policy === 'reject') score += testing ? 12 : 20;
+    else if (scan.dmarc.policy === 'quarantine') score += testing ? 4 : 12;
     else if (scan.dmarc.policy === 'none') score += 4;
+    if (hasNonExistentSubdomainGap(scan.dmarc)) score -= 5;
     if (scan.dmarc.rua) score += 5; // Aggregate reporting
   }
 
@@ -261,12 +319,27 @@ export function calculateEmailSecurityScore(scan: EmailSecurityScanInput): { sco
 export function generateRecommendations(scan: EmailSecurityScanInput): string[] {
   const recs: string[] = [];
 
+  if (scan.dmarc.exists && scan.dmarc.policyInvalid) {
+    recs.push('WARNING: DMARC p= value is invalid — receivers treat it as "none" (no enforcement). Set p=quarantine or p=reject.');
+  }
+
   if (!scan.dmarc.exists) {
     recs.push('CRITICAL: No DMARC record found. Anyone can send emails pretending to be your domain.');
   } else if (scan.dmarc.policy === 'none') {
     recs.push('WARNING: DMARC policy is set to "none" — spoofed emails are not being blocked. Upgrade to "quarantine" or "reject".');
   } else if (scan.dmarc.policy === 'quarantine') {
     recs.push('GOOD: DMARC quarantine is active. Consider upgrading to "reject" for full protection.');
+  }
+
+  if (scan.dmarc.exists && (scan.dmarc.policy === 'quarantine' || scan.dmarc.policy === 'reject')) {
+    if ((scan.dmarc.t ?? '').toLowerCase() === 'y') {
+      recs.push('WARNING: DMARC is in testing mode (t=y) — receivers are asked not to apply your policy in full. Remove t=y (or set t=n) once reports look clean.');
+    } else if (isDmarcTestingMode(scan.dmarc)) {
+      recs.push(`WARNING: DMARC pct=${scan.dmarc.pct} means the policy is only partly enforced. pct is deprecated by RFC 9989 (DMARCbis) — remove it for full enforcement, or use t=y while testing.`);
+    }
+    if (hasNonExistentSubdomainGap(scan.dmarc)) {
+      recs.push('WARNING: DMARC policy for non-existent subdomains resolves to "none" (np=none, or sp=none with no np). Attackers can spoof made-up subdomains of your domain. Set np=reject (RFC 9989).');
+    }
   }
 
   if (scan.dmarc.exists && !scan.dmarc.rua) {
@@ -309,12 +382,21 @@ export interface EmailSecurityResult {
   domain: string;
   score: number;
   grade: string;
+  /** EMAIL_SCORE_RUBRIC_VERSION the score/grade were computed under. */
+  score_rubric_version: number;
   dmarc: {
     exists: boolean;
     policy: string | null;
     pct: number | null;
     rua: string | null;
     ruf: string | null;
+    /** RFC 9989 tags (null when absent). */
+    sp: string | null;
+    np: string | null;
+    t: string | null;
+    psd: string | null;
+    /** t=y or legacy pct<100 — scored one enforcement level lower. */
+    testing: boolean;
     reporting_enabled: boolean;
     record: string | null;
   };
@@ -357,12 +439,18 @@ export async function runEmailSecurityScan(domain: string): Promise<EmailSecurit
     domain,
     score,
     grade,
+    score_rubric_version: EMAIL_SCORE_RUBRIC_VERSION,
     dmarc: {
       exists: dmarc.exists,
       policy: dmarc.policy,
       pct: dmarc.pct,
       rua: dmarc.rua,
       ruf: dmarc.ruf,
+      sp: dmarc.sp ?? null,
+      np: dmarc.np ?? null,
+      t: dmarc.t ?? null,
+      psd: dmarc.psd ?? null,
+      testing: dmarc.exists && isDmarcTestingMode(dmarc),
       reporting_enabled: !!dmarc.rua,
       record: dmarc.raw,
     },
@@ -517,18 +605,20 @@ export async function saveEmailSecurityScan(
     INSERT INTO email_security_scans (
       brand_id, domain,
       dmarc_exists, dmarc_policy, dmarc_pct, dmarc_rua, dmarc_ruf, dmarc_raw,
+      dmarc_sp, dmarc_np, dmarc_t, dmarc_psd,
       spf_exists, spf_policy, spf_includes, spf_too_many_lookups, spf_raw,
       dkim_exists, dkim_selectors_found, dkim_raw,
       mx_exists, mx_providers,
-      email_security_score, email_security_grade,
+      email_security_score, email_security_grade, score_rubric_version,
       scanned_at, scan_duration_ms
     ) VALUES (
       ?, ?,
       ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?,
       ?, ?,
-      ?, ?,
+      ?, ?, ?,
       datetime('now'), ?
     )
   `).bind(
@@ -537,13 +627,17 @@ export async function saveEmailSecurityScan(
     result.dmarc.exists ? result.dmarc.rua ?? null : null,
     result.dmarc.exists ? result.dmarc.ruf ?? null : null,
     result.dmarc.record,
+    result.dmarc.exists ? result.dmarc.sp ?? null : null,
+    result.dmarc.exists ? result.dmarc.np ?? null : null,
+    result.dmarc.exists ? result.dmarc.t ?? null : null,
+    result.dmarc.exists ? result.dmarc.psd ?? null : null,
     result.spf.exists ? 1 : 0, result.spf.policy, 0, result.spf.too_many_lookups ? 1 : 0, result.spf.record,
     result.dkim.exists ? 1 : 0,
     JSON.stringify(result.dkim.selectors_found),
     result.dkim.exists ? `Selectors: ${result.dkim.selectors_found.join(', ')}` : null,
     result.mx.exists ? 1 : 0,
     JSON.stringify(result.mx.providers),
-    result.score, result.grade,
+    result.score, result.grade, result.score_rubric_version,
     result.scan_duration_ms,
   ).run();
 }

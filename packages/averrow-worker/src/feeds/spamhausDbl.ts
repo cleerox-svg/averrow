@@ -1,6 +1,15 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import type { Env } from "../types";
 import { logger } from "../lib/logger";
+import {
+  DnsblLookupError,
+  dohLookupA,
+  dnsblQueryName,
+  dnsblRunShouldFail,
+  markDnsblRetry,
+  pickDnsblBatch,
+  type DohAnswer,
+} from "../lib/dnsbl-doh";
 
 /**
  * Spamhaus DBL — Domain Block List checks via DNS-over-HTTPS.
@@ -22,6 +31,13 @@ import { logger } from "../lib/logger";
  *   105 = abused legit malware
  *   106 = abused legit botnet C2
  * NXDOMAIN = clean
+ * 127.255.255.x / 127.0.1.255 = Spamhaus error codes → lookup ERROR, never
+ * clean (lib/dnsbl-doh.ts). Each run self-tests on dbltest.com first and
+ * fails the pull when it is not listed.
+ *
+ * DISABLED in prod by migration 0326: the free DBL tiers are non-commercial
+ * and Spamhaus refuses public resolvers. Re-enable only with a Spamhaus
+ * Technology subscription (DQS key) and a lookup path that uses it.
  *
  * Rate limit: max 50 DNS lookups per cron run (Spamhaus fair use).
  * Results cached in KV with 24h TTL: dbl:{domain}
@@ -54,11 +70,32 @@ const SEVERITY_RANK: Record<string, number> = {
 };
 
 /**
+ * Spamhaus's DBL test record — always listed (127.0.1.2). Each ingest run
+ * resolves it first; if it does not come back listed the resolver path is
+ * blind (Spamhaus answers public resolvers such as Cloudflare's with
+ * 127.255.255.254 — live test 2026-11-14) and the run fails loudly.
+ */
+export const DBL_TEST_POINT = "dbltest.com";
+
+/**
+ * KV cache prefix. `v2`: entries written before 2026-11 could be a refused
+ * lookup cached as "clean"; the new prefix never reads them.
+ */
+const DBL_CACHE_PREFIX = "dbl:v2:";
+/** KV backoff marker for names whose lookup failed (lib/dnsbl-doh.ts). */
+const DBL_RETRY_PREFIX = "dbl:v2:retry:";
+const DBL_ZONE = "dbl.spamhaus.org";
+
+/**
  * Inline Spamhaus DBL check — call from other feeds for immediate domain validation.
- * Results cached in KV with 24h TTL.
+ * Results cached in KV with 24h TTL. Throws `DnsblLookupError` when the
+ * lookup failed or was refused; that is never a clean verdict.
  */
 export async function checkSpamhausDBL(domain: string, env: Env): Promise<DBLResult> {
-  const cacheKey = `dbl:${domain}`;
+  const name = dnsblQueryName(domain, DBL_ZONE);
+  if (name === null) throw new DnsblLookupError("row", `not a valid DNSBL query name: ${domain}`);
+  domain = name;
+  const cacheKey = `${DBL_CACHE_PREFIX}${domain}`;
   const cached = await env.CACHE.get(cacheKey);
   if (cached !== null) {
     return JSON.parse(cached) as DBLResult;
@@ -69,38 +106,54 @@ export async function checkSpamhausDBL(domain: string, env: Env): Promise<DBLRes
   return result;
 }
 
-async function dnsLookupDBL(domain: string): Promise<DBLResult> {
-  const queryDomain = `${domain}.dbl.spamhaus.org`;
-  const dohUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(queryDomain)}&type=A`;
-
-  const res = await fetch(dohUrl, {
-    signal: AbortSignal.timeout(30_000), headers: { Accept: "application/dns-json" },
-  });
-
-  if (!res.ok) {
+/**
+ * Decode a DBL DoH answer. Exported for tests.
+ *
+ *   NXDOMAIN / empty NOERROR    → not listed
+ *   127.255.255.X               → Spamhaus error code (.252 typo in the
+ *                                 zone name, .254 public/open resolver,
+ *                                 .255 excessive queries) → refused error
+ *                                 (aborts the run)
+ *   127.0.1.255                 → "IP queries prohibited" — about this one
+ *                                 query name → row error (not run-level)
+ *   127.0.1.X                   → listed
+ *   anything else               → unexpected answer → refused error
+ */
+export function decodeDBLAnswer(domain: string, answer: DohAnswer): DBLResult {
+  if (answer.status === 3 || answer.addresses.length === 0) {
     return { listed: false, listingType: null, raw: null };
   }
-
-  const data = (await res.json()) as {
-    Status: number;
-    Answer?: Array<{ data: string }>;
-  };
-
-  // Status 3 = NXDOMAIN (not listed)
-  if (data.Status === 3 || !data.Answer || data.Answer.length === 0) {
-    return { listed: false, listingType: null, raw: null };
-  }
-
-  for (const answer of data.Answer) {
-    const ip = answer.data;
+  for (const ip of answer.addresses) {
+    if (ip.startsWith("127.255.255.")) {
+      throw new DnsblLookupError("refused", `Spamhaus DBL refused the query for ${domain} (${ip} is an error code, not a listing)`);
+    }
+    if (ip === "127.0.1.255") {
+      throw new DnsblLookupError("row", `Spamhaus DBL: IP queries prohibited for ${domain} (127.0.1.255)`);
+    }
     if (ip.startsWith("127.0.1.")) {
       const lastOctet = parseInt(ip.split(".")[3] ?? "0", 10);
       const listingType = DBL_CODES[lastOctet] ?? `unknown_${lastOctet}`;
       return { listed: true, listingType, raw: ip };
     }
   }
+  throw new DnsblLookupError("refused", `Spamhaus DBL returned an unexpected answer for ${domain}: ${answer.addresses.join(",")}`);
+}
 
-  return { listed: false, listingType: null, raw: null };
+async function dnsLookupDBL(domain: string): Promise<DBLResult> {
+  return decodeDBLAnswer(domain, await dohLookupA(`${domain}.${DBL_ZONE}`));
+}
+
+/** Resolve the DBL test record (uncached); throws when it is not listed. */
+export async function assertDBLResolverWorks(): Promise<void> {
+  let result: DBLResult;
+  try {
+    result = await dnsLookupDBL(DBL_TEST_POINT);
+  } catch (err) {
+    throw new Error(`Spamhaus DBL self-test failed: test record lookup errored (${err instanceof Error ? err.message : String(err)}) — lookups are not being answered; no domains checked`);
+  }
+  if (!result.listed) {
+    throw new Error("Spamhaus DBL self-test failed: dbltest.com is not listed — resolver path is blind; no domains checked");
+  }
 }
 
 /** Map DBL listing type to severity escalation and confidence boost */
@@ -155,7 +208,13 @@ export const spamhaus_dbl: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const { env } = ctx;
 
-    // Query unchecked domains (last 7 days, limit 50 — Spamhaus fair use)
+    // Self-test first: a blind resolver must fail the pull, not stamp
+    // every domain checked-clean.
+    await assertDBLResolverWorks();
+
+    // Query unchecked domains (last 7 days). 200 candidates, at most 50
+    // lookups per run (Spamhaus fair use): the extra candidates let
+    // pickDnsblBatch move names that failed recently behind fresh work.
     const unchecked = await env.DB.prepare(`
       SELECT DISTINCT id, malicious_domain FROM threats
       WHERE dbl_checked = 0
@@ -164,19 +223,41 @@ export const spamhaus_dbl: FeedModule = {
         AND first_seen >= datetime('now', '-7 days')
       ORDER BY
         CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
-      LIMIT 50
+      LIMIT 200
     `).all<{ id: string; malicious_domain: string }>();
 
-    const threats = unchecked.results;
     let itemsFetched = 0;
     let itemsNew = 0;
     let itemsDuplicate = 0;
     let itemsError = 0;
+    let lookups = 0;
+
+    // Invalid names can never be answered: stamp them checked /
+    // not-applicable so they leave the work set for good. dbl_listed stays
+    // 0, which readers surface as "unknown" (lib/dnsbl-verdict.ts).
+    const valid: Array<{ id: string; malicious_domain: string; name: string }> = [];
+    for (const row of unchecked.results) {
+      const name = dnsblQueryName(row.malicious_domain, DBL_ZONE);
+      if (name === null) {
+        await env.DB.prepare(`
+          UPDATE threats SET dbl_checked = 1
+          WHERE malicious_domain = ? AND dbl_checked = 0
+        `).bind(row.malicious_domain).run();
+        itemsFetched++;
+        itemsDuplicate++;
+        logger.warn("spamhaus_dbl_invalid_name", { domain: row.malicious_domain });
+      } else {
+        valid.push({ ...row, name });
+      }
+    }
+
+    const threats = await pickDnsblBatch(valid, (r) => r.name, env.CACHE, DBL_RETRY_PREFIX, 50);
 
     for (const row of threats) {
       itemsFetched++;
+      lookups++;
       try {
-        const result = await checkSpamhausDBL(row.malicious_domain, env);
+        const result = await checkSpamhausDBL(row.name, env);
 
         if (result.listed && result.listingType) {
           const { severity: targetSeverity, boost } = dblEscalation(result.listingType);
@@ -240,12 +321,23 @@ export const spamhaus_dbl: FeedModule = {
           itemsDuplicate++;
         }
       } catch (err) {
+        // A refused lookup means Spamhaus stopped answering mid-run: abort
+        // so the pull is recorded failed. The row stays dbl_checked = 0.
+        if (err instanceof DnsblLookupError && err.kind === "refused") {
+          throw new Error(`Spamhaus DBL lookups refused after ${lookups - 1} checked: ${err.message}`);
+        }
+        // Transient / per-row error: this row only, backed off for 6h.
+        await markDnsblRetry(env.CACHE, DBL_RETRY_PREFIX, row.name);
         logger.error("spamhaus_dbl_error", {
           domain: row.malicious_domain,
           error: err instanceof Error ? err.message : String(err),
         });
         itemsError++;
       }
+    }
+
+    if (dnsblRunShouldFail(lookups, itemsError)) {
+      throw new Error(`Spamhaus DBL: all ${lookups} lookups failed — no domains checked`);
     }
 
     return { itemsFetched, itemsNew, itemsDuplicate, itemsError };

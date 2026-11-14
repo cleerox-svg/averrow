@@ -112,6 +112,12 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - The same rule applies to any future notification key: registry change and CHECK-widening migration ship together (see `docs/PLATFORM_DATA_DEPENDENCIES.md` §3).
 - **0274** (`0274_notifications_add_abuse_mailbox_inbound_stale.sql`) is the same swap for `platform_abuse_mailbox_inbound_stale` (Flight Control's abuse-mailbox inbound freshness guard). Same ordering rule and same verification: the `notifications` schema must contain `platform_abuse_mailbox_inbound_stale`.
 
+### Migrations 0326 / 0327 / 0328 — feed licence fixes and DMARCbis columns (2026-11-14)
+
+- `0326_disable_noncommercial_feeds.sql` — `UPDATE`s only: `feed_configs` `enabled = 0` + `manual:licence_noncommercial …` `paused_reason` for `spamhaus_dbl` and `dshield` (`manual:licence_noncommercial …`) and `surbl` (`manual:blind_resolver …`: SERVFAIL through the public resolver), and `feed_status` reset to `disabled` (failures 0, `next_retry_at` NULL). Re-enable conditions are in the migration header.
+- `0327_spamhaus_drop_json_asn_drop.sql` — creates `spamhaus_asn_drop` + partial index `idx_spamhaus_asn_drop_listed`, updates the `spamhaus_drop` `feed_configs` description/source URL (`drop_v4.json`), and seeds the `spamhaus_asn_drop` feed (`0 5 * * *`, i.e. a 24h interval) and its `feed_status` row.
+- `0328_email_security_dmarcbis_tags.sql` — `ALTER TABLE email_security_scans ADD COLUMN` `dmarc_sp`, `dmarc_np`, `dmarc_t`, `dmarc_psd` (nullable TEXT, no backfill) plus `score_rubric_version` (nullable INTEGER; NULL = pre-RFC 9989 rubric, current `EMAIL_SCORE_RUBRIC_VERSION` = 2 — the first rescan after deploy updates each brand's grade without a grade-change alert). The Worker writes them on every scan, so apply 0328 before (or with) the Worker deploy.
+
 ### Migration 0316 — AI spend ceiling lowered to $80 (2026-11)
 
 `0316_budget_config_free_credit.sql` is a non-destructive `UPDATE budget_config SET monthly_limit_usd = 80 WHERE id = 1 AND monthly_limit_usd > 80` (prod was $150; a lower operator-set value is kept; no row is a no-op). It ships with the change that sets prod `AI_MODE = "enabled"` + `AI_CLAUDE_TASKS`. Deploy order is not critical, but until it applies the throttle ceiling stays at the old limit. Verify: `SELECT monthly_limit_usd FROM budget_config WHERE id = 1` returns 80.

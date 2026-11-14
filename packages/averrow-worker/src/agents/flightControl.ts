@@ -2161,6 +2161,29 @@ export const flightControlAgent: AgentModule = {
 
 // ─── Backlog Measurement ─────────────────────────────────────────
 
+/**
+ * Feeds disabled on purpose (`manual:` paused_reason). One small read of
+ * feed_configs (~100 rows) per FC tick. Fails soft to an empty set so a
+ * read error never hides a real backlog.
+ *
+ * The exemption is deliberately limited to MIGRATION-retired feeds: their
+ * reason is `manual:<cause> — …` WITH a colon (e.g. migration 0326's
+ * `manual:licence_noncommercial`, `manual:blind_resolver`). An admin-UI
+ * pause (handlers/feeds.ts) writes a bare `manual` with no colon, does
+ * not match `LIKE 'manual:%'`, and is still counted: a temporarily paused
+ * feed's growing backlog is something an operator should keep seeing.
+ */
+export async function loadManuallyDisabledFeeds(db: D1Database): Promise<Set<string>> {
+  try {
+    const r = await db.prepare(
+      `SELECT feed_name FROM feed_configs WHERE enabled = 0 AND paused_reason LIKE 'manual:%'`,
+    ).all<{ feed_name: string }>();
+    return new Set((r.results ?? []).map((row) => row.feed_name));
+  } catch {
+    return new Set();
+  }
+}
+
 async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
   // Each backlog is cached through KV via `cachedCount`. The TTL picks
   // whether this is a "live" counter (short TTL, ~every tick) or a
@@ -2204,6 +2227,22 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     });
     return { value, wasCached };
   };
+
+  // Enrichment feeds an operator retired on purpose (`enabled = 0` with a
+  // `manual:` paused_reason, e.g. spamhaus_dbl / migration 0326) never
+  // drain their backlog again. Counting it would log an
+  // `enrichment_backlog` warning every tick and a `backlog_stalled`
+  // critical every few samples, forever. For those feeds the count is
+  // skipped and reported as 0 with wasCached = true, so no
+  // backlog_history sample, no stall check and no warning. Auto-paused
+  // feeds (`auto:consecutive_failures`) are still counted: their backlog
+  // growing is the symptom an operator needs to see.
+  const retiredFeeds = await loadManuallyDisabledFeeds(db);
+  const gated = (
+    feedName: string,
+    count: () => Promise<{ value: number; wasCached: boolean }>,
+  ): Promise<{ value: number; wasCached: boolean }> =>
+    retiredFeeds.has(feedName) ? Promise.resolve({ value: 0, wasCached: true }) : count();
 
   const [
     cartResult,
@@ -2298,52 +2337,52 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     // ~426K rows. It used to filter on first_seen and allow '' domains, so
     // it counted a different set than the feed drains; key renamed with
     // the predicate.
-    cacheCount('backlog.surbl.pending', BACKLOG_TTL_MONITORING_S, SURBL_BACKLOG_COUNT_SQL),
-    cacheCount('backlog.vt', BACKLOG_TTL_MONITORING_S, `
+    gated('surbl', () => cacheCount('backlog.surbl.pending', BACKLOG_TTL_MONITORING_S, SURBL_BACKLOG_COUNT_SQL)),
+    gated('virustotal', () => cacheCount('backlog.vt', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE vt_checked = 0
         AND severity IN ('critical', 'high')
         AND malicious_domain IS NOT NULL
         AND first_seen >= datetime('now', '-7 days')
-    `),
-    cacheCount('backlog.gsb', BACKLOG_TTL_MONITORING_S, `
+    `)),
+    gated('google_safe_browsing', () => cacheCount('backlog.gsb', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE gsb_checked = 0
         AND (malicious_url IS NOT NULL OR malicious_domain IS NOT NULL)
         AND first_seen >= datetime('now', '-7 days')
-    `),
-    cacheCount('backlog.dbl', BACKLOG_TTL_MONITORING_S, `
+    `)),
+    gated('spamhaus_dbl', () => cacheCount('backlog.dbl', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE dbl_checked = 0
         AND malicious_domain IS NOT NULL
         AND first_seen >= datetime('now', '-7 days')
-    `),
-    cacheCount('backlog.abuseipdb', BACKLOG_TTL_MONITORING_S, `
+    `)),
+    gated('abuseipdb', () => cacheCount('backlog.abuseipdb', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE abuseipdb_checked = 0
         AND ip_address IS NOT NULL
         AND first_seen >= datetime('now', '-7 days')
-    `),
-    cacheCount('backlog.pdns', BACKLOG_TTL_MONITORING_S, `
+    `)),
+    gated('circl_pdns', () => cacheCount('backlog.pdns', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE pdns_checked = 0
         AND severity IN ('critical', 'high')
         AND malicious_domain IS NOT NULL
         AND first_seen >= datetime('now', '-7 days')
-    `),
-    cacheCount('backlog.greynoise', BACKLOG_TTL_MONITORING_S, `
+    `)),
+    gated('greynoise', () => cacheCount('backlog.greynoise', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE greynoise_checked = 0
         AND ip_address IS NOT NULL
         AND severity IN ('critical', 'high')
         AND first_seen >= datetime('now', '-7 days')
-    `, true),
-    cacheCount('backlog.seclookup', BACKLOG_TTL_MONITORING_S, `
+    `, true)),
+    gated('seclookup', () => cacheCount('backlog.seclookup', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM threats
       WHERE seclookup_checked = 0
         AND (malicious_domain IS NOT NULL OR ip_address IS NOT NULL)
         AND first_seen >= datetime('now', '-7 days')
-    `, true),
+    `, true)),
     cacheCount('backlog.watchdog', BACKLOG_TTL_LIVE_S, `
       SELECT COUNT(*) as count FROM social_mentions WHERE status = 'new'
     `, true),
