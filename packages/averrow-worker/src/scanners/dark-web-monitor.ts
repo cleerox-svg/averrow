@@ -799,22 +799,29 @@ export async function runDarkWebMonitorBatch(env: Env): Promise<{
   ai_upgraded: number;
   ransomware_inserted: number;
   ransomware_alerts: number;
+  /** Non-null when the ransomware leak-site pull failed this tick. */
+  ransomware_upstream_error: string | null;
 }> {
   const now = new Date().toISOString();
 
   // ── 0. Global-pull ransomware DLS ingest ──
-  // Pulls ransomwatch + ransomware.live victim feeds, brand-matches
-  // in SQL, inserts directly into dark_web_mentions with
+  // Pulls RansomLook's recent leak-site posts (CC BY 4.0), brand-matches
+  // in JS, inserts directly into dark_web_mentions with
   // source='ransomware_leak'. One pull per cron tick (every 6h),
   // not per-brand. Deterministic classification — no AI tokens.
   // Failures here never block the per-brand PSBDMP scan below.
   let ransomwareInserted = 0;
   let ransomwareAlerts = 0;
+  let ransomwareUpstreamError: string | null = null;
   try {
     const ransomware = await runDarkWebRansomwareIngest(env);
     ransomwareInserted = ransomware.inserted;
     ransomwareAlerts = ransomware.alerts_created;
-    if (ransomware.skipped) {
+    if (ransomware.upstream_error) {
+      ransomwareUpstreamError = ransomware.upstream_error;
+      logger.warn("dark_web_ransomware_upstream_failed", { error: ransomware.upstream_error });
+    } else if (ransomware.skipped) {
+      ransomwareUpstreamError = `ransomware ingest skipped: ${ransomware.reason ?? "unknown error"}`;
       logger.warn("dark_web_ransomware_skipped", { reason: ransomware.reason });
     } else {
       logger.info("dark_web_ransomware_summary", {
@@ -825,6 +832,7 @@ export async function runDarkWebMonitorBatch(env: Env): Promise<{
       });
     }
   } catch (err) {
+    ransomwareUpstreamError = `ransomware ingest threw: ${err instanceof Error ? err.message : String(err)}`;
     logger.error("dark_web_ransomware_ingest_error", {
       error: err instanceof Error ? err.message : String(err),
     });
@@ -867,6 +875,7 @@ export async function runDarkWebMonitorBatch(env: Env): Promise<{
       ai_processed: 0, ai_upgraded: 0,
       ransomware_inserted: ransomwareInserted,
       ransomware_alerts: ransomwareAlerts,
+      ransomware_upstream_error: ransomwareUpstreamError,
     };
   }
 
@@ -930,5 +939,6 @@ export async function runDarkWebMonitorBatch(env: Env): Promise<{
     ai_upgraded: ai.upgraded,
     ransomware_inserted: ransomwareInserted,
     ransomware_alerts: ransomwareAlerts,
+    ransomware_upstream_error: ransomwareUpstreamError,
   };
 }

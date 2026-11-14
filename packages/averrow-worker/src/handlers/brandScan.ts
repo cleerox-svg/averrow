@@ -14,6 +14,7 @@
  */
 
 import { json } from "../lib/cors";
+import { parseDmarcRecord } from "../lib/dmarc-record";
 import { isFreemailEmail } from "../lib/freemail";
 import { normalizePublicHostname } from "../lib/public-hostname";
 import { registrableDomain } from "../lib/registrable-domain";
@@ -75,8 +76,8 @@ async function checkDNS(domain: string): Promise<{
         const data = answer.data?.replace(/"/g, "") ?? "";
         if (data.startsWith("v=DMARC1")) {
           result.dmarc.record = data;
-          const pMatch = data.match(/p=(\w+)/);
-          result.dmarc.policy = pMatch?.[1] ?? "none";
+          // Shared RFC 9989 tag parser — `/p=(\w+)/` also matched `sp=` / `np=`.
+          result.dmarc.policy = parseDmarcRecord(data)?.pRaw ?? "none";
         }
       }
     }

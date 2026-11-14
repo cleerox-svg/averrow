@@ -4,32 +4,29 @@
  * Each enricher is idempotent: it checks a metadata flag before processing
  * a threat and sets it on completion, so re-runs safely skip already-enriched rows.
  *
- * Run order matters:
- *   1. Shodan — adds port/CVE data to IP-based threats
- *   2. RDAP   — adds domain age to domain-based threats
- *   3. DNS    — adds DNS health signals to domain-based threats
+ * Enrichers (run concurrently):
+ *   1. RDAP   — adds domain age to domain-based threats
+ *   2. DNS    — adds DNS health signals to domain-based threats
+ *
+ * Shodan InternetDB was removed 2026-11-14: its terms require an enterprise
+ * licence for commercial use. Do not re-add it without that licence.
+ *
+ * NOTE: `runEnrichmentChain` has no caller anywhere in the worker (verified
+ * 2026-11-14); this module is currently dead code.
  */
 
 import type { Env } from "../types";
-import { enrichShodan } from "./shodan";
 import { enrichRdap } from "./rdap";
 import { enrichDns } from "./dns";
 
-export { enrichShodan, enrichRdap, enrichDns };
+export { enrichRdap, enrichDns };
 
 export async function runEnrichmentChain(db: D1Database, env: Env): Promise<void> {
-  // Shodan and RDAP/DNS are independent — run them concurrently
-  const [shodanResult, rdapResult, dnsResult] = await Promise.allSettled([
-    enrichShodan(db, env),
+  // RDAP and DNS are independent — run them concurrently
+  const [rdapResult, dnsResult] = await Promise.allSettled([
     enrichRdap(db, env),
     enrichDns(db, env),
   ]);
-
-  if (shodanResult.status === "fulfilled") {
-    // result available but no logging needed
-  } else {
-    console.error("[shodan] enrichment chain error:", shodanResult.reason);
-  }
 
   if (rdapResult.status === "fulfilled") {
     // result available but no logging needed

@@ -1,59 +1,56 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { threatId } from "./types";
-
-const DROP_URL = "https://www.spamhaus.org/drop/drop.txt";
-const EDROP_URL = "https://www.spamhaus.org/drop/edrop.txt";
-const BATCH_SIZE = 50;
-
-interface DropEntry {
-  cidr: string;
-  sblId: string | null;
-}
+import { dedupeBy, parseDropV4Json } from "../lib/spamhaus-drop-json";
 
 /**
- * Spamhaus DROP + EDROP — Hijacked network ranges (CIDR blocks).
+ * drop_v4.json (NDJSON + trailing metadata line). The text files
+ * (drop.txt) are slated for deprecation by Spamhaus, and edrop.txt has been
+ * a comment-only stub since eDROP was merged into DROP on 2024-04-10, so
+ * it is no longer fetched. IPv4 only, as before (drop_v6.json is a
+ * follow-up — threats.ip_address has never carried v6 DROP ranges).
+ */
+export const DROP_V4_URL = "https://www.spamhaus.org/drop/drop_v4.json";
+const FETCH_TIMEOUT_MS = 30_000;
+const BATCH_SIZE = 50;
+
+/**
+ * Spamhaus DROP — Hijacked network ranges (CIDR blocks).
  *
  * These are entire network ranges allocated to spammers or hijacked for
  * malware/botnet operations. Gold-standard network-level blocklist.
  *
- * Schedule: daily at 03:00. No API key required.
+ * Licence: free for any business, "when used in a product, credit must be
+ * given to The Spamhaus Project, and the date and © text should remain with
+ * the file and data" (spamhaus.org/blocklists/do-not-route-or-peer/). The
+ * credit lives on the feed_configs row (migration 0327). Spamhaus's DROP
+ * terms §3.2 also forbid the Spamhaus name in marketing material.
+ *
+ * Schedule: daily (feed_configs interval). No API key required. Spamhaus
+ * asks for at most one automated download per hour.
  */
 export const spamhaus_drop: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const db = ctx.env.DB;
 
-    // Fetch both DROP and EDROP in parallel
-    const [dropRes, edropRes] = await Promise.all([
-      fetch(DROP_URL, { headers: { "User-Agent": "Averrow-ThreatIntel/1.0" } }),
-      fetch(EDROP_URL, { headers: { "User-Agent": "Averrow-ThreatIntel/1.0" } }),
-    ]);
+    const res = await fetch(DROP_V4_URL, {
+      headers: { "User-Agent": "Averrow-ThreatIntel/1.0", Accept: "application/json" },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`spamhaus_drop: HTTP ${res.status} fetching drop_v4.json`);
 
-    const entries: DropEntry[] = [];
-
-    for (const res of [dropRes, edropRes]) {
-      if (!res.ok) continue;
-      const text = await res.text();
-      for (const line of text.split("\n")) {
-        const trimmed = line.trim();
-        // Skip comments (starting with ;) and empty lines
-        if (!trimmed || trimmed.startsWith(";")) continue;
-        // Format: "CIDR ; SBLnnnnn" or just CIDR
-        const parts = trimmed.split(";").map((p) => p.trim());
-        const cidr = parts[0];
-        if (!cidr || !/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/.test(cidr)) continue;
-        const sblId = parts[1] && /^SBL\d+$/i.test(parts[1]) ? parts[1] : null;
-        entries.push({ cidr, sblId });
-      }
+    const parsed = parseDropV4Json(await res.text());
+    if (parsed.records.length === 0) {
+      throw new Error(`spamhaus_drop: drop_v4.json parsed 0 records (${parsed.malformed} malformed lines)`);
     }
 
     // Deduplicate by CIDR
-    const seen = new Set<string>();
-    const unique: DropEntry[] = [];
-    for (const entry of entries) {
-      if (!seen.has(entry.cidr)) {
-        seen.add(entry.cidr);
-        unique.push(entry);
-      }
+    const unique = dedupeBy(parsed.records, (e) => e.cidr);
+
+    const warnings: string[] = [];
+    if (parsed.malformed > 0) warnings.push(`${parsed.malformed} malformed/non-IPv4 lines skipped`);
+    if (!parsed.metadata) warnings.push("metadata line missing");
+    else if (parsed.metadata.records !== null && unique.length < parsed.metadata.records) {
+      warnings.push(`parsed ${unique.length} of ${parsed.metadata.records} records`);
     }
 
     let itemsNew = 0;
@@ -165,6 +162,7 @@ export const spamhaus_drop: FeedModule = {
       itemsNew,
       itemsDuplicate: unique.length - itemsNew,
       itemsError: firstError ? 1 : 0,
+      ...(warnings.length > 0 ? { warning: `spamhaus_drop: ${warnings.join("; ")}` } : {}),
     };
   },
 };

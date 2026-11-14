@@ -172,6 +172,34 @@ export async function handleGetProvider(request: Request, env: Env, providerId: 
        WHERE LOWER(provider_name) = LOWER(?) LIMIT 1`
     ).bind(displayName).first();
 
+    // Spamhaus ASN-DROP (migration 0327, feeds/spamhausAsnDrop.ts): one PK
+    // lookup on the canonical ASN key. Evidence metadata only — it does not
+    // feed scoring, triage or alerts. Null when the provider has no ASN, the
+    // ASN is not listed, or the table is unreadable (best-effort).
+    const asnDropKey = asnKey(providerInfo?.asn ?? null);
+    const asnDropRow = asnDropKey
+      ? await env.DB.prepare(
+          `SELECT asn, as_name, as_domain, country_code, first_seen, last_seen, list_copyright
+             FROM spamhaus_asn_drop WHERE asn = ? AND removed_at IS NULL`
+        ).bind(asnDropKey).first<{
+          asn: string; as_name: string | null; as_domain: string | null; country_code: string | null;
+          first_seen: string; last_seen: string; list_copyright: string | null;
+        }>().catch(() => null)
+      : null;
+    const spamhausAsnDrop = asnDropRow
+      ? {
+          listed: true as const,
+          asn: asnDropRow.asn,
+          as_name: asnDropRow.as_name,
+          as_domain: asnDropRow.as_domain,
+          country_code: asnDropRow.country_code,
+          first_seen: asnDropRow.first_seen,
+          last_seen: asnDropRow.last_seen,
+          // Spamhaus requires credit when its data is used in a product.
+          attribution: asnDropRow.list_copyright ?? "Spamhaus ASN-DROP List - (c) The Spamhaus Project SLU",
+        }
+      : null;
+
     const [stats, brandBreakdown, typeBreakdown] = await Promise.all([
       env.DB.prepare(`
         SELECT COUNT(*) AS total_threats,
@@ -208,6 +236,7 @@ export async function handleGetProvider(request: Request, env: Env, providerId: 
         reputation_score: providerInfo?.reputation_score ?? null,
         avg_response_time: providerInfo?.avg_response_time ?? null,
         abuse_contact: abuseContact ?? null,
+        spamhaus_asn_drop: spamhausAsnDrop,
         ...stats,
         brand_breakdown: brandBreakdown.results,
         type_breakdown: typeBreakdown.results,
