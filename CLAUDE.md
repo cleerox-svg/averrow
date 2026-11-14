@@ -673,6 +673,15 @@ navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV c
                                scan_leads untouched)
                               (UTC hour 0 also: lib/contact-rate.ts purges expired contact_rate
                                counter rows — the D1 per-IP and daily-email caps for /api/contact)
+                              (UTC hour 0 also: lib/dmarc-retention.ts — dmarc_report_records +
+                               dmarc_reports and dmarc_source_daily older than 180 days, dmarc_report_seen
+                               older than 61 days, in bounded batches; a backlog drains on the next
+                               hour-0 tick; dmarc_daily_stats / dmarc_enrollment never swept; raw_xml
+                               is no longer stored)
+                              (every tick, bounded: lib/dmarc-source-rollup.ts runDmarcRollupCatchUp —
+                               one probe of the partial idx_dmarc_reports_rollup_pending, ≤3 stored
+                               reports (processed=1, rolled_up_at NULL, >5 min old) rolled up from
+                               dmarc_report_records, no ipinfo; skipped over the soft cap)
 orchestrator: 7 * * * *     (hourly at :07 — feeds, agent dispatch, Workflows)
 enricher:     8 * * * *     (hourly at :08 — own invocation so it doesn't share CPU
                              with the orchestrator's analyst inline-await. Decoupled
@@ -1663,9 +1672,10 @@ bot_traffic_snapshots     ← Cloudflare Radar internet bot-vs-human share, top 
 radar_country_snapshots   ← Radar per-country daily metrics (migration 0292): `attack_origin`, `attack_target`
                             (7d L7 attack shares) and derived `bot_density`. Not threats; written only by
                             `cf_radar_bots`; read by `GET /api/bot-traffic` (Observatory BOT DENSITY view)
-dmarc_enrollment          ← Brands whose `_dmarc` rua= names Averrow (migration 0329); a DMARC aggregate report is stored only for an enrolled brand
-dmarc_report_seen         ← DMARC report de-dup key (domain, reporter_org, report_id) (migration 0329)
-dmarc_source_daily        ← Brand x day x source-IP rollup of non-passing DMARC sources with class (aligned_pass / forwarder_likely / unaligned_shared_esp / spoof_candidate); metadata only, never alerts (migration 0329; `lib/dmarc-source-rollup.ts`)
+dmarc_enrollment          ← Brands whose CANONICAL domain's own `_dmarc` rua= names Averrow (migration 0329), re-verified after 30 days; a DMARC aggregate report is stored only for an enrolled, eligible brand (tier monitored/customer, trusted source, not shared hosting)
+dmarc_report_seen         ← DMARC report de-dup key (domain, reporter_org, report_id) + `claim_id` (migration 0329); swept at 61 days
+dmarc_reports             ← since 0329 also `sender_domain`, `sender_auth`, `verified` (known reporter + authenticated, `lib/dmarc-provenance.ts`), `claim_id`, `rolled_up_at`; `processed` 2 = writing / 1 = complete / 0 = incomplete (a resend recovers it); `raw_xml` no longer stored
+dmarc_source_daily        ← Brand x day x source-IP rollup of non-passing DMARC sources with class (aligned_pass / forwarder_likely / unaligned_shared_esp / spoof_candidate) and `verified_fail_messages` (failing volume from verified reports only); metadata only, never alerts (migration 0329; `lib/dmarc-source-rollup.ts`)
 org_executives            ← Org-scoped executive identity registry (migration 0244); watched
                             by the executive_monitor agent (Doppelganger) for name→handle
                             impersonation, raising executive_impersonation alerts
@@ -1888,7 +1898,7 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `cron_health[]` | `navigator` (+ historical `fast_tick`), `flight_control`, `orchestrator` run counts + success rate |
 | `backlog_trends` | Per-pipeline: `current`, `previous`, `trend` (negative = draining) |
 | `ai_spend_24h` | Per-agent: `calls`, `input_tokens`, `output_tokens`, `cost_usd`. Says what AI *cost*, not whether it *works* — a zero-cost window is identical for "nothing to classify" and "every call HTTP 400". Read `ai_health` for that. |
-| `dmarc_ingest` | Hosted DMARC aggregate reporting (endpoint_version 18, additive): `reports_24h` (stored `dmarc_reports`), `last_report_at`, `enrolled_brands` (`dmarc_enrollment` rows), `dropped_unenrolled_24h` (= `unenrolled` + `no_brand`), `dropped_24h{no_brand,unenrolled,duplicate,unparseable}` (hourly KV buckets, best-effort). All zeros until the `*._report._dmarc.averrow.ca` TXT and the Email Routing rule exist — see `docs/EMAIL_ROUTING_RUNBOOK.md`. |
+| `dmarc_ingest` | Hosted DMARC aggregate reporting (endpoint_version 18, additive): `reports_24h` (stored `dmarc_reports`), `verified_reports_24h` (known authenticated reporter), `incomplete_reports_24h` (`processed <> 1`: writing or records failed), `last_report_at`, `enrolled_brands` (`dmarc_enrollment` rows), `rollup_pending` (processed=1, `rolled_up_at` NULL; Navigator catches up ≤3/tick), `dropped_unenrolled_24h` (`unenrolled` only), `dropped_no_brand_24h`, `dropped_24h{no_brand,ineligible_brand,unenrolled,rate_limited,duplicate,unparseable,error}` (hourly KV buckets, best-effort; `error` = receiver threw). A `verified_reports_24h` stuck at 0 with reports arriving means the trusted authserv-id is unconfirmed — see the runbook canary. All zeros until the `*._report._dmarc.averrow.ca` TXT and the Email Routing rule exist — see `docs/EMAIL_ROUTING_RUNBOOK.md`. |
 | `ai_health` | Is AI *working* (`ai_spend_24h` only says what it cost): `last_ledger_row_at`, `hours_since_last_call` (newest `budget_ledger` row = last SUCCESSFUL call; `null` = empty), `window_hours`, `per_agent[]` (`attempted`, `succeeded`, `skipped`, `last_run_at`, `first_failure_kind`, `first_error`), `agents_all_failing[]` (`attempted > 0`, `succeeded = 0`). Only counter-instrumented agents appear (analyst, observer, narrator, campaign_hunter) — absent ≠ healthy. Under `AI_MODE=rules_only` every call is a skip, so `attempted` stays 0 and `hours_since_last_call` grows without it being an outage. See §6 "AI-call health". |
 | `platform_totals` | `brands`, `providers`, `campaigns`, `clusters`, `feeds_enabled`, `feeds_disabled` |
 | `brand_count_drift` | Last cube_healer reconciliation of `brands.threat_count` AND `brands.active_threat_count` in one pass (`brandsChecked`, `drifted`, `fixed`, `checked_at`). Persistent large `drifted` = a brand-link writer is skipping the counter bump — see `lib/brand-count-reconciler.ts`. |

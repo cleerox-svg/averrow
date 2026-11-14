@@ -128,7 +128,10 @@ Both steps below are manual and required before any report can arrive:
 
 A customer then publishes `rua=mailto:dmarc_rua@averrow.ca` in their
 `_dmarc` TXT. Reports are stored only for brands whose `_dmarc` record names
-our address (enrollment gate); other mail is dropped and counted.
+our address (enrollment gate) and that are eligible (tier monitored or
+customer, trusted source, not shared hosting); other mail is dropped and
+counted. Caps: 50 stored reports per brand per UTC day (verified and
+unverified counted separately) and 500 per hour overall (`rate_limited`).
 
 **Canary test.**
 1. Confirm the authorization record: `dig TXT test._report._dmarc.averrow.ca +short` returns `"v=DMARC1"`.
@@ -139,7 +142,8 @@ our address (enrollment gate); other mail is dropped and counted.
      "SELECT id, domain, reporter_org, total_messages, total_fail, received_at
       FROM dmarc_reports ORDER BY received_at DESC LIMIT 1"
    ```
-4. Platform diagnostics `dmarc_ingest`: `reports_24h` rises on success. If the report is missing, `dropped_24h` says why (`no_brand`, `unenrolled`, `duplicate`, `unparseable`). If neither moves, mail never reached the Worker: check the routing rule. A resend of the same report counts `duplicate` and writes nothing.
+4. **Confirm provenance against real mail (required once, before trusting `verified`).** `TRUSTED_AUTHSERV_IDS` in `src/lib/dmarc-provenance.ts` (`mx.cloudflare.net`) is an assumption: nobody has yet captured a real report's headers to see which `Authentication-Results` header Cloudflare Email Routing adds and with what authserv-id. With a real report from a known reporter (for example Google) delivered to the address, capture its full raw headers (for example by temporarily forwarding or logging the first 64 KB of a real message) and check that the TOPMOST `Authentication-Results` carries the authserv-id in that set and shows `dkim=pass` or `dmarc=pass` for the reporter's organization. Then check the stored row: `SELECT sender_domain, sender_auth, verified FROM dmarc_reports ORDER BY received_at DESC LIMIT 1` should read `verified = 1` with a populated `sender_auth`. If `verified` stays 0 for genuine mail, fix `TRUSTED_AUTHSERV_IDS` (and `KNOWN_RUA_REPORTER_ORG_DOMAINS` if the reporter is missing). Until confirmed, every report is unverified: metadata only, no ipinfo, no staff notification.
+5. Platform diagnostics `dmarc_ingest`: `reports_24h` rises on success (`verified_reports_24h` counts the verified ones; `incomplete_reports_24h` and `rollup_pending` should return to 0, Navigator catches up). If the report is missing, `dropped_24h` says why (`no_brand`, `ineligible_brand`, `unenrolled`, `rate_limited`, `duplicate`, `unparseable`, `error`). If neither moves, mail never reached the Worker: check the routing rule. A resend of the same report counts `duplicate` and writes nothing (unless the original was left incomplete, in which case the resend completes it).
 
 ## What this does to averrow.com
 
