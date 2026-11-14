@@ -129,7 +129,7 @@ Each ingested threat is classified into one of these types:
 
 ## Feed Registry
 
-All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 36 entries), `socialModules` (4 entries), or `enrichmentModules` (10 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
+All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 37 entries), `socialModules` (4 entries), or `enrichmentModules` (10 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
 
 **Cadence:** every ingest/social feed except `nrd_hagezi` and 7 of the 10 enrichment feeds run inside the hourly orchestrator tick (`7 * * * *` in `wrangler.toml`) via `runAllFeeds` / `runAllSocialFeeds` / `runAllEnrichmentFeeds` — each feed's actual per-tick eligibility is decided by `shouldRunNow` (`lib/feedRunner.ts:940`), not by a per-feed cron trigger in `wrangler.toml`. That check is: skip while `feed_status.next_retry_at` is still in the future (the circuit breaker, see `CLAUDE.md §6`); otherwise run when the elapsed time since `feed_status.last_successful_pull` has reached the interval `parseCronIntervalMs` derives from that feed's own `feed_configs.schedule_cron` string, less a proportional tolerance (`dueToleranceMs`: 20% of the interval, floor 60 s, cap 20 min — so 5-min feeds keep 60 s, hourly feeds get 12 min, 2h+ feeds 20 min). The tolerance exists because `last_successful_pull` is stamped at pull *completion* while the check runs at the *start* of the next tick; with the old fixed 60 s, any feed finishing a few minutes after the tick (slow upstream, concurrency-pool queuing, late slot in the social/enrichment chain) was skipped one tick and ran at interval + 1h (fixed 2026-10-22). A feed with no `feed_status` row, or none with a successful pull yet, always runs. Three enrichment feeds are the exception: **GreyNoise** (`19 */4 * * *`, every 4h), **SecLookup** (`21 * * * *`, hourly), and **Pulsedive** (`27 */4 * * *`, every 4h) run on dedicated crons (`DEDICATED_ENRICHMENT_FEEDS` in `lib/feedRunner.ts`, skipped by `runAllEnrichmentFeeds` inside the orchestrator tick) because their per-IOC rate-limit sleeps would starve the shared enrichment chain — see `CLAUDE.md §6` for the full rationale and cron table. One ingest feed is the exception too: **NRD Hagezi** (`29 */2 * * *`, every 2h) runs on a dedicated cron (`DEDICATED_INGEST_FEEDS`, skipped by `runAllFeeds`; dispatched by `dispatchDedicatedIngestFeed`, which applies the enabled flag, the circuit breaker and the feed's per-pull timeout but not the interval check — the cron is the schedule) because its daily diff was reaped mid-run inside the shared hourly invocation on 2026-11-09.
 
@@ -161,11 +161,12 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 
 | Feed | File | Source | Description |
 |------|------|--------|-------------|
-| **DShield** | `dshield.ts` | SANS ISC | Top attacking IP addresses |
+| **DShield** | `dshield.ts` | SANS ISC | Top attacking IP addresses. **Disabled** (migration 0326, 2026-11-14): ISC API data is CC BY-NC-SA 4.0; re-enable only with written SANS permission |
 | **CINS Army** | `cins_army.ts` | Sentinel IPS | Malicious IP blocklist |
 | **Blocklist.de** | `blocklistde.ts` | Blocklist.de | IPs attacking SSH/FTP/Web services |
 | **C2 Intel Feeds** | `c2intelfeeds.ts` | drb-ra | Aggregated C2 intel from multiple sources |
-| **Spamhaus DROP** | `spamhausDrop.ts` | Spamhaus | Bulk hijacked / criminal netblocks |
+| **Spamhaus DROP** | `spamhausDrop.ts` | Spamhaus | Bulk hijacked / criminal netblocks, from `drop_v4.json` (IPv4 only; eDROP was merged into DROP 2024-04-10 and is no longer fetched; migration 0327). Daily. Credit The Spamhaus Project in-product; the Spamhaus name must not be used in marketing material |
+| **Spamhaus ASN-DROP** | `spamhausAsnDrop.ts` | Spamhaus | Context only, **not IOCs**: daily `asndrop.json` upsert into `spamhaus_asn_drop` (migration 0327; one row per ASN keyed by `asnKey`, `first_seen` / `last_seen` / `removed_at`, list date + © text per row). Writes no threats, `itemsNew` always 0 (never wakes Sentinel). `removed_at` is stamped on ASNs missing from a pull only when the pull is complete (metadata record count matched, no malformed lines, every batch landed). Only reader: `spamhaus_asn_drop` on `GET /api/providers/:id`. Same credit rule as DROP |
 | **Tor Exit Nodes** | `torExitNodes.ts` | Tor Project | Current exit node list (tagged, not inherently malicious) |
 | **Emerging Threats** | `emergingThreats.ts` | Proofpoint ET | Compromised IPs rule set |
 | **DataPlane** | `dataplane.ts` | dataplane.org | First-party honeypot mesh; rotates 1 of 6 attack-category lists per hourly tick (`hour % 6`) |
@@ -273,10 +274,10 @@ Enrichment feeds run **after** ingest. They query existing threats and annotate 
 
 | Feed | File | Source | Description |
 |------|------|--------|-------------|
-| **SURBL** | `surbl.ts` | SURBL DNS | Domain reputation DNSBL lookups |
+| **SURBL** | `surbl.ts` | SURBL DNS | Domain reputation DNSBL lookups over Cloudflare DoH (`lib/dnsbl-doh.ts`). Resolver refusals / SERVFAIL, SURBL's `127.0.0.1` "blocked" answer and transport failures are lookup **errors**, never clean (row stays `surbl_checked = 0`). Each run self-tests on `surbl-org-permanent-test-point.com` and fails the pull if it is not listed; a refused lookup mid-run, or every lookup erroring, also fails it, so the breaker backs off and auto-pauses. **Currently blind** through Cloudflare's public resolver (SERVFAIL, tested 2026-11-14): expect failed pulls and an auto-pause until an access route is sorted. KV cache prefix `surbl:v2:` |
 | **VirusTotal** | `virustotal.ts` | VT v3 API | Per-URL / per-domain scan verdicts |
 | **Google Safe Browsing** | `googleSafeBrowsing.ts` | GSB v4 | Phishing / malware URL classification |
-| **Spamhaus DBL** | `spamhausDbl.ts` | Spamhaus | Domain blocklist reputation |
+| **Spamhaus DBL** | `spamhausDbl.ts` | Spamhaus | Domain blocklist reputation. **Disabled** (migration 0326, `paused_reason` `manual:licence_noncommercial …`): free DBL tiers are non-commercial and Spamhaus answers public resolvers with `127.255.255.254`. Decoder treats `127.255.255.x` / `127.0.1.255` as lookup errors and each run self-tests on `dbltest.com` (same rules as SURBL; cache prefix `dbl:v2:`). Re-enable only with a Spamhaus Technology subscription (DQS key) and a lookup path that uses it |
 | **AbuseIPDB** | `abuseipdb.ts` | AbuseIPDB | IP abuse confidence score |
 | **CIRCL Passive DNS** | `circlPassiveDns.ts` | CIRCL | Historical DNS records for pivot analysis |
 | **GreyNoise** | `greynoise.ts` | GreyNoise | Internet-wide scanner / noise classification |
@@ -284,6 +285,26 @@ Enrichment feeds run **after** ingest. They query existing threats and annotate 
 | **Pulsedive** | `pulsedive.ts` | Pulsedive | IOC risk scoring (domain/ip) via the free REST API — calibrates confidence/severity from Pulsedive's risk level. Dedicated cron (`27 */4 * * *`); self-gates when `PULSEDIVE_API_KEY` is unset. Pulsedive's STIX/TAXII export is paid, so this is REST enrichment, not a TAXII ingest (migration 0250) |
 
 **Retired — HIBP Stealer Logs (`hibp_stealer_logs`, 2026-10-30).** The Have I Been Pwned stealer-log feed needed a paid HIBP Pro subscription that will not be purchased. It was registered disabled (migration 0051), never pulled, and `HIBP_API_KEY` was never set. The module (`feeds/hibp.ts`), its registration and the `HIBP_API_KEY` binding type were removed; migration 0310 stamps `feed_configs.paused_reason` as retired (row kept, `enabled = 0`). The unused `stealer_log_results` table (0051) is left in place as history. The platform has no credential-exposure / stealer-log source.
+
+**Feeds disabled for licence (2026-11-14, migration 0326).** `spamhaus_dbl` and `dshield` are `enabled = 0` with a `manual:` `paused_reason`; modules and registrations stay. That prefix keeps them out of the auto-pause / degraded / silent-feed alerts, and Flight Control reports an enrichment backlog of a `manual:`-disabled feed as 0 and does not stall-track it (`loadManuallyDisabledFeeds`, `agents/flightControl.ts`). Auto-paused feeds are still measured. To re-enable: meet the condition above, then `enabled = 1, paused_reason = NULL` on the `feed_configs` row.
+
+**Removed integrations (2026-11-14).** Shodan InternetDB enrichment (`enrichment/shodan.ts`) was deleted: commercial use needs an enterprise licence. Do not re-add without one. `runEnrichmentChain` (`enrichment/index.ts`, now RDAP + DNS only) has no caller in the worker. The ransomware leak-site ingest (`lib/dark-web-ransomware-ingest.ts`, not a `feeds/` module — see "Ransomware leak ingest") no longer reads ransomwatch (archived) or ransomware.live (terms bar commercial use).
+
+### Ransomware leak ingest
+
+Not a feed module and no `feed_configs` row: `runDarkWebRansomwareIngest` runs at the top of each `dark_web_monitor` run (`14 */6 * * *`). One fetch of RansomLook `https://www.ransomlook.io/api/recent/300`, brand-matched in JS against the monitored-brand catalog, matches inserted into `dark_web_mentions` (`source='ransomware_leak'`) with a CRITICAL `dark_web_mention` alert. Rows and alerts store the RansomLook credit and licence (`RANSOMLOOK_ATTRIBUTION`, CC BY 4.0); UI that shows them must show the credit. An upstream failure (HTTP error, timeout, non-JSON, or a non-empty body that parses to zero posts, or the ingest throwing) ends the run `partial` (`AgentResult.degraded`) with a high-severity `agent_outputs` diagnostic row, instead of a silent `success` with zero rows. No AI.
+
+### Licence at integration time (2026-11-14)
+
+Licence terms as read when each source was integrated or audited; re-check before relying on them.
+
+| Source | Terms | Status |
+|---|---|---|
+| Spamhaus DROP / ASN-DROP | Free for commercial use with credit to The Spamhaus Project; list date and © text stay with the data; no Spamhaus name in marketing; at most one automated download per hour | Live (daily) |
+| RansomLook | CC BY 4.0 (attribution stored on every row) | Live |
+| Spamhaus DBL (free tiers) | Non-commercial only | Disabled (0326) |
+| SANS ISC (DShield) | CC BY-NC-SA 4.0 | Disabled (0326) |
+| Cloudflare Radar API | CC BY-NC 4.0 | Live, staff-only surfaces; the reader graph is pinned by `test/radar-data-exposure.test.ts` (no tenant, public or marketing reader) |
 
 ### Retired feeds — dead upstreams (2026-10-30)
 

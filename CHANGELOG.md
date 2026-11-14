@@ -4,6 +4,23 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [Unreleased]
+
+Feed licence and honesty audit (2026-11-14). No version bump yet.
+
+### Feeds
+- **Disabled for licence (migration 0326):** `spamhaus_dbl` (free DBL tiers are non-commercial; Spamhaus also answers public resolvers with `127.255.255.254`) and `dshield` (SANS ISC API is CC BY-NC-SA 4.0). `manual:` `paused_reason`; re-enable conditions are in the migration.
+- **DNSBL honesty (`lib/dnsbl-doh.ts`):** SURBL and DBL now treat resolver refusals / SERVFAIL, their "blocked" answer codes and transport failures as lookup errors (row stays unchecked) instead of "clean", self-test on the list's test point each run, and fail the pull when blind. KV cache prefixes bumped to `surbl:v2:` / `dbl:v2:` so old refused-as-clean entries are never read. SURBL is currently blind through Cloudflare's public resolver: expect failed pulls and an auto-pause until an access route is sorted.
+- **Flight Control:** enrichment backlogs of feeds disabled with a `manual:` `paused_reason` are reported as 0 and not stall-tracked.
+- **Spamhaus DROP** now reads `drop_v4.json`; eDROP removed (merged into DROP 2024-04-10). New context-only feed `spamhaus_asn_drop` (daily, table `spamhaus_asn_drop`, migration 0327): never writes threats, `itemsNew = 0`, delisting stamped only on a complete pull. `GET /api/providers/:id` gains `spamhaus_asn_drop`. Credit The Spamhaus Project in-product; the Spamhaus name must not be used in marketing material.
+- **Ransomware leak ingest** reads RansomLook only (CC BY 4.0, attribution stored on rows and alerts); ransomwatch and ransomware.live removed. An upstream failure ends the dark-web monitor run `partial` with a high-severity `agent_outputs` row.
+- **Shodan InternetDB enrichment removed** (`enrichment/shodan.ts` deleted; commercial use needs an enterprise licence).
+
+### Email security
+- Shared RFC 9989 DMARC parser (`lib/dmarc-record.ts`) used by the posture scanner, Flight Control's own-domain check (`lib/doh.ts`) and the free-scan handler; fixes `p=` being matched inside `sp=` / `np=`. Tags `np`, `t`, `psd` (and `sp`) parsed; `t=y` or `pct` < 100 scores an enforcing policy one level lower; an `np=none` (or `sp=none` with no `np`) gap under quarantine/reject costs 5 points. Migration 0328 adds `email_security_scans.dmarc_sp/np/t/psd`; scan results carry the new `dmarc` fields.
+
+---
+
 ## [v4.10.0] — 2026-11-09
 
 Facelift Phase 6 (per-screen redesign): the indigo-on-graphite identity now

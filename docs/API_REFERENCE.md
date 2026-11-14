@@ -99,7 +99,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | POST | `/api/v1/public/assess` | Domain assessment (rate-limited by `CF-Connecting-IP` in KV only; the requester IP is not stored in `assessments` — PR-E, 2026-10). Response `{ assessment_id, domain, brand_name, trust_score, grade, assessment_text, spf_policy, dmarc_policy, assessed_at }` — email posture (SPF/DMARC/MX) only; no threat/provider/campaign counts, threat types, monitored status or spam-trap data (detection-oracle fix 2026-10-05). The threat-derived staff values stay on the `assessments` row **Turnstile** (`TURNSTILE_MODE`, action `scan`): token via `CF-Turnstile-Response` header or JSON `turnstileToken`; in `enforce` a missing/failed token → **403** `{success:false,error:"Verification failed"}` — see note under Public Endpoints. |
 | POST | `/api/v1/public/leads` | Lead capture. Caller `trust_score`/`grade` are ignored; `assessment_id` is linked only if that row exists, else the latest assessment for `domain`, else a placeholder with no score **Turnstile** (`TURNSTILE_MODE`, action `lead`): token via `CF-Turnstile-Response` header or JSON `turnstileToken`; in `enforce` a missing/failed token → **403** `{success:false,error:"Verification failed"}` — see note under Public Endpoints. |
 | POST | `/api/v1/public/monitor` | Monitor request. Response `{ domain, brand_name, monitoring, message }` — the same whether or not the brand already existed; no `brand_id`, no threat count **Turnstile** (`TURNSTILE_MODE`, action `monitor`): token via `CF-Turnstile-Response` header or JSON `turnstileToken`; in `enforce` a missing/failed token → **403** `{success:false,error:"Verification failed"}` — see note under Public Endpoints. |
-| GET | `/api/v1/public/email-security/:domain` | Public email security check. Rate limit 30/hour per IP (429). Read-only: returns the live scan (KV-cached 1h) and never writes brand state or creates alerts — those come only from the staff scan routes |
+| GET | `/api/v1/public/email-security/:domain` | Public email security check. Rate limit 30/hour per IP (429). Read-only: returns the live scan (KV-cached 1h) and never writes brand state or creates alerts — those come only from the staff scan routes. The `dmarc` object carries the RFC 9989 tags `sp`, `np`, `t`, `psd` (null when absent) and `testing` (`t=y` or legacy `pct` < 100, scored one enforcement level lower; an `np`/`sp=none` gap under an enforcing policy costs 5 points). Entries cached before 2026-11-14 lack the new keys |
 | GET | `/api/v1/public/platform-status` | Platform uptime rollup (no auth) — feeds Home banner + Phase 3 public status page. Same payload as `/api/admin/platform-status`. KV-cached 60s. Returns the `PlatformStatus` body directly (never the `{success,error}` envelope); on a compute failure it returns HTTP 200 with a `PlatformStatus`-shaped `overall:'outage'` fallback so consumers can always read a valid `overall`. |
 | GET | `/api/v1/public/milestones/latest` | Most recently fired platform milestone (e.g. "1,000,000 threats ingested"). Drives the Home celebration banner. Public, polled every 5 min by clients. |
 | GET | `/api/v1/public/incidents` | Public incidents feed for `/status`. Returns only rows with `visibility='public'` AND `public_title` set. Stripped to `id`, `title`, `details`, `status`, `severity`, `affected_components`, `started_at`, `resolved_at`, `updates[]`. Internal title/description never exposed. |
@@ -358,7 +358,7 @@ Same `requireStaff` gate; handler `handlers/observatoryEvents.ts`. Feeds the Int
 |--------|------|------|-------------|
 | GET | `/api/providers` | Staff | List hosting providers |
 | GET | `/api/providers/stats` | Staff | Provider statistics |
-| GET | `/api/providers/:id` | Staff | Get provider detail |
+| GET | `/api/providers/:id` | Staff | Get provider detail. Includes `spamhaus_asn_drop`: `null` unless the provider's ASN (via `asnKey`) is currently listed on Spamhaus ASN-DROP (`spamhaus_asn_drop`, `removed_at IS NULL`), else `{ listed: true, asn, as_name, as_domain, country_code, first_seen, last_seen, attribution }` (`attribution` = the list's © text; show it, Spamhaus requires credit). Evidence metadata only; best-effort, `null` on read error |
 | GET | `/api/providers/:id/threats` | Staff | Provider's threats |
 | GET | `/api/providers/:id/brands` | Staff | Brands affected by provider |
 | GET | `/api/providers/:id/timeline` | Staff | Provider timeline |
@@ -379,9 +379,9 @@ Same `requireStaff` gate; handler `handlers/observatoryEvents.ts`. Feeds the Int
 |--------|------|------|-------------|
 | GET | `/api/email-security/stats` | User | Email security statistics |
 | GET | `/api/email-security/scan-all` | Admin | Scan all monitored brands |
-| GET | `/api/email-security/:brandId` | User | Get brand email security posture |
+| GET | `/api/email-security/:brandId` | User | Get brand email security posture (latest `email_security_scans` row, `SELECT *`; since migration 0328 also `dmarc_sp`, `dmarc_np`, `dmarc_t`, `dmarc_psd`, NULL on older rows) |
 | GET | `/api/email-security/:brandId/history?limit=N` | User | Up to N most-recent scans with per-scan `protocols_passing` (0–4) for the brand-detail Surface tab posture sparkline |
-| POST | `/api/email-security/scan/:brandId` | Staff (mutation) | Trigger email security scan; persists brand state and may raise `bimi_removed` / `dmarc_downgraded` (each ≤1 per brand per 24h) and `vmc_expiring` (≤1 per brand per certificate expiry per 7 days) |
+| POST | `/api/email-security/scan/:brandId` | Staff (mutation) | Trigger email security scan (result `dmarc` object has the same RFC 9989 additions as the public check); persists brand state (incl. `dmarc_sp/np/t/psd`) and may raise `bimi_removed` / `dmarc_downgraded` (each ≤1 per brand per 24h) and `vmc_expiring` (≤1 per brand per certificate expiry per 7 days) |
 
 ## DMARC Reports
 
