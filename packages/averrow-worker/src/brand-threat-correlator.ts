@@ -149,11 +149,16 @@ export async function correlateBrandThreats(
   }));
 
   // 6. DMARC aggregate reports: one dmarc_reports row per received report
-  // (total_fail = messages not passing BOTH SPF and DKIM, as dmarc-receiver
-  // counts them — a superset of DMARC failures, since DMARC passes on either),
-  // per-source rows in dmarc_report_records. "Unauthorized senders" are
-  // sources that pass NEITHER check, i.e. actual DMARC failures (a forwarder
-  // that breaks SPF but keeps DKIM is not counted).
+  // (total_fail = messages that failed DMARC, i.e. neither aligned DKIM nor
+  // aligned SPF passed — dmarc-receiver uses pass = dkim OR spf since
+  // 2026-11-14; before that it counted "not both", a superset), per-source
+  // rows in dmarc_report_records. "Unauthorized senders" are sources that
+  // pass NEITHER check — the same DMARC-failure definition (a forwarder that
+  // breaks SPF but keeps DKIM is not counted). Written against the
+  // policy_evaluated columns rather than dmarc_result so pre-2026-11-14 rows
+  // (dmarc_result NULL) still count. Note it still counts forwarders and
+  // shared-ESP misconfiguration; dmarc_source_daily.source_class separates
+  // those from spoof candidates.
   // Both seek idx_dmarc_reports_brand_received (migration 0325); CROSS JOIN pins
   // dr as the outer loop so the records are reached via idx_drr_report.
   const dmarcFailures = await env.DB.prepare(`

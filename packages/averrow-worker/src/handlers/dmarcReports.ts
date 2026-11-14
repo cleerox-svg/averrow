@@ -8,10 +8,22 @@
  * GET /api/dmarc-reports/:brandId          — reports for a brand (last 50)
  * GET /api/dmarc-reports/:brandId/stats    — daily stats + totals
  * GET /api/dmarc-reports/:brandId/sources  — top source IPs
+ * GET /api/dmarc-reports/:brandId/setup    — hosted-RUA onboarding state
+ * GET /api/dmarc-reports/:brandId/spoof-sources — classified failing sources
+ *
+ * All staff-only at the route layer (routes/email-security.ts).
  */
 
 import type { Env } from "../types";
 import { json } from "../lib/cors";
+import { attachBookmark, getDbContext, getReadSession } from "../lib/db";
+import {
+  DMARC_RUA_PRIMARY,
+  DMARC_RUA_TAG_VALUE,
+  ruaIncludesAverrow,
+} from "../lib/dmarc-rua";
+import { liveDmarcRuaState, ruaAuthorizationRecordOk } from "../lib/dmarc-enrollment";
+import { mergeDmarcSourceClass, type DmarcSourceClass } from "../lib/dmarc-source-classify";
 
 // GET /api/dmarc-reports/overview — Admin: global summary (last 30 days)
 export async function handleGetDmarcOverview(request: Request, env: Env): Promise<Response> {
@@ -184,15 +196,17 @@ export async function handleGetDmarcSources(
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20"), 50);
   const failOnly = url.searchParams.get("fail_only") !== "false";
 
+  // DMARC fails only when NEITHER aligned check passed (pass = dkim OR
+  // spf). The old `!= 'pass' OR != 'pass'` counted any single failure.
   const failFilter = failOnly
-    ? `AND (rr.dkim_result != 'pass' OR rr.spf_result != 'pass')`
+    ? `AND COALESCE(rr.dkim_result, '') <> 'pass' AND COALESCE(rr.spf_result, '') <> 'pass'`
     : "";
 
   const sources = await env.DB.prepare(`
     SELECT
       rr.source_ip,
       SUM(rr.count) AS total_messages,
-      SUM(CASE WHEN rr.dkim_result != 'pass' OR rr.spf_result != 'pass'
+      SUM(CASE WHEN COALESCE(rr.dkim_result, '') <> 'pass' AND COALESCE(rr.spf_result, '') <> 'pass'
                THEN rr.count ELSE 0 END) AS fail_messages,
       rr.country_code,
       rr.org,
@@ -213,4 +227,218 @@ export async function handleGetDmarcSources(
   }>();
 
   return json({ success: true, data: sources.results }, 200, origin);
+}
+
+// ─── Hosted DMARC reporting (sensor) ────────────────────────────────
+
+/** Days without a report after which a receiving brand reads `stale`. */
+export const DMARC_RECEIVING_WINDOW_DAYS = 7;
+
+export type DmarcSetupState = "no_dmarc" | "rua_missing" | "awaiting_reports" | "receiving" | "stale";
+
+function sqliteTsMs(ts: string | null | undefined): number | null {
+  if (!ts) return null;
+  const ms = Date.parse(ts.includes("T") ? ts : `${ts.replace(" ", "T")}Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Pure state machine for the setup endpoint (unit-tested). */
+export function deriveDmarcSetupState(opts: {
+  lastReportAt: string | null;
+  ruaIncludesAverrow: boolean;
+  dmarcRecordExists: boolean;
+  nowMs: number;
+}): DmarcSetupState {
+  const last = sqliteTsMs(opts.lastReportAt);
+  if (last !== null) {
+    return opts.nowMs - last <= DMARC_RECEIVING_WINDOW_DAYS * 86_400_000 ? "receiving" : "stale";
+  }
+  if (opts.ruaIncludesAverrow) return "awaiting_reports";
+  return opts.dmarcRecordExists ? "rua_missing" : "no_dmarc";
+}
+
+// GET /api/dmarc-reports/:brandId/setup — onboarding state for hosted RUA.
+export async function handleGetDmarcSetup(request: Request, env: Env, brandId: string): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const session = getReadSession(env, getDbContext(request));
+  try {
+    const brand = await session.prepare("SELECT id, canonical_domain FROM brands WHERE id = ?")
+      .bind(brandId).first<{ id: string; canonical_domain: string }>();
+    if (!brand) return json({ success: false, error: "Brand not found" }, 404, origin);
+
+    const scan = await session.prepare(
+      "SELECT dmarc_exists, dmarc_rua, scanned_at FROM email_security_scans WHERE brand_id = ? ORDER BY scanned_at DESC LIMIT 1",
+    ).bind(brand.id).first<{ dmarc_exists: number | null; dmarc_rua: string | null; scanned_at: string | null }>();
+    const enrollment = await session.prepare(
+      "SELECT rua_verified_at, verified_via, last_report_at FROM dmarc_enrollment WHERE brand_id = ?",
+    ).bind(brand.id).first<{ rua_verified_at: string; verified_via: string; last_report_at: string | null }>();
+    const lastReport = await session.prepare(
+      "SELECT MAX(received_at) AS last FROM dmarc_reports WHERE brand_id = ?",
+    ).bind(brand.id).first<{ last: string | null }>();
+
+    // The scan answers when it already shows our address; otherwise ask
+    // DNS (KV-cached 6h / 30 min when empty) so a just-published rua shows
+    // up without waiting for the next posture scan.
+    let ruaOurs = ruaIncludesAverrow(scan?.dmarc_rua ?? null);
+    let ruaSource: "scan" | "live_dns" = "scan";
+    let dmarcExists = !!scan?.dmarc_exists;
+    if (!ruaOurs) {
+      const live = await liveDmarcRuaState(env, brand.canonical_domain);
+      ruaSource = "live_dns";
+      ruaOurs = live === "averrow";
+      // A failed lookup reads as no_dmarc; don't let it override a scan
+      // that saw a record.
+      dmarcExists = live !== "no_dmarc" || dmarcExists;
+    }
+
+    const lastReportAt = lastReport?.last ?? enrollment?.last_report_at ?? null;
+    const state = deriveDmarcSetupState({ lastReportAt, ruaIncludesAverrow: ruaOurs, dmarcRecordExists: dmarcExists, nowMs: Date.now() });
+    const auth = await ruaAuthorizationRecordOk(env, brand.canonical_domain);
+
+    return attachBookmark(json({
+      success: true,
+      data: {
+        brand_id: brand.id,
+        domain: brand.canonical_domain,
+        state,
+        rua_address: DMARC_RUA_PRIMARY,
+        rua_value: DMARC_RUA_TAG_VALUE,
+        rua_includes_averrow: ruaOurs,
+        rua_checked_via: ruaSource,
+        authorization_required: auth.required,
+        authorization_record_ok: auth.ok,
+        authorization_record_name: auth.record_name,
+        authorization_record_value: "v=DMARC1;",
+        enrolled: !!enrollment,
+        verified_via: enrollment?.verified_via ?? null,
+        rua_verified_at: enrollment?.rua_verified_at ?? null,
+        last_report_at: lastReportAt,
+        last_scan_at: scan?.scanned_at ?? null,
+      },
+    }, 200, origin), session);
+  } catch (err) {
+    console.error("[dmarc-setup] failed:", err instanceof Error ? err.message : String(err));
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
+export const DMARC_SPOOF_SOURCES_TTL_S = 300;
+export const DMARC_SPOOF_SOURCES_LIMIT = 200;
+
+export function dmarcSpoofSourcesCacheKey(brandId: string, days: number): string {
+  return `dmarc:spoof_sources:v1:${brandId}:${days}`;
+}
+
+/** Merge a `group_concat(DISTINCT source_class)` list with the classifier's
+ *  total order; unknown tokens are ignored. */
+export function mergeClassList(list: string | null): DmarcSourceClass {
+  let out: DmarcSourceClass = "aligned_pass";
+  for (const c of (list ?? "").split(",")) {
+    if (c === "aligned_pass" || c === "forwarder_likely" || c === "unaligned_shared_esp" || c === "spoof_candidate") {
+      out = mergeDmarcSourceClass(out, c);
+    }
+  }
+  return out;
+}
+
+// GET /api/dmarc-reports/:brandId/spoof-sources?days=7|30
+// Reads ONLY the dmarc_source_daily rollup (+ dmarc_daily_stats series).
+export async function handleGetDmarcSpoofSources(request: Request, env: Env, brandId: string): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const rawDays = new URL(request.url).searchParams.get("days");
+  if (rawDays !== null && rawDays !== "7" && rawDays !== "30") {
+    return json({ success: false, error: "days must be 7 or 30" }, 400, origin);
+  }
+  const days = rawDays === "30" ? 30 : 7;
+
+  const cacheKey = dmarcSpoofSourcesCacheKey(brandId, days);
+  try {
+    const cached = await env.CACHE.get(cacheKey);
+    if (cached) return json({ success: true, data: JSON.parse(cached) as unknown }, 200, origin);
+  } catch {
+    // KV transient — fall through.
+  }
+
+  const session = getReadSession(env, getDbContext(request));
+  try {
+    const brand = await session.prepare("SELECT id, canonical_domain FROM brands WHERE id = ?")
+      .bind(brandId).first<{ id: string; canonical_domain: string }>();
+    if (!brand) return json({ success: false, error: "Brand not found" }, 404, origin);
+
+    const since = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+    // PK (brand_id, date, source_ip) range. Per-IP attributes are stable
+    // across days; MAX picks the non-null value deterministically.
+    const rows = await session.prepare(
+      `SELECT d.source_ip, d.messages, d.fail_messages, d.classes, d.rules, d.asn, d.as_org,
+              d.country_code, d.hosting_provider_id, hp.name AS provider_name, d.cluster_id,
+              d.asn_drop_listed, d.first_seen, d.last_seen, d.days_seen
+       FROM (
+         SELECT source_ip,
+                SUM(messages) AS messages, SUM(fail_messages) AS fail_messages,
+                group_concat(DISTINCT source_class) AS classes,
+                group_concat(DISTINCT source_rule) AS rules,
+                MAX(asn) AS asn, MAX(as_org) AS as_org, MAX(country_code) AS country_code,
+                MAX(hosting_provider_id) AS hosting_provider_id, MAX(cluster_id) AS cluster_id,
+                MAX(asn_drop_listed) AS asn_drop_listed,
+                MIN(first_seen) AS first_seen, MAX(last_seen) AS last_seen,
+                COUNT(*) AS days_seen
+         FROM dmarc_source_daily
+         WHERE brand_id = ? AND date >= ?
+         GROUP BY source_ip
+       ) d
+       LEFT JOIN hosting_providers hp ON hp.id = d.hosting_provider_id
+       ORDER BY d.fail_messages DESC, d.source_ip
+       LIMIT ${DMARC_SPOOF_SOURCES_LIMIT}`,
+    ).bind(brand.id, since).all<{
+      source_ip: string; messages: number; fail_messages: number; classes: string | null; rules: string | null;
+      asn: string | null; as_org: string | null; country_code: string | null;
+      hosting_provider_id: string | null; provider_name: string | null; cluster_id: string | null;
+      asn_drop_listed: number; first_seen: string; last_seen: string; days_seen: number;
+    }>();
+
+    const daily = await session.prepare(
+      `SELECT date, total_messages, passed, failed FROM dmarc_daily_stats
+       WHERE domain = ? AND date >= ? ORDER BY date`,
+    ).bind(brand.canonical_domain, since).all<{ date: string; total_messages: number; passed: number; failed: number }>();
+
+    const sources = (rows.results ?? []).map((r) => ({
+      source_ip: r.source_ip,
+      source_class: mergeClassList(r.classes),
+      source_rules: (r.rules ?? "").split(",").filter((x) => x !== ""),
+      messages: r.messages,
+      fail_messages: r.fail_messages,
+      asn: r.asn,
+      as_org: r.as_org,
+      country_code: r.country_code,
+      provider: r.hosting_provider_id ? { id: r.hosting_provider_id, name: r.provider_name } : null,
+      cluster_id: r.cluster_id,
+      asn_drop_listed: r.asn_drop_listed === 1,
+      first_seen: r.first_seen,
+      last_seen: r.last_seen,
+      days_seen: r.days_seen,
+    }));
+    const data = {
+      brand_id: brand.id,
+      domain: brand.canonical_domain,
+      days,
+      since,
+      sources,
+      daily: (daily.results ?? []).map((d) => ({ date: d.date, total: d.total_messages, passed: d.passed, failed: d.failed })),
+      summary: {
+        sources: sources.length,
+        spoof_candidate_sources: sources.filter((s) => s.source_class === "spoof_candidate").length,
+        fail_messages: sources.reduce((n, s) => n + s.fail_messages, 0),
+        truncated: sources.length >= DMARC_SPOOF_SOURCES_LIMIT,
+      },
+    };
+    try {
+      await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: DMARC_SPOOF_SOURCES_TTL_S });
+    } catch {
+      // serve uncached
+    }
+    return attachBookmark(json({ success: true, data }, 200, origin), session);
+  } catch (err) {
+    console.error("[dmarc-spoof-sources] failed:", err instanceof Error ? err.message : String(err));
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
 }

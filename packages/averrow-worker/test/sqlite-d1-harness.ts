@@ -139,9 +139,11 @@ export function d1FromSqlite(raw: SqliteDb, opts: D1Options = {}): D1Database {
 
   return {
     prepare: (sql: string) => make(sql, []),
-    batch: async (stmts: Array<{ run: () => Promise<unknown> }>) => {
+    batch: async (stmts: Array<{ run: () => Promise<unknown>; all: () => Promise<unknown>; __sql?: string }>) => {
+      // D1's batch returns each statement's rows, so a `… RETURNING` write
+      // inside a batch yields its returned rows; mirror that.
       const out: unknown[] = [];
-      for (const s of stmts) out.push(await s.run());
+      for (const s of stmts) out.push(await (/\bRETURNING\b/i.test(s.__sql ?? "") ? s.all() : s.run()));
       return out;
     },
   } as unknown as D1Database;
