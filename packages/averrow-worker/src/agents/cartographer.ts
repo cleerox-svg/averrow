@@ -1184,35 +1184,10 @@ export const cartographerAgent: AgentModule = {
     if (budgetSpent()) {
       budgetSkipped.push("phase4 dmarc geo");
     } else try {
-      const unenrichedIps = await env.DB.prepare(`
-        SELECT DISTINCT source_ip FROM dmarc_report_records
-        WHERE country_code IS NULL AND source_ip IS NOT NULL
-        LIMIT 10
-      `).all<{ source_ip: string }>();
-
-      if (unenrichedIps.results.length > 0) {
-        const { batchGeoLookup, isPrivateIP } = await import("../lib/geoip");
-        const ips = unenrichedIps.results.map(r => r.source_ip).filter(ip => !isPrivateIP(ip));
-        const { results: geoMap } = await batchGeoLookup(ips, env.CACHE, env.IPINFO_TOKEN);
-
-        for (const [ip, geo] of geoMap.entries()) {
-          await env.DB.prepare(`
-            UPDATE dmarc_report_records
-            SET country_code = ?, org = ?, asn = ?, lat = ?, lng = ?
-            WHERE source_ip = ? AND country_code IS NULL
-          `).bind(geo.countryCode, geo.org, geo.as, geo.lat, geo.lng, ip).run();
-          dmarcGeoEnriched++;
-        }
-
-        // Mark private/bogon IPs so they exit the queue
-        for (const { source_ip } of unenrichedIps.results) {
-          if (isPrivateIP(source_ip)) {
-            await env.DB.prepare(
-              `UPDATE dmarc_report_records SET country_code = 'PRIV' WHERE source_ip = ? AND country_code IS NULL`
-            ).bind(source_ip).run();
-          }
-        }
-      }
+      // lib/dmarc-record-geo.ts: every queued IP leaves the queue
+      // (resolved, 'PRIV' for reserved ranges, 'XX' for a failed lookup).
+      const { geoEnrichDmarcRecords } = await import("../lib/dmarc-record-geo");
+      dmarcGeoEnriched = (await geoEnrichDmarcRecords(env)).enriched;
     } catch (e) {
       console.error("[cartographer] DMARC geo enrichment error:", e);
     }

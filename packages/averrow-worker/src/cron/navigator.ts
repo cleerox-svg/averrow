@@ -497,7 +497,7 @@ interface NavigatorImplResult {
   contactRatePurgeResult: ContactRatePurgeResult | null;
   /** DMARC rollup catch-up — every tick; null when skipped (soft cap). */
   dmarcRollupCatchUpResult: DmarcRollupCatchUpResult | null;
-  /** DMARC aggregate-report retention — hour-0 ticks only. */
+  /** DMARC aggregate-report retention — every tick; null when skipped. */
   dmarcPurgeResult: DmarcPurgeResult | null;
 }
 
@@ -711,11 +711,13 @@ async function runNavigatorImpl(
       contactRatePurgeResult = await purgeExpiredContactRate(env);
     }
 
-    // ── 2g. DMARC aggregate-report retention (records/sources 180d, seen 61d) ──
-    // Hour-only gate (cron-audit rule). Four indexed reads when nothing is
-    // due; a backlog over the batch cap drains on the next hour-0 tick.
+    // ── 2g. DMARC aggregate-report retention (reports/records/sources 180d,
+    //        seen 63d, rate counters 2d) ──
+    // Every tick, no time gate: it must keep pace with what the ingest caps
+    // allow (lib/dmarc-retention.ts has the numbers). Four indexed seeks
+    // that return nothing when nothing is due; bounded batches otherwise.
     // Never throws.
-    if (scheduledTime.getUTCHours() === 0 && !isOverCap()) {
+    if (!isOverCap()) {
       dmarcPurgeResult = await purgeExpiredDmarcData(env, {
         softCapMs: Math.max(0, NAVIGATOR_SOFT_CAP_MS - (Date.now() - start)),
       });
@@ -1407,19 +1409,19 @@ export const navigatorAgent: AgentModule = {
     // DMARC retention / rollup catch-up — only when they did something or
     // failed, so empty ticks add no noise.
     const dp = result.dmarcPurgeResult;
-    if (dp && (dp.records_deleted + dp.reports_deleted + dp.sources_deleted + dp.seen_deleted > 0 || dp.error)) {
+    if (dp && (dp.records_deleted + dp.reports_deleted + dp.sources_deleted + dp.seen_deleted + dp.counters_deleted > 0 || dp.error)) {
       agentOutputs.push({
         type: 'diagnostic',
-        summary: `dmarc-retention: records=${dp.records_deleted} reports=${dp.reports_deleted} sources=${dp.sources_deleted} seen=${dp.seen_deleted} batches=${dp.batches} more=${dp.more_remaining ? 'yes' : 'no'}${dp.error ? ` err="${dp.error.slice(0, 120)}"` : ''}`,
+        summary: `dmarc-retention: records=${dp.records_deleted} reports=${dp.reports_deleted} sources=${dp.sources_deleted} seen=${dp.seen_deleted} counters=${dp.counters_deleted} statements=${dp.statements} more=${dp.more_remaining ? 'yes' : 'no'}${dp.error ? ` err="${dp.error.slice(0, 120)}"` : ''}`,
         severity: dp.error ? 'medium' : 'info',
         details: { ...dp },
       });
     }
     const dc = result.dmarcRollupCatchUpResult;
-    if (dc && (dc.pending > 0 || dc.error)) {
+    if (dc && (dc.pending > 0 || dc.staleReset > 0 || dc.error)) {
       agentOutputs.push({
         type: 'diagnostic',
-        summary: `dmarc-rollup-catchup: pending=${dc.pending} rolled_up=${dc.rolledUp}${dc.error ? ` err="${dc.error.slice(0, 120)}"` : ''}`,
+        summary: `dmarc-rollup-catchup: stale_reset=${dc.staleReset} pending=${dc.pending} rolled_up=${dc.rolledUp} abandoned=${dc.abandoned} failed=${dc.failed}${dc.error ? ` err="${dc.error.slice(0, 120)}"` : ''}`,
         severity: dc.error ? 'medium' : 'info',
         details: { ...dc },
       });

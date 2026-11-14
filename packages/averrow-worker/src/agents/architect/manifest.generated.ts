@@ -193,7 +193,6 @@ export const REPO_MANIFEST: RepoInventory = {
         "CACHE",
         "DB",
         "brands",
-        "dmarc_report_records",
         "email_security_scans",
         "geopolitical_campaign_links",
         "geopolitical_campaigns",
@@ -205,15 +204,14 @@ export const REPO_MANIFEST: RepoInventory = {
         "agent_events",
         "alerts",
         "brands",
-        "dmarc_report_records",
         "hosting_providers",
         "merges",
         "provider_threat_stats",
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 1797,
-      "last_modified": "2026-11-14T07:22:31.826Z"
+      "loc": 1772,
+      "last_modified": "2026-11-14T13:33:40.238Z"
     },
     {
       "name": "ct-monitor",

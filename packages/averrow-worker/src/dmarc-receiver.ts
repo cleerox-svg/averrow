@@ -21,8 +21,9 @@
  *      row carrying it yet, so a retry or a resend never double-counts.
  *      The row is found again by claim_id (no reliance on RETURNING).
  *   6. Per-source records (≤ MAX_STORED_RECORDS, failing first), retried
- *      per batch. A report left incomplete (processed = 0) is completed by
- *      a resend of the same report instead of being dropped as duplicate.
+ *      per batch. A report left incomplete (processed = 0, or a dead
+ *      worker's stale processed = 2) is completed by a resend carrying the
+ *      same totals instead of being dropped as duplicate.
  *   7. Staff notification (verified reports only) and the source rollup
  *      under waitUntil; a rollup that never lands is caught up by
  *      Navigator (lib/dmarc-source-rollup.ts runDmarcRollupCatchUp).
@@ -45,6 +46,7 @@ import {
   dmarcReportDay,
   dmarcReportEpochIso,
   encodeRecordAuth,
+  isDmarcReportInWindow,
   parseDmarcAggregateXml,
   type DmarcAggregateRecord,
   type DmarcAggregateReport,
@@ -58,8 +60,8 @@ import {
   type DmarcBrand,
   type DmarcDropReason,
 } from "./lib/dmarc-enrollment";
-import { readDmarcProvenance, type DmarcProvenance } from "./lib/dmarc-provenance";
-import { pickDkimDomain, recordDmarcPassed, runDmarcSourceRollup } from "./lib/dmarc-source-rollup";
+import { readDmarcProvenance, type DmarcProvenance, type DmarcProvenanceOptions } from "./lib/dmarc-provenance";
+import { DMARC_STALE_PROCESSING_AGE, pickDkimDomain, recordDmarcPassed, runDmarcSourceRollup } from "./lib/dmarc-source-rollup";
 import { withD1Retry, D1_OVERLOAD_RETRY_BASE_MS } from "./lib/d1-retry";
 
 export { dmarcReportDay } from "./lib/dmarc-aggregate-xml";
@@ -84,8 +86,14 @@ export const MAX_XML_BYTES = 10 * 1024 * 1024;
 export const MAX_EMAIL_DECOMPRESSED_BYTES = 12 * 1024 * 1024;
 /** Candidate attachments tried per email (S3). */
 export const MAX_CANDIDATE_ATTACHMENTS = 3;
-/** Per-source rows stored per report (failing records first). */
-export const MAX_STORED_RECORDS = 1000;
+/**
+ * Per-source rows stored per report (failing records first). Unverified
+ * reports keep fewer: their evidence is forgeable, and the smaller cap is
+ * what lets the retention sweep keep up with the unverified ingest cap
+ * (lib/dmarc-retention.ts).
+ */
+export const MAX_STORED_RECORDS = { verified: 1000, unverified: 250 } as const;
+
 /** Rows per multi-row records INSERT: 12 columns × 8 = 96 binds (< 100). */
 const RECORD_ROWS_PER_STMT = 8;
 const RECORD_STMTS_PER_BATCH = 50;
@@ -111,10 +119,15 @@ type WaitUntil = Pick<ExecutionContext, "waitUntil">;
 
 // ─── Main entry point ─────────────────────────────────────────────
 
-export async function handleDmarcEmail(message: EmailMessage, env: Env, ctx?: WaitUntil): Promise<DmarcIngestOutcome> {
+export async function handleDmarcEmail(
+  message: EmailMessage,
+  env: Env,
+  ctx?: WaitUntil,
+  opts: { provenance?: DmarcProvenanceOptions } = {},
+): Promise<DmarcIngestOutcome> {
   try {
     const rawBytes = await readStream(message.raw, MAX_EMAIL_BYTES);
-    const provenance = readDmarcProvenance(new TextDecoder("utf-8").decode(rawBytes.subarray(0, 65_536)), message.from);
+    const provenance = readDmarcProvenance(new TextDecoder("utf-8").decode(rawBytes.subarray(0, 65_536)), message.from, opts.provenance);
     const xmlData = await extractXmlFromEmail(rawBytes);
     const report = xmlData ? parseDmarcAggregateXml(xmlData) : null;
     if (!xmlData || !report) {
@@ -373,11 +386,11 @@ async function sha256Hex(s: string): Promise<string> {
 
 /** Failing records first (by volume), then passing — what we keep when a
  *  report has more rows than MAX_STORED_RECORDS. */
-function recordsToStore(records: DmarcAggregateRecord[]): DmarcAggregateRecord[] {
-  if (records.length <= MAX_STORED_RECORDS) return records;
+function recordsToStore(records: DmarcAggregateRecord[], max: number): DmarcAggregateRecord[] {
+  if (records.length <= max) return records;
   return [...records]
     .sort((a, b) => Number(recordDmarcPassed(a)) - Number(recordDmarcPassed(b)) || b.message_count - a.message_count)
-    .slice(0, MAX_STORED_RECORDS);
+    .slice(0, max);
 }
 
 /**
@@ -419,7 +432,8 @@ export async function ingestDmarcReport(
   };
   const verified = sender.provenance.verified;
 
-  // 4. Gates.
+  // 4. Gates. The date window costs no D1 read.
+  if (!isDmarcReportInWindow(parsed.date_begin, parsed.date_end, nowMs)) return drop("out_of_window");
   const brand = await resolveDmarcBrand(db, parsed.domain);
   if (!brand) return drop("no_brand");
   if (!isDmarcEligibleBrand(brand)) return drop("ineligible_brand");
@@ -508,8 +522,8 @@ export async function ingestDmarcReport(
          (brand_id, domain, reporter_org, reporter_email, report_id,
           date_begin, date_end, total_records, total_messages,
           total_pass, total_fail, policy_published, raw_xml, received_at, processed, process_error,
-          sender_domain, sender_auth, verified, claim_id)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), 2, ?, ?, ?, ?, ?
+          sender_domain, sender_auth, verified, claim_id, processing_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), 2, ?, ?, ?, ?, ?, datetime('now')
        WHERE ${CLAIM_GUARD_SQL}`,
     ).bind(
       brand.id, report.domain, report.reporter_org, sender.senderEmail.slice(0, 200), report.report_id,
@@ -529,24 +543,33 @@ export async function ingestDmarcReport(
   if (mine) {
     reportRowId = mine.id;
   } else {
-    // Claim lost: a duplicate — unless the original was left incomplete,
-    // in which case this resend finishes it (stats are NOT re-counted).
+    // Claim lost: a duplicate — unless the original was left incomplete
+    // (processed = 0, or a dead worker's processed = 2 older than
+    // DMARC_STALE_PROCESSING_AGE), in which case this resend finishes it. Stats
+    // are NOT re-counted, and the resend must carry the same totals as the
+    // stored original (otherwise it is a different document → duplicate).
     const prior = await db.prepare(
-      `SELECT r.id AS id, r.verified AS verified FROM dmarc_report_seen s JOIN dmarc_reports r ON r.claim_id = s.claim_id
-       WHERE s.domain = ? AND s.reporter_org = ? AND s.report_id = ? AND r.processed = 0`,
-    ).bind(...seenKey).first<{ id: number; verified: number }>();
-    if (!prior) return drop("duplicate");
+      `SELECT r.id AS id, r.verified AS verified, r.total_pass AS total_pass, r.total_fail AS total_fail
+       FROM dmarc_report_seen s JOIN dmarc_reports r ON r.claim_id = s.claim_id
+       WHERE s.domain = ? AND s.reporter_org = ? AND s.report_id = ?
+         AND (r.processed = 0 OR (r.processed = 2 AND r.processing_at < datetime('now', ?)))`,
+    ).bind(...seenKey, DMARC_STALE_PROCESSING_AGE).first<{ id: number; verified: number; total_pass: number; total_fail: number }>();
+    if (!prior || prior.total_pass !== pass || prior.total_fail !== fail) return drop("duplicate");
     const taken = await withD1Retry(() =>
-      db.prepare("UPDATE dmarc_reports SET processed = 2 WHERE id = ? AND processed = 0").bind(prior.id).run(), RETRY);
+      db.prepare(
+        `UPDATE dmarc_reports SET processed = 2, processing_at = datetime('now')
+         WHERE id = ? AND (processed = 0 OR (processed = 2 AND processing_at < datetime('now', ?)))`,
+      ).bind(prior.id, DMARC_STALE_PROCESSING_AGE).run(), RETRY);
     if ((taken.meta?.changes ?? 0) === 0) return drop("duplicate");
     await withD1Retry(() => db.prepare("DELETE FROM dmarc_report_records WHERE report_id = ?").bind(prior.id).run(), RETRY);
     reportRowId = prior.id;
     recovered = true;
-    rowVerified = prior.verified === 1;
+    // A resend can't upgrade a report's provenance, only keep or lose it.
+    rowVerified = prior.verified === 1 && verified;
   }
 
   // 6. Per-source records (multi-row INSERTs, ≤96 binds each, retried per batch).
-  const stored = recordsToStore(report.records);
+  const stored = recordsToStore(report.records, MAX_STORED_RECORDS[rowVerified ? "verified" : "unverified"]);
   const stmts: D1PreparedStatement[] = [];
   const rowsPerStmt: number[] = [];
   for (let i = 0; i < stored.length; i += RECORD_ROWS_PER_STMT) {
@@ -607,10 +630,9 @@ export async function ingestDmarcReport(
     // 7a. Staff notification — verified reports only.
     if (rowVerified) await maybeNotifyDmarcFailures(env, brand, reportDate, total, fail);
 
-    // 7b. Source rollup. With KV degraded (no rate accounting) the inline
-    // rollup and its ipinfo spend are skipped; Navigator's catch-up rolls
-    // the report up later from the stored records.
-    if (!slot.degraded) {
+    // 7b. Source rollup (ipinfo only for verified reports). A rollup that
+    // doesn't land is caught up by Navigator from the stored records.
+    {
       const rollup = runDmarcSourceRollup(env, {
         reportRowId,
         brandId: brand.id,
@@ -620,7 +642,7 @@ export async function ingestDmarcReport(
         firstSeen: dmarcReportEpochIso(report.date_begin, nowMs),
         lastSeen: dmarcReportEpochIso(report.date_end, nowMs),
         records: stored,
-      }, { geo: rowVerified, nowMs }).catch((err: unknown) => {
+      }, { geo: rowVerified, nowMs, overloadRetry: true }).catch((err: unknown) => {
         console.error("[dmarc] source rollup error:", err instanceof Error ? err.message : String(err));
       });
       if (ctx) ctx.waitUntil(rollup);

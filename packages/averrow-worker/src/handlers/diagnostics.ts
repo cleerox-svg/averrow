@@ -1133,7 +1133,7 @@ export async function buildDmarcIngestDiag(env: Env): Promise<DmarcIngestDiag> {
     "SELECT COUNT(*) AS n, MAX(last_report_at) AS last FROM dmarc_enrollment",
   ).first<{ n: number; last: string | null }>();
   const pending = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM dmarc_reports WHERE processed = 1 AND rolled_up_at IS NULL",
+    "SELECT COUNT(*) AS n FROM dmarc_reports WHERE rolled_up_at IS NULL AND processed IN (0, 1)",
   ).first<{ n: number }>();
   const drops = await readDmarcDrops24h(env);
   const lasts = [recent?.last ?? null, enrolled?.last ?? null].filter((x): x is string => !!x).sort();

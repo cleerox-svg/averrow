@@ -7,27 +7,34 @@
  * stored ONLY when all of these hold (each failure is a counted drop):
  *   no_brand          the policy domain (or a parent) is a brand's
  *                     canonical_domain (indexed IN lookup);
- *   ineligible_brand  the brand is tier monitored / customer, its `source`
- *                     is not one an anonymous user can create
- *                     (UNTRUSTED_BRAND_SOURCES — public_assess /
- *                     self_service / ai_attributed) and its canonical domain
- *                     is not / not under a shared-hosting domain. Otherwise
- *                     anyone could create a brand for a domain they control,
- *                     publish our rua and drive writes at will (appsec M1);
+ *   ineligible_brand  the brand is tier monitored / customer, its
+ *                     canonical domain passes the platform's trusted-brand
+ *                     rule (TRUSTED_BRAND_CANONICAL_SQL, lib/safeDomains.ts:
+ *                     source not public_assess / self_service /
+ *                     ai_attributed AND (tier customer OR source manual /
+ *                     curated OR tranco_rank ≤ 20000)), and it is not / not
+ *                     under a shared-hosting domain. Otherwise anyone could
+ *                     create a brand for a domain they control (or the
+ *                     analyst agent's NULL-source brand for a PHISHING
+ *                     domain, promoted to `monitored` by migration 0156),
+ *                     publish our rua and drive writes (appsec M1);
  *   unenrolled        the brand's CANONICAL domain's own `_dmarc` record
  *                     names our RUA address (scan or live DNS, re-verified
  *                     after ENROLLMENT_REVERIFY_DAYS);
- *   rate_limited      ≤ DMARC_BRAND_DAILY_CAP stored reports per brand per
- *                     UTC wall-clock day (separately for verified and
- *                     unverified reports, so forged mail can't starve real
- *                     reporters) and ≤ DMARC_GLOBAL_HOURLY_CAP per hour.
+ *   rate_limited      D1 counters (dmarc_rate_counters), keyed on
+ *                     wall-clock UTC time and split by provenance so forged
+ *                     (unverified) mail can't starve real reporters:
+ *                     ≤ DMARC_BRAND_DAILY_CAP per brand per day and
+ *                     ≤ DMARC_GLOBAL_HOURLY_CAP per hour, each per class.
+ *                     A counter that can't be written DENIES.
  */
 
 import type { Env } from "../types";
 import { dohTxtLookupDetailed } from "./doh";
 import { parseDmarcRecord } from "./dmarc-record";
 import { isRuaAuthorizationRequired, ruaAuthorizationRecordName, ruaIncludesAverrow } from "./dmarc-rua";
-import { UNTRUSTED_BRAND_SOURCES, isUnderSharedHosting } from "./safeDomains";
+import { TRUSTED_BRAND_CANONICAL_SQL, isUnderSharedHosting } from "./safeDomains";
+import { withD1Retry } from "./d1-retry";
 
 export const ENROLLMENT_REVERIFY_DAYS = 30;
 export const SCAN_FRESH_DAYS = 7;
@@ -42,17 +49,26 @@ export const RUA_AUTH_MISSING_TTL_S = 3600;
 /** Parent-domain candidates tried for a subdomain policy domain. */
 const MAX_PARENT_CANDIDATES = 4;
 
-/** Stored reports per brand per UTC day, per provenance (verified / not). */
-export const DMARC_BRAND_DAILY_CAP = 50;
-/** Stored reports per UTC hour, all brands. */
-export const DMARC_GLOBAL_HOURLY_CAP = 500;
+/** Stored reports per brand per UTC day, per provenance class. */
+export const DMARC_BRAND_DAILY_CAP = { verified: 50, unverified: 50 } as const;
+/**
+ * Stored reports per UTC hour, all brands, per provenance class. Sized so
+ * the retention sweep keeps up (lib/dmarc-retention.ts): ≤ 4,800 verified
+ * + 1,200 unverified reports a day.
+ */
+export const DMARC_GLOBAL_HOURLY_CAP = { verified: 200, unverified: 50 } as const;
 
 export interface DmarcBrand {
   id: string;
   canonical_domain: string;
   tier: string | null;
-  source: string | null;
+  /** TRUSTED_BRAND_CANONICAL_SQL evaluated for the row (1 / 0). */
+  trusted: number;
 }
+
+/** SELECT list for a `brands b` row as a DmarcBrand. */
+export const DMARC_BRAND_COLUMNS_SQL =
+  `b.id AS id, b.canonical_domain AS canonical_domain, b.tier AS tier, (${TRUSTED_BRAND_CANONICAL_SQL}) AS trusted`;
 
 /** Lowercased, trailing dot and a leading `www.` removed. */
 export function normalizePolicyDomain(domain: string): string {
@@ -84,7 +100,7 @@ export async function resolveDmarcBrand(db: D1Database, policyDomain: string): P
   const candidates = brandDomainCandidates(policyDomain);
   if (candidates.length === 0) return null;
   const rows = await db
-    .prepare(`SELECT id, canonical_domain, tier, source FROM brands WHERE canonical_domain IN (${candidates.map(() => "?").join(", ")})`)
+    .prepare(`SELECT ${DMARC_BRAND_COLUMNS_SQL} FROM brands b WHERE b.canonical_domain IN (${candidates.map(() => "?").join(", ")})`)
     .bind(...candidates)
     .all<DmarcBrand>();
   let best: DmarcBrand | null = null;
@@ -94,12 +110,10 @@ export async function resolveDmarcBrand(db: D1Database, policyDomain: string): P
   return best;
 }
 
-const UNTRUSTED_SOURCES: ReadonlySet<string> = new Set(UNTRUSTED_BRAND_SOURCES);
-
 /** May reports be stored for this brand at all? (B1a) */
-export function isDmarcEligibleBrand(b: Pick<DmarcBrand, "canonical_domain" | "tier" | "source">): boolean {
+export function isDmarcEligibleBrand(b: Pick<DmarcBrand, "canonical_domain" | "tier" | "trusted">): boolean {
   if (b.tier !== "monitored" && b.tier !== "customer") return false;
-  if (UNTRUSTED_SOURCES.has(b.source ?? "")) return false;
+  if (b.trusted !== 1) return false;
   return !isUnderSharedHosting(b.canonical_domain);
 }
 
@@ -237,62 +251,75 @@ export async function ruaAuthorizationRecordOk(env: Env, domain: string): Promis
   return { required: true, ok, record_name };
 }
 
-// ─── Rate caps (B1b) ────────────────────────────────────────────────────
+// ─── Rate caps (B1b, review M1/M2) ──────────────────────────────────────
 
 export interface RateDecision {
   allowed: boolean;
-  /** KV could not be read/written: the report is allowed, but the caller
-   *  skips the inline rollup and ipinfo (the Navigator catch-up rolls it
-   *  up later, without ipinfo). */
-  degraded: boolean;
-}
-
-function readCount(raw: string | null): number {
-  const n = raw === null ? 0 : parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : 0;
+  /** Counter values after this attempt (null when the statement failed). */
+  brandCount: number | null;
+  globalCount: number | null;
 }
 
 /**
- * Check-and-count one stored report against the per-brand daily and global
- * hourly caps. Keyed on WALL-CLOCK UTC time, never on the report's own
- * (attacker-chosen) dates. Best-effort read-modify-write: concurrent
- * reports can overshoot a cap by the concurrency, which is fine for an
- * abuse bound. KV error → allowed + degraded (documented trade-off:
- * failing closed would drop real reports while KV is down; failing open
- * with the full pipeline would remove the bound, so the degraded path
- * skips the expensive parts).
+ * Brand counter: always incremented. Global counter: incremented only when
+ * this attempt is still within the brand cap (the guard sees the brand
+ * increment, same batch), so one flooded brand can't use up the global
+ * hour for everyone else in its class.
+ */
+export const DMARC_RATE_BRAND_SQL = `INSERT INTO dmarc_rate_counters (bucket, period, n) VALUES (?, ?, 1)
+  ON CONFLICT(bucket, period) DO UPDATE SET n = n + 1
+  RETURNING n`;
+export const DMARC_RATE_GLOBAL_SQL = `INSERT INTO dmarc_rate_counters (bucket, period, n)
+  SELECT ?, ?, 1 WHERE (SELECT n FROM dmarc_rate_counters WHERE bucket = ? AND period = ?) <= ?
+  ON CONFLICT(bucket, period) DO UPDATE SET n = n + 1
+  RETURNING n`;
+
+/**
+ * Check-and-count one report against the per-brand daily and global hourly
+ * caps of its provenance class, atomically in one D1 batch. Keyed on
+ * WALL-CLOCK UTC time, never on the report's own dates. Fails CLOSED: if
+ * the counter batch can't run (after withD1Retry's short default), or
+ * returns no count, the report is denied — a D1 that can't take two tiny
+ * upserts must not then take the ~200 statements of a stored report.
  */
 export async function takeDmarcIngestSlot(env: Env, brandId: string, verified: boolean, nowMs = Date.now()): Promise<RateDecision> {
   const iso = new Date(nowMs).toISOString();
-  const brandKey = `dmarc:rate:brand:${brandId}:${iso.slice(0, 10)}:${verified ? "v" : "u"}`;
-  const globalKey = `dmarc:rate:global:${iso.slice(0, 13)}`;
+  const cls = verified ? "verified" : "unverified";
+  const day = iso.slice(0, 10);
+  const hour = iso.slice(0, 13);
+  const brandBucket = `brand:${brandId}:${cls}`;
+  const globalBucket = `global:${cls}`;
   try {
-    const [b, g] = await Promise.all([env.CACHE.get(brandKey), env.CACHE.get(globalKey)]);
-    const brandCount = readCount(b);
-    const globalCount = readCount(g);
-    if (brandCount >= DMARC_BRAND_DAILY_CAP || globalCount >= DMARC_GLOBAL_HOURLY_CAP) {
-      return { allowed: false, degraded: false };
-    }
-    await Promise.all([
-      env.CACHE.put(brandKey, String(brandCount + 1), { expirationTtl: 2 * 86400 }),
-      env.CACHE.put(globalKey, String(globalCount + 1), { expirationTtl: 2 * 3600 }),
-    ]);
-    return { allowed: true, degraded: false };
-  } catch {
-    return { allowed: true, degraded: true };
+    const db = env.DB;
+    const res = await withD1Retry(() => db.batch([
+      db.prepare(DMARC_RATE_BRAND_SQL).bind(brandBucket, day),
+      db.prepare(DMARC_RATE_GLOBAL_SQL).bind(globalBucket, hour, brandBucket, day, DMARC_BRAND_DAILY_CAP[cls]),
+    ]));
+    const n = (r: D1Result | undefined): number | null => {
+      const v = (r?.results as Array<{ n: number }> | undefined)?.[0]?.n;
+      return typeof v === "number" ? v : null;
+    };
+    const brandCount = n(res[0]);
+    const globalCount = n(res[1]);
+    const allowed = brandCount !== null && brandCount <= DMARC_BRAND_DAILY_CAP[cls]
+      && globalCount !== null && globalCount <= DMARC_GLOBAL_HOURLY_CAP[cls];
+    return { allowed, brandCount, globalCount };
+  } catch (err) {
+    console.error("[dmarc] rate counter failed — denying:", err instanceof Error ? err.message : String(err));
+    return { allowed: false, brandCount: null, globalCount: null };
   }
 }
 
 // ─── Drop counters (diagnostics `dmarc_ingest`) ─────────────────────────
 
 export const DMARC_DROP_REASONS = [
-  "no_brand", "ineligible_brand", "unenrolled", "rate_limited", "duplicate", "unparseable", "error",
+  "no_brand", "ineligible_brand", "unenrolled", "rate_limited", "duplicate", "unparseable", "out_of_window", "error",
 ] as const;
 export type DmarcDropReason = (typeof DMARC_DROP_REASONS)[number];
 export type DmarcDropCounts = Record<DmarcDropReason, number>;
 
 function zeroDrops(): DmarcDropCounts {
-  return { no_brand: 0, ineligible_brand: 0, unenrolled: 0, rate_limited: 0, duplicate: 0, unparseable: 0, error: 0 };
+  return { no_brand: 0, ineligible_brand: 0, unenrolled: 0, rate_limited: 0, duplicate: 0, unparseable: 0, out_of_window: 0, error: 0 };
 }
 
 /** `dmarc:drops:YYYY-MM-DDTHH` — one JSON counter object per UTC hour. */

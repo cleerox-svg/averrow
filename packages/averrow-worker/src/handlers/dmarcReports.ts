@@ -23,6 +23,8 @@ import {
   ruaIncludesAverrow,
 } from "../lib/dmarc-rua";
 import {
+  DMARC_BRAND_COLUMNS_SQL,
+  type DmarcBrand,
   ENROLLMENT_REVERIFY_DAYS,
   isDmarcEligibleBrand,
   liveDmarcRuaState,
@@ -268,8 +270,8 @@ export async function handleGetDmarcSetup(request: Request, env: Env, brandId: s
   const origin = request.headers.get("Origin");
   const session = getReadSession(env, getDbContext(request));
   try {
-    const brand = await session.prepare("SELECT id, canonical_domain, tier, source FROM brands WHERE id = ?")
-      .bind(brandId).first<{ id: string; canonical_domain: string; tier: string | null; source: string | null }>();
+    const brand = await session.prepare(`SELECT ${DMARC_BRAND_COLUMNS_SQL} FROM brands b WHERE b.id = ?`)
+      .bind(brandId).first<DmarcBrand>();
     if (!brand) return json({ success: false, error: "Brand not found" }, 404, origin);
 
     const scan = await session.prepare(

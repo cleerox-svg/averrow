@@ -252,6 +252,13 @@ export interface DmarcRollupOptions {
   /** Allow ipinfo lookups (email path + verified report only). */
   geo: boolean;
   nowMs?: number;
+  /**
+   * Back off past D1's 10 s overload window on the final batch (email
+   * path, inside waitUntil). The Navigator catch-up passes false: it uses
+   * withD1Retry's short default so one tick's wall time stays bounded, and
+   * simply tries again on the next tick.
+   */
+  overloadRetry?: boolean;
 }
 
 /** Roll one stored report's failing sources into dmarc_source_daily. */
@@ -413,23 +420,56 @@ export async function runDmarcSourceRollup(env: Env, input: DmarcRollupInput, op
   const stmts: D1PreparedStatement[] = chunks(rows, DMARC_ROLLUP_LIMITS.rowsPerUpsert).map((c) =>
     db.prepare(dmarcSourceDailyUpsertSql(c.length)).bind(...c.flat(), input.reportRowId));
   stmts.push(db.prepare(DMARC_ROLLUP_STAMP_SQL).bind(input.reportRowId));
-  const results = await withD1Retry(() => db.batch(stmts), { overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS, label: "dmarc-rollup" });
+  const results = await withD1Retry(() => db.batch(stmts),
+    opts.overloadRetry ? { overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS, label: "dmarc-rollup" } : { label: "dmarc-rollup" });
   const applied = (results[results.length - 1]?.meta?.changes ?? 0) > 0;
 
   return { ips: ips.length, applied, geoLookups, byClass };
 }
 
-// ─── Catch-up (Navigator) ───────────────────────────────────────────────
+// ─── Catch-up (Navigator, every tick) ───────────────────────────────────
+//
+// Three bounded steps, each a no-op read when nothing is due:
+//   1. Reset dead workers' rows: processed = 2 with processing_at older than
+//      15 min → 0 (≤ DMARC_STALE_RESET_LIMIT, partial index
+//      idx_dmarc_reports_processing). A resend can then recover it; if none
+//      comes, step 2 rolls it up from whatever records it has.
+//   2. Roll up stored reports whose rollup never landed: rolled_up_at NULL,
+//      processed IN (0, 1), older than 5 min (partial index
+//      idx_dmarc_reports_rollup_pending), ≤ DMARC_ROLLUP_CATCHUP_LIMIT per
+//      tick, oldest first. processed = 0 rows roll up from their partial
+//      records — their stats were counted at claim time. No ipinfo.
+//   3. Per-report try/catch and an attempt cap: every try bumps
+//      rollup_attempts; past DMARC_ROLLUP_MAX_ATTEMPTS the report is
+//      stamped terminal (rolled_up_at set, process_error +=
+//      'rollup_abandoned') so a poison report leaves the queue.
+// Wall time: short D1 retries only, and no new report is started after
+// DMARC_ROLLUP_CATCHUP_BUDGET_MS.
 
 export const DMARC_ROLLUP_CATCHUP_LIMIT = 3;
+export const DMARC_STALE_RESET_LIMIT = 20;
+export const DMARC_ROLLUP_MAX_ATTEMPTS = 5;
+export const DMARC_ROLLUP_CATCHUP_BUDGET_MS = 10_000;
 /** A report this fresh may still be rolling up under the email handler's
  *  waitUntil — leave it alone. */
 export const DMARC_ROLLUP_CATCHUP_MIN_AGE = "-5 minutes";
+/** A processed = 2 row older than this belongs to a dead worker. */
+export const DMARC_STALE_PROCESSING_AGE = "-15 minutes";
 
-/** Pending probe — served by the partial idx_dmarc_reports_rollup_pending. */
+export const DMARC_STALE_RESET_SQL = `UPDATE dmarc_reports SET processed = 0 WHERE id IN (
+  SELECT id FROM dmarc_reports WHERE processed = 2 AND processing_at < datetime('now', ?)
+  ORDER BY processing_at LIMIT ?)`;
+
 export const DMARC_ROLLUP_PENDING_SQL = `SELECT id FROM dmarc_reports
-  WHERE processed = 1 AND rolled_up_at IS NULL AND received_at < datetime('now', ?)
+  WHERE rolled_up_at IS NULL AND processed IN (0, 1) AND received_at < datetime('now', ?)
   ORDER BY received_at LIMIT ?`;
+
+const ROLLUP_ATTEMPT_SQL = `UPDATE dmarc_reports SET rollup_attempts = rollup_attempts + 1
+  WHERE id = ? AND rolled_up_at IS NULL RETURNING rollup_attempts`;
+
+const ROLLUP_ABANDON_SQL = `UPDATE dmarc_reports SET rolled_up_at = datetime('now'),
+  process_error = CASE WHEN process_error IS NULL THEN 'rollup_abandoned' ELSE process_error || '; rollup_abandoned' END
+  WHERE id = ? AND rolled_up_at IS NULL`;
 
 function sqliteTsMs(ts: string | null): number {
   if (!ts) return Date.now();
@@ -438,17 +478,18 @@ function sqliteTsMs(ts: string | null): number {
 }
 
 /** Re-run the rollup of one stored report from its dmarc_report_records
- *  (no ipinfo). Null when the report is gone or already rolled up. */
+ *  (no ipinfo, short retries). Null when the report is gone, already
+ *  rolled up, or still being written (processed = 2). */
 export async function rollupStoredDmarcReport(env: Env, reportId: number): Promise<DmarcRollupResult | null> {
   const db = env.DB;
   const rep = await db.prepare(
-    `SELECT id, brand_id, reporter_org, date_begin, date_end, verified, received_at, rolled_up_at
+    `SELECT id, brand_id, reporter_org, date_begin, date_end, verified, received_at, rolled_up_at, processed
      FROM dmarc_reports WHERE id = ?`,
   ).bind(reportId).first<{
     id: number; brand_id: string | null; reporter_org: string | null; date_begin: string | null; date_end: string | null;
-    verified: number; received_at: string | null; rolled_up_at: string | null;
+    verified: number; received_at: string | null; rolled_up_at: string | null; processed: number;
   }>();
-  if (!rep || rep.rolled_up_at !== null || !rep.brand_id) return null;
+  if (!rep || rep.rolled_up_at !== null || !rep.brand_id || rep.processed === 2) return null;
   const recs = await db.prepare(
     `SELECT source_ip, count, disposition, dkim_result, spf_result, header_from, envelope_from, auth_json
      FROM dmarc_report_records WHERE report_id = ?`,
@@ -479,25 +520,45 @@ export async function rollupStoredDmarcReport(env: Env, reportId: number): Promi
     firstSeen: dmarcReportEpochIso(begin, receivedMs),
     lastSeen: dmarcReportEpochIso(end, receivedMs),
     records,
-  }, { geo: false, nowMs: receivedMs });
+  }, { geo: false, nowMs: receivedMs, overloadRetry: false });
 }
 
 export interface DmarcRollupCatchUpResult {
+  staleReset: number;
   pending: number;
   rolledUp: number;
+  abandoned: number;
+  failed: number;
   error: string | null;
 }
 
-/** Navigator, every tick: one indexed probe; ≤3 stranded reports rolled up. */
+/** Navigator, every tick. Never throws. */
 export async function runDmarcRollupCatchUp(env: Env, limit = DMARC_ROLLUP_CATCHUP_LIMIT): Promise<DmarcRollupCatchUpResult> {
-  const out: DmarcRollupCatchUpResult = { pending: 0, rolledUp: 0, error: null };
+  const out: DmarcRollupCatchUpResult = { staleReset: 0, pending: 0, rolledUp: 0, abandoned: 0, failed: 0, error: null };
+  const start = Date.now();
+  const db = env.DB;
   try {
-    const rows = await env.DB.prepare(DMARC_ROLLUP_PENDING_SQL).bind(DMARC_ROLLUP_CATCHUP_MIN_AGE, limit).all<{ id: number }>();
+    const reset = await withD1Retry(() => db.prepare(DMARC_STALE_RESET_SQL).bind(DMARC_STALE_PROCESSING_AGE, DMARC_STALE_RESET_LIMIT).run());
+    out.staleReset = reset.meta?.changes ?? 0;
+    const rows = await db.prepare(DMARC_ROLLUP_PENDING_SQL).bind(DMARC_ROLLUP_CATCHUP_MIN_AGE, limit).all<{ id: number }>();
     const ids = (rows.results ?? []).map((r) => r.id);
     out.pending = ids.length;
     for (const id of ids) {
-      const r = await rollupStoredDmarcReport(env, id);
-      if (r?.applied) out.rolledUp++;
+      if (Date.now() - start > DMARC_ROLLUP_CATCHUP_BUDGET_MS) break;
+      try {
+        const att = await db.prepare(ROLLUP_ATTEMPT_SQL).bind(id).first<{ rollup_attempts: number }>();
+        if (!att) continue;
+        if (att.rollup_attempts > DMARC_ROLLUP_MAX_ATTEMPTS) {
+          await db.prepare(ROLLUP_ABANDON_SQL).bind(id).run();
+          out.abandoned++;
+          continue;
+        }
+        const r = await rollupStoredDmarcReport(env, id);
+        if (r?.applied) out.rolledUp++;
+      } catch (err) {
+        out.failed++;
+        out.error = `report ${id}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
+      }
     }
   } catch (err) {
     out.error = err instanceof Error ? err.message : String(err);

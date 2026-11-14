@@ -61,23 +61,34 @@ CREATE INDEX IF NOT EXISTS idx_drr_geo_pending
 --                  lets a resend find its own row (no reliance on RETURNING)
 --   rolled_up_at   set in the same batch as the report's
 --                  dmarc_source_daily upserts; NULL = not rolled up yet
+--   processing_at  when the row last entered processed = 2 (being
+--                  written); older than 15 min = a dead worker
+--   rollup_attempts  Navigator catch-up tries; past 5 the report is stamped
+--                  terminal ('rollup_abandoned') and leaves the queue
 ALTER TABLE dmarc_reports ADD COLUMN sender_domain TEXT;
 ALTER TABLE dmarc_reports ADD COLUMN sender_auth TEXT;
 ALTER TABLE dmarc_reports ADD COLUMN verified INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE dmarc_reports ADD COLUMN claim_id TEXT;
 ALTER TABLE dmarc_reports ADD COLUMN rolled_up_at TEXT;
+ALTER TABLE dmarc_reports ADD COLUMN processing_at TEXT;
+ALTER TABLE dmarc_reports ADD COLUMN rollup_attempts INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_dmarc_reports_claim
   ON dmarc_reports(claim_id) WHERE claim_id IS NOT NULL;
 
--- Diagnostics `dmarc_ingest.reports_24h` and the retention sweep read a
--- received_at range; the only existing index leads with brand_id (0325).
+-- Diagnostics `dmarc_ingest.reports_24h` and the retention sweep (every
+-- Navigator tick) read a received_at range; the only existing index leads
+-- with brand_id (0325).
 CREATE INDEX IF NOT EXISTS idx_dmarc_reports_received ON dmarc_reports(received_at);
 
--- Navigator catch-up: stored reports whose rollup never landed. Holds only
--- the pending rows, so the every-5-min probe is a no-op read when none.
+-- Navigator catch-up: stored reports whose rollup never landed (processed
+-- 0 or 1; the query adds the processed filter). Holds only the pending
+-- rows, so the every-5-min probe is a no-op read when none.
 CREATE INDEX IF NOT EXISTS idx_dmarc_reports_rollup_pending
-  ON dmarc_reports(received_at) WHERE processed = 1 AND rolled_up_at IS NULL;
+  ON dmarc_reports(received_at) WHERE rolled_up_at IS NULL;
+-- Navigator catch-up: rows a dead worker left at processed = 2.
+CREATE INDEX IF NOT EXISTS idx_dmarc_reports_processing
+  ON dmarc_reports(processing_at) WHERE processed = 2;
 
 -- ─── 2. dmarc_report_seen — report de-duplication ───────────────────────
 -- One row per (policy domain, reporter org, report id). The receiver claims
@@ -100,7 +111,7 @@ CREATE TABLE IF NOT EXISTS dmarc_report_seen (
   first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (domain, reporter_org, report_id)
 );
--- Retention sweep (61 days, lib/dmarc-retention.ts).
+-- Retention sweep (63 days, lib/dmarc-retention.ts).
 CREATE INDEX IF NOT EXISTS idx_dmarc_report_seen_first_seen ON dmarc_report_seen(first_seen_at);
 
 -- ─── 3. dmarc_source_daily — per brand × day × source IP rollup ─────────
@@ -163,3 +174,18 @@ CREATE TABLE IF NOT EXISTS dmarc_enrollment (
   verified_via    TEXT NOT NULL CHECK (verified_via IN ('scan', 'live_dns')),
   last_report_at  TEXT
 );
+
+-- ─── 5. dmarc_rate_counters — ingest rate caps (review M1/M2) ───────────
+-- One row per (bucket, period): bucket 'brand:<id>:<class>' with a UTC day
+-- period 'YYYY-MM-DD', or 'global:<class>' with a UTC hour period
+-- 'YYYY-MM-DDTHH'; class = verified | unverified. Incremented atomically
+-- (INSERT … ON CONFLICT DO UPDATE SET n = n + 1 RETURNING n) before any
+-- other report write; a failed increment denies the report. Rows older
+-- than 2 days are swept every Navigator tick.
+CREATE TABLE IF NOT EXISTS dmarc_rate_counters (
+  bucket TEXT NOT NULL,
+  period TEXT NOT NULL,
+  n      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (bucket, period)
+);
+CREATE INDEX IF NOT EXISTS idx_dmarc_rate_counters_period ON dmarc_rate_counters(period);

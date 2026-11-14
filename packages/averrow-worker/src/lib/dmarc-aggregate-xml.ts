@@ -312,6 +312,20 @@ function clampReportMs(ms: number, nowMs: number): number {
 }
 
 /**
+ * Is a report's date range acceptable (L2)? The range END must lie within
+ * [now − pastDays, now + futureDays]; a missing / zero end is not. A report
+ * outside the window is DROPPED (`out_of_window`) — moving it to today
+ * would let a sender scatter or replay data at will. With the window
+ * enforced, the clamps in dmarcReportDay / dmarcReportEpochIso only matter
+ * for `begin`.
+ */
+export function isDmarcReportInWindow(begin: number, end: number, nowMs: number): boolean {
+  if (!(end > 0) || begin > end) return false;
+  const ms = end * 1000;
+  return ms >= nowMs - DMARC_REPORT_DATE_WINDOW.pastDays * DAY_MS && ms <= nowMs + DMARC_REPORT_DATE_WINDOW.futureDays * DAY_MS;
+}
+
+/**
  * UTC report day. The range end is exclusive in practice (Google sends
  * 00:00:00–23:59:59, others end at the next midnight), so take end − 1 s.
  * A date outside the window (hostile or broken) is replaced by `nowMs`'s
