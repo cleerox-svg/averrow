@@ -165,9 +165,9 @@ const PIPELINE_META: Record<string, PipelineMeta> = {
     schedule: 'hourly',
     feed_name: 'spamhaus_dbl',
     why_grows:
-      'Grows when the DBL DNSBL query fails (UDP packet loss is common). ' +
-      'Re-runs on the next hourly tick. Spamhaus rate-limits at 100k ' +
-      'queries/day for free non-commercial use.',
+      'Feed disabled (migration 0326): the free Spamhaus query tiers are ' +
+      'non-commercial and refuse public resolvers. Re-enable only with a ' +
+      'Spamhaus Technology subscription.',
   },
   abuseipdb: {
     label: 'AbuseIPDB',
