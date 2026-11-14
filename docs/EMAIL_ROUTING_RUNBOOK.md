@@ -102,6 +102,54 @@ wrangler d1 execute trust-radar-v2 --remote --command \
 
 A **determination email** with the verdict arrives at the original submitter.
 
+## DMARC aggregate reports (`dmarc_rua@averrow.ca`)
+
+The same Email Routing setup carries DMARC aggregate (RUA) reports. The
+address customers publish is `dmarc_rua@averrow.ca` (`DMARC_RUA_PRIMARY`,
+`src/lib/dmarc-rua.ts`). It must be on averrow.ca: `averrow.com`'s MX is Google
+Workspace, which answers 550, so `dmarc_rua@averrow.com` has never delivered a
+report. `dmarc_rua@averrow.com` and `dmarc_rua@trustradar.ca` are still routed
+to the receiver if mail ever reaches them. The `email()` handler matches the
+recipient case-insensitively; before this, an averrow.ca RUA message fell
+through to the spam trap.
+
+Both steps below are manual and required before any report can arrive:
+
+1. **External-destination authorization (RFC 7489 section 7.1).** Receivers
+   will not send a customer's reports to an address outside the customer's
+   domain unless this record exists. Publish in the averrow.ca zone:
+   `TXT  *._report._dmarc.averrow.ca  =  v=DMARC1`
+   (a wildcard authorizes every customer; the per-domain form is
+   `<customer-domain>._report._dmarc.averrow.ca`, shown by `GET
+   /api/dmarc-reports/:brandId/setup` as `authorization_record_name`).
+2. **Routing rule.** In Email Routing for averrow.ca, confirm the rule for
+   `dmarc_rua@averrow.ca` (or the `*@averrow.ca` catch-all) is
+   "Send to Worker -> averrow-worker". Renaming the Worker unbinds it (see above).
+
+A customer then publishes `rua=mailto:dmarc_rua@averrow.ca` in their
+`_dmarc` TXT. Reports are stored only for brands whose `_dmarc` record names
+our address (enrollment gate) and that are eligible (tier monitored or
+customer, passes the platform's trusted-brand rule, not shared hosting); other
+mail is dropped and counted. Caps (D1 counters, `rate_limited`, fail closed):
+per brand per UTC day 50 verified + 50 unverified; per UTC hour overall 200
+verified + 50 unverified.
+
+**Canary test.**
+1. Confirm the authorization record: `dig TXT test._report._dmarc.averrow.ca +short` returns `"v=DMARC1"`.
+2. Pick a brand whose `_dmarc` names our address (or publish it on a test brand), then send a minimal aggregate report (plain XML, or gzip) to `dmarc_rua@averrow.ca` with `<policy_published><domain>` set to that brand's domain.
+3. Check `GET /api/dmarc-reports/:brandId/setup` shows `enrolled: true`, and:
+   ```bash
+   wrangler d1 execute trust-radar-v2 --remote --command \
+     "SELECT id, domain, reporter_org, total_messages, total_fail, received_at
+      FROM dmarc_reports ORDER BY received_at DESC LIMIT 1"
+   ```
+4. **Enable provenance (optional, one-time; until done every report is `verified = 0`).** `TRUSTED_AUTHSERV_IDS` in `src/lib/dmarc-provenance.ts` ships EMPTY, so no report is verified: no staff failure notification and no ipinfo lookups on the email path (the stored data and the source rollup still work). We have not captured a real delivered message, so we do not know whether Cloudflare Email Routing adds an `Authentication-Results` header, and trusting one the sender wrote would let anyone mint `verified = 1`. Only the topmost plain `Authentication-Results` header is read; `ARC-Authentication-Results` is never trusted. To enable, take a real report from a known reporter (a sender address in `KNOWN_RUA_REPORTERS`: `noreply-dmarc-support@google.com`, `dmarcreport@microsoft.com`), capture its raw headers (first 64 KB, e.g. by temporarily logging them), and confirm all three:
+   1. Cloudflare adds an `Authentication-Results` header as the TOPMOST one on every message;
+   2. its exact authserv-id (the first token before the first `;`);
+   3. a sender-supplied `Authentication-Results` header carrying that same id always sits BELOW Cloudflare's, or is stripped.
+   Then make the one-line change: add that authserv-id string to `TRUSTED_AUTHSERV_IDS` (`new Set<string>(["<id>"])`) and deploy. Check the next stored row: `SELECT sender_domain, sender_auth, verified FROM dmarc_reports ORDER BY received_at DESC LIMIT 1` reads `verified = 1` with a populated `sender_auth`, and a forged message (same From, no real DKIM pass) stays `verified = 0`. If genuine mail stays 0, the header, id or sender address list is wrong; do not widen the trust to compensate.
+5. Platform diagnostics `dmarc_ingest`: `reports_24h` rises on success (`verified_reports_24h` counts the verified ones, 0 until step 4; `incomplete_reports_24h` and `rollup_pending` should return to 0, Navigator catches up). If the report is missing, `dropped_24h` says why (`no_brand`, `ineligible_brand`, `unenrolled`, `rate_limited`, `duplicate`, `unparseable`, `out_of_window`, `error`). If neither moves, mail never reached the Worker: check the routing rule. A resend of the same report counts `duplicate` and writes nothing, but still uses a rate-cap slot (unless the original was left incomplete, in which case the resend completes it).
+
 ## What this does to averrow.com
 
 Nothing. Google Workspace keeps owning the MX records for averrow.com. Your `claude.leroux@averrow.com` Gmail inbox is unaffected. The previously-seeded `abuse@averrow.com` rows in `org_abuse_aliases` from migration 0180 are now dead aliases — they exist in DB but no mail can reach them (Workspace returns 550 NoSuchUser, the Worker never sees them). Harmless — they're idempotent placeholders.

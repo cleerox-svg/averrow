@@ -42,12 +42,31 @@ export async function dohTxtLookup(
   name: string,
   ttlSeconds = 3_600,
 ): Promise<string[]> {
+  return (await dohTxtLookupDetailed(env, name, ttlSeconds)).records;
+}
+
+/** Outcome of a TXT lookup: `ok` (NOERROR, possibly no TXT answers),
+ *  `nxdomain` (the name does not exist), `error` (SERVFAIL, HTTP error,
+ *  timeout, bad JSON — the resolver could not answer). */
+export type DohTxtStatus = 'ok' | 'nxdomain' | 'error';
+
+/**
+ * dohTxtLookup with the failure mode kept: callers that must not read a
+ * resolver failure as "no record" (DMARC RUA enrollment) branch on
+ * `status`. Same KV cache as dohTxtLookup (positive answers only), so a
+ * cache hit reports `ok`.
+ */
+export async function dohTxtLookupDetailed(
+  env: Env,
+  name: string,
+  ttlSeconds = 3_600,
+): Promise<{ status: DohTxtStatus; records: string[] }> {
   const cacheKey = `doh:txt:${name.toLowerCase()}`;
   if (env.CACHE) {
     try {
       const cached = await env.CACHE.get(cacheKey);
       if (cached !== null) {
-        return JSON.parse(cached) as string[];
+        return { status: 'ok', records: JSON.parse(cached) as string[] };
       }
     } catch {
       // KV miss / parse error — fall through to live lookup.
@@ -63,19 +82,19 @@ export async function dohTxtLookup(
     });
     if (!res.ok) {
       console.warn(`[doh] ${name} TXT HTTP ${res.status}`);
-      return [];
+      return { status: 'error', records: [] };
     }
     const data = (await res.json()) as DohResponse;
-    if (data.Status !== 0) {
-      // NOERROR=0; anything else (NXDOMAIN=3, SERVFAIL=2) → empty.
-      return [];
-    }
+    // NOERROR=0, NXDOMAIN=3; anything else (SERVFAIL=2, REFUSED=5) is a
+    // resolver failure, not an answer.
+    if (data.Status === 3) return { status: 'nxdomain', records: [] };
+    if (data.Status !== 0) return { status: 'error', records: [] };
     records = (data.Answer ?? [])
       .filter((a) => a.type === 16) // TXT
       .map((a) => stripDohQuotes(a.data));
   } catch (err) {
     console.warn(`[doh] ${name} TXT failed:`, err instanceof Error ? err.message : String(err));
-    return [];
+    return { status: 'error', records: [] };
   }
 
   if (env.CACHE && records.length > 0) {
@@ -85,7 +104,7 @@ export async function dohTxtLookup(
       // KV transient — non-fatal.
     }
   }
-  return records;
+  return { status: 'ok', records };
 }
 
 /**

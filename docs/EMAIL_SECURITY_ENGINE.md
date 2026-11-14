@@ -185,3 +185,73 @@ Results are stored in `email_security_scans` with full record details:
 - MX fields (exists, providers as JSON)
 - Composite score and grade
 - Scan duration in milliseconds
+
+## Hosted DMARC Aggregate Reporting (RUA sensor)
+
+Separate from the outside-in scan above: a brand can publish
+`rua=mailto:dmarc_rua@averrow.ca` and Averrow receives the aggregate reports
+mailbox providers send. Setup and routing: `docs/EMAIL_ROUTING_RUNBOOK.md`.
+The scan only reads the brand's `rua=` (and no longer scores it); the data
+below comes from the report receiver.
+
+**Address.** `DMARC_RUA_PRIMARY` = `dmarc_rua@averrow.ca` (`lib/dmarc-rua.ts`).
+`averrow.com` cannot receive (its MX is Google Workspace, which answers 550).
+`dmarc_rua@averrow.com` and `dmarc_rua@trustradar.ca` stay in
+`DMARC_RUA_ADDRESSES`: still routed to the receiver and still recognised as
+"reports to Averrow", but only zones on Cloudflare Email Routing deliver. The
+`email()` handler in `src/index.ts` matches the recipient case-insensitively.
+
+**Pipeline** (`dmarc-receiver.ts`, `handleDmarcEmail`; never rejects or bounces mail):
+1. MIME to XML (zip / gzip / plain). Raw mail capped at 5 MB, decompressed XML at 10 MB (12 MB and 3 candidate attachments per email).
+2. Parse (`lib/dmarc-aggregate-xml.ts`): RFC 7489 and RFC 9990 shapes, with caps on records and fields. `<auth_results>` (DKIM/SPF) are parsed. A report claiming more than the per-report message cap is scaled down proportionally.
+3. Provenance (`lib/dmarc-provenance.ts`): see below. Sets `verified`.
+4. Gates, in order, each a counted drop (hourly KV buckets surfaced as diagnostics `dmarc_ingest`):
+   - `out_of_window` (checked first, no D1 read): the report's range END must lie within [now - 60 days, now + 2 days]; otherwise it is dropped, not moved to today (moving it would let a sender scatter or replay data).
+   - `no_brand`: `brands.canonical_domain` equal to the policy domain or a parent.
+   - `ineligible_brand`: the brand must be tier `monitored` or `customer` AND pass the platform's trusted-brand rule (`TRUSTED_BRAND_CANONICAL_SQL`, `lib/safeDomains.ts`: source not `public_assess` / `self_service` / `ai_attributed`, and tier `customer` or source `manual` / `curated` or Tranco rank <= 20000) AND not be, or sit under, a shared-hosting domain. Otherwise anyone could create a brand for a domain they control and publish our `rua`.
+   - `unenrolled`: only the brand's CANONICAL domain's own `_dmarc` record counts (never a subdomain's) and it must name one of our addresses. Evidence, cheapest first: a `dmarc_enrollment` row verified within 30 days (`ENROLLMENT_REVERIFY_DAYS`), the latest posture scan (within 7 days, `verified_via='scan'`), or a live DoH lookup (`'live_dns'`, KV-cached 6h when positive, 30 min when negative). A resolver failure is not "no record": it is never cached, never refreshes `rua_verified_at`, and a lapsed enrollment is still honoured for that report; with no prior enrollment the report is dropped as `unenrolled`.
+   - `rate_limited`: D1 counters in `dmarc_rate_counters` (migration 0329), one atomic batch, keyed on wall-clock UTC time (never the report's own dates) and split by provenance class so forged (unverified) mail cannot starve real reporters. Per brand per UTC day: 50 verified and 50 unverified (`DMARC_BRAND_DAILY_CAP`). All brands per UTC hour: 200 verified and 50 unverified (`DMARC_GLOBAL_HOURLY_CAP`); the global counter only advances while the brand is still within its cap. The attempt takes its slot before the dedup claim, so a duplicate resend also uses one. If the counter batch fails or returns no count the report is DENIED (fail closed).
+   - Also counted: `duplicate`, `unparseable`, `error` (receiver threw). Full reason list: `no_brand`, `ineligible_brand`, `unenrolled`, `rate_limited`, `duplicate`, `unparseable`, `out_of_window`, `error`.
+5. One atomic, retried batch: claim `(domain, reporter_org, report_id)` in `dmarc_report_seen` (a resent report changes nothing), upsert `dmarc_daily_stats` and insert `dmarc_reports` (`processed = 2`, `raw_xml` is no longer stored), both guarded on the claim. Per-source rows then go to `dmarc_report_records` (at most `MAX_STORED_RECORDS`: 1000 per verified report, 250 per unverified, failing first; `auth_json` keeps the evidence a later re-rollup needs).
+6. `processed` finishes at 1 (complete) or 0 (records failed). A resend of a `processed = 0` report (or a stale `processed = 2` one, `processing_at` over 15 minutes old) with the same totals is not a duplicate: it deletes the partial records and completes the original row (stats are not re-counted).
+7. Staff notification (verified reports only, so none while provenance is disabled) and the source rollup run after a complete report.
+
+**Provenance** (`lib/dmarc-provenance.ts`). Aggregate reports are unauthenticated XML, so each stores `sender_domain`, `sender_auth` and `verified` on `dmarc_reports`. `verified = 1` only when ALL hold: the RFC 5322 From address is EXACTLY one of `KNOWN_RUA_REPORTERS` (a specific mailbox, currently `noreply-dmarc-support@google.com` and `dmarcreport@microsoft.com`, mapped to the domain it signs as; never a consumer mailbox domain); the TOPMOST plain `Authentication-Results` header has an authserv-id in `TRUSTED_AUTHSERV_IDS` (`ARC-Authentication-Results` is never trusted: an ARC set is sender-written until its seal is validated, which we do not do); and that header shows `dkim=pass` with `header.d`, or `dmarc=pass` with `header.from`, exactly equal to the reporter's signing domain.
+
+**Disabled by default.** `TRUSTED_AUTHSERV_IDS` ships EMPTY, so every report is `verified = 0` until an operator confirms the live header on real mail and adds the id (enablement procedure: `docs/EMAIL_ROUTING_RUNBOOK.md`). While off: no failure notification at all, no ipinfo lookups on the email path, and the source rollup still runs from threats / clusters / providers / ASN-DROP evidence. The robust fix (verify the DKIM signature ourselves with WebCrypto) is not built.
+
+**What `verified` gates.** Notification: a verified report with at least 100 messages and a fail rate over 10% raises one `email_security_change` notification, audience `team` (staff, never customers), severity `high`, text built only from the brand's canonical domain and computed numbers. ipinfo: only verified reports on the email path (so none while provenance is disabled), never reserved/private ranges, at most 50 per report and 150 per UTC wall-clock day across all DMARC rollups (`dmarc:geo_used:<date>` in KV). `dmarc_source_daily.verified_fail_messages` records how much failing volume came from verified reports.
+
+**DMARC pass = aligned DKIM pass OR aligned SPF pass.** Before 2026-11-14 the
+receiver required both, which over-counted `total_fail`,
+`dmarc_daily_stats.failed` and the notification (existing rows keep the old
+counts; `dmarc_report_records.dmarc_result` is NULL on them).
+
+**Source classification** (`lib/dmarc-source-classify.ts`, pure) and rollup
+(`lib/dmarc-source-rollup.ts`, table `dmarc_source_daily`, one row per brand x
+UTC day x source IP, non-passing sources only, up to 200 per report):
+`aligned_pass`, `forwarder_likely`, `unaligned_shared_esp`, `spoof_candidate`
+(ranked in that order; the most suspicious class seen wins). Metadata only: it
+never creates alerts or threats and never gates triage. The rollup resolves
+ASN/country (ipinfo only for verified reports, daily cap), the hosting provider, a NEXUS cluster and
+Spamhaus ASN-DROP listing. The rollup is atomic: every upsert and the report's
+`rolled_up_at` stamp go in one batch guarded on `rolled_up_at IS NULL`, so a
+second run changes nothing. A stored report whose rollup never landed
+(`processed` 0 or 1, `rolled_up_at` NULL, over 5 minutes old) is rolled up by
+Navigator every tick (at most 3, from `dmarc_report_records`, no ipinfo). The catch-up first resets a `processed = 2` row whose `processing_at` is over 15 minutes old to 0 (dead worker), isolates each report in its own try/catch, and bumps `rollup_attempts` on every try; past 5 the report is stamped terminal (`rolled_up_at` set, `process_error` gains `rollup_abandoned`) and leaves the queue.
+Read via `GET /api/dmarc-reports/:brandId/spoof-sources`;
+onboarding state via `/setup` (see `docs/API_REFERENCE.md`).
+
+**Limits of the signal.** RUA only shows mail using the brand's exact
+header-from domain, from receivers that send reports; lookalike-domain mail
+never appears.
+
+**Retention** (`lib/dmarc-retention.ts`, EVERY Navigator tick, no hour gate; bounded batches, a backlog continues on the next tick): `dmarc_report_records` and `dmarc_reports` 180 days by `received_at`, `dmarc_source_daily` 180 days by report date, `dmarc_report_seen` 63 days (a report is accepted while its end date is within 60 days back / 2 forward, so the dedup key must outlive that), `dmarc_rate_counters` windows older than 2 days. `dmarc_daily_stats` and `dmarc_enrollment` are not swept.
+
+**Geo for stored source IPs** (`lib/dmarc-record-geo.ts`, Cartographer Phase 4, 10 IPs per cycle): resolved IPs get country/org/ASN/lat/lng from ipinfo; private, bogon, CGNAT, documentation ranges and IPv6 are marked `PRIV`; a failed lookup is marked `XX` (the platform's unknown-country sentinel), so no IP pins the queue. An IP not attempted (budget spent) stays queued.
+
+**Migration 0329** creates `dmarc_report_records` (a no-op in prod, which has it
+out of band), `dmarc_report_seen`, `dmarc_source_daily`, `dmarc_enrollment`, `dmarc_rate_counters` and
+the indexes, and ADDs columns: `dmarc_report_records.auth_json`;
+`dmarc_reports.sender_domain`, `sender_auth`, `verified`, `claim_id`,
+`rolled_up_at`, `processing_at`, `rollup_attempts`. It also creates `dmarc_rate_counters`. The ADD COLUMNs make it non-re-appliable.

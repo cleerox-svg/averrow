@@ -27,18 +27,6 @@ import {
 } from "../src/brand-threat-correlator";
 import type { Env } from "../src/types";
 
-const PROD_DMARC_REPORT_RECORDS_DDL = [
-  `CREATE TABLE dmarc_report_records (
-     id INTEGER PRIMARY KEY AUTOINCREMENT, report_id INTEGER NOT NULL, source_ip TEXT NOT NULL,
-     count INTEGER DEFAULT 1, disposition TEXT, dkim_result TEXT, spf_result TEXT, dmarc_result TEXT,
-     header_from TEXT, envelope_from TEXT, dkim_domain TEXT, spf_domain TEXT, country_code TEXT,
-     city TEXT, lat REAL, lng REAL, asn TEXT, org TEXT,
-     FOREIGN KEY (report_id) REFERENCES dmarc_reports(id))`,
-  "CREATE INDEX idx_drr_report ON dmarc_report_records(report_id)",
-  "CREATE INDEX idx_drr_ip ON dmarc_report_records(source_ip)",
-  "CREATE INDEX idx_drr_dmarc_result ON dmarc_report_records(dmarc_result)",
-];
-
 describe.skipIf(!hasSqlite())("daily brand threat assessments (migrated schema)", () => {
   let raw: SqliteDb;
   let log: StatementLogEntry[];
@@ -46,9 +34,8 @@ describe.skipIf(!hasSqlite())("daily brand threat assessments (migrated schema)"
 
   beforeEach(() => {
     raw = openMigratedDb();
-    // dmarc_report_records predates migrations/ — no migration creates it.
-    // Prod DDL copied from sqlite_master (2026-11-10).
-    for (const stmt of PROD_DMARC_REPORT_RECORDS_DDL) raw.exec(stmt);
+    // dmarc_report_records predates migrations/; migration 0329 recreates
+    // it (IF NOT EXISTS) with the prod DDL above.
     log = [];
     const ins = raw.prepare(
       "INSERT INTO brands (id, name, canonical_domain, tier, last_threat_seen, email_security_grade) VALUES (?, ?, ?, ?, ?, ?)",

@@ -13,6 +13,7 @@ import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetc
 import { cachedCount, getCachedCountStats, peekCountEntry } from "../lib/cached-count";
 import { cachedValue, type SingleFlightOptions } from "../lib/cached-value";
 import { runSequential, softSection, type SectionErrors } from "../lib/run-sequential";
+import { readDmarcDrops24h, type DmarcDropCounts } from "../lib/dmarc-enrollment";
 import {
   countDnsCandidatesInThreats,
   DNS_DRAINABLE_CACHE_KEY,
@@ -1100,6 +1101,52 @@ export async function buildNrdRetentionDiag(env: Env): Promise<NrdRetentionDiag>
     more_remaining: last?.more_remaining ?? null,
     skipped: last?.skipped ?? null,
     error: last?.error ?? null,
+  };
+}
+
+/** `dmarc_ingest` block — hosted DMARC aggregate reporting (2026-11-14).
+ *  Three small indexed main-DB reads (dmarc_reports by received_at,
+ *  idx_dmarc_reports_received; the dmarc_enrollment table, one row per
+ *  enrolled brand; the rollup-pending partial index) plus the 24 hourly KV
+ *  drop buckets the receiver writes (lib/dmarc-enrollment.ts
+ *  recordDmarcDrop). Every drop reason is reported, including `error`, so
+ *  a receiver that fails every message does not read as a quiet day. */
+export interface DmarcIngestDiag {
+  reports_24h: number;
+  verified_reports_24h: number;
+  incomplete_reports_24h: number;
+  last_report_at: string | null;
+  enrolled_brands: number;
+  rollup_pending: number;
+  dropped_unenrolled_24h: number;
+  dropped_no_brand_24h: number;
+  dropped_24h: DmarcDropCounts;
+}
+
+export async function buildDmarcIngestDiag(env: Env): Promise<DmarcIngestDiag> {
+  const recent = await env.DB.prepare(
+    `SELECT COUNT(*) AS n, SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS v,
+            SUM(CASE WHEN processed <> 1 THEN 1 ELSE 0 END) AS incomplete, MAX(received_at) AS last
+     FROM dmarc_reports WHERE received_at >= datetime('now', '-24 hours')`,
+  ).first<{ n: number; v: number | null; incomplete: number | null; last: string | null }>();
+  const enrolled = await env.DB.prepare(
+    "SELECT COUNT(*) AS n, MAX(last_report_at) AS last FROM dmarc_enrollment",
+  ).first<{ n: number; last: string | null }>();
+  const pending = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM dmarc_reports WHERE rolled_up_at IS NULL AND processed IN (0, 1)",
+  ).first<{ n: number }>();
+  const drops = await readDmarcDrops24h(env);
+  const lasts = [recent?.last ?? null, enrolled?.last ?? null].filter((x): x is string => !!x).sort();
+  return {
+    reports_24h: recent?.n ?? 0,
+    verified_reports_24h: recent?.v ?? 0,
+    incomplete_reports_24h: recent?.incomplete ?? 0,
+    last_report_at: lasts.length > 0 ? lasts[lasts.length - 1]! : null,
+    enrolled_brands: enrolled?.n ?? 0,
+    rollup_pending: pending?.n ?? 0,
+    dropped_unenrolled_24h: drops.unenrolled,
+    dropped_no_brand_24h: drops.no_brand,
+    dropped_24h: drops,
   };
 }
 
@@ -2263,6 +2310,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     const pageAnalysisT = soft<PageAnalysisDiag | null>("page_analysis", null, () => buildPageAnalysisDiag(env));
     const velocityT = soft<VelocityDiag | null>("velocity", null, () => buildVelocityDiag(env));
     const pausedAgentsT = () => fetchPausedAgentsSafe(env.DB);
+    const dmarcIngestT = soft<DmarcIngestDiag | null>("dmarc_ingest", null, () => buildDmarcIngestDiag(env));
 
     // ── Main-DB reads, one at a time ────────────────────────────────
     // Order: cheap live reads first, the cached full-scan sections last,
@@ -2275,7 +2323,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       moduleEntitlements, geoCoverage, dnsQueueStability,
       cartoQueue, cartoQueueRaw, cartoExhausted, cartoExhaustedByFeed,
       enrichment, totals, alertsByTier, dnsCandidatesInThreats,
-      pageAnalysis, velocity,
+      pageAnalysis, velocity, dmarcIngest,
     ] = await runSequential([
       clockT,
       feedHealthT, feedStatusT, feedErrorsT,
@@ -2284,7 +2332,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       moduleEntitlementsT, geoCoverageT, dnsQueueStabilityT,
       cartoQueueT, cartoQueueRawT, cartoExhaustedT, cartoExhaustedByFeedT,
       enrichmentT, totalsT, alertsByTierT, dnsCandidatesInThreatsT,
-      pageAnalysisT, velocityT,
+      pageAnalysisT, velocityT, dmarcIngestT,
     ]);
 
     const [
@@ -2638,7 +2686,13 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // fallback instead of 500-ing the endpoint). Main-DB reads run
           // sequentially; enrichment_pipeline (10 min), platform_totals and
           // alerts.by_tier (15 min) are KV-cached. No field removed.
-          endpoint_version: 17,
+          // 18: additive `dmarc_ingest` block (hosted DMARC aggregate
+          // reporting: reports_24h, verified_reports_24h,
+          // incomplete_reports_24h, last_report_at, enrolled_brands,
+          // rollup_pending, dropped_unenrolled_24h, dropped_no_brand_24h,
+          // dropped_24h by reason incl. ineligible_brand / rate_limited /
+          // error). No field removed.
+          endpoint_version: 18,
         },
 
         brand_count_drift: brandCountDrift,
@@ -2762,6 +2816,15 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // unless ingested before 2026-10-05). Only a stuck lookalike matcher
         // can extend retention (to ≤ 37 days, `held_by_lookalike_matcher`).
         nrd_retention: nrdRetention,
+
+        // Hosted DMARC aggregate reporting (lib/dmarc-enrollment.ts).
+        // reports_24h = stored reports (verified_reports_24h of them from a
+        // known, authenticated reporter); dropped_* = never stored, never
+        // notified; dropped_24h splits every reason incl. ineligible_brand,
+        // rate_limited, duplicate, unparseable and error (receiver threw).
+        // rollup_pending = stored reports whose source rollup has not landed
+        // (Navigator catches up ≤3 per tick).
+        dmarc_ingest: dmarcIngest,
 
         alerts: {
           // NX2 tier-gate visibility. `tracked` should trend to 0 (or

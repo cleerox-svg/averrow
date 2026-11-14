@@ -14,6 +14,8 @@ import {
   handleGetDmarcReports,
   handleGetDmarcStats,
   handleGetDmarcSources,
+  handleGetDmarcSetup,
+  handleGetDmarcSpoofSources,
 } from "../handlers/dmarcReports";
 
 export function registerEmailSecurityRoutes(router: RouterType<IRequest>): void {
@@ -63,6 +65,18 @@ export function registerEmailSecurityRoutes(router: RouterType<IRequest>): void 
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetDmarcSources(request, env, request.params["brandId"] ?? "");
+  });
+  // Hosted-RUA sensor (2026-11-14). Same requireStaff guard as the
+  // sibling per-brand routes; registered before the bare /:brandId.
+  router.get("/api/dmarc-reports/:brandId/setup", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetDmarcSetup(request, env, request.params["brandId"] ?? "");
+  });
+  router.get("/api/dmarc-reports/:brandId/spoof-sources", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleGetDmarcSpoofSources(request, env, request.params["brandId"] ?? "");
   });
   router.get("/api/dmarc-reports/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireStaff(request, env);
