@@ -6,6 +6,7 @@ import { handleOptions } from "./lib/cors";
 import { applySecurityHeaders } from "./middleware/security";
 import { handleDmarcEmail } from "./dmarc-receiver";
 import type { EmailMessage } from "./dmarc-receiver";
+import { isDmarcRuaRecipient } from "./lib/dmarc-rua";
 import { handleSpamTrapEmail } from "./spam-trap";
 import { serveHoneypotPage, serveHoneypotDomain, honeypotHtmlResponse, trapMailDomain } from "./honeypot";
 import { serveLrxRadarPage } from "./templates/honeypot-lrx";
@@ -111,8 +112,14 @@ export default {
     // Accept ALL emails — never reject/bounce (Google/Microsoft stop sending on bounces)
     const to = message.to;
 
-    if (to === "dmarc_rua@averrow.com" || to === "dmarc_rua@trustradar.ca") {
-      ctx.waitUntil(handleDmarcEmail(message, env));
+    // DMARC aggregate reports (lib/dmarc-rua.ts). Case-insensitive match
+    // against DMARC_RUA_ADDRESSES — the primary is dmarc_rua@averrow.ca,
+    // because averrow.com's MX is Google Workspace (550) and only Email
+    // Routing zones reach this handler. Before this, the averrow.ca address
+    // fell through to the spam trap. Every other local part routes exactly
+    // as before.
+    if (isDmarcRuaRecipient(to)) {
+      ctx.waitUntil(handleDmarcEmail(message, env, ctx));
       return;
     }
 
