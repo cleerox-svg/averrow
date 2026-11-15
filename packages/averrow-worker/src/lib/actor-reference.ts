@@ -231,7 +231,9 @@ export async function lookupActorReference(
   const keyToOriginal = new Map<string, string>();
   for (const n of names) {
     const k = normalizeActorName(n);
-    if (k && !keyToOriginal.has(k)) keyToOriginal.set(k, n);
+    // Keys of 3 characters or fewer (SEA, UPS, RTM…) or with no letter collide
+    // with unrelated names too easily to show as a match.
+    if (k && k.length > 3 && /\p{L}/u.test(k) && !keyToOriginal.has(k)) keyToOriginal.set(k, n);
   }
   const keys = [...keyToOriginal.keys()];
   if (keys.length === 0) return null;
