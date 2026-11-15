@@ -73,4 +73,18 @@ export function threatId(source: string, iocType: string, iocValue: string): str
   return `thr-${source}-${Math.abs(hash).toString(36)}`;
 }
 
+/**
+ * Collision-safe deterministic id: `thr-<source>-` + the first 64 bits
+ * (16 hex chars) of SHA-256("<source>:<iocType>:<iocValue>"). Use it for
+ * feeds whose corpus grows into the tens of thousands, where `threatId`'s
+ * 31-bit hash starts to collide (a collision silently drops a NEW IOC via
+ * INSERT OR IGNORE). `threatId` ids are base36 of a 31-bit value (≤ 6
+ * chars), so the two id spaces never overlap.
+ */
+export async function threatId64(source: string, iocType: string, iocValue: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${source}:${iocType}:${iocValue}`));
+  const hex = Array.from(new Uint8Array(digest, 0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `thr-${source}-${hex}`;
+}
+
 export { extractDomain } from "../lib/domain-utils";

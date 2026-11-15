@@ -46,6 +46,7 @@
 import { createAlert } from './alerts';
 import { logger } from './logger';
 import { registrableDomain } from './registrable-domain';
+import { readCappedText } from './capped-body';
 import type { Env } from '../types';
 
 // ─── RansomLook source definition ─────────────────────────────────
@@ -227,28 +228,6 @@ export function parseRansomLookPosts(body: unknown): RansomLookParseResult {
     });
   }
   return { victims, invalid, total: body.length, error: null };
-}
-
-/** Read a body as text, giving up (null) once it exceeds maxBytes. */
-async function readCappedText(res: Response, maxBytes: number): Promise<string | null> {
-  if (!res.body) return '';
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > maxBytes) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const buf = new Uint8Array(size);
-  let off = 0;
-  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
-  return new TextDecoder().decode(buf);
 }
 
 type FetchOutcome = { ok: true; body: unknown } | { ok: false; error: string };
