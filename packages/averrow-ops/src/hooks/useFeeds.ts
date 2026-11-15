@@ -33,6 +33,9 @@ export interface FeedOverview {
   errors: number;
   last_run: string | null;
   last_completed: string | null;
+  /** Feed role (PR 1). Missing on older responses; readers default it to
+   *  'ingest'. */
+  feed_type?: 'ingest' | 'enrichment' | 'social';
   /** 24-element hourly arrays (oldest → newest). Added 2026-05 so
    *  cards can render a multi-series sparkline without per-feed
    *  history fan-out. Optional because older cached responses

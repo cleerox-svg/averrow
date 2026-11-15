@@ -57,6 +57,9 @@ export interface Agent {
   consecutive_failure_threshold: number | null;
   paused_at: string | null;
   paused_after_n_failures: number | null;
+  /** AgentModule.status from the registry (PR 1). Missing on older
+   *  responses; readers default it to 'active'. */
+  lifecycle?: 'active' | 'paused' | 'shadow' | 'retired';
 }
 
 export interface AgentConfig {
