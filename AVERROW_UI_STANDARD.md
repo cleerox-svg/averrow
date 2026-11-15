@@ -765,6 +765,8 @@ and pass `onRetry={refetch}`; if a refetch fails while data is on screen, keep t
 data and render `<PageState kind="error" layout="inline" />`. Stat tiles take
 `value={null}` while loading (never `'—'`, `'...'` or `0`) and `error` on failure.
 
+**AppUpdateNotice / UpdateBanner** (`@averrow/shared/ui`, `ui/update/`): the "A new version of Averrow is available" banner, mounted once per app at the top of the shell content column (`shellUrl` = `/v2/` ops, `/tenant/` tenant). Detection is `isNewBuildAvailable`: fetch the app's own shell with `?__update_check=<ts>` (`no-store`) and compare the hashed `/assets/*.js` entry it names with the running one; any failure is "no update". Checks run only while visible (focus, visibilitychange, online, every 30 min; 60 s minimum gap). Primary-tinted strip (`--primary`, `--primary-border`), `role="status"`, one Reload button, no dismiss, never auto-reloads. `reloadToLatest()` tells a waiting ops service worker to `SKIP_WAITING`, then reloads.
+
 **Banner** (`@averrow/shared/ui`, re-exported from the ops barrel; `PlatformAlertBanner` and `AlertQueueBanner` are built on it):
 
 | Variant | Use |

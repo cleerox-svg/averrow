@@ -378,6 +378,7 @@ Two install affordances + one biometric auto-prompt:
 | `<InstallAppBanner />` | Overview (`features/home/OverviewV4.tsx`), directly below the hero | Visible to non-installed users; dismissible per-device |
 | Install card | Settings → Devices & App (`packages/shared/src/account/DevicesSettings.tsx`, ops `/settings/devices`; no longer on Profile; the old `InstallAppCard` was deleted) | Always visible; not dismissible. Tenant has no Devices & App (no service worker) |
 | `<FirstSignInPasskeyPrompt />` | Mounted at `components/layout/ShellV4.tsx` root | Auto-fires when `passkey_count === 0` + WebAuthn supported |
+| `<AppUpdateNotice shellUrl=… />` (`@averrow/shared/ui`) | Top of the content column in ops `ShellV4.tsx` (`/v2/`) and tenant `layout/Shell.tsx` (`/tenant/`) | "A new version of Averrow is available. Reload" banner. Probes the app's own shell (`?__update_check`) for a different hashed entry script on focus / online / every 30 min while visible; never auto-reloads. Tenant works without a service worker |
 
 The banner and the passkey prompt self-gate internally. Don't add per-route logic to control them.
 

@@ -57,6 +57,9 @@ export * from './forms';
 export * from './overlays';
 export * from './settings';
 
+// "New version available" banner + index.html-probe detection + reload helper.
+export * from './update';
+
 // R3 brand marks (facelift P3-5): AverrowMark (tile / bare), AverrowLockup
 // (mark + wordmark, no tagline) and the legacy <-> R3 toggle classes.
 export * from './brand';
