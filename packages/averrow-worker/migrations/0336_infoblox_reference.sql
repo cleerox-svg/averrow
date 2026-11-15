@@ -28,7 +28,11 @@
 --
 -- infoblox_reference_files: one row per upstream file: its label, the
 -- ETag / sha256 of the last fully loaded body (the change guard: an
--- unchanged file costs a conditional GET and no D1 write), row counts.
+-- unchanged file costs a conditional GET and no D1 write), live row count.
+-- When a body shrinks below half the file's live rows its rows are not
+-- removed and NO etag / sha is stamped (both NULL), so every run re-checks
+-- it; pending_sha256 / pending_seen count consecutive runs of that same body,
+-- and the shrink is accepted on the third.
 --
 -- Additive only: two new tables, one index, a feed_configs / feed_status seed.
 
@@ -43,7 +47,9 @@ CREATE TABLE IF NOT EXISTS infoblox_reference_files (
   rows_capped      INTEGER NOT NULL DEFAULT 0,
   status           TEXT NOT NULL DEFAULT 'loaded' CHECK (status IN ('loaded', 'absent', 'retired')),
   loaded_at        TEXT,
-  updated_at       TEXT NOT NULL
+  updated_at       TEXT NOT NULL,
+  pending_sha256   TEXT,                      -- body whose shrink the retain guard blocked (no etag/sha stamp then)
+  pending_seen     INTEGER NOT NULL DEFAULT 0 -- consecutive runs that saw that body; at 3 the shrink is accepted
 );
 
 CREATE TABLE IF NOT EXISTS infoblox_reference (

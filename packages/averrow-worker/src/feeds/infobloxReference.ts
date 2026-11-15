@@ -38,16 +38,26 @@ import {
  * carries on. The first load (~99K rows on 2026-11-15) spans about two runs.
  *
  * Removal: a file's rows that left the file get removed_at only once every
- * upsert for that file landed, the body was read whole, and the pull keeps
- * >= MIN_RETAIN_RATIO of the file's live rows. A whole file's rows are
- * removed (file 404 upstream, or dropped from INFOBLOX_FILES) only on a
- * COMPLETE pull: every file answered, none failed, none deferred.
+ * upsert for that file landed, the body was read whole (no line cap), and the
+ * body still holds >= MIN_RETAIN_RATIO of the file's live rows (counted
+ * BEFORE our own row caps, so a row the per-file / total cap drops is removed
+ * like any other). When that guard blocks removal the file gets NO ETag / sha
+ * stamp, so every later run re-reads and re-checks it; the body's sha is kept
+ * in `pending_sha256` / `pending_seen`, and once the SAME body has been seen
+ * on INFOBLOX_SHRINK_CONFIRM_RUNS consecutive runs the shrink is accepted
+ * (upstream really did shrink the file). A whole file's rows are removed
+ * (file 404 upstream, or dropped from INFOBLOX_FILES) only on a COMPLETE
+ * pull: every file answered, none failed or skipped, none deferred.
  *
- * Failure: any file that fails (HTTP error other than 404, network, body
- * over INFOBLOX_MAX_FILE_BYTES, unexpected header, every write batch of the
- * file failing) is skipped, the other files still run, and the pull then
- * throws (feed breaker applies). More than half the files answering 404 also
- * throws (the repository moved) and removes nothing.
+ * Failure: a file that fails transiently (HTTP error other than 404, a 3xx —
+ * redirects are not followed — network, every write batch of the file
+ * failing) is skipped, the other files still run, and the pull then throws
+ * (feed breaker applies). A file that fails permanently (body over
+ * INFOBLOX_MAX_FILE_BYTES, unexpected header) is a per-file warning
+ * (`filesSkipped`): the pull still succeeds but is not complete, so no
+ * whole-file removal runs. More than half the files failing (either kind)
+ * throws; more than half answering 404 also throws (the repository moved)
+ * and removes nothing.
  *
  * Licence: CC BY 4.0 — docs/licences/infoblox.md.
  */
@@ -59,6 +69,8 @@ export const INFOBLOX_RUN_TIME_BUDGET_MS = 75_000;
 export const INFOBLOX_RUN_ROW_WRITE_BUDGET = 50_000;
 /** Per-file removal needs the pull to keep ≥ this share of the file's live rows. */
 export const INFOBLOX_MIN_RETAIN_RATIO = 0.5;
+/** A shrink the retain guard blocked is accepted once the same body was seen on this many consecutive runs. */
+export const INFOBLOX_SHRINK_CONFIRM_RUNS = 3;
 const README_MAX_BYTES = 256 * 1024;
 /** 7 binds per row; 14 rows = 98 binds (D1 caps a statement at 100). */
 const ROWS_PER_INSERT = 14;
@@ -89,16 +101,22 @@ function insertSql(rows: number): string {
       removed_at     = NULL`;
 }
 
+/**
+ * ?5 / ?6 = etag / content_sha256: the stamp, or NULL when removal was skipped
+ * (no stamp → the next run re-reads and re-checks the file). ?10 / ?11 =
+ * pending_sha256 / pending_seen (NULL / 0 once a body is fully applied).
+ */
 const FILE_UPSERT_SQL = `INSERT INTO infoblox_reference_files
     (source_file, label, label_kind, publication_url, etag, content_sha256,
-     rows_loaded, rows_capped, status, loaded_at, updated_at)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'loaded', ?9, ?9)
+     rows_loaded, rows_capped, status, loaded_at, updated_at, pending_sha256, pending_seen)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'loaded', ?9, ?9, ?10, ?11)
   ON CONFLICT(source_file) DO UPDATE SET
     label = excluded.label, label_kind = excluded.label_kind,
     publication_url = excluded.publication_url, etag = excluded.etag,
     content_sha256 = excluded.content_sha256, rows_loaded = excluded.rows_loaded,
     rows_capped = excluded.rows_capped, status = 'loaded',
-    loaded_at = excluded.loaded_at, updated_at = excluded.updated_at`;
+    loaded_at = excluded.loaded_at, updated_at = excluded.updated_at,
+    pending_sha256 = excluded.pending_sha256, pending_seen = excluded.pending_seen`;
 
 interface FileState {
   source_file: string;
@@ -109,6 +127,8 @@ interface FileState {
   content_sha256: string | null;
   rows_loaded: number;
   status: string;
+  pending_sha256: string | null;
+  pending_seen: number;
 }
 
 interface StoredRow {
@@ -134,17 +154,30 @@ export interface InfobloxRunResult extends FeedResult {
   filesLoaded: number;
   filesDeferred: number;
   filesFailed: string[];
+  /** Files skipped for a permanent per-file fault (oversize body, changed header): a warning, not a failure. */
+  filesSkipped: string[];
   filesAbsent: string[];
   rowsWritten: number;
   rowsRemoved: number;
   complete: boolean;
 }
 
-/** Pure: may this file's stale rows be removed after a full write? */
-export function infobloxFileRemovalAllowed(args: { kept: number; liveBefore: number; lineCapped: boolean }): boolean {
+/**
+ * Pure: may this file's stale rows be removed after a full write?
+ * `inFile` = valid rows the body holds before our own row caps;
+ * `sameBodyRuns` = consecutive runs (this one included) that saw this exact
+ * body with removal blocked. A blocked shrink is accepted once the same body
+ * was seen INFOBLOX_SHRINK_CONFIRM_RUNS times in a row.
+ */
+export function infobloxFileRemovalAllowed(args: {
+  inFile: number; liveBefore: number; lineCapped: boolean; sameBodyRuns?: number;
+}): boolean {
+  if ((args.sameBodyRuns ?? 0) >= INFOBLOX_SHRINK_CONFIRM_RUNS) return true;
   if (args.lineCapped) return false;
-  return args.kept >= Math.ceil(args.liveBefore * INFOBLOX_MIN_RETAIN_RATIO);
+  return args.inFile >= Math.ceil(args.liveBefore * INFOBLOX_MIN_RETAIN_RATIO);
 }
+
+const isRedirect = (s: number) => s >= 300 && s < 400 && s !== 304;
 
 function sameRow(a: InfobloxRow, b: StoredRow): boolean {
   return b.removed_at === null && b.indicator_type === a.type
@@ -163,7 +196,8 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
   const warnings: string[] = [];
 
   const stateRows = await db.prepare(
-    `SELECT source_file, label, label_kind, publication_url, etag, content_sha256, rows_loaded, status
+    `SELECT source_file, label, label_kind, publication_url, etag, content_sha256, rows_loaded, status,
+            pending_sha256, pending_seen
        FROM infoblox_reference_files`,
   ).all<FileState>();
   const state = new Map<string, FileState>();
@@ -178,6 +212,7 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
   let filesLoaded = 0;
   let filesDeferred = 0;
   const filesFailed: string[] = [];
+  const filesSkipped: string[] = [];
   const filesAbsent: string[] = [];
   const outOfBudget = () => now() - started >= timeBudget || rowsWritten >= rowBudget;
 
@@ -193,7 +228,7 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
     try {
       const headers: Record<string, string> = { "User-Agent": UA, Accept: "text/csv, text/plain" };
       if (loadedBefore && prev?.etag) headers["If-None-Match"] = prev.etag;
-      res = await fetch(INFOBLOX_RAW_BASE + f.file, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      res = await fetch(INFOBLOX_RAW_BASE + f.file, { headers, redirect: "manual", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     } catch (e) {
       filesFailed.push(`${f.file}: ${String(e).slice(0, 120)}`);
       continue;
@@ -217,12 +252,12 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
     }
     if (!res.ok) {
       await res.body?.cancel().catch(() => {});
-      filesFailed.push(`${f.file}: HTTP ${res.status}`);
+      filesFailed.push(`${f.file}: HTTP ${res.status}${isRedirect(res.status) ? " (redirect not followed)" : ""}`);
       continue;
     }
     const text = await readCappedText(res, INFOBLOX_MAX_FILE_BYTES);
     if (text === null) {
-      filesFailed.push(`${f.file}: body larger than ${INFOBLOX_MAX_FILE_BYTES} bytes`);
+      filesSkipped.push(`${f.file}: body larger than ${INFOBLOX_MAX_FILE_BYTES} bytes`);
       continue;
     }
     const etag = res.headers.get("ETag");
@@ -239,16 +274,22 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
       continue;
     }
 
+    const fileCap = Math.max(0, Math.min(perFileCap, totalLeft));
     let parsed;
     try {
-      parsed = parseInfobloxCsv(text, Math.max(0, Math.min(perFileCap, totalLeft)));
+      parsed = parseInfobloxCsv(text, fileCap);
     } catch (e) {
-      filesFailed.push(`${f.file}: ${e instanceof Error ? e.message : String(e)}`);
+      filesSkipped.push(`${f.file}: ${e instanceof Error ? e.message : String(e)}`);
       continue;
     }
     totalLeft -= parsed.rows.length;
     itemsFetched += parsed.rows.length;
     if (parsed.lineCapped) warnings.push(`${f.file}: line cap reached`);
+    // The total cap squeezed this file (maxRows can reach 0): say so, and its
+    // over-cap rows are removed below like any row the file no longer keeps.
+    if (fileCap < perFileCap && parsed.capped > 0) {
+      warnings.push(`${f.file}: total row cap reached (kept ${parsed.rows.length}, ${parsed.capped} not kept)`);
+    }
 
     const stored = await db.prepare(
       `SELECT indicator, indicator_type, classification, detected_date, removed_at
@@ -295,11 +336,22 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
       continue;
     }
 
-    // Rows that left the file.
+    // Rows that left the file (or that our caps no longer keep).
     const keep = new Set(parsed.rows.map((r) => r.indicator));
     const gone = [...existing.values()].filter((r) => r.removed_at === null && !keep.has(r.indicator)).map((r) => r.indicator);
+    const live = new Set([...existing.values()].filter((r) => r.removed_at === null).map((r) => r.indicator));
+    for (const k of keep) live.add(k);
+    let removalSkipped = false;
+    let sameBodyRuns = 0;
+    let fileRemoved = 0;
     if (gone.length > 0) {
-      if (infobloxFileRemovalAllowed({ kept: parsed.rows.length, liveBefore, lineCapped: parsed.lineCapped })) {
+      sameBodyRuns = prev?.pending_sha256 === sha ? (prev.pending_seen ?? 0) + 1 : 1;
+      const inFile = parsed.rows.length + parsed.capped;
+      const guardOk = infobloxFileRemovalAllowed({ inFile, liveBefore, lineCapped: parsed.lineCapped });
+      if (guardOk || infobloxFileRemovalAllowed({ inFile, liveBefore, lineCapped: parsed.lineCapped, sameBodyRuns })) {
+        if (!guardOk) {
+          warnings.push(`${f.file}: shrink accepted after ${sameBodyRuns} runs of the same body (${gone.length} removed)`);
+        }
         for (let i = 0; i < gone.length; i += REMOVAL_CHUNK) {
           const chunk = gone.slice(i, i + REMOVAL_CHUNK);
           const r = await db.prepare(
@@ -309,23 +361,32 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
           const n = Number(r.meta?.changes ?? 0);
           rowsRemoved += n;
           rowsWritten += n;
+          fileRemoved += n;
         }
       } else {
-        warnings.push(`${f.file}: removal skipped (${gone.length} missing; kept ${parsed.rows.length}, live ${liveBefore})`);
+        removalSkipped = true;
+        warnings.push(
+          `${f.file}: removal skipped (${gone.length} missing; in file ${inFile}, live ${liveBefore}; ` +
+          `same body ${sameBodyRuns}/${INFOBLOX_SHRINK_CONFIRM_RUNS}) — re-checked next run`,
+        );
       }
     }
 
+    // Removal skipped → no ETag / sha stamp, so the next run re-reads the
+    // file and re-applies the guard; the body's sha + run count go to pending_*.
     await db.prepare(FILE_UPSERT_SQL).bind(
-      f.file, f.label, f.kind, f.publication, etag, sha,
-      parsed.rows.length, parsed.capped, stamp,
+      f.file, f.label, f.kind, f.publication,
+      removalSkipped ? null : etag, removalSkipped ? null : sha,
+      live.size - fileRemoved, parsed.capped, stamp,
+      removalSkipped ? sha : null, removalSkipped ? sameBodyRuns : 0,
     ).run();
     filesLoaded++;
   }
 
   // New upstream publications not in INFOBLOX_FILES (report only).
-  if (!opts.files) {
+  if (!opts.files && !outOfBudget()) {
     try {
-      const r = await fetch(INFOBLOX_INDEX_URL, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      const r = await fetch(INFOBLOX_INDEX_URL, { headers: { "User-Agent": UA }, redirect: "manual", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       const t = r.ok ? await readCappedText(r, README_MAX_BYTES) : null;
       const unlisted = t ? unlistedInfobloxFiles(t) : [];
       if (unlisted.length > 0) warnings.push(`unlisted upstream files: ${unlisted.slice(0, 10).join(", ")}`);
@@ -338,7 +399,12 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
     throw new Error(`infoblox_reference: ${filesAbsent.length}/${files.length} files answered 404 — repository moved? nothing removed`);
   }
 
-  const complete = filesFailed.length === 0 && filesDeferred === 0;
+  const failedCount = filesFailed.length + filesSkipped.length;
+  if (failedCount > files.length / 2) {
+    throw new Error(`infoblox_reference: ${failedCount}/${files.length} files failed: ${[...filesFailed, ...filesSkipped].slice(0, 5).join("; ")}`);
+  }
+
+  const complete = failedCount === 0 && filesDeferred === 0;
   if (complete) {
     // Whole files gone upstream (404) or dropped from the list.
     const listed = new Set(files.map((f) => f.file));
@@ -362,6 +428,7 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
 
   if (filesDeferred > 0) warnings.push(`${filesDeferred} file(s) deferred to the next run (budget)`);
   if (filesAbsent.length > 0) warnings.push(`404 upstream: ${filesAbsent.join(", ")}`);
+  if (filesSkipped.length > 0) warnings.unshift(`file(s) skipped: ${filesSkipped.slice(0, 5).join("; ")}`);
   if (filesFailed.length > 0) {
     throw new Error(`infoblox_reference: ${filesFailed.length} file(s) failed: ${filesFailed.slice(0, 5).join("; ")}`);
   }
@@ -377,6 +444,7 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
     filesLoaded,
     filesDeferred,
     filesFailed,
+    filesSkipped,
     filesAbsent,
     rowsWritten,
     rowsRemoved,

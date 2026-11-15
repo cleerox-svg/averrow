@@ -121,13 +121,39 @@ describe("infobloxDomainCandidates", () => {
     expect(infobloxDomainCandidates("a.b.pages.dev").map((c) => c.value)).toEqual(["a.b.pages.dev"]);
     expect(infobloxDomainCandidates("evil.com")).toEqual([{ value: "evil.com", match: "exact" }]);
   });
+
+  it("never walks above the registrable domain (public suffixes are not keys)", () => {
+    expect(infobloxDomainCandidates("a.b.evil.co.uk").map((c) => c.value)).toEqual(["a.b.evil.co.uk", "b.evil.co.uk", "evil.co.uk"]);
+    expect(infobloxDomainCandidates("login.banco.com.br").map((c) => c.value)).toEqual(["login.banco.com.br", "banco.com.br"]);
+    expect(infobloxDomainCandidates("shop.evil.com.au").map((c) => c.value)).toEqual(["shop.evil.com.au", "evil.com.au"]);
+    for (const d of ["x.evil.co.uk", "x.banco.com.br", "x.evil.com.au"]) {
+      const values = infobloxDomainCandidates(d).map((c) => c.value);
+      expect(values).not.toContain("co.uk");
+      expect(values).not.toContain("com.br");
+      expect(values).not.toContain("com.au");
+    }
+  });
+
+  it("reports www.<x> hitting <x> as an exact match", () => {
+    expect(infobloxDomainCandidates("www.evil.com")).toEqual([
+      { value: "www.evil.com", match: "exact" },
+      { value: "evil.com", match: "exact" },
+    ]);
+    expect(infobloxDomainCandidates("a.www.evil.com").map((c) => c.match)).toEqual(["exact", "parent_domain", "parent_domain"]);
+  });
 });
 
 describe("infobloxFileRemovalAllowed", () => {
   it("needs a whole body that keeps half the live rows", () => {
-    expect(infobloxFileRemovalAllowed({ kept: 10, liveBefore: 12, lineCapped: false })).toBe(true);
-    expect(infobloxFileRemovalAllowed({ kept: 5, liveBefore: 12, lineCapped: false })).toBe(false);
-    expect(infobloxFileRemovalAllowed({ kept: 10, liveBefore: 12, lineCapped: true })).toBe(false);
+    expect(infobloxFileRemovalAllowed({ inFile: 10, liveBefore: 12, lineCapped: false })).toBe(true);
+    expect(infobloxFileRemovalAllowed({ inFile: 5, liveBefore: 12, lineCapped: false })).toBe(false);
+    expect(infobloxFileRemovalAllowed({ inFile: 10, liveBefore: 12, lineCapped: true })).toBe(false);
+  });
+
+  it("accepts a blocked shrink once the same body was seen on 3 consecutive runs", () => {
+    expect(infobloxFileRemovalAllowed({ inFile: 1, liveBefore: 40, lineCapped: false, sameBodyRuns: 2 })).toBe(false);
+    expect(infobloxFileRemovalAllowed({ inFile: 1, liveBefore: 40, lineCapped: false, sameBodyRuns: 3 })).toBe(true);
+    expect(infobloxFileRemovalAllowed({ inFile: 10, liveBefore: 12, lineCapped: true, sameBodyRuns: 3 })).toBe(true);
   });
 });
 
@@ -149,15 +175,16 @@ const FILES: InfobloxFile[] = [
 type Body = string | { status: number; etag?: string; body?: string };
 /** Stub fetch by file name; records request headers. */
 function stub(map: Record<string, Body>) {
-  const calls: Array<{ url: string; ifNoneMatch: string | null }> = [];
+  const calls: Array<{ url: string; ifNoneMatch: string | null; redirect: RequestRedirect | undefined }> = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const h = new Headers(init?.headers);
-    calls.push({ url, ifNoneMatch: h.get("If-None-Match") });
+    calls.push({ url, ifNoneMatch: h.get("If-None-Match"), redirect: init?.redirect });
     const name = url.split("/").pop() ?? "";
     const b = map[name];
     if (b === undefined) return new Response("Not Found", { status: 404 });
     if (typeof b === "string") return new Response(b, { status: 200 });
     if (b.status === 304 || b.status === 404) return new Response(null, { status: b.status });
+    if (b.status >= 300 && b.status < 400) return new Response(null, { status: b.status, headers: { Location: "https://elsewhere.invalid/x.csv" } });
     return new Response(b.body ?? "", { status: b.status, headers: b.etag ? { ETag: b.etag } : {} });
   }));
   return calls;
@@ -220,14 +247,99 @@ describe.skipIf(!hasSqlite())("infoblox_reference feed", () => {
     expect(count(raw, "SELECT COUNT(*) AS n FROM infoblox_reference WHERE indicator = '146.103.91.133' AND removed_at IS NULL")).toBe(1);
   });
 
-  it("skips the per-file removal when the file shrinks below half its live rows", async () => {
+  it("skips the per-file removal when the file shrinks below half its live rows, without stamping, and accepts it on the 3rd same body", async () => {
+    const { env, raw } = rig();
+    stub({ [FILES[0]!.file]: csv(VEXTRIO_ROWS), [FILES[1]!.file]: { status: 200, etag: '"p1"', body: PUMA } });
+    await runInfobloxReference(env, { files: FILES });
+    const fileRow = () => raw.prepare("SELECT etag, content_sha256, rows_loaded, pending_sha256, pending_seen FROM infoblox_reference_files WHERE source_file = ?")
+      .all(FILES[1]!.file)[0] as { etag: string | null; content_sha256: string | null; rows_loaded: number; pending_sha256: string | null; pending_seen: number };
+    expect(fileRow().etag).toBe('"p1"');
+    const shrunk = { status: 200, etag: '"p2"', body: csv(["domain,puma0[.]link,malicious,2023-06-01"]) };
+    const liveCount = () => count(raw, "SELECT COUNT(*) AS n FROM infoblox_reference WHERE source_file = ? AND removed_at IS NULL", FILES[1]!.file);
+
+    const calls1 = stub({ [FILES[0]!.file]: csv(VEXTRIO_ROWS), [FILES[1]!.file]: shrunk });
+    const r1 = await runInfobloxReference(env, { files: FILES });
+    expect(calls1[1]!.ifNoneMatch).toBe('"p1"');
+    expect(r1.warning).toMatch(/removal skipped .*same body 1\/3/);
+    expect(liveCount()).toBe(40);
+    // No stamp: the next run cannot answer 304 / same-sha and skip the re-check.
+    expect(fileRow()).toMatchObject({ etag: null, content_sha256: null, rows_loaded: 40, pending_seen: 1 });
+    expect(fileRow().pending_sha256).toMatch(/^[0-9a-f]{64}$/);
+
+    const calls2 = stub({ [FILES[0]!.file]: csv(VEXTRIO_ROWS), [FILES[1]!.file]: shrunk });
+    const r2 = await runInfobloxReference(env, { files: FILES });
+    expect(calls2[1]!.ifNoneMatch).toBeNull();
+    expect(r2.warning).toMatch(/same body 2\/3/);
+    expect(liveCount()).toBe(40);
+
+    stub({ [FILES[0]!.file]: csv(VEXTRIO_ROWS), [FILES[1]!.file]: shrunk });
+    const r3 = await runInfobloxReference(env, { files: FILES });
+    expect(r3.warning).toMatch(/shrink accepted after 3 runs/);
+    expect(r3.rowsRemoved).toBe(39);
+    expect(liveCount()).toBe(1);
+    expect(fileRow()).toMatchObject({ etag: '"p2"', rows_loaded: 1, pending_sha256: null, pending_seen: 0 });
+    expect(fileRow().content_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("a different body resets the same-body count", async () => {
     const { env, raw } = rig();
     stub({ [FILES[0]!.file]: csv(VEXTRIO_ROWS), [FILES[1]!.file]: PUMA });
     await runInfobloxReference(env, { files: FILES });
-    stub({ [FILES[0]!.file]: csv(VEXTRIO_ROWS), [FILES[1]!.file]: csv(["domain,puma0[.]link,malicious,2023-06-01"]) });
-    const r = await runInfobloxReference(env, { files: FILES });
-    expect(r.warning).toMatch(/removal skipped/);
+    const a = csv(["domain,puma0[.]link,malicious,2023-06-01"]);
+    const b = csv(["domain,puma1[.]link,malicious,2023-06-02"]);
+    for (const body of [a, a, b]) {
+      stub({ [FILES[0]!.file]: csv(VEXTRIO_ROWS), [FILES[1]!.file]: body });
+      await runInfobloxReference(env, { files: FILES });
+    }
+    const f = raw.prepare("SELECT pending_seen FROM infoblox_reference_files WHERE source_file = ?").all(FILES[1]!.file)[0] as { pending_seen: number };
+    expect(f.pending_seen).toBe(1);
     expect(count(raw, "SELECT COUNT(*) AS n FROM infoblox_reference WHERE source_file = ? AND removed_at IS NULL", FILES[1]!.file)).toBe(40);
+  });
+
+  it("a file the total cap squeezes to 0 rows has its old rows removed, with a warning", async () => {
+    const { env, raw } = rig();
+    stub({ [FILES[0]!.file]: csv(VEXTRIO_ROWS), [FILES[1]!.file]: PUMA });
+    await runInfobloxReference(env, { files: FILES });
+    // Change Puma's body so it is re-read, under a total cap Vextrio uses up.
+    stub({ [FILES[0]!.file]: csv(VEXTRIO_ROWS), [FILES[1]!.file]: PUMA + "domain,puma99[.]link,malicious,2023-07-01\r\n" });
+    const r = await runInfobloxReference(env, { files: FILES, maxRowsTotal: 5 });
+    expect(r.warning).toMatch(/prolific_puma_20231031\.csv: total row cap reached \(kept 0, 41 not kept\)/);
+    expect(count(raw, "SELECT COUNT(*) AS n FROM infoblox_reference WHERE source_file = ? AND removed_at IS NULL", FILES[1]!.file)).toBe(0);
+    const f = raw.prepare("SELECT rows_loaded, content_sha256 FROM infoblox_reference_files WHERE source_file = ?").all(FILES[1]!.file)[0] as { rows_loaded: number; content_sha256: string | null };
+    expect(f.rows_loaded).toBe(0);
+    expect(f.content_sha256).not.toBeNull();
+  });
+
+  it("does not follow redirects: a 3xx fails the file", async () => {
+    const { env } = rig();
+    const calls = stub({ [FILES[0]!.file]: { status: 302 }, [FILES[1]!.file]: PUMA });
+    await expect(runInfobloxReference(env, { files: FILES })).rejects.toThrow(/HTTP 302 \(redirect not followed\)/);
+    expect(calls.every((c) => c.redirect === "manual")).toBe(true);
+  });
+
+  it("skips the README check when the run is out of budget", async () => {
+    const { env } = rig();
+    const calls = stub({});
+    const r = await runInfobloxReference(env, { timeBudgetMs: 0 });
+    expect(calls).toHaveLength(0);
+    expect(r.complete).toBe(false);
+  });
+
+  it("a permanently failing file is a warning, not a pull failure, and blocks whole-file removal", async () => {
+    const three: InfobloxFile[] = [...FILES, { file: "hazy_hawk_20250520_iocs.csv", label: "Hazy Hawk", kind: "actor", publication: null }];
+    const { env, raw } = rig();
+    stub({ [three[0]!.file]: csv(VEXTRIO_ROWS), [three[1]!.file]: PUMA, [three[2]!.file]: csv(["domain,hawk.example,malicious,2025-05-20"]) });
+    await runInfobloxReference(env, { files: three });
+    // Puma's header changed, Hazy Hawk 404s.
+    stub({ [three[0]!.file]: csv(VEXTRIO_ROWS), [three[1]!.file]: "a,b,c\n1,2,3\n" });
+    const r = await runInfobloxReference(env, { files: three });
+    expect(r.filesSkipped).toHaveLength(1);
+    expect(r.filesSkipped[0]).toMatch(/prolific_puma.*unexpected header/);
+    expect(r.filesFailed).toEqual([]);
+    expect(r.complete).toBe(false);
+    expect(r.warning).toMatch(/file\(s\) skipped: prolific_puma/);
+    expect(count(raw, "SELECT COUNT(*) AS n FROM infoblox_reference WHERE source_file = ? AND removed_at IS NULL", three[2]!.file)).toBe(1);
+    expect(count(raw, "SELECT COUNT(*) AS n FROM infoblox_reference WHERE source_file = ? AND removed_at IS NULL", three[1]!.file)).toBe(40);
   });
 
   it("resumes across runs under a row budget, then becomes complete", async () => {
@@ -271,7 +383,7 @@ describe.skipIf(!hasSqlite())("infoblox_reference feed", () => {
     expect(count(raw, "SELECT COUNT(*) AS n FROM infoblox_reference WHERE removed_at IS NULL")).toBe(45);
   });
 
-  it("fails a file whose body is over the cap or whose header changed", async () => {
+  it("fails the pull when more than half the files fail permanently (body over the cap, header changed)", async () => {
     const { env } = rig();
     const big = new Uint8Array(INFOBLOX_MAX_FILE_BYTES + 10).fill(32);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(big)));

@@ -19,7 +19,7 @@
  * never an Averrow attribution, and are staff-only by owner default.
  */
 
-import { isUnderSharedHosting } from "./safeDomains";
+import { hostAndParents, isUnderSharedHosting } from "./safeDomains";
 
 export const INFOBLOX_RAW_BASE =
   "https://raw.githubusercontent.com/infobloxopen/threat-intelligence/main/indicators/csv/";
@@ -325,19 +325,22 @@ const MAX_PARENT_HOPS = 4;
 const LOOKUP_LIMIT = 20;
 
 /**
- * The domain itself, then its parents (≥ 2 labels). A parent that is (or is
- * under) a shared-hosting domain is skipped: `x.pages.dev` must not match a
- * listing of a different `pages.dev` tenant. Pure.
+ * The domain itself, then its parents up to (never above) the registrable
+ * domain (`hostAndParents`, lib/safeDomains.ts), so a public suffix such as
+ * `co.uk` / `com.br` is never a lookup key. A parent that is (or is under) a
+ * shared-hosting domain stops the walk: `x.pages.dev` must not match a
+ * listing of a different `pages.dev` tenant. `www.x` hitting `x` is an exact
+ * match (the same site), not `parent_domain`. Pure.
  */
 export function infobloxDomainCandidates(domain: string): Array<{ value: string; match: "exact" | "parent_domain" }> {
   const d = normalizeInfobloxDomain(domain);
   if (!d) return [];
   const out: Array<{ value: string; match: "exact" | "parent_domain" }> = [{ value: d, match: "exact" }];
-  const labels = d.split(".");
-  for (let i = 1; i <= MAX_PARENT_HOPS && labels.length - i >= 2; i++) {
-    const parent = labels.slice(i).join(".");
+  const bare = d.startsWith("www.") ? d.slice(4) : null;
+  const parents = hostAndParents(d).filter((p) => p !== d).slice(0, MAX_PARENT_HOPS);
+  for (const parent of parents) {
     if (isUnderSharedHosting(parent)) break;
-    out.push({ value: parent, match: "parent_domain" });
+    out.push({ value: parent, match: parent === bare ? "exact" : "parent_domain" });
   }
   return out;
 }
