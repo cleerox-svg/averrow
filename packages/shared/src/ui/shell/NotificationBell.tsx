@@ -162,7 +162,7 @@ interface PanelProps<T extends ShellNotification> extends NotificationBellProps<
 function NotificationPanel<T extends ShellNotification>({
   onClose, filter, setFilter, variant, items, unreadCount, panelUnreadCount, loading, error, errorHasStaleData,
   onRetry, onMarkAllRead, onActivate, onSnooze, snoozeOptions, onDone, rowActions, renderBanner,
-  footerLinks, settingsHref, settingsLabel = 'Notification settings', renderLink = defaultRenderLink,
+  footerLinks, settingsHref, 'data-testid': panelTestId, settingsLabel = 'Notification settings', renderLink = defaultRenderLink,
   settingsIcon, closeIcon, emptyIcon, rowTestId,
 }: PanelProps<T>) {
   const headerUnread = panelUnreadCount ?? unreadCount ?? 0;
@@ -177,7 +177,7 @@ function NotificationPanel<T extends ShellNotification>({
   const staleData = !!errorHasStaleData;
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div data-testid={panelTestId} className="flex min-h-full flex-col">
       {/* Header: pinned while the list scrolls */}
       <div
         className="sticky top-0 z-[2] border-b border-[var(--border-base)] bg-[var(--bg-elevated-solid)]"
@@ -331,9 +331,12 @@ export function NotificationBell<T extends ShellNotification>(props: Notificatio
   const panelRef = useRef<HTMLDivElement>(null);
   const count = unreadCount ?? 0;
 
-  const openChangeRef = useRef(onOpenChange);
-  openChangeRef.current = onOpenChange;
-  useEffect(() => { openChangeRef.current?.(open); }, [open]);
+  // Fired synchronously with the state change (not from an effect) so an app
+  // gating a query on it enables it in the same commit that opens the panel.
+  const changeOpen = useCallback((next: boolean) => {
+    setOpen(next);
+    onOpenChange?.(next);
+  }, [onOpenChange]);
 
   // Polite announcement of new arrivals, debounced so a burst reads once.
   const baseline = useRef<number | null>(null);
@@ -357,15 +360,15 @@ export function NotificationBell<T extends ShellNotification>(props: Notificatio
   }, [unreadCount]);
 
   const handleClose = useCallback(() => {
-    setOpen(false);
+    changeOpen(false);
     setFilter('all');
-  }, []);
+  }, [changeOpen]);
 
   // Desktop popover: outside click + Esc. Row menus are portaled, so they are
   // ignored here (their own Esc / outside handling closes them first).
   useEffect(() => {
     if (!open || isMobile) return;
-    const onDown = (e: MouseEvent | globalThis.MouseEvent) => {
+    const onDown = (e: globalThis.MouseEvent) => {
       const target = e.target as Element | null;
       if (!target) return;
       if (wrapRef.current?.contains(target)) return;
@@ -397,7 +400,7 @@ export function NotificationBell<T extends ShellNotification>(props: Notificatio
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { if (open) handleClose(); else changeOpen(true); }}
         data-testid={triggerTestId}
         className={cn(
           'relative inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] border border-[var(--border-base)] bg-transparent text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
@@ -429,11 +432,9 @@ export function NotificationBell<T extends ShellNotification>(props: Notificatio
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{announcement}</div>
 
       {isMobile ? (
-        <Sheet open={open} onOpenChange={(next) => { if (next) setOpen(true); else handleClose(); }}>
+        <Sheet open={open} onOpenChange={(next) => { if (next) changeOpen(true); else handleClose(); }}>
           <SheetContent title="Notifications" labelledBy={PANEL_TITLE_ID} hideHandle fullHeight bodyClassName="p-0">
-            <div data-testid={panelTestId} className="min-h-full">
-              <NotificationPanel {...props} onClose={handleClose} filter={filter} setFilter={setFilter} variant="sheet" />
-            </div>
+            <NotificationPanel {...props} onClose={handleClose} filter={filter} setFilter={setFilter} variant="sheet" />
           </SheetContent>
         </Sheet>
       ) : (
@@ -445,7 +446,6 @@ export function NotificationBell<T extends ShellNotification>(props: Notificatio
             role="dialog"
             aria-labelledby={PANEL_TITLE_ID}
             tabIndex={-1}
-            data-testid={panelTestId}
             className="absolute right-0 top-full mt-2 outline-none"
             style={{ width: 'min(400px, calc(100vw - 24px))', zIndex: 'var(--z-dropdown)' as unknown as number }}
           >

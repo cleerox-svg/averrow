@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   unread: 0 as number | undefined,
   feed: { data: undefined as { notifications: unknown[]; unread_count: number } | undefined, isLoading: false, isError: false },
   refetch: vi.fn(),
+  enabledCalls: [] as boolean[],
   useAuth: vi.fn(),
   useAlertTriageSummary: vi.fn(),
   snooze: vi.fn(),
@@ -34,7 +35,7 @@ vi.mock('@/hooks/useWindowWidth', () => ({ useIsMobile: () => mocks.isMobile }))
 vi.mock('@/hooks/useNotifications', () => ({
   OPS_AUDIENCE_FILTER: ['platform'],
   useUnreadCount: () => ({ data: mocks.unread }),
-  useNotifications: () => ({ ...mocks.feed, refetch: mocks.refetch }),
+  useNotifications: (enabled: boolean) => { mocks.enabledCalls.push(enabled); return { ...mocks.feed, refetch: mocks.refetch }; },
   useMarkRead: () => ({ mutate: mocks.markRead, isPending: false }),
   useMarkAllRead: () => ({ mutate: mocks.markAll, isPending: false }),
   useSnoozeNotification: () => ({ mutate: mocks.snooze, isPending: false }),
@@ -72,6 +73,7 @@ async function openBell() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.enabledCalls.length = 0;
   mocks.isMobile = false;
   mocks.unread = 0;
   mocks.feed = { data: { notifications: [], unread_count: 0 }, isLoading: false, isError: false };
@@ -317,5 +319,30 @@ describe('NotificationBell row navigation', () => {
     await openBell();
     await userEvent.click(screen.getByRole('button', { name: /Go there/ }));
     expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe('NotificationBell lazy list fetch', () => {
+  it('enables the list query only while open', async () => {
+    renderBell();
+    expect(mocks.enabledCalls.length).toBeGreaterThan(0);
+    expect(mocks.enabledCalls.every((e) => e === false)).toBe(true);
+    mocks.enabledCalls.length = 0;
+    await openBell();
+    // (useUnreadSummary also calls the hook, gated on the unread count: false here.)
+    expect(mocks.enabledCalls).toContain(true);
+    mocks.enabledCalls.length = 0;
+    await openBell();
+    expect(mocks.enabledCalls.length).toBeGreaterThan(0);
+    expect(mocks.enabledCalls).not.toContain(true);
+  });
+
+  it('shows the skeleton, not the empty state, on first open before data arrives', async () => {
+    // A disabled/not-yet-started TanStack v5 query: no data, isLoading false.
+    mocks.feed = { data: undefined, isLoading: false, isError: false };
+    renderBell();
+    await openBell();
+    expect(screen.getByText('Loading notifications…')).toBeInTheDocument();
+    expect(screen.queryByText("You're all caught up")).not.toBeInTheDocument();
   });
 });

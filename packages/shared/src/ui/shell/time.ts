@@ -13,7 +13,7 @@ export function parseUtc(date: string | Date | number): Date {
   return new Date(trimmed);
 }
 
-function relativeMagnitude(seconds: number): string {
+export function relativeMagnitude(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);

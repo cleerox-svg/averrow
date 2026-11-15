@@ -1,19 +1,7 @@
-// D1's datetime('now') emits "YYYY-MM-DD HH:MM:SS" — UTC, but with no
-// timezone marker, so `new Date(...)` parses it as LOCAL time and every
-// relative/absolute render drifts by the viewer's UTC offset. Normalize
-// that bare shape to an explicit UTC ISO string; timestamps that already
-// carry a zone (Z or ±hh:mm) pass through untouched. Exported so pages
-// never need to hand-roll their own "+ 'Z'" fixups again.
-const BARE_SQLITE_TS = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
-
-export function parseUtc(date: string | Date | number): Date {
-  if (typeof date !== 'string') return new Date(date);
-  const trimmed = date.trim();
-  if (BARE_SQLITE_TS.test(trimmed)) {
-    return new Date(trimmed.replace(' ', 'T') + 'Z');
-  }
-  return new Date(trimmed);
-}
+// parseUtc / relative-time helpers live in the shared kit (single source, also
+// used by FarmTrack); re-exported so ops imports are unchanged.
+import { parseUtc, relativeMagnitude, relativeTime, relativeTimeSigned, isFuture } from '@averrow/shared/ui';
+export { parseUtc, relativeMagnitude, relativeTime, relativeTimeSigned, isFuture };
 
 /** Compact span: "3d 4h" / "5h 12m" / "38m". */
 export function formatSpan(ms: number): string {
@@ -22,51 +10,6 @@ export function formatSpan(ms: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ${m % 60}m`;
   return `${Math.floor(h / 24)}d ${h % 24}h`;
-}
-
-/** Unsigned magnitude for relativeTime: "5m" / "3h" / "2d" / "4mo" / "1y". */
-function relativeMagnitude(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  if (days < 365) return `${Math.floor(days / 30)}mo`;
-  return `${Math.floor(days / 365)}y`;
-}
-
-/**
- * Past-only relative time: "5m ago" / "3h ago". A future timestamp (client
- * clock behind the server) reads "just now". Use for history ("created",
- * "last run"); for expiries / snoozes / mutes use relativeTimeSigned.
- */
-export function relativeTime(date: string | null): string {
-  if (!date) return 'Never';
-  const ms = Date.now() - parseUtc(date).getTime();
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return 'just now';
-  return `${relativeMagnitude(seconds)} ago`;
-}
-
-/**
- * Signed relative time for timestamps that may be in the future: past →
- * "5m ago" (same as relativeTime), future → "in 5m" / "in 3h" / "in 2d".
- * Within a minute either side reads "just now". Future values round up to
- * the minute so a fresh 7-day expiry reads "in 7d", not "in 6d".
- */
-export function relativeTimeSigned(date: string | null): string {
-  if (!date) return 'Never';
-  const ms = Date.now() - parseUtc(date).getTime();
-  if (ms >= 0) return relativeTime(date);
-  const ahead = -ms;
-  if (ahead < 60_000) return 'just now';
-  return `in ${relativeMagnitude(Math.ceil(ahead / 60_000) * 60)}`;
-}
-
-/** True when `date` is strictly in the future. */
-export function isFuture(date: string | null): boolean {
-  return !!date && parseUtc(date).getTime() > Date.now();
 }
 
 export function timeAgo(dateStr: string | null): string | null {

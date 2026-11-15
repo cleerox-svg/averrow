@@ -736,6 +736,7 @@ feed them data in a thin wrapper (ops: `components/UserAvatar.tsx`,
   triage row), `onSnooze`/`snoozeOptions`/`onDone` row actions, `onOpenChange` for
   lazy fetching. Rows (`NotificationRow`, `DayHeading`, `NotificationRowSkeletons`) and
   `groupByDay` are exported against the minimal `ShellNotification` shape.
+- Bell footer and settings links always get `onClick: close`; a consumer that needs its own handler composes it inside `renderLink`.
 - Always-dark chrome (FarmTrack): restyle with `triggerClassName` / `className`; every
   colour is a token.
 

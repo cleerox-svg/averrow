@@ -79,15 +79,15 @@ function TriageBanner({ onClose }: { onClose: () => void }) {
 export function NotificationBell() {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  // The list is fetched only while the panel is open (or already needed for the
-  // badge colour), exactly as when the panel owned the query.
+  // The list is fetched only while the panel is open, as when the panel owned
+  // the query. (The badge colour has its own gated fetch in useUnreadSummary.)
   const [open, setOpen] = useState(false);
 
   // N1: ops bell is scoped to operator-relevant audiences only. Tenant brand
   // events (DMARC drift, lookalike registered) ring the tenant SPA's bell, and
   // the badge counts only operator-relevant unread so it can't blink on
   // tenant-only events.
-  const { data, isLoading, isError, refetch } = useNotifications(open, OPS_AUDIENCE_FILTER);
+  const { data, isError, refetch } = useNotifications(open, OPS_AUDIENCE_FILTER);
   const { count: unreadData, hasCritical } = useUnreadSummary();
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
@@ -108,7 +108,7 @@ export function NotificationBell() {
       unreadCount={unreadData}
       panelUnreadCount={data?.unread_count ?? 0}
       hasCritical={hasCritical}
-      loading={isLoading && !data}
+      loading={!data && !isError}
       error={isError}
       errorHasStaleData={!!data}
       onRetry={() => { void refetch(); }}

@@ -2,8 +2,9 @@
 // (Today / Yesterday / "Mon, Oct 3"), preserving order.
 
 import { parseUtc } from './time';
+import type { ShellNotification } from './NotificationRow';
 
-export interface DayGroup<T extends { created_at: string }> {
+export interface DayGroup<T extends { created_at: string } = ShellNotification> {
   key: string;
   label: string;
   items: T[];

@@ -17,4 +17,4 @@ export {
   type NotificationRowProps, type ShellNotification, type SnoozeOption, type RowActions,
 } from './NotificationRow';
 export { groupByDay, dayLabel, type DayGroup } from './groupByDay';
-export { parseUtc as shellParseUtc, relativeTime as shellRelativeTime, relativeTimeSigned as shellRelativeTimeSigned, isFuture as shellIsFuture } from './time';
+export { parseUtc, relativeMagnitude, relativeTime, relativeTimeSigned, isFuture } from './time';
