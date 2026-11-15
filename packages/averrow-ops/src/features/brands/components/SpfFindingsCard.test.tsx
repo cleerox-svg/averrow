@@ -48,7 +48,7 @@ describe('SpfFindingsCard', () => {
       ]),
     })} />);
     expect(screen.getByTestId('spf-lookups')).toHaveTextContent('≥ 11 of 10');
-    expect(screen.getByText('Needs at least 11 DNS lookups, over the limit of 10.')).toBeInTheDocument();
+    expect(screen.getByText('Needs at least 11 DNS lookups, over the limit of 10. Some receivers will treat this SPF record as an error.')).toBeInTheDocument();
     expect(screen.getByTestId('spf-walk')).toHaveTextContent('Incomplete');
   });
 
@@ -78,11 +78,11 @@ describe('SpfFindingsCard', () => {
     ]).map((l) => l.text);
     expect(lines).toEqual([
       '2 SPF records are published at the domain.',
-      'Include loop (a.example.com).',
+      'Include loop (a.example.com). Ask the domain owner to fix the record.',
       'An included record ends in +all (b.example.com).',
-      '3 void lookups, over the limit of 2.',
-      'Syntax error (c.example.com).',
-      'Could not confirm whether d.example.com is registered.',
+      '3 lookups that return nothing, over the limit of 2.',
+      'Syntax error (c.example.com). Ask the domain owner to fix the record.',
+      'Could not confirm whether d.example.com is registered. Check it manually.',
     ]);
   });
 

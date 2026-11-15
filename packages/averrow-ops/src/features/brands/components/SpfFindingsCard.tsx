@@ -76,12 +76,14 @@ export interface FindingLine {
 }
 
 export function describeFinding(f: SpfFinding): FindingLine {
-  const first = f.names?.[0] ?? 'a domain';
+  const names = f.names ?? [];
+  const many = names.length > 1;
+  const list = names.join(', ');
   switch (f.code) {
     case 'lookup_limit_exceeded':
-      return { key: f.code, critical: false, text: `Needs ${f.atLeast ? 'at least ' : ''}${f.count ?? 'more than 10'} DNS lookups, over the limit of ${SPF_LOOKUP_LIMIT}.` };
+      return { key: f.code, critical: false, text: `Needs ${f.atLeast ? 'at least ' : ''}${f.count ?? 'more than 10'} DNS lookups, over the limit of ${SPF_LOOKUP_LIMIT}. Some receivers will treat this SPF record as an error.` };
     case 'void_lookup_limit_exceeded':
-      return { key: f.code, critical: false, text: `${f.count ?? 'More than 2'} void lookups, over the limit of 2.` };
+      return { key: f.code, critical: false, text: `${f.count ?? 'More than 2'} lookups that return nothing, over the limit of 2.` };
     case 'multiple_records':
       return { key: f.code, critical: false, text: `${f.count ?? 'More than one'} SPF records are published at the domain.` };
     case 'include_multiple_records':
@@ -95,18 +97,20 @@ export function describeFinding(f: SpfFinding): FindingLine {
     case 'ptr_mechanism':
       return { key: f.code, critical: false, text: `Uses the deprecated ptr mechanism${nameList(f.names)}.` };
     case 'syntax_error':
-      return { key: f.code, critical: false, text: `Syntax error${nameList(f.names)}.` };
+      return { key: f.code, critical: false, text: `Syntax error${nameList(f.names)}. Ask the domain owner to fix the record.` };
     case 'include_loop':
-      return { key: f.code, critical: false, text: `Include loop${nameList(f.names)}.` };
+      return { key: f.code, critical: false, text: `Include loop${nameList(f.names)}. Ask the domain owner to fix the record.` };
     case 'include_target_missing':
       return { key: f.code, critical: false, text: `Include or redirect target has no SPF record or does not exist${nameList(f.names)}.` };
     case 'include_target_unregistered':
       return {
         key: f.code, critical: true,
-        text: `Include target ${first} is not registered. Anyone who registers it can send mail as this domain.`,
+        text: names.length === 0
+          ? 'An include target is not registered. Anyone who registers it can send mail as this domain.'
+          : `Include ${many ? 'targets' : 'target'} ${list} ${many ? 'are' : 'is'} not registered. Anyone who registers ${many ? 'one' : 'it'} can send mail as this domain.`,
       };
     case 'include_target_unverified':
-      return { key: f.code, critical: false, text: `Could not confirm whether ${first} is registered.` };
+      return { key: f.code, critical: false, text: `Could not confirm whether ${names.length ? list : 'an include target'} is registered. Check it manually.` };
     case 'walk_incomplete':
       return { key: f.code, critical: false, text: `The include tree could not be fully checked; ${f.count ?? 0} lookups were counted in the part that was read.` };
     case 'root_lookup_failed':
@@ -122,7 +126,14 @@ export function findingLines(findings: SpfFinding[]): FindingLine[] {
   return [...lines.filter((l) => l.critical), ...lines.filter((l) => !l.critical)];
 }
 
-export function SpfFindingsCard({ emailSec }: { emailSec: any }) {
+export interface SpfScanFields {
+  spf_walk_status?: string | null;
+  spf_lookup_count?: number | null;
+  spf_findings?: unknown;
+  spf_exists?: number | null;
+}
+
+export function SpfFindingsCard({ emailSec }: { emailSec: SpfScanFields | null | undefined }) {
   if (!emailSec) return null;
   const walkStatus = emailSec.spf_walk_status ?? null;
   const findings = parseSpfFindings(emailSec.spf_findings);
@@ -144,20 +155,26 @@ export function SpfFindingsCard({ emailSec }: { emailSec: any }) {
           </dd>
         </div>
         <div>
-          <dt className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-tertiary)]">Walk</dt>
+          <dt className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-tertiary)]">Include check</dt>
           <dd className="mt-0.5 text-[var(--text-primary)]" data-testid="spf-walk">{walkStatusLabel(walkStatus)}</dd>
         </div>
       </dl>
 
       {lines.length === 0 ? (
         <p className="mt-3 text-[12px] text-[var(--text-secondary)]">
-          {noRecord ? 'No SPF record, so there is nothing to check.' : 'No findings on the latest scan.'}
+          {noRecord
+            ? 'No SPF record, so there is nothing to check.'
+            : walkStatus === 'complete'
+              ? 'No findings on the latest scan.'
+              : walkStatus === null
+                ? 'Not checked on the latest scan. Findings appear after the next scan.'
+                : 'No findings reported, but the SPF record was not fully checked on this scan.'}
         </p>
       ) : (
-        <ul className="mt-3 space-y-2">
-          {lines.map((l) => (
+        <ul className="mt-3 space-y-2" aria-label="SPF findings">
+          {lines.map((l, i) => (
             <li
-              key={l.key}
+              key={`${l.key}-${i}`}
               data-critical={l.critical ? 'true' : undefined}
               className="flex flex-wrap items-start gap-2 rounded-md border px-3 py-2 text-[12px] leading-snug"
               style={
