@@ -4,6 +4,7 @@ import { BreakdownCard, PageState, Table, Th, Td } from '@/design-system/compone
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useThreatActorDetail } from '@/hooks/useThreatActors';
 import { BIMIGradeBadge } from '@/components/ui/BIMIGradeBadge';
+import { ReferenceBlock } from './ReferenceBlock';
 
 function countryFlag(code: string | null): string {
   if (!code || code.length !== 2) return '';
@@ -208,6 +209,9 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
           </div>
         </BreakdownCard>
       </div>
+
+      {/* Public reference (MISP Galaxy): third-party context, staff-only; null renders one muted line */}
+      <ReferenceBlock reference={actor.reference} />
 
       {/* Campaigns */}
       {campaigns.length > 0 && (
