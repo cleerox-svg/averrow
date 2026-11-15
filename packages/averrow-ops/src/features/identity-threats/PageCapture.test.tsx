@@ -36,6 +36,7 @@ function cap(over: Partial<PageCapture> = {}): PageCapture {
     screenshot_mobile_url: '/api/intel/captures/c1/screenshot?variant=mobile',
     html_download_url: '/api/intel/captures/c1/html',
     sha256: { desktop: null, mobile: null, html: 'abc123deadbeef' },
+    kit_matching: { ruleset_commit: null, evaluated_at: null, status: null, matches: [], attribution: 'Rules: IOK by phish.report (ODbL)' },
     ...over,
   };
 }
@@ -91,6 +92,17 @@ describe('Page capture group', () => {
     await open([]);
     expect(screen.getByText('No capture yet. Capture the page to preserve evidence.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Capture now' })).toBeEnabled();
+  });
+
+  it('shows the kit match block under a captured page', async () => {
+    await open([cap({ kit_matching: {
+      ruleset_commit: '142f762aa12994cbd26ddf7d40d40c07ac01bd66', evaluated_at: '2026-11-15T10:00:00Z', status: 'complete',
+      matches: [{ rule_id: 'r1', title: 'Okta kit', tags: ['okta'], approximate_fields: [], ruleset_commit: 'x', matched_at: '2026-11-15T10:00:00Z' }],
+      attribution: 'Rules: IOK by phish.report (ODbL)',
+    } })]);
+    const block = document.querySelector('[data-kit-match]') as HTMLElement;
+    expect(within(block).getByText('Okta kit')).toBeInTheDocument();
+    expect(within(block).getByText(/IOK by phish.report/)).toBeInTheDocument();
   });
 
   it('renders captured state details, via authenticated blob', async () => {

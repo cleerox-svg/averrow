@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import { formatDateTime, relativeTime } from '@/lib/time';
 import { CaptureError, useCaptureNow } from './useIdentityThreats';
+import { KitMatchBlock } from './KitMatch';
 import { downloadAuthedFile, useAuthedBlobUrl } from './useCaptureBlob';
 import type { IdentityDetectionDetail, PageCapture, PageCaptureStatus } from './types';
 
@@ -355,6 +356,7 @@ export function PageCaptureGroup({ d }: { d: IdentityDetectionDetail }) {
           </div>
         )}
         <CaptureDetails capture={latest} detectionHost={detectionHost} />
+        <KitMatchBlock kit={latest.kit_matching} />
       </>
     );
   }

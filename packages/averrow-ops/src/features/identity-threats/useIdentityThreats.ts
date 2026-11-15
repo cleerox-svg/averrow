@@ -105,6 +105,7 @@ export function useCaptureNow(threatId: string) {
           final_url: null, http_status: null, page_title: null, redirect_chain: [], form_action_hosts: [],
           anti_bot_wall: null, error: null, screenshot_desktop_url: null, screenshot_mobile_url: null,
           html_download_url: null, sha256: { desktop: null, mobile: null, html: null },
+          kit_matching: { ruleset_commit: null, evaluated_at: null, status: null, matches: [], attribution: '' },
         };
         qc.setQueryData<IdentityDetectionDetail>(key, { ...prev, captures: [optimistic, ...prev.captures].slice(0, 5) });
       }
