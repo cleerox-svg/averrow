@@ -100,6 +100,65 @@ Identity Threats detection detail (and attach it to takedowns).
 - Internal (AVERROW_INTERNAL_SECRET): `POST /api/internal/captures/backfill?days=7&limit=200`
   and `POST /api/internal/agents/page_capture/run`.
 
+## Kit matching (IOK rules, 2026-11-15, migration 0333)
+After a capture is stored, the agent matches it against the open IOK
+phishing-kit ruleset (phish.report, ODbL; `docs/licences/iok.md`). No new
+fetching: the evidence is what the capture already holds.
+
+- **Ruleset:** vendored and compiled at dev time by
+  `scripts/vendor-iok-rules.ts` (`pnpm vendor:iok --src <IOK checkout>`) into
+  `src/data/iok/rules.json`, with `LICENSE` and `SOURCE.md` (origin, commit,
+  counts, drop reasons, refresh steps). Commit `142f762a`: 266 rules, 260
+  kept, 6 dropped (2 need `headers`, 1 needs `cookies`, 2 have a regex that
+  is not on the allowlist, 1 negates a non-exact field). About 130 KB.
+- **Evidence** (`buildIokEvidence`, `lib/iok-engine.ts`):
+
+  | IOK field | What we evaluate | Fidelity |
+  |---|---|---|
+  | `dom` | rendered HTML (`page.html`) | exact |
+  | `hostname` | host of `final_url` (else target) | exact |
+  | `title` | `page_title` (final title only) | subset: can miss |
+  | `js` / `css` | inline `<script>` / `<style>` bodies only | subset: can miss |
+  | `html` | the rendered HTML; the raw server response is not stored | approximate: can miss and over-match (script-injected markup) |
+  | `requests` | redirect chain, final URL, and URLs the DOM's own start tags reference (`src=`, `<link rel=stylesheet\|icon\|preload\|modulepreload\|manifest>`) | approximate: can miss (fetch/XHR) and over-match (referenced, never requested) |
+  | `cookies`, `headers` | not stored; rules using them are dropped | none |
+
+  Under `not` only an exact field is allowed; such rules are dropped. Positive
+  use of an approximate field is kept: the over-match is bounded to "the
+  kit's string is in the rendered page" or "the page's markup points at the
+  kit's file", and each match lists the non-exact fields its rule reads
+  (`approximate_fields`). `src=` inside script text, comments, `<noscript>`
+  or page text is not a reference.
+- **Semantics** follow the reference implementation (iok.go on sigma-go
+  v0.6.4, case-sensitive; `*` in a `contains` value is a literal there too):
+  checked against it on generated inputs with 0 differences.
+- **Regexes:** a regex runs only if its exact source is on the hand-reviewed
+  allowlist `lib/iok-regex-allowlist.ts` (rule id, reviewed commit, measured
+  worst case), checked at vendor time and again at run time; a static screen
+  (`assessRegexSafety`) is a second check. One pattern is allowed today
+  (0.3 ms on adversarial 256K input); `class-attribute-obfuscation` was
+  measured at 184 ms and refused.
+- **Other limits:** HTML capped at 1M chars, regex input at 256K, lists at
+  300 items, matches at 50; a work budget (characters scanned) ends an
+  evaluation between comparisons. Workers freezes the clock during
+  synchronous work, so the budget does not rely on time. No `eval`.
+- **Cost:** about 4 ms for a 50 KB page, 7 ms for 200 KB, 33 ms at the 1M
+  cap (Node 22); at most ~165 ms CPU per 5-capture tick.
+- **Storage:** `page_capture_kit_matches` (capture_id, rule_id, rule_title,
+  rule_tags_json, approx_fields_json, ruleset_commit, matched_at; PK capture
+  + rule) and `page_captures.kit_ruleset_commit` / `kit_evaluated_at` /
+  `kit_eval_status` (`complete`, `truncated` = input was clipped, `partial` =
+  budget ran out; NULL = never evaluated). A re-evaluation deletes the
+  capture's rows and inserts the new set in one batch. The 180-day expiry
+  sweep deletes a capture's match rows with its evidence. Off-site decoy
+  captures are skipped. A failure never fails the capture (`kit_errors`).
+- **Context only:** matches never create alerts, change severity or triage,
+  or enter takedown text. The only reader is the staff detection detail
+  (`captures[].kit_matching`, with the attribution string). No tenant or
+  public API returns them (`test/iok-kit-matches-exposure.test.ts`).
+- **Not done:** captures stored before 0333 are not backfilled; no ops UI
+  renders the field yet.
+
 ## UI (ops)
 In the detection detail panel (`DetectionsSection.tsx`), a **Page capture**
 group above Data points:

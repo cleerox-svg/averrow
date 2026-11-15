@@ -309,6 +309,7 @@ Licence terms as read when each source was integrated or audited; re-check befor
 | Cloudflare Radar API | CC BY-NC 4.0 | Live, staff-only surfaces; the reader graph is pinned by `test/radar-data-exposure.test.ts` (no tenant, public or marketing reader) |
 | phishunt.io (checked 2026-11-15) | CC0 1.0 on all data outputs; attribution appreciated, not required. ToS §4: do not publicly assert a domain is confirmed phishing solely because phishunt lists it; ToS §5: 10 req/s per IP. Snapshot: `docs/licences/phishunt.md` | Live (hourly, migration 0330) |
 | CERT Polska Warning List (checked 2026-11-15) | "Any purpose, including commercial purposes", no warranty; attribution not required, and any attribution must not imply cooperation or endorsement by NASK-PIB / CERT Polska; no use of their names or logos that could mislead. Snapshot: `docs/licences/cert_polska.md` | Live (hourly, migration 0331) |
+| IOK phishing-kit rules, phish.report (checked 2026-11-15) | ODbL 1.0; commercial use allowed with credit to phish.report/IOK. Not a feed: a vendored, converted ruleset (`src/data/iok/`, stays ODbL, licence text + source alongside) matched against stored page captures. Credit "Rules: IOK by phish.report (ODbL)" wherever matches are shown. Staff-only: a tenant or public reader would need the ODbL §4.3 notice and the §4.6 offer of the converted rules. Snapshot: `docs/licences/iok.md` | Live (page_capture agent, migration 0333) |
 
 ### Retired feeds — dead upstreams (2026-10-30)
 

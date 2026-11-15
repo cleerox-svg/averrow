@@ -38,6 +38,7 @@ import {
 } from "../lib/idp-impersonation";
 import { brandTokensFrom } from "../lib/idp-tagging";
 import { CAPTURE_DETAIL_SQL, captureDetailBinds, toCaptureView, type CaptureRow, type CaptureView } from "../lib/page-capture";
+import { loadKitMatches, type KitMatchView } from "../lib/iok-kit-matches";
 import {
   VECTORS,
   d1Time,
@@ -112,7 +113,8 @@ export interface IdentityDetectionDetail extends IdentityDetectionListItem {
   takedown: { id: string; status: string; updated_at: string | null } | null;
   cluster: { id: string; name: string | null } | null;
   /** Page captures (lib/page-capture.ts), newest first, max 5. Screenshot /
-   *  HTML URLs are staff API paths, null unless the object is stored. */
+   *  HTML URLs are staff API paths, null unless the object is stored. Each
+   *  carries `kit_matching` (IOK phishing-kit rule matches; context only). */
   captures: CaptureView[];
 }
 
@@ -467,6 +469,18 @@ export async function getIdentityDetection(
   const vector = row ? techniqueToVector(row.technique) : null;
   if (!row || !vector) return null;
 
+  // Phishing-kit (IOK) matches of the listed captures — staff-only context
+  // (migration 0333). One PK-range read; a failure degrades to "no matches".
+  const captureList = captureRows.results ?? [];
+  let kitMatches = new Map<string, KitMatchView[]>();
+  if (captureList.length > 0) {
+    try {
+      kitMatches = await loadKitMatches(db, captureList.map((c) => c.id));
+    } catch {
+      kitMatches = new Map();
+    }
+  }
+
   const base = toListItem(row, vector);
   // Recomputed from the host/URL alone (no existingTechnique), so a row with
   // no observable lure — e.g. a device-code page on a neutral host — reads
@@ -525,7 +539,7 @@ export async function getIdentityDetection(
       ? { id: takedown.id, status: takedown.status, updated_at: isoOrNull(takedown.updated_at) }
       : null,
     cluster: row.cluster_id ? { id: row.cluster_id, name: row.cluster_name } : null,
-    captures: (captureRows.results ?? []).map(toCaptureView),
+    captures: captureList.map((c) => toCaptureView(c, kitMatches.get(c.id))),
   };
 }
 

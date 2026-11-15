@@ -9,6 +9,7 @@
     "audit:agent-standard": "tsx scripts/audit-agent-standard.ts",
     "new-agent": "tsx scripts/new-agent.ts",
     "load-geoip": "tsx scripts/load-geoip.ts",
+    "vendor:iok": "tsx scripts/vendor-iok-rules.ts",
     "build": "pnpm build:manifest && wrangler deploy --dry-run --outdir dist",
     "dev": "wrangler dev",
     "deploy": "pnpm build:manifest && wrangler deploy",
@@ -44,6 +45,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10",
-    "wrangler": "^4.110.0"
+    "wrangler": "^4.110.0",
+    "yaml": "2.9.0"
   }
 }

@@ -29,6 +29,9 @@
 
 import { assertResolvedHostSafe, CHALLENGE_PHRASES, defaultResolve, type FetchDeps } from "./page-fetch";
 import type { Env } from "../types";
+// The vendored ruleset itself (lib/iok-ruleset.ts) is loaded lazily in
+// matchKitRules, keeping the JSON off every other importer's path.
+import { deleteKitMatchesStmt, recordKitMatches, toKitMatchingView, type KitMatchView, type KitMatchingView } from "./iok-kit-matches";
 
 // ─── Tunables ────────────────────────────────────────────────────────
 
@@ -1145,6 +1148,15 @@ export async function sweepExpiredCaptures(
     ).bind(...ids).run();
     expired += upd.meta?.changes ?? 0;
 
+    // Kit matches are derived from the evidence that just expired: delete
+    // them with it (the kit_* stamp columns stay — they hold no content).
+    // Own try/catch so a failure here never stops the sweep.
+    try {
+      await deleteKitMatchesStmt(db, ids).run();
+    } catch (err) {
+      console.warn(`[page-capture] sweep kit-match delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     // Every takedown this capture was linked to — the capturing threat's,
     // alias threats', catch-up links — has a takedown_evidence row with the
     // deterministic id 'tde_<capture_id>_<takedown_id>' (PK range per
@@ -1206,6 +1218,15 @@ export interface PageCaptureRunStats {
   requeued: number;
   released: number;
   evidence_linked: number;
+  /** Captures the IOK kit rules were evaluated on / matches recorded /
+   *  evaluations cut short by the work budget / failures / largest work
+   *  units of one evaluation (lib/iok-kit-matches.ts). Context only. */
+  kit_evaluated: number;
+  kit_matches: number;
+  kit_budget_exhausted: number;
+  kit_truncated: number;
+  kit_errors: number;
+  kit_work_max: number;
   reaped: ReapResult;
   sweep: SweepResult;
   [key: string]: unknown;
@@ -1229,12 +1250,52 @@ function isRefusal(err: unknown): boolean {
   return err instanceof CaptureRefusedError;
 }
 
+/**
+ * Phishing-kit rule matching (IOK, lib/iok-kit-matches.ts) over the evidence
+ * this capture just stored — the rendered HTML still in memory (the same
+ * bytes written to R2, capped), title, final URL, redirect chain. No new
+ * fetching. CONTEXT ONLY: matches are written to page_capture_kit_matches
+ * and never create alerts or touch triage. Skipped for off-site decoys (the
+ * HTML is the decoy's page, not the kit's). Never fails the capture.
+ */
+async function matchKitRules(
+  db: D1Database,
+  row: ClaimedCapture,
+  raw: RawCapture,
+  stored: StoredCapture,
+  now: Date,
+  stats: PageCaptureRunStats,
+): Promise<void> {
+  if (stored.antiBotWall === OFFSITE_REDIRECT_WALL) return;
+  try {
+    const { IOK_RULESET } = await import("./iok-ruleset");
+    // raw.html is already capped by the driver; the evaluator applies its
+    // own cap (IOK_TEXT_MAX, in characters) and reports when it clipped.
+    const res = await recordKitMatches(db, row.id, {
+      html: raw.html,
+      title: stored.title,
+      finalUrl: stored.finalUrl,
+      targetUrl: row.target_url,
+      redirectChain: stored.redirectChain,
+    }, IOK_RULESET, now);
+    stats.kit_evaluated++;
+    stats.kit_matches += res.matched;
+    if (res.status === "partial") stats.kit_budget_exhausted++;
+    if (res.status === "truncated") stats.kit_truncated++;
+    stats.kit_work_max = Math.max(stats.kit_work_max, res.work);
+  } catch (err) {
+    stats.kit_errors++;
+    console.warn(`[page-capture] kit matching failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 export async function runPageCapture(env: Env, opts: PageCaptureRunOptions = {}): Promise<PageCaptureRunStats> {
   const clock = opts.now ?? (() => new Date());
   const startedAt = clock();
   const stats: PageCaptureRunStats = {
     skipped: null, claimed: 0, captured: 0, blocked: 0, failed: 0, requeued: 0,
     released: 0, evidence_linked: 0,
+    kit_evaluated: 0, kit_matches: 0, kit_budget_exhausted: 0, kit_truncated: 0, kit_errors: 0, kit_work_max: 0,
     reaped: { requeued: 0, failed: 0, stale: 0 },
     sweep: { expired: 0, objectsDeleted: 0, ran: false },
   };
@@ -1317,6 +1378,7 @@ export async function runPageCapture(env: Env, opts: PageCaptureRunOptions = {})
         } catch (err) {
           console.warn(`[page-capture] evidence link failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
         }
+        await matchKitRules(env.DB, row, raw, stored, clock(), stats);
       } catch (err) {
         if (err instanceof CaptureSupersededError) {
           stats.requeued++;
@@ -1360,6 +1422,8 @@ export async function emitPageCaptureEvent(
             requeued: stats.requeued,
             released: stats.released,
             evidence_linked: stats.evidence_linked,
+            kit_evaluated: stats.kit_evaluated,
+            kit_matches: stats.kit_matches,
             reaped: stats.reaped,
             expired: stats.sweep.expired,
             error,
@@ -1392,6 +1456,9 @@ export interface CaptureRow {
   desktop_sha256: string | null;
   mobile_sha256: string | null;
   html_sha256: string | null;
+  kit_ruleset_commit: string | null;
+  kit_evaluated_at: string | null;
+  kit_eval_status: string | null;
 }
 
 export interface CaptureView {
@@ -1411,6 +1478,9 @@ export interface CaptureView {
   screenshot_mobile_url: string | null;
   html_download_url: string | null;
   sha256: { desktop: string | null; mobile: string | null; html: string | null };
+  /** Phishing-kit (IOK) rule matches — staff-only context
+   *  (lib/iok-kit-matches.ts, migration 0333). */
+  kit_matching: KitMatchingView;
 }
 
 /**
@@ -1427,7 +1497,8 @@ export interface CaptureView {
 export const CAPTURE_DETAIL_SQL =
   `SELECT id, status, queued_at, captured_at, expires_at, final_url, http_status, page_title,
           redirect_chain_json, form_action_hosts_json, anti_bot_wall, error,
-          desktop_key, mobile_key, html_key, desktop_sha256, mobile_sha256, html_sha256
+          desktop_key, mobile_key, html_key, desktop_sha256, mobile_sha256, html_sha256,
+          kit_ruleset_commit, kit_evaluated_at, kit_eval_status
      FROM page_captures
     WHERE id IN (
             SELECT id FROM (SELECT id FROM page_captures
@@ -1462,7 +1533,7 @@ function iso(v: string | null): string | null {
   return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(v) ? `${v.replace(" ", "T")}Z` : v;
 }
 
-export function toCaptureView(r: CaptureRow): CaptureView {
+export function toCaptureView(r: CaptureRow, kitMatches?: KitMatchView[]): CaptureView {
   return {
     id: r.id,
     status: r.status,
@@ -1480,5 +1551,6 @@ export function toCaptureView(r: CaptureRow): CaptureView {
     screenshot_mobile_url: r.mobile_key ? screenshotApiPath(r.id, "mobile") : null,
     html_download_url: r.html_key ? htmlApiPath(r.id) : null,
     sha256: { desktop: r.desktop_sha256, mobile: r.mobile_sha256, html: r.html_sha256 },
+    kit_matching: toKitMatchingView(r, kitMatches),
   };
 }

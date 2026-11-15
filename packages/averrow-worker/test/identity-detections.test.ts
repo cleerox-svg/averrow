@@ -24,7 +24,7 @@ import { IDP_MITRE } from "../src/lib/idp-impersonation";
 import { captureDetailBinds } from "../src/lib/page-capture";
 import type { Env } from "../src/types";
 
-const TABLES = ["threats", "brands", "hosting_providers", "infrastructure_clusters", "takedown_requests", "page_captures", "page_capture_targets"];
+const TABLES = ["threats", "brands", "hosting_providers", "infrastructure_clusters", "takedown_requests", "page_captures", "page_capture_targets", "page_capture_kit_matches"];
 const NOW = new Date("2026-10-10T12:00:00Z");
 const MIGRATIONS_DIR = resolve(__dirname, "..", "migrations");
 
@@ -311,6 +311,8 @@ describe.skipIf(!hasSqlite())("IdP detections drill-down (real SQLite)", () => {
       screenshot_mobile_url: null,
       html_download_url: "/api/intel/captures/pc_new/html",
       sha256: { desktop: "dsha", mobile: null, html: "hsha" },
+      // Never evaluated (no kit_ruleset_commit) → null commit, no matches.
+      kit_matching: { ruleset_commit: null, evaluated_at: null, status: null, matches: [], attribution: "Rules: IOK by phish.report (ODbL)" },
     });
     expect(d!.captures[1]).toMatchObject({ status: "failed", error: "net::ERR", redirect_chain: [], form_action_hosts: [],
       screenshot_desktop_url: null, html_download_url: null, captured_at: null });
@@ -349,6 +351,40 @@ describe.skipIf(!hasSqlite())("IdP detections drill-down (real SQLite)", () => {
     ins.run("pc_t02_manual", "t02", "https://globex-okta.com/login", "globex-okta.com/login", "queued",
       "2026-10-10 11:00:00", "2026-10-10 11:00:00", null);
     expect((await getIdentityDetection(env, req(), "t02", NOW))!.captures.map((c) => c.id)).toEqual(["pc_t02_manual", "pc_t09"]);
+    expect(log.every((l) => !l.error)).toBe(true);
+  });
+
+  it("detail: captures[].kit_matching carries the capture's IOK matches (staff-only context)", async () => {
+    raw.exec(`INSERT INTO page_captures (id, threat_id, target_url, target_key, status, queued_at, created_at,
+        kit_ruleset_commit, kit_evaluated_at, kit_eval_status)
+      VALUES ('pc_k1', 't01', 'https://acme-sso.okta.com/', 'acme-sso.okta.com/', 'captured',
+        '2026-10-10 10:00:00', '2026-10-10 10:00:00', 'abc123', '2026-10-10 10:06:00', 'complete'),
+             ('pc_k2', 't01', 'https://acme-sso.okta.com/', 'acme-sso.okta.com/', 'captured',
+        '2026-10-09 10:00:00', '2026-10-09 10:00:00', 'abc123', '2026-10-09 10:06:00', 'truncated'),
+             ('pc_k3', 't01', 'https://acme-sso.okta.com/', 'acme-sso.okta.com/', 'captured',
+        '2026-10-08 10:00:00', '2026-10-08 10:00:00', 'abc123', '2026-10-08 10:06:00', 'partial')`);
+    raw.exec(`INSERT INTO page_capture_kit_matches (capture_id, rule_id, rule_title, rule_tags_json, approx_fields_json, ruleset_commit, matched_at)
+      VALUES ('pc_k1', 'okta-kit-1', 'Okta kit 1', '["kit","target.okta"]', '["html","bogus"]', 'abc123', '2026-10-10 10:06:00'),
+             ('pc_k3', 'okta-kit-2', 'Okta kit 2', NULL, '[]', 'abc123', '2026-10-08 10:06:00'),
+             ('pc_other', 'x', 'Not ours', NULL, NULL, 'abc123', '2026-10-10 10:06:00')`);
+    const d = await getIdentityDetection(env, req(), "t01", NOW);
+    expect(d!.captures.map((c) => [c.id, c.kit_matching])).toEqual([
+      ["pc_k1", {
+        ruleset_commit: "abc123", evaluated_at: "2026-10-10T10:06:00Z", status: "complete", attribution: "Rules: IOK by phish.report (ODbL)",
+        matches: [{ rule_id: "okta-kit-1", title: "Okta kit 1", tags: ["kit", "target.okta"], approximate_fields: ["html"], ruleset_commit: "abc123", matched_at: "2026-10-10T10:06:00Z" }],
+      }],
+      // Evaluated on clipped input, nothing matched → says "truncated", not a clean result.
+      ["pc_k2", { ruleset_commit: "abc123", evaluated_at: "2026-10-09T10:06:00Z", status: "truncated", attribution: "Rules: IOK by phish.report (ODbL)", matches: [] }],
+      // Budget ran out: the matches found are shown under "partial", never under "not checked".
+      ["pc_k3", {
+        ruleset_commit: "abc123", evaluated_at: "2026-10-08T10:06:00Z", status: "partial", attribution: "Rules: IOK by phish.report (ODbL)",
+        matches: [{ rule_id: "okta-kit-2", title: "Okta kit 2", tags: [], approximate_fields: [], ruleset_commit: "abc123", matched_at: "2026-10-08T10:06:00Z" }],
+      }],
+    ]);
+    const kitSql = log.find((l) => l.sql.includes("FROM page_capture_kit_matches"))!;
+    const plan = raw.prepare(`EXPLAIN QUERY PLAN ${kitSql.sql}`).all("pc_k1", "pc_k2", "pc_k3")
+      .map((r) => String((r as { detail: string }).detail)).join(" | ");
+    expect(plan).toMatch(/SEARCH page_capture_kit_matches USING (?:INDEX|PRIMARY KEY|COVERING INDEX) sqlite_autoindex_page_capture_kit_matches_1 \(capture_id=\?\)/);
     expect(log.every((l) => !l.error)).toBe(true);
   });
 

@@ -64,7 +64,15 @@ vi.mock("../src/lib/page-capture-browser", () => ({
   },
 }));
 
-const TABLES = ["page_captures", "page_capture_targets", "threats", "takedown_requests", "takedown_evidence", "brands"];
+// Kit matching is context only: it must never raise an alert. Spy on the one
+// alert writer (partial mock — everything else in lib/alerts stays real).
+const createAlertSpy = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/alerts", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../src/lib/alerts")>();
+  return { ...mod, createAlert: (...args: Parameters<typeof mod.createAlert>) => { createAlertSpy(...args); return mod.createAlert(...args); } };
+});
+
+const TABLES = ["page_captures", "page_capture_targets", "page_capture_kit_matches", "threats", "takedown_requests", "takedown_evidence", "brands"];
 const MIGRATION = resolve(__dirname, "..", "migrations", "0290_page_captures.sql");
 const NOW = new Date("2026-10-12T00:05:00Z");
 const PNG_D = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
@@ -1025,6 +1033,125 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
   });
 
   // ─── Retention sweep ──────────────────────────────────────────────
+  describe("kit matching (IOK, context only)", () => {
+    const KIT_HTML = "<html><head><title>123 Reg</title></head><body><form action=\"https://www.123-reg.co.uk/order/basket/add\">" +
+      "<input type=\"hidden\" name=\"X-CSRF-Token\" value=\"63c2690a6e94180ff183110c4cd9ff7719014722\"></form></body></html>";
+
+    it("evaluates the vendored rules after a successful capture and records matches + the ruleset stamp", async () => {
+      insertThreat("t1");
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const fd = fakeDriver({ "https://acme-sso-login.com/": raw({ html: KIT_HTML, title: "123 Reg" }) });
+      createAlertSpy.mockClear();
+
+      const stats = await runPageCapture(env, { driver: fd.driver, now: () => NOW, resolve: resolveHost });
+      expect(stats).toMatchObject({ captured: 1, kit_evaluated: 1, kit_matches: 1, kit_errors: 0, kit_budget_exhausted: 0 });
+      const id = String(rows(`SELECT id FROM page_captures`)[0]!["id"]);
+      const { IOK_RULESET } = await import("../src/lib/iok-ruleset");
+      expect(rows(`SELECT capture_id, rule_id, rule_title, rule_tags_json, approx_fields_json, ruleset_commit, matched_at FROM page_capture_kit_matches`)).toEqual([
+        { capture_id: id, rule_id: "123-reg-63c26", rule_title: "123 Reg Phishing kit 63c26", rule_tags_json: JSON.stringify(["kit", "target.123_reg"]),
+          approx_fields_json: JSON.stringify(["html"]), ruleset_commit: IOK_RULESET.source.commit, matched_at: d1Ts(NOW) },
+      ]);
+      expect(capRow(id)).toMatchObject({ status: "captured", kit_ruleset_commit: IOK_RULESET.source.commit, kit_evaluated_at: d1Ts(NOW), kit_eval_status: "complete" });
+
+      // Context only: no alert, no severity / triage write, no other table touched.
+      expect(createAlertSpy).not.toHaveBeenCalled();
+      const writes = log.filter((l) => /^\s*(INSERT|UPDATE|DELETE)/i.test(l.sql)).map((l) => l.sql);
+      expect(writes.some((w) => /\b(alerts|threats)\b/i.test(w.replace(/page_capture\w*/g, "")))).toBe(false);
+      expect(log.every((l) => !l.error)).toBe(true);
+    });
+
+    it("re-evaluating under a refreshed ruleset replaces the capture's rows (stale matches removed)", async () => {
+      const { recordKitMatches } = await import("../src/lib/iok-kit-matches");
+      const { IOK_RULESET } = await import("../src/lib/iok-ruleset");
+      rawDb.exec(`INSERT INTO page_captures (id, threat_id, target_url, status) VALUES ('pc_r', 't1', 'https://x.test/', 'captured'), ('pc_o', 't2', 'https://y.test/', 'captured')`);
+      rawDb.exec(`INSERT INTO page_capture_kit_matches (capture_id, rule_id, rule_title, ruleset_commit) VALUES
+        ('pc_r', 'rule-removed-upstream', 'Gone', 'oldcommit'), ('pc_o', 'other-capture-rule', 'Keep', 'oldcommit')`);
+      const input = { html: KIT_HTML, title: null, finalUrl: "https://x.test/", targetUrl: "https://x.test/", redirectChain: [] };
+      await recordKitMatches(db, "pc_r", input, IOK_RULESET, NOW);
+      expect(rows(`SELECT capture_id, rule_id FROM page_capture_kit_matches ORDER BY capture_id, rule_id`)).toEqual([
+        { capture_id: "pc_o", rule_id: "other-capture-rule" },
+        { capture_id: "pc_r", rule_id: "123-reg-63c26" },
+      ]);
+    });
+
+    it("clipped input and an exhausted budget are stamped as such, never as a clean check", async () => {
+      const { recordKitMatches } = await import("../src/lib/iok-kit-matches");
+      const { IOK_RULESET } = await import("../src/lib/iok-ruleset");
+      rawDb.exec(`INSERT INTO page_captures (id, threat_id, target_url, status) VALUES ('pc_big', 't1', 'https://x.test/', 'captured')`);
+      const big = `<html>${"x".repeat(1_000_050)}</html>`;
+      const res = await recordKitMatches(db, "pc_big", { html: big, title: null, finalUrl: "https://x.test/", targetUrl: null, redirectChain: [] }, IOK_RULESET, NOW);
+      expect(res).toMatchObject({ status: "truncated", matched: 0 });
+      expect(capRow("pc_big")).toMatchObject({ kit_eval_status: "truncated", kit_ruleset_commit: IOK_RULESET.source.commit });
+
+      // Budget exhaustion: a ruleset far heavier than the work budget allows.
+      rawDb.exec(`INSERT INTO page_captures (id, threat_id, target_url, status) VALUES ('pc_part', 't1', 'https://x.test/', 'captured')`);
+      const first = { id: "first", title: "First", tags: [], sel: { s: [[{ f: "dom" as const, op: "contains" as const, v: ["KIT"] }]] }, cond: { t: "ref" as const, n: "s" } };
+      const heavy = Array.from({ length: 2000 }, (_, i) => ({ ...first, id: `h${i}`, sel: { s: [[{ f: "dom" as const, op: "contains" as const, v: [`nope${i}`] }]] } }));
+      const part = await recordKitMatches(db, "pc_part",
+        { html: `KIT${"y".repeat(999_000)}`, title: null, finalUrl: "https://x.test/", targetUrl: null, redirectChain: [] },
+        { ...IOK_RULESET, rules: [first, ...heavy] }, NOW);
+      expect(part.status).toBe("partial");
+      expect(part.skipped).toBeGreaterThan(0);
+      expect(capRow("pc_part")).toMatchObject({ kit_eval_status: "partial", kit_ruleset_commit: IOK_RULESET.source.commit });
+      expect(rows(`SELECT rule_id FROM page_capture_kit_matches WHERE capture_id = 'pc_part'`)).toEqual([{ rule_id: "first" }]);
+    });
+
+    it("the expiry sweep deletes an expired capture's kit matches", async () => {
+      rawDb.exec(`INSERT INTO page_captures (id, threat_id, target_url, status, captured_at, expires_at, kit_ruleset_commit, kit_eval_status)
+        VALUES ('pc_old', 't1', 'https://x.test/', 'captured', '2026-01-01 00:00:00', '2026-06-30 00:00:00', 'c1', 'complete'),
+               ('pc_live', 't2', 'https://y.test/', 'captured', '2026-10-01 00:00:00', '2027-03-30 00:00:00', 'c1', 'complete')`);
+      rawDb.exec(`INSERT INTO page_capture_kit_matches (capture_id, rule_id, rule_title, ruleset_commit) VALUES
+        ('pc_old', 'r1', 'R1', 'c1'), ('pc_old', 'r2', 'R2', 'c1'), ('pc_live', 'r1', 'R1', 'c1')`);
+      const res = await sweepExpiredCaptures(db, r2.bucket, NOW);
+      expect(res.expired).toBe(1);
+      expect(rows(`SELECT capture_id, rule_id FROM page_capture_kit_matches`)).toEqual([{ capture_id: "pc_live", rule_id: "r1" }]);
+      expect(capRow("pc_old")).toMatchObject({ status: "expired", kit_ruleset_commit: "c1" });
+    });
+
+    it("re-evaluating the same capture upserts (no duplicate rows)", async () => {
+      const { recordKitMatches } = await import("../src/lib/iok-kit-matches");
+      const { IOK_RULESET } = await import("../src/lib/iok-ruleset");
+      rawDb.exec(`INSERT INTO page_captures (id, threat_id, target_url, status) VALUES ('pc_r', 't1', 'https://x.test/', 'captured')`);
+      const input = { html: KIT_HTML, title: null, finalUrl: "https://x.test/", targetUrl: "https://x.test/", redirectChain: [] };
+      expect((await recordKitMatches(db, "pc_r", input, IOK_RULESET, NOW)).matched).toBe(1);
+      expect((await recordKitMatches(db, "pc_r", input, IOK_RULESET, new Date(NOW.getTime() + 60_000))).matched).toBe(1);
+      expect(rows(`SELECT COUNT(*) AS n FROM page_capture_kit_matches WHERE capture_id = 'pc_r'`)[0]!["n"]).toBe(1);
+      expect(rows(`SELECT matched_at FROM page_capture_kit_matches`)[0]!["matched_at"]).toBe(d1Ts(new Date(NOW.getTime() + 60_000)));
+    });
+
+    it("a clean page is stamped evaluated with no match rows", async () => {
+      insertThreat("t1");
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const fd = fakeDriver({ "https://acme-sso-login.com/": raw() });
+      const stats = await runPageCapture(env, { driver: fd.driver, now: () => NOW, resolve: resolveHost });
+      expect(stats).toMatchObject({ captured: 1, kit_evaluated: 1, kit_matches: 0 });
+      expect(rows(`SELECT COUNT(*) AS n FROM page_capture_kit_matches`)[0]!["n"]).toBe(0);
+      expect(capRow(String(rows(`SELECT id FROM page_captures`)[0]!["id"]))["kit_ruleset_commit"]).toMatch(/^[0-9a-f]{40}$/);
+    });
+
+    it("skips off-site decoy captures (the HTML is the decoy's, not the kit's)", async () => {
+      insertThreat("t1");
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const fd = fakeDriver({ "https://acme-sso-login.com/": raw({ html: KIT_HTML, finalUrl: "https://www.youtube.com/watch?v=x" }) });
+      const stats = await runPageCapture(env, { driver: fd.driver, now: () => NOW, resolve: resolveHost });
+      expect(stats).toMatchObject({ blocked: 1, kit_evaluated: 0, kit_matches: 0 });
+      expect(rows(`SELECT COUNT(*) AS n FROM page_capture_kit_matches`)[0]!["n"]).toBe(0);
+      expect(capRow(String(rows(`SELECT id FROM page_captures`)[0]!["id"]))["kit_ruleset_commit"]).toBeNull();
+    });
+
+    it("a matching failure never fails the capture", async () => {
+      rawDb.exec(`DROP TABLE page_capture_kit_matches`);
+      insertThreat("t1");
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const fd = fakeDriver({ "https://acme-sso-login.com/": raw({ html: KIT_HTML }) });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const stats = await runPageCapture(env, { driver: fd.driver, now: () => NOW, resolve: resolveHost });
+      warn.mockRestore();
+      expect(stats).toMatchObject({ captured: 1, failed: 0, kit_errors: 1, kit_evaluated: 0 });
+      expect(capRow(String(rows(`SELECT id FROM page_captures`)[0]!["id"]))["status"]).toBe("captured");
+    });
+  });
+
   describe("retention sweep", () => {
     const seedStored = (id: string, status: string, expiresAt: string): void => {
       rawDb.prepare(

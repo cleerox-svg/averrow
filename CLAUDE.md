@@ -826,7 +826,12 @@ page_capture: */10 * * * *  (every 10 min — phishing page evidence capture, sp
                              day stamp (`page_capture:sweep:<date>`) — no minute gate. No AI.
                              Needs R2 `PHISH_CAPTURES` + `[browser]` `BROWSER` (prod only;
                              absent → clean no-op). Manual/fallback trigger:
-                             `POST /api/internal/agents/page_capture/run`.)
+                             `POST /api/internal/agents/page_capture/run`.
+                             After each stored capture it matches the vendored IOK phishing-kit
+                             rules (`lib/iok-engine.ts`, `src/data/iok/`) against the stored
+                             evidence, no new fetching: context only, staff-only, never alerts
+                             or triage; credit "Rules: IOK by phish.report (ODbL)" wherever
+                             shown; a regex runs only if listed in `lib/iok-regex-allowlist.ts`.)
 daily_snapshots: 28 0,12 * * * (00:28 + 12:28 UTC — writes `daily_snapshots` brand +
                              provider rows; Flight Control's provider-escalation watcher
                              compares `hosting_providers.active_threat_count` to YESTERDAY's
@@ -1684,7 +1689,13 @@ hosting_providers         ← Provider registry with pre-computed threat counts
 provider_threat_stats     ← Per-period (today/7d/30d/all) provider rollups written by Cartographer
 lookalike_domains         ← Typosquat scanner results
 page_captures             ← Phishing-page capture queue + evidence index (migration 0290); R2 keys +
-                            SHA-256 per object, 180-day expiry; written by the page_capture agent
+                            SHA-256 per object, 180-day expiry; written by the page_capture agent.
+                            `kit_ruleset_commit` / `kit_evaluated_at` / `kit_eval_status` (0333; complete |
+                            truncated | partial, NULL = not checked) record the IOK kit-rule evaluation
+page_capture_kit_matches  ← IOK phishing-kit rule matches per capture (migration 0333; PK capture_id + rule_id),
+                            replaced on re-evaluation, deleted when the capture expires. Staff-only context:
+                            read only by `GET /api/intel/identity-threats/detections/:threatId`, never a
+                            tenant/public API, never alerts. Rules: IOK by phish.report (ODbL), `docs/licences/iok.md`
 bot_traffic_snapshots     ← Cloudflare Radar internet bot-vs-human share, top bot countries/ASNs, verified-bot
                             categories (migration 0290). Platform context, NOT threats; written only by the
                             `cf_radar_bots` feed (daily via its feed_configs interval, `itemsNew=0` so it never
