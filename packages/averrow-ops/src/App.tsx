@@ -1,6 +1,8 @@
 import React, { Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
+import { stripOpsBase } from '@/lib/basePath';
+import { clearAppHint, HOME_NO_REDIRECT_URL } from '@averrow/shared/auth';
 import { ShellV4 } from '@/components/layout/ShellV4';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { RedirectToTab } from '@/components/routing/RedirectToTab';
@@ -68,7 +70,7 @@ const SearchResults = React.lazy(() => import('@/features/search/SearchResults')
 // is shared with its React.lazy, so the module is fetched once. Tab panes of
 // Console / Explorer come from their light tabLoaders registries.
 export function preloadRouteForPath(pathname: string, search: string): void {
-  const path = pathname.replace(/^\/v2(?=\/|$)/, '').replace(/\/+$/, '') || '/';
+  const path = stripOpsBase(pathname).replace(/\/+$/, '') || '/';
   const tab = new URLSearchParams(search).get('tab');
   const go = (f: () => Promise<unknown>) => { void f().catch(() => undefined); };
   if (path === '/') go(loadOverviewV4);
@@ -121,7 +123,12 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) {
     // Redirect to public homepage — don't trap users in an in-app login screen.
     // The public site has the proper "Sign In" flow via /login → /api/auth/login.
-    window.location.href = '/';
+    // The public home page redirects signed-in browsers straight back into the
+    // app (localStorage hint). Clear it BEFORE leaving, and ask for the home
+    // page that never redirects (`?home=1`), so a session that is gone (or a
+    // transient /me failure that left no user) can never loop home <-> app.
+    clearAppHint();
+    window.location.href = HOME_NO_REDIRECT_URL;
     return null;
   }
   return <>{children}</>;

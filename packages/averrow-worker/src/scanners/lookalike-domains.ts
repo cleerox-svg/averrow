@@ -261,7 +261,7 @@ export const SCAN_NOW_CHECK_LIMITS: CheckRunLimits = {
  * rows whose processing THREW, which before per-row isolation could not
  * be counted at all because a single throw aborted the tick. The
  * `lookalike_scanner` agent folds this into its `agentOutputs`
- * diagnostic, so it lands in `agent_runs` / the /v2/agents page
+ * diagnostic, so it lands in `agent_runs` / the /ops/agents page
  * (CLAUDE.md §6) instead of requiring a log search.
  *
  * ── THE SWALLOWED-ERROR COUNTERS ────────────────────────────────────

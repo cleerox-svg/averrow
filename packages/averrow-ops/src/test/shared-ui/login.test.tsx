@@ -25,7 +25,7 @@ function setup(over: Partial<LoginPageProps> = {}, search = '') {
       apiClient={{ post }}
       passkeyAdapter={passkeyAdapter}
       lastSignInMethod={lastSignInMethod}
-      returnTo="/v2/"
+      returnTo="/ops/"
       {...over}
     />,
   );
@@ -122,7 +122,7 @@ describe('errorCopy lookup', () => {
   });
 });
 
-// The worker redirects every sign-in failure to /v2/login?error=<code>
+// The worker redirects every sign-in failure to /ops/login?error=<code>
 // (handlers/auth.ts redirectToLoginWithError); each code it can send must
 // render its own customer copy, never the raw "Sign-in error: <code>".
 describe('worker sign-in error codes', () => {
@@ -197,7 +197,7 @@ describe('onGoogleSignIn', () => {
     try {
       setup();
       await userEvent.click(screen.getByTestId('login-google'));
-      expect(loc.assigned).toEqual(['/api/auth/login?return_to=%2Fv2%2F']);
+      expect(loc.assigned).toEqual(['/api/auth/login?return_to=%2Fops%2F']);
       expect(lastSignInMethod.write).toHaveBeenCalledWith('google');
       expect(screen.getByTestId('login-google')).not.toHaveAttribute('aria-busy');
     } finally { loc.restore(); }

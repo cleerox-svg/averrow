@@ -24,7 +24,7 @@ Averrow monitors the internet for brand impersonation, phishing infrastructure, 
 averrow/                             ← repo: cleerox-svg/averrow (renamed from trust-radar 2026-07-17)
 ├── packages/
 │   ├── averrow-worker/              ← Averrow Worker (backend)
-│   ├── averrow-ops/                 ← Staff back-office React SPA (rebadged from averrow-ui; serves /v2/*)
+│   ├── averrow-ops/                 ← Staff back-office React SPA (rebadged from averrow-ui; serves /ops/*)
 │   ├── averrow-tenant/              ← Customer-facing React SPA (serves /tenant/*)
 │   └── averrow-mcp/                 ← MCP server exposing platform diagnostics to Claude Code
 ├── docs/                            ← Platform documentation

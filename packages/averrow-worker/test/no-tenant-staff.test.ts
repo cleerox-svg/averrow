@@ -139,7 +139,7 @@ describe.skipIf(!hasSqlite())("PR-F: invite acceptance never produces tenant sta
     const res = await accept(token, "staff1@averrow.com", "g-staff1");
     expect(res.status).toBe(302);
     const loc = res.headers.get("Location") ?? "";
-    expect(loc).toContain("/v2/login?error=invite_account_conflict");
+    expect(loc).toContain("/ops/login?error=invite_account_conflict");
     expect(decodeURIComponent(loc)).not.toMatch(/staff/i);
     expect(roleOf(rig.raw, "staff1")).toBe("analyst");
     expect(activeMemberships("staff1")).toBe(0);
@@ -150,7 +150,7 @@ describe.skipIf(!hasSqlite())("PR-F: invite acceptance never produces tenant sta
   it("staff invite to an existing active ORG MEMBER: refused, still client", async () => {
     const token = await invite("inv2", "cust1@acme.co", "analyst", null);
     const res = await accept(token, "cust1@acme.co", "g-cust1");
-    expect(res.headers.get("Location") ?? "").toContain("/v2/login?error=invite_account_conflict");
+    expect(res.headers.get("Location") ?? "").toContain("/ops/login?error=invite_account_conflict");
     expect(roleOf(rig.raw, "cust1")).toBe("client");
     expect(invStatus("inv2")).toBe("pending");
     expect(rig.audits).toContain("invite_accept_refused_org_member");
@@ -288,7 +288,7 @@ describe.skipIf(!hasSqlite())("PR-F follow-up: invite acceptance staff lookup is
   it("staff row `Bob@x.com` + org invite to `bob@x.com`: refused, no new account", async () => {
     const token = await seedInvite(rig.raw, "ci1", "bob@x.com", "client", 1, "viewer");
     const res = await acceptOn(rig, token, "bob@x.com", "g-bob-new");
-    expect(res.headers.get("Location") ?? "").toBe("https://averrow.com/v2/login?error=invite_account_conflict");
+    expect(res.headers.get("Location") ?? "").toBe("https://averrow.com/ops/login?error=invite_account_conflict");
     expect(roleOf(rig.raw, "bobStaff")).toBe("analyst");
     const n = (rig.raw.prepare("SELECT COUNT(*) AS n FROM users WHERE LOWER(email) = 'bob@x.com'").all() as Array<{ n: number }>)[0]!.n;
     expect(n).toBe(1);
@@ -298,7 +298,7 @@ describe.skipIf(!hasSqlite())("PR-F follow-up: invite acceptance staff lookup is
   it("refuses when ANY matching row is staff, even if the exact-case row is a client", async () => {
     const token = await seedInvite(rig.raw, "ci2", "bob2@x.com", "client", 1, "viewer");
     const res = await acceptOn(rig, token, "bob2@x.com", "g-bob2");
-    expect(res.headers.get("Location") ?? "").toBe("https://averrow.com/v2/login?error=invite_account_conflict");
+    expect(res.headers.get("Location") ?? "").toBe("https://averrow.com/ops/login?error=invite_account_conflict");
     expect(roleOf(rig.raw, "bob2Adm")).toBe("admin");
     const active = (rig.raw.prepare("SELECT COUNT(*) AS n FROM org_members WHERE user_id IN ('bob2Cli','bob2Adm') AND status = 'active'")
       .all() as Array<{ n: number }>)[0]!.n;

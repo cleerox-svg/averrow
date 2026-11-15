@@ -162,7 +162,7 @@ describe.skipIf(!hasSqlite())("access tokens carry sid", () => {
 
   it("login (issueSession) mints a token whose sid is the new sessions row", async () => {
     const res = await issueSession(new Request("https://x/api/auth/passkey/finish"), rig.env, "u1", "u1@example.com",
-      "analyst", "https://x", "/v2/", "passkey", "json");
+      "analyst", "https://x", "/ops/", "passkey", "json");
     const body = await res.json() as { data: { access_token: string } };
     const payload = await verifyJWT(body.data.access_token, SECRET);
     const rows = rig.raw.prepare("SELECT id FROM sessions WHERE user_id = 'u1'").all() as Array<{ id: string }>;
@@ -302,7 +302,7 @@ describe.skipIf(!hasSqlite())("revocation reaches live access tokens", () => {
 
     // Fresh sign-in within the same second: new session, new sid, iat = now > ts.
     const login = await issueSession(new Request("https://x/api/auth/passkey/finish"), rig.env, "u1", "u1@example.com",
-      "analyst", "https://x", "/v2/", "passkey", "json");
+      "analyst", "https://x", "/ops/", "passkey", "json");
     const fresh = (await login.json() as { data: { access_token: string } }).data.access_token;
     expect(await authStatus(rig, fresh)).toBe(200);
   });

@@ -1,4 +1,4 @@
-// /v2 auth context — wraps @averrow/shared/auth's AuthProvider with
+// /ops auth context — wraps @averrow/shared/auth's AuthProvider with
 // product-specific deltas (HTTP client adapter, role==='client'
 // redirect to /tenant/, lastSignInMethod cleanup on logout).
 //
@@ -16,6 +16,7 @@ import type {
 } from '@averrow/shared/auth';
 import { clearLastSignInMethod as clearLastSignInMethodInStorage } from '@averrow/shared/login';
 import { api } from './api';
+import { OPS_BASE_PATH, OPS_SHELL_URL } from './basePath';
 
 const LAST_SIGNIN_METHOD_KEY = 'averrow.lastSignInMethod';
 
@@ -35,8 +36,9 @@ const httpClient: AuthHttpClient = {
 // matching backstop in packages/averrow-worker/src/handlers/auth.ts.
 const config: AuthProviderConfig = {
   userCacheKey:     'averrow-user',
-  loginPath:        '/api/auth/login?return_to=/v2/',
-  returnToPrefix:   '/v2',
+  loginPath:        `/api/auth/login?return_to=${OPS_SHELL_URL}`,
+  returnToPrefix:   OPS_BASE_PATH,
+  appHint:          'ops',
   refreshMode:      'cookie-refresh',
   onValidatedUser:  (user): ValidatedUserDecision => {
     if (user.role === 'client') return { kind: 'redirect', to: '/tenant/' };
@@ -53,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// /v2 useAuth — the shared auth state as-is (no product-specific selectors).
+// /ops useAuth — the shared auth state as-is (no product-specific selectors).
 export function useAuth(): SharedAuthState {
   return useSharedAuth();
 }

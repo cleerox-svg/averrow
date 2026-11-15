@@ -25,6 +25,7 @@
 
 import { json } from "../lib/cors";
 import type { Env } from "../types";
+import { OPS_BASE } from "../lib/app-paths";
 import { generateVapidKeypair } from "../lib/push-vapid";
 import { dispatchPush, getPushConfig } from "../lib/push";
 
@@ -179,7 +180,7 @@ export async function handlePushTest(
     const result = await dispatchPush(env, userId, {
       title: "Averrow test notification",
       body: "If you see this, push delivery is working end-to-end.",
-      url: "/v2/observatory",
+      url: `${OPS_BASE}/observatory`,
       tag: "averrow-test",
       severity: "info",
       type: "test",

@@ -1,4 +1,4 @@
-// /v2 passkey lib — thin wrapper over @averrow/shared/passkeys.
+// /ops passkey lib — thin wrapper over @averrow/shared/passkeys.
 //
 // Per SHARED_LOGIN_SPEC the WebAuthn flows are canonical and live
 // in the shared package. This file just instantiates the client
@@ -8,6 +8,7 @@
 import { createPasskeyClient } from '@averrow/shared/passkeys';
 import type { PasskeyHttpClient } from '@averrow/shared/passkeys';
 import { api } from './api';
+import { OPS_SHELL_URL } from './basePath';
 
 const httpClient: PasskeyHttpClient = {
   get:    (path) => api.get(path),
@@ -15,7 +16,7 @@ const httpClient: PasskeyHttpClient = {
   delete: (path) => api.delete(path),
 };
 
-const client = createPasskeyClient(httpClient, { defaultReturnTo: '/v2/' });
+const client = createPasskeyClient(httpClient, { defaultReturnTo: OPS_SHELL_URL });
 
 // Re-export the existing surface so call sites don't change.
 export const isPasskeySupported   = client.isSupported;

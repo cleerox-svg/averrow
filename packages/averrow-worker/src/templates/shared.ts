@@ -163,7 +163,7 @@ export function renderHead(title: string, description: string): string {
 <title>${title}</title>
 <meta name="description" content="${description}">
 <link rel="icon" href="${R3_FAVICON_DATA_URI}" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/v2/apple-touch-icon.png">
+<link rel="apple-touch-icon" href="/ops/apple-touch-icon.png">
 <link rel="alternate" type="application/rss+xml" title="Averrow Blog" href="/blog/feed.xml">
 <link rel="alternate" type="application/rss+xml" title="Averrow Changelog" href="/changelog/feed.xml">
 <noscript>

@@ -51,7 +51,7 @@ export function UpdateBanner({ onReload }: UpdateBannerProps): React.ReactElemen
 /**
  * Mount once per app, at the top of the shell's content column. The polite
  * live region is always mounted (so the insertion is announced) and empty
- * until a newer build is detected. `shellUrl`: `/v2/` (ops) or `/tenant/`.
+ * until a newer build is detected. `shellUrl`: `/ops/` (ops) or `/tenant/`.
  */
 export function AppUpdateNotice({ shellUrl }: { shellUrl: string }): React.ReactElement {
   const available = useAppUpdateAvailable(shellUrl);

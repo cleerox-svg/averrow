@@ -1,4 +1,4 @@
-// Trademark monitoring — ops (/v2) surface.
+// Trademark monitoring — ops (/ops) surface.
 //
 //   GET /api/trademarks/overview
 //     Cross-brand rollup for the staff Trademark page: per-brand asset +

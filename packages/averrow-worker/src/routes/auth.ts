@@ -113,7 +113,7 @@ export function registerAuthRoutes(router: RouterType<IRequest>): void {
   //   renders a "Sign in to Averrow" interstitial whose button POSTs:
   // POST /api/auth/magic-link/verify  — form body { token }; consumes the
   //   single-use token, mints a session and 302s to the SPA exactly like
-  //   the OAuth callback does. Failures 302 to /v2/login?error=<code>.
+  //   the OAuth callback does. Failures 302 to /ops/login?error=<code>.
   router.post("/api/auth/magic-link/request", async (request: Request, env: Env, ctx: ExecutionContext) => {
     const limited = await rateLimit(request, env, "auth");
     if (limited) return limited;

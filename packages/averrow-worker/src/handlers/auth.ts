@@ -18,6 +18,7 @@ import { sendMagicLinkEmail } from "../lib/magic-link-email";
 import { renderMagicLinkConfirmPage } from "../templates/magic-link-confirm";
 import type { AuthErrorCode } from "@averrow/shared";
 import type { Env, UserRole } from "../types";
+import { OPS_BASE, OPS_HOME, TENANT_HOME } from "../lib/app-paths";
 
 // ─── OAuth: initiate login ──────────────────────────────────────
 
@@ -889,10 +890,10 @@ export async function issueSession(
   // users (role='client') route to /tenant/ regardless of what
   // returnToPath was. The averrow-ops auth bootstrap ALSO redirects
   // these users client-side; this is the worker-side belt to the
-  // SPA's suspenders so a client never lands inside /v2/ or the
-  // legacy /observatory alias (which 301s to /v2 anyway). Clients
+  // SPA's suspenders so a client never lands inside /ops/ or the
+  // legacy /observatory alias (which redirects to /ops anyway). Clients
   // only keep an explicit return_to if it's already a /tenant path.
-  // The single return_to gate: anything that isn't a plain /v2 or /tenant
+  // The single return_to gate: anything that isn't a plain /ops or /tenant
   // path (fragment, encoded '#', '..', '\', protocol-relative, absolute URL,
   // legacy '/observatory') falls back to the role default.
   const returnTo = resolveReturnTo(returnToPath, role);
@@ -915,7 +916,7 @@ export async function issueSession(
   // magic-link verify). Drop the token in the URL hash so it never
   // hits an HTTP log.
   // Both React apps read `#token=` on load (shared AuthProvider
-  // readTokensFromUrl), and resolveReturnTo only yields /v2 or /tenant
+  // readTokensFromUrl), and resolveReturnTo only yields /ops or /tenant
   // paths, so the session always lands in an app. (The old /auth/callback
   // fallback was a legacy-SPA route that is no longer served — 404.)
   const redirectUrl = `${siteOrigin}${returnTo}#token=${accessToken}&expires_in=${ACCESS_TOKEN_TTL}`;
@@ -931,7 +932,9 @@ export async function issueSession(
  *  characters — a decoded CR/LF would make the Location header throw). The access token is appended as `#token=`, so
  *  a return_to that could carry its own fragment would let an attacker
  *  plant THEIR token ahead of ours (AuthProvider reads the first one). */
-const SAFE_RETURN_TO = /^\/(v2|tenant)(\/[A-Za-z0-9._~\-/]*)?(\?[A-Za-z0-9._~\-/=&%+,:;@!$'()*]*)?$/;
+const SAFE_RETURN_TO = new RegExp(
+  `^\\/(${OPS_BASE.slice(1)}|tenant)(\\/[A-Za-z0-9._~\\-/]*)?(\\?[A-Za-z0-9._~\\-/=&%+,:;@!$'()*]*)?$`,
+);
 const MAX_RETURN_TO_LENGTH = 200;
 
 /** The validated path, or null. No role logic — see resolveReturnTo. */
@@ -940,14 +943,16 @@ export function validateReturnTo(raw: string | null | undefined): string | null 
   if (!SAFE_RETURN_TO.test(raw)) return null;
   const path = raw.split("?", 1)[0]!;
   if (path.split("/").some((seg) => seg === "." || seg === "..")) return null;
+  // No empty segment ("/ops//evil.com"): same-origin, but never a path we mint.
+  if (path.includes("//")) return null;
   return raw;
 }
 
 /** Where a fresh session lands: a valid return_to, else the role default
- *  (staff /v2/, client /tenant/). Clients never land in /v2 — Phase D D2c
+ *  (staff /ops/, client /tenant/). Clients never land in /ops — Phase D D2c
  *  server-side backstop to the ops SPA's own client redirect. */
 export function resolveReturnTo(raw: string | null | undefined, role: UserRole): string {
-  const fallback = role === "client" ? "/tenant/" : "/v2/";
+  const fallback = role === "client" ? TENANT_HOME : OPS_HOME;
   const valid = validateReturnTo(raw);
   if (!valid) return fallback;
   if (role === "client" && !valid.startsWith("/tenant")) return fallback;
@@ -1002,7 +1007,7 @@ function clearRefreshCookie(response: Response): Response {
  *  logged-out guard sends people to `/`, which routes here), and
  *  `issueSession` sends a `client` to /tenant/ after any sign-in, so every
  *  flow — staff, client invite, magic link — fails back to this page. */
-export const LOGIN_PATH = "/v2/login";
+export const LOGIN_PATH = `${OPS_BASE}/login`;
 
 /** Every sign-in failure: 302 to the login page with a stable CODE from
  *  `@averrow/shared` `AUTH_ERROR_CODES`, never free text — the LoginPage
@@ -1336,7 +1341,7 @@ export async function handleMagicLinkVerify(
   }
 }
 
-/** Same gate as issueSession (validateReturnTo): only plain /v2 or /tenant
+/** Same gate as issueSession (validateReturnTo): only plain /ops or /tenant
  *  paths are stored on the magic-link row. */
 function sanitizeReturnTo(returnTo: string | undefined): string | null {
   return validateReturnTo(returnTo);
@@ -1476,7 +1481,7 @@ export async function handleMintServiceJwt(request: Request, env: Env): Promise<
 // capable token, and the TTL is hard-capped too.
 //
 // Inject the token by navigating a browser to the returned `preview_url`
-// (`<origin>/v2/#token=…` or `/tenant/#token=…`) — the SPA's AuthProvider
+// (`<origin>/ops/#token=…` or `/tenant/#token=…`) — the SPA's AuthProvider
 // reads the hash, validates /api/auth/me, and boots.
 //
 // Kill switch (≤ about 75s):
@@ -1501,13 +1506,13 @@ const UI_PREVIEW_STAFF: UiPreviewPreset = {
   id: "claude_ui_staff",
   email: "claude-ui-staff@averrow.local",
   name: "Claude UI Preview (Staff)",
-  returnTo: "/v2/",
+  returnTo: OPS_HOME,
 };
 const UI_PREVIEW_TENANT: UiPreviewPreset = {
   id: "claude_ui_tenant",
   email: "claude-ui-tenant@averrow.local",
   name: "Claude UI Preview (Tenant)",
-  returnTo: "/tenant/",
+  returnTo: TENANT_HOME,
 };
 /** User ids of the shared UI-preview identities. Many minted preview tokens
  *  share each id, so self-service session mutations (logout-all,

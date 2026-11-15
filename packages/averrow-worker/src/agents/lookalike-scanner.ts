@@ -148,7 +148,7 @@ export const lookalikeScannerAgent: AgentModule = {
       const check = await checkLookalikeBatch(ctx.env);
       rowsChecked = check.checked;
       // Surface the run's counters as a diagnostic so they reach
-      // `agent_runs` / `agent_outputs` and the /v2/agents page, not only
+      // `agent_runs` / `agent_outputs` and the /ops/agents page, not only
       // the log stream. `row_errors` is the reason this exists: with
       // per-row error isolation a poisoned row no longer aborts the
       // tick, so a non-zero count is now a thing that can happen

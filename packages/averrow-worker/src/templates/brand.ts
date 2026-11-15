@@ -27,7 +27,7 @@ export const R3_TILE_FILL = "#121B31";
 
 /** Hosted R3 mark for emails: 144x144 transparent PNG, shown at 38x38.
  *  The file lives in packages/averrow-ops/public/email/ (Vite copies it to
- *  public/v2/email/). Emails reference the Worker route /email/… instead,
+ *  public/ops/email/). Emails reference the Worker route /email/… instead,
  *  which re-serves it with a one-year immutable cache for Gmail's image
  *  proxy (handlers/emailAssets.ts). New filename so mail-proxy caches of
  *  the old /logo-email-mark.png don't apply. */

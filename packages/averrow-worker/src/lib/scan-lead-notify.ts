@@ -16,6 +16,7 @@
 // — the caller has already committed the lead row.
 
 import type { Env } from "../types";
+import { OPS_BASE } from "./app-paths";
 import { logger } from "./logger";
 
 const FROM_ADDRESS = "Averrow Sales <sales@averrow.com>";
@@ -84,7 +85,7 @@ interface NewLeadNotifyParams {
 export async function notifySalesOfNewLead(env: Env, params: NewLeadNotifyParams): Promise<SendResult> {
   const subject = `New scan lead — ${params.email}${params.correlatedBrandId ? " (already-monitored brand)" : ""}`;
   // Scan Leads lives as a tab inside the Leads page.
-  const adminLink = `${params.adminUrlBase}/v2/leads?view=scan&lead=${encodeURIComponent(params.leadId)}`;
+  const adminLink = `${params.adminUrlBase}${OPS_BASE}/leads?view=scan&lead=${encodeURIComponent(params.leadId)}`;
   const deliveryText = params.delivery === "emailed"
     ? "Report emailed to the prospect automatically (email domain matches the scanned domain)."
     : "Follow-up needed: the prospect was told the team will be in touch.";

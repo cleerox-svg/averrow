@@ -37,6 +37,7 @@ import { rateLimitCustom } from "../middleware/rateLimit";
 import type { RateLimitConfig } from "../middleware/rateLimit";
 import { handlePublicEmailSecurity } from "../handlers/emailSecurity";
 import { EMAIL_LOGO_PATH, handleEmailLogo } from "../handlers/emailAssets";
+import { OPS_BASE, OPS_HOME, RETIRED_OPS_BASE } from "../lib/app-paths";
 
 // Public marketing HTML routes eligible for edge analytics logging.
 const MARKETING_PATHS = new Set([
@@ -57,24 +58,24 @@ const htmlPage = (render: () => string) => () =>
 
 /** Wraps the old homepage with a legacy banner */
 function renderLegacyHomepage(): string {
-  const banner = `<div style="background:#C83C3C;color:white;padding:8px 16px;font-family:monospace;font-size:12px;text-align:center;position:sticky;top:0;z-index:9999">\u26A0 You are viewing the legacy interface. <a href="/v2" style="color:white;text-decoration:underline">Switch to Averrow v2 \u2192</a></div>`;
+  const banner = `<div style="background:#C83C3C;color:white;padding:8px 16px;font-family:monospace;font-size:12px;text-align:center;position:sticky;top:0;z-index:9999">\u26A0 You are viewing the legacy interface. <a href="${OPS_HOME}" style="color:white;text-decoration:underline">Switch to the new interface \u2192</a></div>`;
   const html = renderHomepage();
   return html.replace(/<body([^>]*)>/, `<body$1>${banner}`);
 }
 
-// ─── Legacy redirects (old admin routes → /v2 equivalents) ──────
+// ─── Legacy redirects (old admin routes → /ops equivalents) ─────
 const LEGACY_REDIRECTS: Record<string, string> = {
-  '/admin':               '/v2/admin',
-  '/admin/dashboard':     '/v2/admin',
-  '/admin/users':         '/v2/admin/users',
-  '/admin/organizations': '/v2/admin/customers',
-  '/admin/feeds':         '/v2/admin/operations?tab=feeds',
-  '/admin/agent-config':  '/v2/admin/operations?tab=agents',
-  '/admin/audit':         '/v2/admin/governance?tab=audit',
-  '/admin/spam-trap':     '/v2/admin/spam-trap',
-  '/admin/takedowns':     '/v2/console?tab=takedowns',
-  '/observatory':         '/v2',
-  '/brands':              '/v2/explore?tab=brands',
+  '/admin':               `${OPS_BASE}/admin`,
+  '/admin/dashboard':     `${OPS_BASE}/admin`,
+  '/admin/users':         `${OPS_BASE}/admin/users`,
+  '/admin/organizations': `${OPS_BASE}/admin/customers`,
+  '/admin/feeds':         `${OPS_BASE}/admin/operations?tab=feeds`,
+  '/admin/agent-config':  `${OPS_BASE}/admin/operations?tab=agents`,
+  '/admin/audit':         `${OPS_BASE}/admin/governance?tab=audit`,
+  '/admin/spam-trap':     `${OPS_BASE}/admin/spam-trap`,
+  '/admin/takedowns':     `${OPS_BASE}/console?tab=takedowns`,
+  '/observatory':         OPS_HOME,
+  '/brands':              `${OPS_BASE}/explore?tab=brands`,
 };
 
 /** 30 anonymous email-security checks per IP per hour. */
@@ -97,7 +98,7 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // and /changelog/feed.xml. The dynamic-stats fetch that used to
   // live on / moves to R7 (build-time fetch in averrow-marketing).
 
-  // ─── Legacy redirects (old admin routes → /v2) ──────────────────
+  // ─── Legacy redirects (old admin routes → /ops) ─────────────────
   for (const [oldPath, newPath] of Object.entries(LEGACY_REDIRECTS)) {
     router.get(oldPath, (request: Request) => {
       const url = new URL(request.url);
@@ -105,15 +106,15 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     });
   }
 
-  // ─── /login → React /v2/login ────────────────────────────────────
+  // ─── /login → React /ops/login ───────────────────────────────────
   // Previously this redirected straight to /api/auth/login (Google
   // OAuth). That short-circuited the React Login page so users only
   // ever saw Google as an option — passkey + magic-link were
-  // unreachable. Send them to /v2/login instead so the React page
+  // unreachable. Send them to /ops/login instead so the React page
   // surfaces all three auth methods.
   router.get("/login", (request: Request) => {
     const url = new URL(request.url);
-    return Response.redirect(`${url.origin}/v2/login`, 302);
+    return Response.redirect(`${url.origin}${OPS_BASE}/login`, 302);
   });
 
   // ─── Legacy escape hatch — old homepage at /legacy ──────────────
@@ -196,7 +197,7 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // load. CDN may revalidate after 30s.
   // Hosted email logo with a one-year immutable cache (Gmail image proxy;
   // see handlers/emailAssets.ts). No static asset exists at this path, so
-  // the request reaches the Worker; the PNG itself ships at /v2/email/.
+  // the request reaches the Worker; the PNG itself ships at /ops/email/.
   router.get(EMAIL_LOGO_PATH, (request: Request, env: Env) => handleEmailLogo(request, env));
   router.head(EMAIL_LOGO_PATH, (request: Request, env: Env) => handleEmailLogo(request, env));
 
@@ -398,33 +399,46 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     return handleLatestMilestone(request, env);
   });
 
-  // ─── React app — serve v2/index.html for all /v2/* routes ────────
-  router.get("/v2/*", async (request: Request, env: Env) => {
+  // ─── Retired staff mount: /v2 → plain 404 (hard cut, 2026-11-15) ─
+  // No redirect and no stub: old links break by owner decision. Explicit
+  // routes (registered before the catch-all) so /v2/* can never fall into
+  // the marketing/SPA fallbacks or serve a stale file from the assets dir.
+  const retiredOps = () =>
+    new Response("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  router.all(RETIRED_OPS_BASE, retiredOps);
+  router.all(`${RETIRED_OPS_BASE}/*`, retiredOps);
+
+  // ─── React app — serve ops/index.html for all /ops/* routes ──────
+  const serveOpsApp = async (request: Request, env: Env) => {
     const url = new URL(request.url);
+    // Bare /ops (no slash; the router also matches it here): the app's base is
+    // /ops/, so send it there.
+    if (url.pathname === OPS_BASE) return Response.redirect(`${url.origin}${OPS_HOME}`, 302);
     // Try to serve the exact file (JS, CSS, assets)
     const assetResponse = await env.ASSETS.fetch(new Request(new URL(url.pathname, request.url).toString()));
     if (assetResponse.ok && !url.pathname.endsWith('/') && url.pathname.includes('.')) {
       return assetResponse;
     }
-    // Otherwise serve v2/index.html for client-side routing
-    const htmlResponse = await env.ASSETS.fetch(new Request(new URL("/v2/index.html", request.url).toString()));
-    return new Response(htmlResponse.body, {
-      status: htmlResponse.status,
-      headers: {
-        // The Workers Headers type doesn't declare .entries() but the runtime supports it.
-        ...Object.fromEntries((htmlResponse.headers as unknown as { entries(): IterableIterator<[string, string]> }).entries()),
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0',
-      },
-    });
-  });
+    // Otherwise serve ops/index.html for client-side routing
+    const htmlResponse = await env.ASSETS.fetch(new Request(new URL(`${OPS_BASE}/index.html`, request.url).toString()));
+    // .set() on a Headers object so our no-cache REPLACES the asset layer's
+    // default Cache-Control instead of being comma-joined onto it.
+    const headers = new Headers(htmlResponse.headers);
+    headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    headers.set('Pragma', 'no-cache');
+    headers.set('Expires', '0');
+    return new Response(htmlResponse.body, { status: htmlResponse.status, headers });
+  };
+  router.get(`${OPS_BASE}/*`, serveOpsApp);
 
   // ─── Static assets fallback (SPA) ────────────────────────────────
   //
   // Deep-link refresh handling for the two React SPAs that live under
   // path prefixes:
-  //   /v2/*      → averrow-ops    (staff back office) — shell at /v2/index.html
+  //   /ops/*     → averrow-ops    (staff back office) — shell at /ops/index.html
   //   /tenant/*  → averrow-tenant (customers)         — shell at /tenant/index.html
   //
   // ASSETS handles the happy path (file exists). When a 404 falls
@@ -455,11 +469,11 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
       return assetResponse;
     }
 
-    // SPA shell fallbacks. /v2 + /tenant are React Router apps — any
+    // SPA shell fallbacks. /ops + /tenant are React Router apps — any
     // sub-path that isn't a real file should serve their respective
     // index.html so the client router decides what to render.
-    if (url.pathname.startsWith("/v2/") || url.pathname === "/v2") {
-      const shell = await env.ASSETS.fetch(new Request(new URL("/v2/index.html", request.url).toString()));
+    if (url.pathname.startsWith(`${OPS_BASE}/`) || url.pathname === OPS_BASE) {
+      const shell = await env.ASSETS.fetch(new Request(new URL(`${OPS_BASE}/index.html`, request.url).toString()));
       if (shell.status !== 404) return shell;
     }
     if (url.pathname.startsWith("/tenant/") || url.pathname === "/tenant") {

@@ -60,7 +60,7 @@ const V3_TABS = [
   { id: 'risk',     label: 'Risk',     hint: "What's threatening you now" },
   // Threats tab is the brand-scoped view of the raw threats table —
   // the evidence behind the Risk tab's counts. Same plumbing as the
-  // global /v2/threats page, scoped to this brand's target_brand_id
+  // global /ops/threats page, scoped to this brand's target_brand_id
   // and excluding the brand's own safe domains.
   { id: 'threats',  label: 'Threats',  hint: "Every raw threat targeting this brand (the evidence behind Risk)" },
   // NX3: Signals tab gives SOC analysts a brand-scoped view of every

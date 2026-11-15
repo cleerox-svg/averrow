@@ -2,7 +2,7 @@
 // mirrors FarmTrack's src/app/lib/appUpdate.ts, extended to the whole asset set.)
 //
 // An open tab keeps running the bundle it loaded until someone reloads. The
-// app's index.html names the build's hashed assets (/v2/assets/index-<hash>.js,
+// app's index.html names the build's hashed assets (/ops/assets/index-<hash>.js,
 // its CSS and preloaded chunks); a new deploy whose app code or styles changed
 // ships an index.html naming different ones. So: fetch the app's own shell and
 // see whether it names an /assets/*.js|css file this page does not have. The
@@ -67,7 +67,7 @@ type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
  * name counts. Any failure (offline, error status, unexpected body) is "no":
  * a false "update available" would nag; a missed one is caught next time.
  *
- * `shellUrl` is the app's own shell URL: `/v2/` (ops) or `/tenant/` (tenant).
+ * `shellUrl` is the app's own shell URL: `/ops/` (ops) or `/tenant/` (tenant).
  */
 export async function isNewBuildAvailable(
   current: ReadonlySet<string> | readonly string[] | string | null,

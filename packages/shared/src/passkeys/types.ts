@@ -51,7 +51,7 @@ export interface PasskeyHttpClient {
 // ─── Factory options ─────────────────────────────────────────
 
 export interface PasskeyClientOptions {
-  /** Default returnTo for sign-in. e.g. '/v2/' or '/tenant/'. */
+  /** Default returnTo for sign-in. e.g. '/ops/' or '/tenant/'. */
   defaultReturnTo: string;
   /** Override paths if a product carries a different backend. */
   paths?: Partial<{

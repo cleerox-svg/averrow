@@ -259,7 +259,7 @@ export type UserRole =
   | "support"       // Averrow customer support — read customer data + alerts, no edits
   | "billing"       // Averrow finance — Stripe + pricing only, no customer ops access
   | "auditor"       // read-only global seat — sees ALL backend + tenant data, mutates nothing, never super_admin (AUTH_AUDIT_2026-06). Minted-only: see note below.
-  | "client";       // customer (lives in /tenant; never reaches /v2)
+  | "client";       // customer (lives in /tenant; never reaches /ops)
 // NOTE on `auditor` (AUTH_AUDIT_2026-06): it is a fully-functional role at
 // the auth layer (read-only permission set + super_admin-style global org
 // scope) but is currently **minted-only** — issued via

@@ -37,7 +37,7 @@ type PreloadFn = (pathname: string, search: string) => void;
 async function freshPreload(): Promise<PreloadFn> {
   vi.resetModules();
   registerMocks();
-  window.history.pushState({}, '', '/v2/__nope__');
+  window.history.pushState({}, '', '/ops/__nope__');
   const mod = await import('@/App');
   loaded.length = 0;
   return mod.preloadRouteForPath;
@@ -64,24 +64,24 @@ describe('preloadRouteForPath', () => {
     expect(await run(path)).toEqual(expected);
   });
 
-  it('strips the /v2 basename', async () => {
-    expect(await run('/v2/observatory')).toEqual(['observatory']);
-    expect(await run('/v2/brands/abc')).toEqual(['brand-detail']);
+  it('strips the /ops basename', async () => {
+    expect(await run('/ops/observatory')).toEqual(['observatory']);
+    expect(await run('/ops/brands/abc')).toEqual(['brand-detail']);
   });
 
-  it('treats /v2 and /v2/ as the home route', async () => {
-    expect(await run('/v2')).toEqual(['overview']);
-    expect(await run('/v2/')).toEqual(['overview']);
+  it('treats /ops and /ops/ as the home route', async () => {
+    expect(await run('/ops')).toEqual(['overview']);
+    expect(await run('/ops/')).toEqual(['overview']);
   });
 
   it('ignores trailing slashes', async () => {
     expect(await run('/coverage/')).toEqual(['coverage']);
-    expect(await run('/v2/admin/governance//')).toEqual(['governance']);
+    expect(await run('/ops/admin/governance//')).toEqual(['governance']);
   });
 
-  it('does not strip a prefix that merely starts with v2 (/v2evil)', async () => {
-    expect(await run('/v2evil')).toEqual([]);
-    expect(await run('/v2evil/observatory')).toEqual([]);
+  it('does not strip a prefix that merely starts with ops (/opsevil)', async () => {
+    expect(await run('/opsevil')).toEqual([]);
+    expect(await run('/opsevil/observatory')).toEqual([]);
   });
 
   it.each([
@@ -99,7 +99,7 @@ describe('preloadRouteForPath', () => {
   });
 
   it('console passes the legacy signals alias through to the registry', async () => {
-    expect(await run('/v2/console', '?tab=signals')).toEqual(['console', 'console-tab:signals'].sort());
+    expect(await run('/ops/console', '?tab=signals')).toEqual(['console', 'console-tab:signals'].sort());
   });
 
   it('explore loads the workspace chunk plus the tab pane', async () => {
@@ -130,17 +130,17 @@ describe('preloadRouteForPath with hostile ?tab= values', () => {
         ['@/features/console/Console', { Console: () => null }],
         ['@/features/explore/ExploreWorkspace', { ExploreWorkspace: () => null }],
       ] as const) vi.doMock(path, () => mod);
-      window.history.pushState({}, '', '/v2/__nope__');
+      window.history.pushState({}, '', '/ops/__nope__');
       const { preloadRouteForPath } = await import('@/App');
-      expect(() => preloadRouteForPath('/v2/console', `?tab=${tab}`)).not.toThrow();
-      expect(() => preloadRouteForPath('/v2/explore', `?tab=${tab}`)).not.toThrow();
+      expect(() => preloadRouteForPath('/ops/console', `?tab=${tab}`)).not.toThrow();
+      expect(() => preloadRouteForPath('/ops/explore', `?tab=${tab}`)).not.toThrow();
       await new Promise(r => setTimeout(r, 0));
     });
 
   it('importing App starts no preload (the boot call lives in main.tsx)', async () => {
     vi.resetModules();
     registerMocks();
-    window.history.pushState({}, '', '/v2/console?tab=threats');
+    window.history.pushState({}, '', '/ops/console?tab=threats');
     loaded.length = 0;
     await import('@/App');
     await new Promise(r => setTimeout(r, 0));

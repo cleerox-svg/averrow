@@ -1280,7 +1280,7 @@ export function Alerts() {
           { value: 'medium',   label: 'Medium',   count: stats?.medium },
           // Low tier was missing from the original filter — audit H7
           // (2026-05-06) flagged the inconsistent severity scale vs.
-          // /v2/threats which has all 5 tiers.
+          // /ops/threats which has all 5 tiers.
           { value: 'low',      label: 'Low',      count: stats?.low },
         ]}
         active={filters.severity ?? 'all'}

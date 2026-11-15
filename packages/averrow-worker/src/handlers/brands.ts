@@ -210,7 +210,7 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
     // read across 68 calls/24h.
     //
     // PR-U: returns the full top-8 breakdown for the donut chart on
-    // /v2/brands. Previously only the #1 row was extracted, which
+    // /ops/brands. Previously only the #1 row was extracted, which
     // left the Attack-types card showing one bar with the real %
     // and 2nd/3rd entries reaching for `second_threat_type` /
     // `third_threat_type` fields that this handler never returned.
@@ -234,7 +234,7 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
 
     const topType = threatTypeBreakdown.results?.[0] ?? null;
 
-    // Sector mix for the donut on /v2/brands. The UI was rendering
+    // Sector mix for the donut on /ops/brands. The UI was rendering
     // "Sector classification pending for X brands" for every visitor
     // because this handler never returned `sector_breakdown` — even
     // though ~6% of brands (4.7K of 78K) have a sector populated. Top

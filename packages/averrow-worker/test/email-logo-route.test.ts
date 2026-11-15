@@ -1,6 +1,6 @@
 // Facelift Phase 4 review fix: the hosted email logo needs a one-year
 // immutable Cache-Control for Gmail's image proxy (PR-BB / PR-BF). The PNG
-// ships in the ops build at /v2/email/, which the frozen public/_headers
+// ships in the ops build at /ops/email/, which the frozen public/_headers
 // can't cover, so emails reference the Worker route /email/averrow-mark-r3.png
 // that re-serves it from ASSETS with the long cache.
 
@@ -77,7 +77,7 @@ describe("GET /email/averrow-mark-r3.png", () => {
     expect(existsSync(resolve(WORKER, "public", EMAIL_LOGO_PATH.slice(1)))).toBe(false);
     expect(existsSync(resolve(WORKER, "../averrow-marketing/public/email"))).toBe(false);
     expect(existsSync(resolve(WORKER, "../averrow-marketing/src/pages/email"))).toBe(false);
-    // The file it re-serves does ship (ops public/ → public/v2/).
+    // The file it re-serves does ship (ops public/ → public/ops/).
     expect(existsSync(resolve(WORKER, "../averrow-ops/public/email/averrow-mark-r3.png"))).toBe(true);
   });
 });

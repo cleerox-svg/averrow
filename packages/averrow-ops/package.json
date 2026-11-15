@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node -e \"require('fs').rmSync('../averrow-worker/public/v2',{recursive:true,force:true})\" && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "preview": "vite preview",

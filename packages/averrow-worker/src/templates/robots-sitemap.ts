@@ -9,11 +9,13 @@
  * the Worker-only routes in case ASSETS misses the static one.
  */
 
+import { OPS_BASE } from "../lib/app-paths";
+
 export function renderRobotsTxt(): string {
   // Shared disallow list — kept identical across the wildcard block and
   // every explicit AI-crawler block below.
   const disallow = [
-    "/v2/",
+    `${OPS_BASE}/`,
     "/api/",
     "/admin-portal/",
     "/internal-staff/",

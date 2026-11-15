@@ -1,12 +1,12 @@
 /* Averrow service worker — PWA shell + runtime caching + Web Push.
  *
- * Scope: /v2/  (set by registration; matches the SPA's vite `base`).
+ * Scope: /ops/  (set by registration; matches the SPA's vite `base`).
  * Old SPA at / and /legacy is unaffected — its pages are not in scope.
  *
  * Three caching strategies:
  *   0. Requests carrying ?__update_check → not intercepted (the shared "new version"
  *      probe must see the live index.html)
- *   1. Navigation requests (/v2/...)   → network-first; the shell cache is the offline fallback only
+ *   1. Navigation requests (/ops/...)   → network-first; the shell cache is the offline fallback only
  *   2. /api/... GETs                   → network-only, never cached (offline 503)
  *      H6 (SECURITY_AUDIT_2026-06-10): /api/* responses carry authenticated
  *      data and must not persist in Cache Storage — they were previously
@@ -14,7 +14,7 @@
  *      on a shared device after logout. Nothing in the SPA relied on the API
  *      offline fallback (the app does its own refetching once the shell
  *      boots), so this is a clean removal rather than an allowlist.
- *   3. /v2/assets/... (Vite hashed)    → cache-first immutable
+ *   3. /ops/assets/... (Vite hashed)    → cache-first immutable
  *   4. Anything else same-origin       → stale-while-revalidate (runtime cache)
  *
  * Cross-origin (Google Fonts, etc.) is not intercepted — browser handles it.
@@ -23,7 +23,7 @@
  * Web Push (added in PR 3b):
  *   - `push` event: decodes the dispatcher's JSON payload and shows an OS
  *     notification with severity-aware icon + tag-based dedup.
- *   - `notificationclick`: focuses an existing /v2/ tab if open, otherwise
+ *   - `notificationclick`: focuses an existing /ops/ tab if open, otherwise
  *     opens a new one at the deep-link URL from the payload. Best-effort
  *     marks the in-app row read by POSTing /api/notifications/:id/read
  *     with the cookie-based session — no auth header needed because the
@@ -32,7 +32,7 @@
  * Bump VERSION on any change here so old caches are evicted on activate.
  */
 
-const VERSION = '2026-11-15.1';
+const VERSION = '2026-11-15.2-ops';
 const SHELL_CACHE   = `averrow-shell-${VERSION}`;
 const RUNTIME_CACHE = `averrow-runtime-${VERSION}`;
 
@@ -45,18 +45,18 @@ const API_CACHE_PREFIX = 'averrow-api-';
 // Everything else fills in opportunistically through SWR + cache-first as
 // the user navigates.
 const SHELL_PRECACHE = [
-  '/v2/',
-  '/v2/index.html',
-  '/v2/manifest.json',
-  '/v2/favicon.svg',
-  '/v2/favicon.ico',
-  '/v2/apple-touch-icon.png',
-  '/v2/icon-192.png',
-  '/v2/icon-512.png',
-  '/v2/icon-512-maskable.png',
-  '/v2/icon-192.svg',
-  '/v2/icon-512.svg',
-  '/v2/notification-badge.png',
+  '/ops/',
+  '/ops/index.html',
+  '/ops/manifest.json',
+  '/ops/favicon.svg',
+  '/ops/favicon.ico',
+  '/ops/apple-touch-icon.png',
+  '/ops/icon-192.png',
+  '/ops/icon-512.png',
+  '/ops/icon-512-maskable.png',
+  '/ops/icon-192.svg',
+  '/ops/icon-512.svg',
+  '/ops/notification-badge.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -118,7 +118,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Vite-hashed bundles are immutable — cache-first is safe.
-  if (url.pathname.startsWith('/v2/assets/')) {
+  if (url.pathname.startsWith('/ops/assets/')) {
     event.respondWith(cacheFirst(req, RUNTIME_CACHE));
     return;
   }
@@ -152,17 +152,17 @@ self.addEventListener('message', (event) => {
 // ─── Strategies ─────────────────────────────────────────────────────────
 
 async function navigationHandler(req) {
-  // Try network for the latest shell, but always fall back to cached /v2/
+  // Try network for the latest shell, but always fall back to cached /ops/
   // shell so the app boots offline. The SPA does its own data refetching
   // once it's running.
   try {
     const fresh = await fetch(req);
     const cache = await caches.open(SHELL_CACHE);
-    cache.put('/v2/', fresh.clone()).catch(() => {});
+    cache.put('/ops/', fresh.clone()).catch(() => {});
     return fresh;
   } catch {
     const cache = await caches.open(SHELL_CACHE);
-    const cached = (await cache.match('/v2/')) || (await cache.match('/v2/index.html'));
+    const cached = (await cache.match('/ops/')) || (await cache.match('/ops/index.html'));
     if (cached) return cached;
     return new Response('Offline. Reload when you have a connection.', {
       status: 503,
@@ -269,7 +269,7 @@ self.addEventListener('push', (event) => {
     body: data.body || '',
     // PNG, not SVG: Chrome on Android does not render SVG notification
     // images, so an SVG icon/badge falls back to a generic glyph.
-    icon: '/v2/icon-192.png',
+    icon: '/ops/icon-192.png',
     // Android renders `badge` as the status-bar small icon and
     // expects a monochrome white-on-transparent silhouette (it uses the
     // alpha channel only). icon-192 is multi-color (navy tile + red
@@ -277,13 +277,13 @@ self.addEventListener('push', (event) => {
     // generic glyph fallback. notification-badge.png is the 96x96
     // white R3 mark (source: notification-badge.svg). iOS/desktop
     // ignore `badge`.
-    badge: '/v2/notification-badge.png',
+    badge: '/ops/notification-badge.png',
     tag: data.tag || `averrow-${data.type || 'generic'}`,
     renotify: true,
     // Stash the click target + in-app id on the notification itself so the
     // notificationclick handler can read it back without another fetch.
     data: {
-      url: data.url || '/v2/',
+      url: data.url || '/ops/',
       notificationId: data.notificationId || null,
       severity: data.severity || 'info',
       type: data.type || null,
@@ -309,25 +309,36 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// React Router runs at basename="/v2", but notification.link is
+// React Router runs at basename="/ops", but notification.link is
 // stored as a basename-relative path (e.g. "/agents") so the in-app
 // bell click via navigate() works. The SW navigates the bare URL
-// though — `/agents` on averrow.com hits the LEGACY SPA, not v2.
-// Prepend /v2/ when the path is missing it (operator screenshot
+// though — `/agents` on averrow.com hits the LEGACY SPA, not the app.
+// Prepend /ops/ when the path is missing it (operator screenshot
 // 2026-04-30: tapping a platform alert opened the old UI).
-function v2Path(path) {
-  if (!path) return '/v2/';
-  if (path.startsWith('http://') || path.startsWith('https://')) return path;
-  if (path.startsWith('/v2/') || path === '/v2') return path;
-  if (path.startsWith('/')) return '/v2' + path;
-  return '/v2/' + path;
+function opsPath(path) {
+  if (!path) return '/ops/';
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    // Same-origin absolute links only; a notification never opens another site.
+    try {
+      const u = new URL(path);
+      if (u.origin !== self.location.origin) return '/ops/';
+      return opsPath(u.pathname + u.search + u.hash);
+    } catch (e) {
+      return '/ops/';
+    }
+  }
+  if (path.startsWith('/ops/') || path === '/ops') return path;
+  // An in-flight payload from before the move (/v2 was retired 2026-11-15).
+  if (path === '/v2' || path.startsWith('/v2/')) return '/ops' + path.slice(3);
+  if (path.startsWith('/')) return '/ops' + path;
+  return '/ops/' + path;
 }
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const rawPath = (event.notification.data && event.notification.data.url) || '/v2/';
-  const targetPath = v2Path(rawPath);
+  const rawPath = (event.notification.data && event.notification.data.url) || '/ops/';
+  const targetPath = opsPath(rawPath);
   const notificationId = event.notification.data && event.notification.data.notificationId;
   const targetUrl = new URL(targetPath, self.location.origin).href;
   const action = event.action; // '' for default tap, 'snooze' / 'done' for action buttons
@@ -364,12 +375,12 @@ self.addEventListener('notificationclick', (event) => {
       }).catch(() => {});
     }
 
-    // If a /v2/ tab is already open, focus it and navigate; otherwise open new.
+    // If a /ops/ tab is already open, focus it and navigate; otherwise open new.
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const client of all) {
       try {
         const url = new URL(client.url);
-        if (url.origin === self.location.origin && url.pathname.startsWith('/v2/')) {
+        if (url.origin === self.location.origin && url.pathname.startsWith('/ops/')) {
           if ('focus' in client) await client.focus();
           if ('navigate' in client) await client.navigate(targetUrl);
           return;

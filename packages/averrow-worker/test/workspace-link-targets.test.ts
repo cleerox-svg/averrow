@@ -2,7 +2,7 @@
 // (ops UI consolidation PR4).
 //
 //  1. registerPublicRoutes' LEGACY_REDIRECTS: old standalone paths must 302 to
-//     the canonical /v2 workspace URL (driven through the REAL router).
+//     the canonical /ops workspace URL (driven through the REAL router).
 //  2. Platform notification templates must deep-link only to URLs the SPA
 //     actually serves. Before PR4 they pointed at /admin/agents and
 //     /admin/feeds, which 404 inside the SPA.
@@ -24,7 +24,7 @@ import { registerPublicRoutes } from "../src/routes/public";
 import type { Env } from "../src/types";
 import * as T from "../src/lib/platform-templates";
 
-// In-app (basename-relative, no /v2) canonical URLs.
+// In-app (basename-relative, no /ops) canonical URLs.
 const AGENTS = "/admin/operations?tab=agents"; // WORKSPACE_TABS.agents
 const FEEDS = "/admin/operations?tab=feeds"; // WORKSPACE_TABS.feeds
 const ADMIN = "/admin"; // <Route path="admin"> AdminDashboard
@@ -45,18 +45,18 @@ async function get(path: string): Promise<Response> {
 
 describe("legacy standalone paths redirect to workspace tab URLs", () => {
   const CASES: Array<[string, string]> = [
-    ["/admin/organizations", "https://averrow.com/v2/admin/customers"],
-    ["/admin/feeds", "https://averrow.com/v2/admin/operations?tab=feeds"],
-    ["/admin/agent-config", "https://averrow.com/v2/admin/operations?tab=agents"],
-    ["/admin/audit", "https://averrow.com/v2/admin/governance?tab=audit"],
-    ["/admin/takedowns", "https://averrow.com/v2/console?tab=takedowns"],
-    ["/brands", "https://averrow.com/v2/explore?tab=brands"],
+    ["/admin/organizations", "https://averrow.com/ops/admin/customers"],
+    ["/admin/feeds", "https://averrow.com/ops/admin/operations?tab=feeds"],
+    ["/admin/agent-config", "https://averrow.com/ops/admin/operations?tab=agents"],
+    ["/admin/audit", "https://averrow.com/ops/admin/governance?tab=audit"],
+    ["/admin/takedowns", "https://averrow.com/ops/console?tab=takedowns"],
+    ["/brands", "https://averrow.com/ops/explore?tab=brands"],
     // Unchanged entries guard against collateral damage to the table.
-    ["/admin", "https://averrow.com/v2/admin"],
-    ["/admin/dashboard", "https://averrow.com/v2/admin"],
-    ["/admin/users", "https://averrow.com/v2/admin/users"],
-    ["/admin/spam-trap", "https://averrow.com/v2/admin/spam-trap"],
-    ["/observatory", "https://averrow.com/v2"],
+    ["/admin", "https://averrow.com/ops/admin"],
+    ["/admin/dashboard", "https://averrow.com/ops/admin"],
+    ["/admin/users", "https://averrow.com/ops/admin/users"],
+    ["/admin/spam-trap", "https://averrow.com/ops/admin/spam-trap"],
+    ["/observatory", "https://averrow.com/ops/"],
   ];
   for (const [from, location] of CASES) {
     it(`${from} -> 302 ${location}`, async () => {
@@ -70,7 +70,7 @@ describe("legacy standalone paths redirect to workspace tab URLs", () => {
     const req = new Request("https://staging.averrow.com/admin/feeds");
     const res = (await makeRouter().fetch(req, {} as Env)) as Response;
     expect(res.headers.get("Location")).toBe(
-      "https://staging.averrow.com/v2/admin/operations?tab=feeds",
+      "https://staging.averrow.com/ops/admin/operations?tab=feeds",
     );
   });
 });

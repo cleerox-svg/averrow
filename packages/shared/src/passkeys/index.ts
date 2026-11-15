@@ -5,7 +5,7 @@
 //
 // Usage:
 //   const passkeys = createPasskeyClient(httpAdapter, {
-//     defaultReturnTo: '/v2/',
+//     defaultReturnTo: '/ops/',
 //   });
 //   passkeys.registerPasskey('MacBook Pro 14');
 

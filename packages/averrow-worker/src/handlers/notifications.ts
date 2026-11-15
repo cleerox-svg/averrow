@@ -37,7 +37,7 @@ const PREF_DEFAULTS: Record<PrefColumn, boolean> = (() => {
 
 // GET /api/notifications
 //
-// Powers both the bell dropdown (no filters) and the /v2/notifications
+// Powers both the bell dropdown (no filters) and the /ops/notifications
 // archive page (filtered + searched + cursor-paginated).
 //
 // Query params:

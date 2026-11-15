@@ -223,11 +223,11 @@ describe('appearance-html plugin helpers', () => {
   };
 
   it('font preloads: none when off; upright sans + mono, base-prefixed, when on', () => {
-    expect(fontPreloadTags(bundle, '/v2/', false)).toEqual([]);
-    const tags = fontPreloadTags(bundle, '/v2/', true);
+    expect(fontPreloadTags(bundle, '/ops/', false)).toEqual([]);
+    const tags = fontPreloadTags(bundle, '/ops/', true);
     expect(tags.map((t) => t.attrs.href)).toEqual([
-      '/v2/assets/geist-sans-latin-var-AAAA.woff2',
-      '/v2/assets/geist-mono-latin-var-CCCC.woff2',
+      '/ops/assets/geist-sans-latin-var-AAAA.woff2',
+      '/ops/assets/geist-mono-latin-var-CCCC.woff2',
     ]);
     for (const t of tags) {
       expect(t).toMatchObject({ tag: 'link', injectTo: 'head', attrs: { rel: 'preload', as: 'font', type: 'font/woff2', crossorigin: true } });
@@ -238,8 +238,8 @@ describe('appearance-html plugin helpers', () => {
 
   it('font preloads: a font missing from the bundle fails the build', () => {
     const { ['assets/geist-mono-latin-var-CCCC.woff2']: _gone, ...rest } = bundle;
-    expect(() => fontPreloadTags(rest, '/v2/', true)).toThrow(/geist-mono-latin-var/);
-    expect(() => fontPreloadTags(rest, '/v2/', false)).not.toThrow();
+    expect(() => fontPreloadTags(rest, '/ops/', true)).toThrow(/geist-mono-latin-var/);
+    expect(() => fontPreloadTags(rest, '/ops/', false)).not.toThrow();
   });
 
   it('preloaded fonts exist in the shared theme', () => {

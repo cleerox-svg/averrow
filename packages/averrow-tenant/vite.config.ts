@@ -19,7 +19,7 @@ const builtAt = new Date().toISOString();
 
 // averrow-tenant — customer-facing v3 app. Builds into the worker's
 // /tenant assets path so Cloudflare can serve it from a single
-// origin alongside averrow-ops (the staff back-office at /v2). The
+// origin alongside averrow-ops (the staff back-office at /ops). The
 // final routing decision (subdomain vs path) lands in Phase D.
 export default defineConfig({
   // appearanceHtml(): fills index.html's appearance bootstrap / theme-color /

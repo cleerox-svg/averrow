@@ -24,6 +24,7 @@
 import { json } from "../lib/cors";
 import { dispatchPush } from "../lib/push";
 import type { Env } from "../types";
+import { OPS_HOME } from "../lib/app-paths";
 
 // ─── GET /api/notifications/config ────────────────────────────
 //
@@ -208,7 +209,7 @@ export async function handleTestNotification(
     const result = await dispatchPush(env, userId, {
       title: "Averrow test notification",
       body: "If you see this, push delivery is working end-to-end on this device.",
-      url: "/v2",
+      url: OPS_HOME,
       tag: "averrow-test",
       severity: "info",
       type: "test",

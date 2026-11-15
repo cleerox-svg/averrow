@@ -5,7 +5,7 @@
  *
  * Why this exists: writing Astro's outDir directly into public/
  * causes Astro's outDir cleanup to wipe legacy SPA assets that
- * share the directory (app.js, dashboard.html, public/v2, etc.).
+ * share the directory (app.js, dashboard.html, public/ops, etc.).
  * Going through dist/ + post-build copy lets us overlay without
  * destroying anything.
  *

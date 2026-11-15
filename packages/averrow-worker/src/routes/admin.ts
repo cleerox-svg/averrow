@@ -265,7 +265,7 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
 
   // ─── NX5 Notification Center (super-admin only) ────────────────────
   // Activity stats + per-type system-wide mutes. Powers
-  // /v2/notifications/admin in averrow-ops.
+  // /ops/notifications/admin in averrow-ops.
   router.get("/api/admin/notifications/stats", async (request: Request, env: Env) => {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
