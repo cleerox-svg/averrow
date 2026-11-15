@@ -38,15 +38,16 @@ function MatchRow({ m }: { m: KitMatch }) {
       {tags.length > 0 && (
         <div className="mt-1 flex flex-wrap items-center gap-1">
           {tags.map((t, i) => <Tag key={`${i}-${t}`}>{t}</Tag>)}
-          {hidden > 0 && (
+          {m.tags.length > KIT_VISIBLE_TAGS && (
             <button
               type="button"
-              onClick={() => setAllTags(true)}
-              aria-label={`Show ${hidden} more tags`}
-              className="min-h-[24px] cursor-pointer border-0 bg-transparent px-1 font-mono text-[11px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
+              onClick={() => setAllTags((v) => !v)}
+              aria-expanded={allTags}
+              aria-label={allTags ? 'Show fewer tags' : `Show ${hidden} more tags`}
+              className="min-h-[24px] cursor-pointer rounded border-0 bg-transparent px-1.5 font-mono text-[11px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
               style={{ color: 'var(--primary-text)' }}
             >
-              +{hidden}
+              {allTags ? 'Less' : `+${hidden}`}
             </button>
           )}
         </div>
@@ -123,7 +124,7 @@ export function KitMatchBlock({ kit }: { kit: KitMatching | null | undefined }) 
   }
 
   return (
-    <section className="mt-3" aria-label="Kit match" data-kit-match>
+    <section className="mb-3 mt-3" aria-label="Kit match" data-kit-match>
       <h5 className={`${LABEL_CLS} m-0 mb-1`} style={MUTED}>Kit match</h5>
       {body}
     </section>
