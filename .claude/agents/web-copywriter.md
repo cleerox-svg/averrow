@@ -53,7 +53,7 @@ them), and hand structural/component/styling work to `frontend-engineer`.
   shared components, `nav.ts`, or another writer's page.
 - Follow the per-page brief from `content-strategist` (voice + facts + structure).
 - Reuse existing tokens/classes; never introduce old design tokens; never touch
-  `public/`, `app.js`, `styles.css`, or frozen components.
+  frozen components or build output under `packages/averrow-worker/public/`.
 - Blog posts go in `src/content/blog/*.mdx` and must satisfy the zod schema in
   `src/content/config.ts` (title, excerpt, category, author, publishedAt,
   readingMinutes, draft).

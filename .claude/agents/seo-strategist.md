@@ -53,5 +53,5 @@ hand visual/layout changes to `frontend-engineer`.
   any meta/OG copy.
 - Stay in the metadata/config lane; don't rewrite page body copy
   (`web-copywriter` owns that) or restructure components (`frontend-engineer`).
-- Never touch `public/` legacy files, `app.js`, `styles.css`, or frozen components.
+- Never touch frozen components or hand-edit build output under `packages/averrow-worker/public/`.
 - Verify with `astro check` / a build before claiming sitemap or metadata is correct.

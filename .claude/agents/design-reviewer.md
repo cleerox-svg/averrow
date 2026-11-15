@@ -36,6 +36,5 @@ you are not the feature builder.
 - Read-only by default: you produce a prioritized findings list plus suggested
   diffs, and hand implementation to `frontend-engineer` unless explicitly asked
   to apply small fixes.
-- Never touch frozen components or the old SPA (`public/`, `app.js`,
-  `styles.css`).
+- Never touch frozen components.
 - Ground every finding in a file:line and the specific standard it violates.

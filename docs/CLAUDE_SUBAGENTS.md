@@ -59,7 +59,7 @@ Features, hooks, layouts, design-system primitives across ops/tenant/shared and
 marketing islands. **Key guardrails:** import from `@/design-system/components` (new components: the shared kit
 `@averrow/shared/ui`, re-exported there from Phase 1 PR6);
 CSS custom properties, never old tokens; never refactor frozen components; never
-touch `public/` / `app.js` / `styles.css`; user avatars = initials only; light +
+hand-edit build output under `public/`; user avatars = initials only; light +
 dark theme; login parity spec (profile/account is Averrow-canonical, `docs/ACCOUNT_DESIGN_SPEC.md`); `tsc --noEmit` clean.
 
 ### `test-engineer` — automated test coverage
@@ -148,7 +148,7 @@ instances in parallel, one page each. **Guardrails:** works from a
 never invents metrics or placeholder proof (see the accuracy discipline in its
 charter — the site has shipped self-contradicting numbers before); writes
 copy/MDX only and hands layout/components to `frontend-engineer`; never touches
-`public/` / `app.js` / `styles.css` / frozen components.
+frozen components or build output under `public/`.
 
 ### `market-analyst` — competitive & market intelligence
 Peer/competitor teardowns (IA, messaging, proof, pricing, CTA, SEO footprint),
