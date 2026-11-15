@@ -21,7 +21,6 @@ import {
 import { wrapPage } from "../src/templates/shared";
 import { renderPrivacyPage } from "../src/templates/privacy";
 import { renderTermsPage } from "../src/templates/terms";
-import { renderHomepage } from "../src/templates/homepage";
 import { renderNotFoundPage } from "../src/templates/not-found";
 import { renderInviteAcceptPage, renderInviteErrorPage } from "../src/templates/invite-accept";
 import { emailShell, headerStatusBadge, EMAIL_COLORS, EMAIL_CTA_STYLE } from "../src/lib/email-layout";
@@ -90,7 +89,6 @@ describe("server-rendered pages", () => {
     ["wrapPage (status / incidents chrome)", () => wrapPage("T — Averrow", "d", "<main></main>")],
     ["privacy", renderPrivacyPage],
     ["terms", renderTermsPage],
-    ["legacy homepage", () => renderHomepage()],
     ["404", renderNotFoundPage],
     ["invite accept", () => renderInviteAcceptPage({
       email: "a@b.example", role: "analyst", orgName: "Acme", authUrl: "https://averrow.com/auth", expiresAt: "2026-12-01T00:00:00Z",

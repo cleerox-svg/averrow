@@ -18,8 +18,8 @@ import react from "@astrojs/react";
 // copies the artifacts overlay-style into ../averrow-worker/public/ so
 // the Worker's ASSETS binding picks them up. Going through dist/
 // instead of writing directly into public/ prevents Astro's outDir
-// cleanup from wiping the legacy SPA assets (app.js, dashboard.html,
-// public/ops, public/tenant) that share the directory.
+// cleanup from wiping the SPA builds (public/ops, public/tenant) that
+// share the directory.
 export default defineConfig({
   site: "https://averrow.com",
   base: "/",

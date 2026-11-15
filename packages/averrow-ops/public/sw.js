@@ -312,7 +312,7 @@ self.addEventListener('push', (event) => {
 // React Router runs at basename="/ops", but notification.link is
 // stored as a basename-relative path (e.g. "/agents") so the in-app
 // bell click via navigate() works. The SW navigates the bare URL
-// though — `/agents` on averrow.com hits the LEGACY SPA, not the app.
+// though — `/agents` on averrow.com is not an app route (it 404s).
 // Prepend /ops/ when the path is missing it (operator screenshot
 // 2026-04-30: tapping a platform alert opened the old UI).
 function opsPath(path) {

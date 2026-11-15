@@ -99,7 +99,7 @@ export function r3WordmarkSvg(height: number, fill = "currentColor", className?:
 
 /** Inline favicon — byte-identical to docs/brand/logo/favicon.svg (pinned
  *  by test) — as a data URI, so the
- *  pages don't depend on the frozen legacy /favicon.svg. */
+ *  pages don't depend on a served /favicon.svg. */
 export const R3_FAVICON_DATA_URI =
   "data:image/svg+xml," +
   encodeURIComponent(

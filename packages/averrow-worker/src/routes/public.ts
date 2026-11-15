@@ -9,10 +9,8 @@ import { json } from "../lib/cors";
 // Worker-served routes remain for paths with dynamic behaviour
 // (auth, scan, status incidents, etc.).
 //
-// homepage.ts is kept to power /legacy (renderHomepage wrapped with a
-// banner). The free scan page (/scan) is the Astro page in
+// The free scan page (/scan) is the Astro page in
 // packages/averrow-marketing, served by ASSETS.
-import { renderHomepage } from "../templates/homepage";
 import { renderStatusPage } from "../templates/status";
 import { renderPrivacyPage } from "../templates/privacy";
 import { renderTermsPage } from "../templates/terms";
@@ -29,8 +27,8 @@ import {
   evaluateTurnstile, turnstileBlockedRedirectPath, TURNSTILE_FORM_FIELD, TURNSTILE_HEADER, TURNSTILE_JSON_FIELD,
 } from "../lib/turnstile";
 import {
-  handlePublicStats, handlePublicGeo, handlePublicAssess, handlePublicLeadCapture,
-  handlePublicMonitor, handlePublicFeeds, publicAssessIpLimit,
+  handlePublicStats, handlePublicAssess, handlePublicLeadCapture,
+  handlePublicMonitor, publicAssessIpLimit,
 } from "../handlers/public";
 import { handlePublicStats as handlePublicStatsV2 } from "../handlers/stats";
 import { rateLimitCustom } from "../middleware/rateLimit";
@@ -56,28 +54,6 @@ const htmlPage = (render: () => string) => () =>
     },
   });
 
-/** Wraps the old homepage with a legacy banner */
-function renderLegacyHomepage(): string {
-  const banner = `<div style="background:#C83C3C;color:white;padding:8px 16px;font-family:monospace;font-size:12px;text-align:center;position:sticky;top:0;z-index:9999">\u26A0 You are viewing the legacy interface. <a href="${OPS_HOME}" style="color:white;text-decoration:underline">Switch to the new interface \u2192</a></div>`;
-  const html = renderHomepage();
-  return html.replace(/<body([^>]*)>/, `<body$1>${banner}`);
-}
-
-// ─── Legacy redirects (old admin routes → /ops equivalents) ─────
-const LEGACY_REDIRECTS: Record<string, string> = {
-  '/admin':               `${OPS_BASE}/admin`,
-  '/admin/dashboard':     `${OPS_BASE}/admin`,
-  '/admin/users':         `${OPS_BASE}/admin/users`,
-  '/admin/organizations': `${OPS_BASE}/admin/customers`,
-  '/admin/feeds':         `${OPS_BASE}/admin/operations?tab=feeds`,
-  '/admin/agent-config':  `${OPS_BASE}/admin/operations?tab=agents`,
-  '/admin/audit':         `${OPS_BASE}/admin/governance?tab=audit`,
-  '/admin/spam-trap':     `${OPS_BASE}/admin/spam-trap`,
-  '/admin/takedowns':     `${OPS_BASE}/console?tab=takedowns`,
-  '/observatory':         OPS_HOME,
-  '/brands':              `${OPS_BASE}/explore?tab=brands`,
-};
-
 /** 30 anonymous email-security checks per IP per hour. */
 export const PUBLIC_EMAIL_SECURITY_RATE_LIMIT: RateLimitConfig = {
   key: "pub_email_security",
@@ -98,14 +74,6 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // and /changelog/feed.xml. The dynamic-stats fetch that used to
   // live on / moves to R7 (build-time fetch in averrow-marketing).
 
-  // ─── Legacy redirects (old admin routes → /ops) ─────────────────
-  for (const [oldPath, newPath] of Object.entries(LEGACY_REDIRECTS)) {
-    router.get(oldPath, (request: Request) => {
-      const url = new URL(request.url);
-      return Response.redirect(`${url.origin}${newPath}`, 302);
-    });
-  }
-
   // ─── /login → React /ops/login ───────────────────────────────────
   // Previously this redirected straight to /api/auth/login (Google
   // OAuth). That short-circuited the React Login page so users only
@@ -116,16 +84,6 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     const url = new URL(request.url);
     return Response.redirect(`${url.origin}${OPS_BASE}/login`, 302);
   });
-
-  // ─── Legacy escape hatch — old homepage at /legacy ──────────────
-  router.get("/legacy", () =>
-    new Response(renderLegacyHomepage(), {
-      headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "public, max-age=300, s-maxage=600",
-      },
-    })
-  );
 
   // ─── Public Assessment ───────────────────────────────────────────
   router.post("/assess", async (request: Request, env: Env) => {
@@ -354,8 +312,6 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
 
   // ─── Public API endpoints (no auth) ──────────────────────────────
   router.get("/api/v1/public/stats", (request: Request, env: Env) => handlePublicStats(request, env));
-  router.get("/api/v1/public/geo", (request: Request, env: Env) => handlePublicGeo(request, env));
-  router.get("/api/v1/public/feeds", (request: Request, env: Env) => handlePublicFeeds(request, env));
   router.post("/api/v1/public/assess", (request: Request, env: Env) => handlePublicAssess(request, env));
   router.post("/api/v1/public/leads", (request: Request, env: Env) => handlePublicLeadCapture(request, env));
   router.post("/api/v1/public/monitor", (request: Request, env: Env) => handlePublicMonitor(request, env));
@@ -444,9 +400,8 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // ASSETS handles the happy path (file exists). When a 404 falls
   // through, we re-issue the request against the matching SPA shell
   // so the React Router can take over client-side. Without this the
-  // catch-all would route every /tenant/<slug> refresh into the
-  // legacy /dashboard.html shell, which renders its own "Page not
-  // found" (the bug the user just hit).
+  // catch-all would render the branded 404 page for every
+  // /tenant/<slug> refresh.
   router.all("*", async (request: Request, env: Env, ctx: ExecutionContext) => {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) {
@@ -482,10 +437,6 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     }
 
     // Last-ditch fallback: render the Worker's branded 404 page.
-    // Note: /dashboard.html (the legacy SPA shell) is intentionally
-    // no longer the catch-all — that surface was retired with the
-    // marketing-site Astro cutover and isn't a sensible fallback
-    // for unknown paths.
     return new Response(renderNotFoundPage(), { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } });
   });
 }

@@ -23,8 +23,8 @@ export interface PublicStats {
    *  so the two can never disagree (disclosure register L20). */
   threats_total: number | null;
   /** Size of the brand CATALOG (`COUNT(*) FROM brands`, incl. the passive
-   *  tier='tracked' rows), formatted. The key name is legacy (the /legacy
-   *  homepage template + `brands_monitored_label` read it); it is NOT the
+   *  tier='tracked' rows), formatted. The key name is historical
+   *  (`brands_monitored_label` reads it); it is NOT the
    *  monitored-brand count — see proof.monitored_brands (register L12). */
   brands_monitored: string | null;    // e.g. "124K+"
   // Static marketing claim kept here so the template doesn't hardcode it.

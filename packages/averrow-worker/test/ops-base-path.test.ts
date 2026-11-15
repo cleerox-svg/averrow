@@ -102,20 +102,31 @@ describe("redirects into the app point at /ops", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("https://averrow.com/ops/login");
   });
+});
+
+// The pre-React app was deleted on 2026-11-15 (owner decision; screenshots in
+// docs/history/legacy-app/). Its URLs are plain 404s now: no redirect table,
+// no /legacy page. /login stays (above); marketing pages are untouched.
+describe("deleted legacy app paths", () => {
   it.each([
-    ["/admin", "/ops/admin"],
-    ["/brands", "/ops/explore?tab=brands"],
-    ["/observatory", "/ops/"],
-  ])("legacy %s -> %s", async (from, to) => {
+    "/legacy", "/observatory", "/brands", "/admin", "/admin/users", "/admin/feeds",
+    "/dashboard.html", "/app.js", "/styles.css", "/manifest.json",
+  ])("%s -> 404, no redirect into the app", async (p) => {
     const { env } = makeEnv();
-    const res = await get(from, env);
-    expect(res.headers.get("Location")).toBe(`https://averrow.com${to}`);
+    const res = await get(p, env);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Location")).toBeNull();
   });
-  it("/legacy banner links to /ops/", async () => {
-    const { env } = makeEnv();
-    const html = await (await get("/legacy", env)).text();
-    expect(html).toContain('href="/ops/"');
-    expect(html).not.toContain('href="/v2');
+
+  it("/security (a marketing page served by ASSETS) is unaffected", async () => {
+    const fetch = vi.fn(async (req: Request) =>
+      new URL(req.url).pathname === "/security"
+        ? new Response("<html>security</html>", { status: 200, headers: { "Content-Type": "text/html" } })
+        : new Response("nope", { status: 404 }));
+    const env = { ASSETS: { fetch } } as unknown as Env;
+    const res = await get("/security", env);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<html>security</html>");
   });
 });
 

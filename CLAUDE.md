@@ -152,15 +152,11 @@ service-worker stub; installed PWAs must be reinstalled and push re-enabled).
 - Mount path: ops `src/lib/basePath.ts` (`OPS_BASE_PATH`) and worker
   `src/lib/app-paths.ts` (`OPS_BASE`); `sw.js`, `manifest.json`, `index.html`,
   `public/_headers` hard-code `/ops` and are pinned by tests
-- `averrow.com/legacy` → old SPA escape hatch
 - `/ops` is the router basename (`<BrowserRouter basename="/ops">`), so in-app paths and notification links are basename-relative
 
-**NEVER MODIFY — frozen forever:**
-```
-public/          ← OLD SPA — DO NOT TOUCH
-app.js           ← OLD SPA — DO NOT TOUCH
-styles.css       ← OLD SPA — DO NOT TOUCH
-```
+The legacy pre-React SPA (`app.js`, `styles.css`, `dashboard.html`, the `/legacy`
+homepage) was deleted on 2026-11-15 at the owner's request; screenshots of it are
+kept in `docs/history/legacy-app/`.
 
 **Restructure in progress:** Sessions R1–R10 per `RESTRUCTURE_SPEC.md`.
 Check the spec to see which sessions are complete before starting work.
@@ -1991,7 +1987,6 @@ for browser access.
 - New API endpoints for data derivable client-side
 - Loading skeletons on views that already have them
 - Refactoring working code during a bug fix session — one thing at a time
-- Anything in `public/`, `app.js`, `styles.css` — frozen forever
 - Old design tokens (`glass-card`, `bg-cockpit`, `text-parchment`) in new files
 - Duplicate utility functions — check `src/lib/` first
 - `console.log` in production — use `agent_runs` error logging
@@ -2001,7 +1996,6 @@ for browser access.
 ## 12. Session Checklist (Before Marking Complete)
 
 - [ ] `npx tsc --noEmit` passes in `packages/averrow-ops`
-- [ ] No old SPA files touched (`public/`, `app.js`, `styles.css`)
 - [ ] New API endpoints added to `docs/API_REFERENCE.md`
 - [ ] New agent logic follows `agent_runs` + `agent_events` pattern
 - [ ] `RESTRUCTURE_SPEC.md` updated if architecture decisions were made
