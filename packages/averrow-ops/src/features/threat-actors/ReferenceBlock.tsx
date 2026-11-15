@@ -12,7 +12,7 @@ export const REFERENCE_DESCRIPTION_CLAMP_CHARS = 280;
 const TOGGLE_CLS =
   'min-h-[24px] cursor-pointer rounded border-0 bg-transparent px-1.5 font-mono text-[11px] ' +
   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] ' +
-  '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11';
+  '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 max-sm:min-h-11 max-sm:min-w-11';
 
 function sameName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
