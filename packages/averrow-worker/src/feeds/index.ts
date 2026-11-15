@@ -105,6 +105,12 @@ import { cf_radar_bots } from "./cf_radar_bots";
 // threats and always reports itemsNew = 0 (never triggers Sentinel).
 import { spamhaus_asn_drop } from "./spamhausAsnDrop";
 
+// ─── Free phishing feeds (2026-11-15, migrations 0330 / 0331) ───
+// phishunt.io (CC0, hourly, brand-labelled URLs) and the CERT Polska
+// Warning List (commercial use permitted; newest-first, watermark diff).
+import { phishunt } from "./phishunt";
+import { cert_polska } from "./certPolska";
+
 /**
  * Registry mapping feed_name → FeedModule.
  * Keys match feed_configs.feed_name in the database.
@@ -165,6 +171,10 @@ export const feedModules: Record<string, FeedModule> = {
 
   // Reference data — Spamhaus ASN-DROP (no threats).
   spamhaus_asn_drop,
+
+  // Free phishing feeds — phishunt.io + CERT Polska Warning List.
+  phishunt,
+  cert_polska,
 };
 
 /**
