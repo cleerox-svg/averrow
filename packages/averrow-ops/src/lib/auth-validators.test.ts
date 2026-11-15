@@ -8,38 +8,38 @@ import { isSafeReturnTo, isValidCachedUser } from '@averrow/shared/auth';
 
 describe('isSafeReturnTo (returnToPrefix boundary)', () => {
   it('exact prefix match is safe', () => {
-    expect(isSafeReturnTo('/v2', '/v2')).toBe(true);
+    expect(isSafeReturnTo('/ops', '/ops')).toBe(true);
   });
 
   it('child path is safe', () => {
-    expect(isSafeReturnTo('/v2/', '/v2')).toBe(true);
-    expect(isSafeReturnTo('/v2/profile', '/v2')).toBe(true);
-    expect(isSafeReturnTo('/v2/admin/customers', '/v2')).toBe(true);
+    expect(isSafeReturnTo('/ops/', '/ops')).toBe(true);
+    expect(isSafeReturnTo('/ops/profile', '/ops')).toBe(true);
+    expect(isSafeReturnTo('/ops/admin/customers', '/ops')).toBe(true);
   });
 
   it('query string + fragment are safe', () => {
-    expect(isSafeReturnTo('/v2?next=foo', '/v2')).toBe(true);
-    expect(isSafeReturnTo('/v2#token=x', '/v2')).toBe(true);
+    expect(isSafeReturnTo('/ops?next=foo', '/ops')).toBe(true);
+    expect(isSafeReturnTo('/ops#token=x', '/ops')).toBe(true);
   });
 
   it('rejects prefix-boundary attacks (the H1 fix)', () => {
-    // These all `startsWith('/v2')` but are NOT safe child paths.
-    expect(isSafeReturnTo('/v2evil/path',  '/v2')).toBe(false);
-    expect(isSafeReturnTo('/v2attacker',   '/v2')).toBe(false);
-    expect(isSafeReturnTo('/v2.evil.com',  '/v2')).toBe(false);
-    expect(isSafeReturnTo('/v23',          '/v2')).toBe(false);
-    expect(isSafeReturnTo('/v2-evil',      '/v2')).toBe(false);
+    // These all `startsWith('/ops')` but are NOT safe child paths.
+    expect(isSafeReturnTo('/opsevil/path',  '/ops')).toBe(false);
+    expect(isSafeReturnTo('/opsattacker',   '/ops')).toBe(false);
+    expect(isSafeReturnTo('/ops.evil.com',  '/ops')).toBe(false);
+    expect(isSafeReturnTo('/ops3',          '/ops')).toBe(false);
+    expect(isSafeReturnTo('/ops-evil',      '/ops')).toBe(false);
   });
 
   it('rejects entirely-different paths', () => {
-    expect(isSafeReturnTo('/admin',     '/v2')).toBe(false);
-    expect(isSafeReturnTo('/tenant/',   '/v2')).toBe(false);
-    expect(isSafeReturnTo('https://evil.com/v2/', '/v2')).toBe(false);
+    expect(isSafeReturnTo('/admin',     '/ops')).toBe(false);
+    expect(isSafeReturnTo('/tenant/',   '/ops')).toBe(false);
+    expect(isSafeReturnTo('https://evil.com/ops/', '/ops')).toBe(false);
   });
 
   it('rejects empty inputs', () => {
-    expect(isSafeReturnTo('',     '/v2')).toBe(false);
-    expect(isSafeReturnTo('/v2',  '')).toBe(false);
+    expect(isSafeReturnTo('',     '/ops')).toBe(false);
+    expect(isSafeReturnTo('/ops',  '')).toBe(false);
   });
 
   it('works for tenant prefix too', () => {

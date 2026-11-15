@@ -444,7 +444,7 @@ describe('LoginPage unmount and the account theme', () => {
         apiClient={{ post: vi.fn().mockResolvedValue({ success: true }) }}
         passkeyAdapter={{ isSupported: () => false, startConditionalUI: vi.fn().mockResolvedValue(undefined), signIn: vi.fn().mockResolvedValue(false) }}
         lastSignInMethod={{ read: () => null, write: vi.fn() }}
-        returnTo="/v2/"
+        returnTo="/ops/"
       />,
     );
   }

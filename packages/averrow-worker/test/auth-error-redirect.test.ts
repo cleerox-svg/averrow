@@ -22,7 +22,7 @@ import type { Env } from "../src/types";
 
 const SAFE_ERROR_CODE = /^[a-z0-9_]{1,40}$/;
 const ORIGIN = "https://averrow.com";
-const LOGIN = `${ORIGIN}/v2/login?error=`;
+const LOGIN = `${ORIGIN}/ops/login?error=`;
 
 const loc = (res: Response): string => res.headers.get("Location") ?? "";
 
@@ -30,7 +30,7 @@ const loc = (res: Response): string => res.headers.get("Location") ?? "";
 function errorCodeOf(res: Response): string {
   expect(res.status).toBe(302);
   const u = new URL(loc(res));
-  expect(u.pathname).toBe("/v2/login");
+  expect(u.pathname).toBe("/ops/login");
   expect([...u.searchParams.keys()]).toEqual(["error"]);
   const code = u.searchParams.get("error") ?? "";
   expect(code).toMatch(SAFE_ERROR_CODE);
@@ -77,7 +77,7 @@ describe("redirectToLoginWithError call sites", () => {
     }
   });
 
-  it("helper builds /v2/login?error=<code> with no-store", () => {
+  it("helper builds /ops/login?error=<code> with no-store", () => {
     const res = redirectToLoginWithError(ORIGIN, "oauth_failed");
     expect(loc(res)).toBe(`${LOGIN}oauth_failed`);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
@@ -127,7 +127,7 @@ describe.skipIf(!hasSqlite())("OAuth callback failures → login codes", () => {
     }), rig.env);
 
   /** Valid state + browser-binding cookie, so the flow reaches Google. */
-  async function validState(stored = "/v2/"): Promise<{ qs: string; cookie: string }> {
+  async function validState(stored = "/ops/"): Promise<{ qs: string; cookie: string }> {
     const state = "nonce-1";
     await rig.kv.put(`oauth_state:${state}`, stored);
     return { qs: `code=c&state=${state}`, cookie: `radar_oauth_state=${await hashToken(state)}` };
@@ -237,10 +237,10 @@ describe.skipIf(!hasSqlite())("invite acceptance failures → login codes", () =
   // Invite acceptance passes no return_to: the role default decides, and it
   // must be an app path (the old '/observatory' default went to the legacy
   // /auth/callback page, a 404).
-  it("staff invite success → /v2/#token=", async () => {
+  it("staff invite success → /ops/#token=", async () => {
     const t = await seed("i3", "newstaff@averrow.com", 3_600_000, "analyst");
     const res = await accept(t, "newstaff@averrow.com", "g-newstaff");
-    expect(loc(res)).toMatch(/^https:\/\/averrow\.com\/v2\/#token=/);
+    expect(loc(res)).toMatch(/^https:\/\/averrow\.com\/ops\/#token=/);
   });
 
   it("client invite success → /tenant/#token=", async () => {
@@ -378,7 +378,7 @@ describe.skipIf(!hasSqlite())("magic link survives prefetch", () => {
       `INSERT INTO magic_link_tokens (id, email, token_hash, expires_at, used_at, return_to) VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(`ml-${token}`, email, await hashMagicLinkToken(token),
       new Date(Date.now() + (opts.expiresInMs ?? 600_000)).toISOString(),
-      opts.used ? new Date().toISOString() : null, opts.returnTo === undefined ? "/v2/" : opts.returnTo);
+      opts.used ? new Date().toISOString() : null, opts.returnTo === undefined ? "/ops/" : opts.returnTo);
   }
   const usedAt = (token: string) =>
     (rig.raw.prepare("SELECT used_at FROM magic_link_tokens WHERE id = ?").all(`ml-${token}`) as Array<{ used_at: string | null }>)[0]!.used_at;
@@ -433,14 +433,14 @@ describe.skipIf(!hasSqlite())("magic link survives prefetch", () => {
     expect(loc(res)).toMatch(/^https:\/\/averrow\.com\/tenant\/#token=/);
   });
 
-  it("staff magic link (no return_to) → /v2/#token=", async () => {
+  it("staff magic link (no return_to) → /ops/#token=", async () => {
     await seedLink("st", "ops@averrow.com", { returnTo: null });
-    expect(loc(await post("st"))).toMatch(/^https:\/\/averrow\.com\/v2\/#token=/);
+    expect(loc(await post("st"))).toMatch(/^https:\/\/averrow\.com\/ops\/#token=/);
   });
 
-  it("staff magic link keeps a valid /v2 return_to", async () => {
-    await seedLink("st2", "ops@averrow.com", { returnTo: "/v2/brands?tab=threats" });
-    expect(loc(await post("st2"))).toMatch(/^https:\/\/averrow\.com\/v2\/brands\?tab=threats#token=/);
+  it("staff magic link keeps a valid /ops return_to", async () => {
+    await seedLink("st2", "ops@averrow.com", { returnTo: "/ops/brands?tab=threats" });
+    expect(loc(await post("st2"))).toMatch(/^https:\/\/averrow\.com\/ops\/brands\?tab=threats#token=/);
   });
 
   it("a stored return_to carrying its own fragment can't plant a token", async () => {
@@ -546,26 +546,30 @@ describe("isSameOriginPost", () => {
 
 describe("return_to validation", () => {
   it.each([
-    "/v2/", "/v2", "/v2/brands", "/v2/brands?tab=a&b=1", "/tenant/", "/tenant/alerts/123",
+    "/ops/", "/ops", "/ops/brands", "/ops/brands?tab=a&b=1", "/tenant/", "/tenant/alerts/123",
   ])("accepts %s", (p) => {
     expect(validateReturnTo(p)).toBe(p);
   });
 
   it.each([
-    "/tenant/#token=evil", "/tenant/%23token=evil%26x=", "/v2/?x=1#token=evil",
-    "/v2/../admin", "/tenant/./x", "/v2/..", "/v2\\evil", "/v2/?a=\\b",
-    "//evil.example", "https://evil.example/v2/", "javascript:alert(1)",
-    "/observatory", "/", "", "/v2x", "/tenantx/", "/v2/" + "a".repeat(200),
+    "/tenant/#token=evil", "/tenant/%23token=evil%26x=", "/ops/?x=1#token=evil",
+    "/ops/../admin", "/tenant/./x", "/ops/..", "/ops\\evil", "/ops/?a=\\b",
+    "//evil.example", "https://evil.example/ops/", "javascript:alert(1)",
+    "/observatory", "/", "", "/opsx", "/tenantx/", "/ops/" + "a".repeat(200),
+    // /v2 is retired (hard cut 2026-11-15): never a valid return_to again.
+    "/v2", "/v2/", "/v2/x", "/v2/brands?tab=a",
+    // exact prefix boundary + no empty segments + no backslash
+    "/opsevil", "/ops//evil.com", "/ops/\\evil", "/ops//", "/tenantx", "/tenant//x",
   ])("rejects %s", (p) => {
     expect(validateReturnTo(p)).toBeNull();
-    expect(resolveReturnTo(p, "analyst")).toBe("/v2/");
+    expect(resolveReturnTo(p, "analyst")).toBe("/ops/");
     expect(resolveReturnTo(p, "client")).toBe("/tenant/");
   });
 
-  it("role defaults: staff /v2/, client /tenant/ (a client never lands in /v2)", () => {
-    expect(resolveReturnTo(undefined, "super_admin")).toBe("/v2/");
+  it("role defaults: staff /ops/, client /tenant/ (a client never lands in /ops)", () => {
+    expect(resolveReturnTo(undefined, "super_admin")).toBe("/ops/");
     expect(resolveReturnTo(null, "client")).toBe("/tenant/");
-    expect(resolveReturnTo("/v2/brands", "client")).toBe("/tenant/");
+    expect(resolveReturnTo("/ops/brands", "client")).toBe("/tenant/");
     expect(resolveReturnTo("/tenant/alerts", "client")).toBe("/tenant/alerts");
   });
 
@@ -573,16 +577,16 @@ describe("return_to validation", () => {
     const kv = fakeKv();
     const env = { CACHE: kv, GOOGLE_CLIENT_ID: "cid" } as unknown as Env;
     await handleOAuthLogin(new Request(`${ORIGIN}/api/auth/login?return_to=${encodeURIComponent("/tenant/#token=evil")}`), env);
-    await handleOAuthLogin(new Request(`${ORIGIN}/api/auth/login?return_to=/v2/brands`), env);
+    await handleOAuthLogin(new Request(`${ORIGIN}/api/auth/login?return_to=/ops/brands`), env);
     const stored = [...kv.store.entries()].filter(([k]) => k.startsWith("oauth_state:")).map(([, v]) => v).sort();
-    expect(stored).toEqual(["", "/v2/brands"]);
+    expect(stored).toEqual(["", "/ops/brands"]);
   });
 
   it("rejects control characters and spaces in the query part", () => {
-    expect(validateReturnTo("/v2/?a=\n")).toBeNull();
-    expect(validateReturnTo("/v2/?a=\r")).toBeNull();
-    expect(validateReturnTo("/v2/?a=b c")).toBeNull();
-    expect(validateReturnTo("/v2/brands?tab=threats&x=1")).toBe("/v2/brands?tab=threats&x=1");
+    expect(validateReturnTo("/ops/?a=\n")).toBeNull();
+    expect(validateReturnTo("/ops/?a=\r")).toBeNull();
+    expect(validateReturnTo("/ops/?a=b c")).toBeNull();
+    expect(validateReturnTo("/ops/brands?tab=threats&x=1")).toBe("/ops/brands?tab=threats&x=1");
   });
 
   it("maskEmail", () => {

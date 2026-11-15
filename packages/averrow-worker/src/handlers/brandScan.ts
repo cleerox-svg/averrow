@@ -749,7 +749,7 @@ export async function handleLeadCapture(request: Request, env: Env): Promise<Res
           message: delivery === "emailed"
             ? `${email} scanned ${domain}; the scan-only report was emailed to them automatically.`
             : `${email} scanned ${domain} and asked for the report. Follow up needed.`,
-          // Basename-relative (SPA mounts at /v2), deep-links to the lead.
+          // Basename-relative (SPA mounts at /ops), deep-links to the lead.
           link: `/leads?view=scan&lead=${id}`,
           groupKey: `new_lead:${id}`,
           reasonText: "A visitor submitted the free-scan report form.",

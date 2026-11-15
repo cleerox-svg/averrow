@@ -6,10 +6,10 @@
  * footer. Active link is decided server-side from the current path so
  * there's no hydration flash.
  *
- * Log in -> /login (worker 302 -> /v2/login). That is the single shared
+ * Log in -> /login (worker 302 -> /ops/login). That is the single shared
  * sign-in page (passkey / Google / magic link): `client` (customer)
  * accounts are sent on to /tenant/ by the worker after sign-in
- * (handlers/auth.ts, "Phase D D2c rebadge gate"), staff land in /v2.
+ * (handlers/auth.ts, "Phase D D2c rebadge gate"), staff land in /ops.
  * /tenant/ itself cannot be the target: signed-out visitors there are
  * bounced to "/".
  *

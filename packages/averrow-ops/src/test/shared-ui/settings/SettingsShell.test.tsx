@@ -51,10 +51,10 @@ describe('SettingsShell — desktop', () => {
   });
 
   it('uses renderLink for router integration and does not render the mobile home', () => {
-    const renderLink = vi.fn((p) => <a data-rl href={`/v2${p.href}`} className={p.className} aria-current={p['aria-current']} onClick={p.onClick}>{p.children}</a>);
+    const renderLink = vi.fn((p) => <a data-rl href={`/ops${p.href}`} className={p.className} aria-current={p['aria-current']} onClick={p.onClick}>{p.children}</a>);
     render(<SettingsShell sections={SECTIONS} activeId="profile" basePath="/settings" renderLink={renderLink} home={<div>HOME SLOT</div>} />);
     expect(renderLink).toHaveBeenCalled();
-    expect(screen.getAllByRole('link')[0]).toHaveAttribute('href', '/v2/settings/profile');
+    expect(screen.getAllByRole('link')[0]).toHaveAttribute('href', '/ops/settings/profile');
     expect(screen.queryByText('HOME SLOT')).toBeNull();
   });
 });

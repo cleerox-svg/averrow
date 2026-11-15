@@ -6,6 +6,16 @@ All notable changes to the Averrow platform are documented here.
 
 ## [Unreleased]
 
+### Staff app moved from `/v2` to `/ops` (2026-11-15, hard cut)
+- **The staff back office now lives at `https://averrow.com/ops/`.** `/v2` and `/v2/*` return a plain 404: no redirect, no transition service worker. Old bookmarks, emailed links and chat links to `/v2/...` are broken on purpose (owner decision). Customer app is unchanged at `/tenant/`.
+- **Installed PWAs must be reinstalled.** The manifest `id`, `start_url` and `scope` are now `/ops/` (a new app identity) and the service worker is `/ops/sw.js`. The old `/v2/` installation can no longer load; on the next visit to `/ops/` the page unregisters any leftover `/v2/` service worker (best effort). Remove the old home-screen icon and install again from `/ops/`.
+- **Push notifications must be re-enabled** (Settings, Devices & App, then turn notifications on). A subscription is bound to its service worker, so the old `/v2/` one is dead; the server prunes it on its next 404/410 from the push service. Notification taps in flight with a `/v2` URL still map to `/ops`.
+- Sign-in: `return_to` accepts only `/ops...` and `/tenant...` (`/v2...` is now rejected and falls back to `/ops/`); an empty segment such as `/ops//x` is rejected too. Sign-in failures go to `/ops/login?error=<code>`. The Google OAuth redirect URI is under `/api/auth` and is unchanged (no Google Console change).
+- Signed-in visitors to the public home page `/` are sent straight into their app. The apps keep a non-sensitive hint in localStorage (`averrow.app` = `ops` or `tenant`) while a session is valid and clear it when it is lost; the home page reads it before paint. `/?home=1` always shows the home page. The app's own auth check stays the real gate and clears the hint before redirecting to `/?home=1`, so there is no loop.
+- Single sources of truth: ops `src/lib/basePath.ts` (router basename, SW registration, update-banner shell URL, auth return_to) and worker `src/lib/app-paths.ts` (`OPS_BASE`). `sw.js`, `manifest.json`, `index.html`, `public/_headers` and `vite.config.ts` hard-code the same literal and are pinned by tests. The ops build removes `public/v2` before building so a stale build can never be deployed.
+- Server-generated links now point at `/ops`: briefing and platform-alert emails, scan-lead notification, push payloads, `robots.txt` (`Disallow: /ops/`), the `/login` and legacy `/admin*` redirects, the `/legacy` banner, the hosted email logo asset (`/ops/email/...`).
+- Follow-up for the owner: `.github/workflows/deploy-radar.yml` still mentions `/v2` in comments and a step name (lines 6-9, 77); cosmetic, left untouched.
+
 Feed licence and honesty audit (2026-11-14). No version bump yet.
 
 ### Apps: "new version available" banner

@@ -93,7 +93,7 @@ export interface AuthProviderConfig {
   userCacheKey:     string;
   /** Path to start the OAuth login redirect. REQUIRED — no
    *  default. Each product MUST set its own return_to so a future
-   *  product (FarmTrack, etc.) doesn't silently inherit /v2/. */
+   *  product (FarmTrack, etc.) doesn't silently inherit /ops/. */
   loginPath:        string;
   /** Path to POST to revoke the session on logout.
    *  Default `/api/auth/logout`. */
@@ -110,10 +110,14 @@ export interface AuthProviderConfig {
    *  may include a return_to. We only restore it if it begins
    *  with this prefix (defends against malicious return_to). */
   returnToPrefix?:  string;
+  /** Which app this is, for the public home page's signed-in redirect
+   *  hint (see appHint.ts). Set while a session is valid, cleared when it
+   *  is lost. Omit for products that don't take part (e.g. FarmTrack). */
+  appHint?:         'ops' | 'tenant';
   /** Per-product hook called after /api/auth/me succeeds.
    *  - 'continue' lets the user into this app (default).
    *  - 'redirect' hard-navigates to `to` (e.g. role='client'
-   *    bouncing from /v2 to /tenant). */
+   *    bouncing from /ops to /tenant). */
   onValidatedUser?: (user: SharedAuthUser) => ValidatedUserDecision;
   /** Called during logout so the host can clear product-specific
    *  side state (e.g. lastSignInMethod, theme overrides). */

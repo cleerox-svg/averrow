@@ -12,7 +12,7 @@
 //     createNotification short-circuits the insert so deliveries are
 //     suppressed without changing producer code.
 //
-// Distinct from /v2/notifications/preferences, which is the per-user
+// Distinct from /ops/notifications/preferences, which is the per-user
 // preferences page. This one is platform-wide.
 
 import { useState } from 'react';

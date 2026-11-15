@@ -10,6 +10,8 @@ dist/
 *.tsbuildinfo
 
 # Frontend built assets (built in CI before deploy)
+packages/averrow-worker/public/ops/
+# Retired staff mount (moved to /ops 2026-11-15): never commit or ship a stale build.
 packages/averrow-worker/public/v2/
 packages/averrow-worker/public/tenant/
 

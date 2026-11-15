@@ -2,7 +2,7 @@
  * Notification Center — super-admin admin endpoints.
  *
  * NX5 (RESTRUCTURE_SPEC.md § NOTIFICATIONS RESTRUCTURE). Powers the
- * `/v2/notifications/admin` page in averrow-ops. Three responsibilities:
+ * `/ops/notifications/admin` page in averrow-ops. Three responsibilities:
  *
  *   1. Activity stats — what's firing, to whom, at what severity, in
  *      the last 24h. Lets the operator answer "is the notification

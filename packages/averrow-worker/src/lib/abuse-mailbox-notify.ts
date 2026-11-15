@@ -88,8 +88,8 @@ export async function notifyAbuseVerdict(env: Env, v: VerdictNotice): Promise<vo
     const { createNotification } = await import("./notifications");
     const audience: "tenant" | "super_admin" = v.brandId ? "tenant" : "super_admin";
     // Link paths are basename-relative because both SPAs use
-    // <BrowserRouter basename="..."> — `/v2/admin/...` would get
-    // double-prefixed to `/v2/v2/admin/...` and 404.
+    // <BrowserRouter basename="..."> — `/ops/admin/...` would get
+    // double-prefixed to `/ops/ops/admin/...` and 404.
     const link = audience === "super_admin"
       ? `/admin/abuse-mailbox#msg-${v.messageId}`
       : `/modules/abuse-mailbox#msg-${v.messageId}`;

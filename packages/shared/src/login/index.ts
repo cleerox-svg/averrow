@@ -14,7 +14,7 @@
 //     apiClient={...}
 //     passkeyAdapter={...}
 //     lastSignInMethod={makeLastSignInMethodAdapter('averrow.lastSignInMethod')}
-//     returnTo="/v2/"
+//     returnTo="/ops/"
 //   />
 
 export { LoginPage } from './LoginPage';

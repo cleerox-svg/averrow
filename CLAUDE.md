@@ -105,7 +105,7 @@ papered over by editing product source to pass a check.
 │   │   │   ├── lib/              ← Shared utilities
 │   │   │   └── index.ts          ← Worker entry point
 │   │   └── wrangler.toml
-│   ├── averrow-ops/              ← Staff back-office React SPA (rebadged from averrow-ui in v3 D2; serves /v2/*)
+│   ├── averrow-ops/              ← Staff back-office React SPA (rebadged from averrow-ui in v3 D2; serves /ops/*)
 │   ├── averrow-tenant/           ← Customer-facing React SPA (serves /tenant/*)
 │   │   ├── src/
 │   │   │   ├── design-system/    ← [RESTRUCTURE TARGET] tokens + primitives
@@ -135,10 +135,25 @@ papered over by editing product source to pass a check.
 
 ## 3. Current Platform State
 
-**React /v2 IS the live platform.**
-- `averrow.com` → serves React /v2 by default (session-aware routing)
+**The React staff app at `/ops` IS the live platform** (moved from `/v2` on
+2026-11-15 as a hard cut: `/v2` and `/v2/*` now return 404, no redirect, no
+service-worker stub; installed PWAs must be reinstalled and push re-enabled).
+- `averrow.com` (`/`) is the static Astro marketing home page. It is NOT
+  session-aware server-side: the session cookie is path-scoped to `/api/auth`,
+  so the worker cannot see it at `/`. Signed-in visitors are redirected by a
+  tiny inline script on the home page only (`averrow-marketing`
+  `src/scripts/home-redirect.js`): the apps keep a non-sensitive localStorage
+  hint `averrow.app` = `ops` | `tenant` while a session is valid
+  (`@averrow/shared/auth` `appHint.ts`, maintained in `AuthProvider.setUser`) and
+  clear it when it is lost, and the script does `location.replace('/ops/')` or
+  `/tenant/`. `/?home=1` never redirects (the logged-out guards clear the hint
+  first and navigate there, so there is no loop; the app's own auth check is the
+  real gate).
+- Mount path: ops `src/lib/basePath.ts` (`OPS_BASE_PATH`) and worker
+  `src/lib/app-paths.ts` (`OPS_BASE`); `sw.js`, `manifest.json`, `index.html`,
+  `public/_headers` hard-code `/ops` and are pinned by tests
 - `averrow.com/legacy` → old SPA escape hatch
-- `/v2` is not in URLs — React Router `basename="/v2"` handles it internally
+- `/ops` is the router basename (`<BrowserRouter basename="/ops">`), so in-app paths and notification links are basename-relative
 
 **NEVER MODIFY — frozen forever:**
 ```
@@ -378,12 +393,12 @@ Two install affordances + one biometric auto-prompt:
 | `<InstallAppBanner />` | Overview (`features/home/OverviewV4.tsx`), directly below the hero | Visible to non-installed users; dismissible per-device |
 | Install card | Settings → Devices & App (`packages/shared/src/account/DevicesSettings.tsx`, ops `/settings/devices`; no longer on Profile; the old `InstallAppCard` was deleted) | Always visible; not dismissible. Tenant has no Devices & App (no service worker) |
 | `<FirstSignInPasskeyPrompt />` | Mounted at `components/layout/ShellV4.tsx` root | Auto-fires when `passkey_count === 0` + WebAuthn supported |
-| `<AppUpdateNotice shellUrl=… />` (`@averrow/shared/ui`) | Top of the content column in ops `ShellV4.tsx` (`/v2/`) and tenant `layout/Shell.tsx` (`/tenant/`) | "A new version of Averrow is available. Reload" banner. Probes the app's own shell (`?__update_check`) for a `/assets/*.js|css` file the page doesn't have (the commit sha is an index.html `<meta>`, not in the bundle, so backend-only deploys stay quiet) on focus / online / every 30 min while visible; a failed lazy chunk (`vite:preloadError`) also raises it; never auto-reloads. Tenant works without a service worker |
+| `<AppUpdateNotice shellUrl=… />` (`@averrow/shared/ui`) | Top of the content column in ops `ShellV4.tsx` (`/ops/`) and tenant `layout/Shell.tsx` (`/tenant/`) | "A new version of Averrow is available. Reload" banner. Probes the app's own shell (`?__update_check`) for a `/assets/*.js|css` file the page doesn't have (the commit sha is an index.html `<meta>`, not in the bundle, so backend-only deploys stay quiet) on focus / online / every 30 min while visible; a failed lazy chunk (`vite:preloadError`) also raises it; never auto-reloads. Tenant works without a service worker |
 
 The banner and the passkey prompt self-gate internally. Don't add per-route logic to control them.
 
 **Scope note (2026-06-10):** this PWA flow is fully wired in `averrow-ops` only
-(hand-rolled SW at `/v2/sw.js`, registered via `src/lib/pwa.ts`, push in
+(hand-rolled SW at `/ops/sw.js`, scope `/ops/`, registered via `src/lib/pwa.ts`, push in
 `src/lib/push.ts`). `averrow-tenant` ships a manifest but **no service worker**,
 so install/push there is aspirational until improvement-plan session S12
 (`docs/IMPROVEMENT_PLAN_2026-06.md`) lands a tenant SW.
@@ -415,7 +430,7 @@ Handler-dispatched writers should pass a backoff of the same size to
 
 The `status` value on each AgentModule registration is **descriptive,
 not enforced** — it controls how operators classify the agent and how
-the `/v2/agents` UI surfaces it, but `executeAgent` / `runSyncAgent`
+the `/ops/agents` UI surfaces it, but `executeAgent` / `runSyncAgent`
 (`lib/agentRunner.ts:302,526`) do **not** gate dispatch on it. The
 per-agent circuit-breaker (`agent_configs.enabled`) is the only
 runtime kill-switch.
@@ -449,7 +464,7 @@ never existed in prod. The `url_scan` takedown `source_type`
 called from live handlers. `public_trust_check` is wired into the
 public homepage scan widget (`handlers/admin.ts`); `brand_deep_scan`
 is dispatched by the brand-page "AI DEEP SCAN" button; etc. The
-`/v2/agents` page shows them with their pretty subtitles but
+`/ops/agents` page shows them with their pretty subtitles but
 `0 runs / 24h` because sync invocations don't always write to
 `agent_runs`. To genuinely retire an agent: also remove the
 manual/api handler that dispatches it. To pause runtime dispatch
@@ -1041,7 +1056,7 @@ auditor      level 3  — READ-ONLY global seat (AUTH_AUDIT_2026-06): sees
                         one of the two roles that bypass the tenant-route
                         backstop), mutates nothing, never reaches an
                         admin-only gate. Minted-only — see note below.
-client       level 1  — customer (lives at /tenant; never reaches /v2)
+client       level 1  — customer (lives at /tenant; never reaches /ops)
 ```
 
 **Staff are global; tenant isolation lives in the tenant app (PR-F,

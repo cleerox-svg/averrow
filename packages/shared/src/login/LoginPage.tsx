@@ -1,5 +1,5 @@
 // Unified LoginPage — single source of truth for averrow-ops's
-// /v2/login and (future) FarmTrack's /login. Both products
+// /ops/login and (future) FarmTrack's /login. Both products
 // render this same component with brand deltas via the
 // `branding` prop.
 //

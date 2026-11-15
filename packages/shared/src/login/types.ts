@@ -104,7 +104,7 @@ export interface LoginPageProps {
   passkeyAdapter:         PasskeyLoginAdapter;
   lastSignInMethod:       LastSignInMethodAdapter;
   /** Where the OAuth + magic-link callback should land after
-   *  success. Per-product: `/v2/` for Averrow, `/` for FarmTrack. */
+   *  success. Per-product: `/ops/` for Averrow, `/` for FarmTrack. */
   returnTo:               string;
   /** Path to the host app's OAuth login starter. Default
    *  `/api/auth/login?return_to=<returnTo>`. */

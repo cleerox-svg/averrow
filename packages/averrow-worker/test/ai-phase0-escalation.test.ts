@@ -166,7 +166,7 @@ describe("sendPlatformEscalationEmail (real)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("sends one Resend request to BRIEFING_RECIPIENT with an absolute /v2 link and escaped body", async () => {
+  it("sends one Resend request to BRIEFING_RECIPIENT with an absolute /ops link and escaped body", async () => {
     const { sendPlatformEscalationEmail } = await load();
     const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ id: "re_1" }), { status: 200 }));
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
@@ -181,7 +181,7 @@ describe("sendPlatformEscalationEmail (real)", () => {
     const body = JSON.parse(init.body) as { to: string[]; subject: string; html: string };
     expect(body.to).toEqual(["ops@example.test"]);
     expect(body.subject).toBe("[Averrow HIGH] AI calls failing — 9 attempted, 0 succeeded");
-    expect(body.html).toContain("https://averrow.com/v2/agents");
+    expect(body.html).toContain("https://averrow.com/ops/agents");
     expect(body.html).not.toContain("<b>escaped</b>");
   });
 

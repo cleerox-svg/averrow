@@ -218,7 +218,7 @@ function OrgListRow({ org, onClick }: { org: AdminOrg; onClick: () => void }) {
 
 // WS-B cull: dropped 'integrations' + 'api-keys' tabs. Both were
 // pointer-text placeholders that just said "managed from the org's own
-// dashboard" — the link they offered (/v2/admin/users) was wrong and
+// dashboard" — the link they offered (/ops/admin/users) was wrong and
 // the tabs gave no actual functionality. Org admins manage both
 // surfaces from their own dashboard already (see features/settings).
 const DETAIL_TABS = [

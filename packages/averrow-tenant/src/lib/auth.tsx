@@ -45,6 +45,7 @@ const httpClient: AuthHttpClient = {
 const config: AuthProviderConfig = {
   userCacheKey:   'averrow-tenant-user',
   loginPath:      '/api/auth/login?return_to=/tenant/',
+  appHint:        'tenant',
   returnToPrefix: '/tenant',
   refreshMode:    'cookie-refresh',
 };

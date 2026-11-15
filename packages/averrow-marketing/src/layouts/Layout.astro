@@ -13,6 +13,7 @@
 import "../styles/global.css";
 import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
+import homeRedirectSrc from "../scripts/home-redirect.js?raw";
 
 interface Props {
   title: string;
@@ -25,6 +26,9 @@ interface Props {
   ogType?: string;
   /** Optional extra JSON-LD block (e.g. Article on blog posts). */
   jsonLd?: Record<string, unknown>;
+  /** Home page only: send signed-in visitors straight into their app
+   *  (scripts/home-redirect.js). */
+  homeRedirect?: boolean;
 }
 
 const {
@@ -34,6 +38,7 @@ const {
   ogImage = "/brand/og-r3-2026.png",
   ogType = "website",
   jsonLd,
+  homeRedirect = false,
 } = Astro.props;
 
 const siteOrigin = new URL(Astro.site ?? "https://averrow.com").origin;
@@ -59,6 +64,7 @@ const orgJsonLd = {
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
+    {homeRedirect && <script is:inline set:html={homeRedirectSrc} />}
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{title}</title>
     <meta name="description" content={description} />

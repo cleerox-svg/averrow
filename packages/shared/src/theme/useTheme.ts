@@ -13,7 +13,7 @@
 // the toggle, the menu unmounts before React commits effects, so
 // a useEffect-based approach silently no-ops. Surfaced via the
 // avatar dropdown's "Light Mode" item being a no-op while
-// /v2/profile's toggle worked correctly. Audit fix 2026-05-08.
+// /ops/profile's toggle worked correctly. Audit fix 2026-05-08.
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { safeGetItem, safeSetItem, setRootAttr } from './storage';

@@ -1,5 +1,5 @@
 // Unified AuthProvider — single source of truth for both
-// averrow-ops's /v2 auth context and averrow-tenant's /tenant auth
+// averrow-ops's /ops auth context and averrow-tenant's /tenant auth
 // context. Per SHARED_LOGIN_SPEC §1+§2 the auth lifecycle is
 // canonical and lives here; products parameterize via
 // AuthProviderConfig.
@@ -47,6 +47,7 @@ import type {
 } from './types';
 import { hydrateAppearanceFromAccount } from '../theme/useAppearance';
 import { resetAccountSyncSession } from '../theme/accountSync';
+import { clearAppHint, setAppHint } from './appHint';
 
 const AuthContext = createContext<SharedAuthState | null>(null);
 
@@ -58,12 +59,12 @@ interface TokenPayload {
 
 /**
  * Path-prefix check that requires a boundary character after the
- * prefix so `'/v2evil/path'` does NOT match prefix `'/v2'`. The
+ * prefix so `'/opsevil/path'` does NOT match prefix `'/ops'`. The
  * next character must be undefined (end of string), or one of
  * `/`, `?`, `#` — i.e. a real path / query / fragment boundary.
  *
  * Without this, the post-callback `replaceState` would happily
- * write `'/v2evil/path'` into the URL bar, which (although
+ * write `'/opsevil/path'` into the URL bar, which (although
  * same-origin and not directly XSS-exploitable via replaceState)
  * could be weaponized by future code that reads
  * `window.location.pathname` for routing decisions. Defense in
@@ -150,7 +151,7 @@ interface AuthProviderProps {
 export function AuthProvider({ children, httpClient, config }: AuthProviderProps) {
   const {
     userCacheKey,
-    // loginPath is REQUIRED — no default. Defaulting to /v2/ would
+    // loginPath is REQUIRED — no default. Defaulting to /ops/ would
     // silently misroute customers on a future product (FarmTrack,
     // etc.) that forgot to override.
     loginPath,
@@ -158,7 +159,10 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     refreshPath      = '/api/auth/refresh',
     mePath           = '/api/auth/me',
     logoutRedirectTo = '/',
-    returnToPrefix   = '/v2',
+    // No default: an unset prefix restores no return_to (isSafeReturnTo
+    // rejects an empty prefix) rather than inheriting one product's path.
+    returnToPrefix,
+    appHint,
     onValidatedUser,
     onLogoutCleanup,
     refreshMode      = 'cookie-refresh',
@@ -216,14 +220,21 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     // account-appearance session, so the next user on this tab hydrates their
     // own values and never inherits the previous user's save state.
     if (!u) resetAccountSyncSession();
-  }, [saveCachedUser]);
+    // Public home-page redirect hint (see appHint.ts): present exactly while a
+    // session is valid, removed on EVERY path that loses it (logout, 401, failed
+    // /me, no cookie session) — synchronously, before any host redirect to `/`.
+    if (appHint) {
+      if (u) setAppHint(appHint);
+      else clearAppHint();
+    }
+  }, [saveCachedUser, appHint]);
 
   const checkAuth = useCallback(async () => {
     // 1. Pull the access token from the URL if this is a callback.
     const fromUrl = readTokensFromUrl();
     if (fromUrl && typeof window !== 'undefined') {
       httpClient.setTokens(fromUrl.accessToken, '');
-      if (fromUrl.source === 'hash' && fromUrl.returnTo && isSafeReturnTo(fromUrl.returnTo, returnToPrefix)) {
+      if (fromUrl.source === 'hash' && fromUrl.returnTo && returnToPrefix && isSafeReturnTo(fromUrl.returnTo, returnToPrefix)) {
         window.history.replaceState({}, '', fromUrl.returnTo);
       } else {
         // Strip the token noise from the URL bar even when returnTo

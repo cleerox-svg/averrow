@@ -29,7 +29,7 @@ specified in `docs/ACCOUNT_DESIGN_SPEC.md`.
 ## 1. Login page
 
 **The Login page is now a single canonical component shared by all
-products.** Both averrow-ops's `/v2/login` and (future) FarmTrack's
+products.** Both averrow-ops's `/ops/login` and (future) FarmTrack's
 `/login` render `<LoginPage>` from `@averrow/shared/login`. Each
 product passes branding deltas and adapter callbacks via props.
 Edit the shared component, NOT per-product wrappers.
@@ -64,7 +64,7 @@ export function Login() {
       apiClient={...}
       passkeyAdapter={...}
       lastSignInMethod={makeLastSignInMethodAdapter('averrow.lastSignInMethod')}
-      returnTo="/v2/"
+      returnTo="/ops/"
     />
   );
 }
@@ -178,7 +178,7 @@ same tokens) to stay identical to Averrow** — this replaces the previous
   `Sign in with passkey` / `Send link`. The brand mark is the shared kit R3
   `AverrowMark` (48px). When FarmTrack adopts the facelift, author its strings
   in sentence case too; don't reintroduce uppercase styling.
-- **OAuth `return_to`:** points to each product's main interior route (`/v2/` for Averrow, which lands on the Home / Command Center; `/` for FarmTrack).
+- **OAuth `return_to`:** points to each product's main interior route (`/ops/` for Averrow, which lands on the Home / Command Center; `/` for FarmTrack). The staff app moved from `/v2/` to `/ops/` on 2026-11-15 (hard cut: `/v2` returns 404); the worker's `return_to` allowlist is `^/(ops|tenant)` only.
 
 ### Forbidden deltas
 
@@ -257,7 +257,7 @@ into view on phones. A Google error also forces the full method menu (like
 The Averrow worker sends only the codes in `AUTH_ERROR_CODES`
 (`packages/shared/src/auth-error-codes.ts`, also the source of the default
 `errorCopy`): every sign-in failure (OAuth callback, invite acceptance, magic
-link) 302s to `/v2/login?error=<code>`; the tenant app has no login of its own.
+link) 302s to `/ops/login?error=<code>`; the tenant app has no login of its own.
 Add a code there (with its copy) before the worker can send it.
 
 ### Brand-locked theme (added 2026-06, login audit F2)
@@ -360,7 +360,7 @@ not part of the portable account kit.
    `push.supported` is false.
 5. **Backend contract.** The pages need `/api/profile`, `/api/auth/sessions*`
    (own sessions only), `/api/passkeys*`, `/api/notifications/preferences` +
-   `/v2`, and the `sid` claim / `forced_logout` KV semantics so revoking a
+   `/ops`, and the `sid` claim / `forced_logout` KV semantics so revoking a
    session also stops its live access tokens (see "Session revocation" in
    `docs/API_REFERENCE.md`).
 6. **Redirect legacy routes** to the new section URLs, as the table above does.
@@ -619,7 +619,7 @@ flow has always set it. Do not add one.
 | Concern | Mitigation |
 |---|---|
 | URL hash callback tokens | `replaceState` immediately strips the hash. Hash is read once on mount, then the URL bar is rewritten (either to a validated `return_to` or to the bare path). |
-| Malicious `return_to` from URL | `isSafeReturnTo(returnTo, prefix)` requires the prefix to be followed by `/`, `?`, `#`, or end-of-string. Defends against `/v2evil/path` style attacks where `startsWith` would naively accept. Failing values fall through to `window.location.pathname`, never echoed back. |
+| Malicious `return_to` from URL | `isSafeReturnTo(returnTo, prefix)` requires the prefix to be followed by `/`, `?`, `#`, or end-of-string. Defends against `/opsevil/path` style attacks where `startsWith` would naively accept. Failing values fall through to `window.location.pathname`, never echoed back. |
 | Cached user shape drift / poisoning | `isValidCachedUser(value)` does runtime type checks on `id`, `email`, `name`, `role`, and the optional `organization` block. Mismatches are treated as "no cache" and the offending entry is removed from localStorage. |
 | Per-product redirect mistake | `loginPath` is a REQUIRED config field (no default). Each product's wrapper must explicitly state where the OAuth start URL goes. |
 | CSRF | Bearer tokens for all state-changing API calls. The cookie-bearing requests are `/api/auth/refresh` (returns a new access token, not a state mutation) and `/api/auth/logout` (Bearer-authenticated; the cookie only identifies which session row to revoke). The cookie is `SameSite=Strict; Path=/api/auth`, so it never rides cross-site requests. |

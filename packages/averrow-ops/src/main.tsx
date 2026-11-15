@@ -9,6 +9,7 @@ import { registerServiceWorker, captureInstallPrompt } from '@/lib/pwa';
 import { bootstrapTheme } from '@/design-system/hooks/useTheme';
 import { bootstrapAppearance } from '@averrow/shared/theme';
 import App, { preloadRouteForPath } from '@/App';
+import { OPS_BASE_PATH } from '@/lib/basePath';
 import '@/index.css';
 
 // Apply persisted theme synchronously, before React mounts. Without
@@ -47,7 +48,7 @@ const queryClient = createAppQueryClient();
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter basename="/v2">
+      <BrowserRouter basename={OPS_BASE_PATH}>
         <ToastProvider>
           <AuthProvider>
             <App />

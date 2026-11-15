@@ -521,7 +521,7 @@ function NotAuthenticated() {
     <div className="max-w-md mx-auto py-16 text-center">
       <h1 className="text-type-h2 text-[var(--text-primary)] mb-2">Sign in required</h1>
       <p className="text-type-small text-[var(--text-secondary)]">
-        Your session has expired. <a href="/v2/login" className={LINK}>Sign in to continue</a>.
+        Your session has expired. <a href="/ops/login" className={LINK}>Sign in to continue</a>.
       </p>
     </div>
   );

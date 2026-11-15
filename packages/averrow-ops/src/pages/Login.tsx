@@ -1,4 +1,4 @@
-// /v2/login — averrow-ops login route.
+// /ops/login — averrow-ops login route.
 //
 // Per SHARED_LOGIN_SPEC §1 the Login UI is canonical and shared
 // across averrow-ops and (future) FarmTrack via @averrow/shared/login.
@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { LoginPage, makeLastSignInMethodAdapter } from '@averrow/shared/login';
 import type { LoginApiClient, PasskeyLoginAdapter } from '@averrow/shared/login';
 import { api } from '@/lib/api';
+import { OPS_SHELL_URL, stripOpsBase } from '@/lib/basePath';
 import { useAuth } from '@/lib/auth';
 import { AverrowMark } from '@averrow/shared/ui';
 import {
@@ -37,9 +38,9 @@ export function Login() {
     const onSuccess = async (accessToken: string, _expiresIn: number, returnTo: string) => {
       api.setTokens(accessToken, '');
       await refreshUser();
-      // returnTo is the full path ('/v2/'); strip the router basename so
-      // navigate() doesn't double it ('/v2/v2/').
-      const target = returnTo.replace(/^\/v2(?=\/|$)/, '') || '/';
+      // returnTo is the full path ('/ops/'); strip the router basename so
+      // navigate() doesn't double it ('/ops/ops/').
+      const target = stripOpsBase(returnTo) || '/';
       navigate(target, { replace: true });
     };
     return {
@@ -61,7 +62,7 @@ export function Login() {
       apiClient={apiClient}
       passkeyAdapter={passkeyAdapter}
       lastSignInMethod={lastSignInMethod}
-      returnTo="/v2/"
+      returnTo={OPS_SHELL_URL}
     />
   );
 }

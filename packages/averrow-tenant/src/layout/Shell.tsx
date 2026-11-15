@@ -5,6 +5,7 @@ import { TopBar } from './TopBar';
 import { AppUpdateNotice } from '@averrow/shared/ui';
 import { useTheme } from '@/lib/useTheme';
 import { useAuth } from '@/lib/auth';
+import { clearAppHint, HOME_NO_REDIRECT_URL } from '@averrow/shared/auth';
 
 export function Shell() {
   // Mounting useTheme here applies the persisted theme on app boot
@@ -61,12 +62,14 @@ export function Shell() {
 
   // Logged-out guard. Without this the SPA renders the shell with
   // no user data — empty TopBar avatar, sidebar with no modules.
-  // Hard-navigate to '/' so the parent worker's session-aware
-  // login redirect runs (lands on /v2/login per the FarmTrack-aligned
-  // SHARED_LOGIN_SPEC).
+  // Hard-navigate to the public home page. Clear the "signed in to <app>"
+  // hint FIRST and ask for `/?home=1` (the form that never redirects into an
+  // app), so a lost session can't bounce home <-> app. The home page's
+  // "Log in" goes to /login -> /ops/login (the one shared sign-in page).
   useEffect(() => {
     if (!loading && !user) {
-      window.location.href = '/';
+      clearAppHint();
+      window.location.href = HOME_NO_REDIRECT_URL;
     }
   }, [loading, user]);
 

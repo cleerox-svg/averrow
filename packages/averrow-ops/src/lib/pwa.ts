@@ -1,13 +1,36 @@
 /**
  * PWA helpers — service worker registration + install/standalone detection.
  *
- * The SW is hand-rolled at /v2/sw.js (no vite-plugin-pwa) and scoped to /v2/
+ * The SW is hand-rolled at /ops/sw.js (no vite-plugin-pwa) and scoped to /ops/
  * so it never touches the legacy SPA at /. See public/sw.js for the strategies.
  *
  * `isStandalone()` is the gate to use later when wiring Web Push: iOS only
  * allows `Notification.permission` requests when the PWA is installed (Add to
  * Home Screen). PR 3 (push notifications) will read this.
  */
+
+import { LEGACY_OPS_BASE_PATH, OPS_BASE_PATH, OPS_SHELL_URL } from './basePath';
+
+/**
+ * The staff app used to live at /v2/ (retired 2026-11-15, hard cut). A browser
+ * that installed the app there still holds a /v2/ registration; it can no longer
+ * reach its scope's shell, so drop it. Best-effort client cleanup — NOT a
+ * redirect or a stub worker. Push subscriptions made under it die with it.
+ */
+export async function unregisterLegacyServiceWorkers(): Promise<void> {
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(
+      regs.map(async (reg) => {
+        let scopePath = '';
+        try { scopePath = new URL(reg.scope).pathname; } catch { return; }
+        if (scopePath === `${LEGACY_OPS_BASE_PATH}/`) await reg.unregister();
+      }),
+    );
+  } catch {
+    // Swallow — cleanup must never break the app.
+  }
+}
 
 export function registerServiceWorker(): void {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
@@ -18,8 +41,9 @@ export function registerServiceWorker(): void {
   if (host === 'localhost' || host === '127.0.0.1') return;
 
   window.addEventListener('load', () => {
+    void unregisterLegacyServiceWorkers();
     navigator.serviceWorker
-      .register('/v2/sw.js', { scope: '/v2/' })
+      .register(`${OPS_BASE_PATH}/sw.js`, { scope: OPS_SHELL_URL })
       .catch((err) => {
         // Swallow — SW failure should never break the app.
         console.warn('[pwa] service worker registration failed:', err);

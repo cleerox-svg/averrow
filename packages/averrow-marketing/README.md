@@ -43,7 +43,7 @@ Astro builds with `output: 'static'`. The artifacts land in
 `packages/averrow-worker/public/` so the averrow Worker's
 `[assets]` binding serves them. Going through `dist/` + sync
 keeps Astro's outDir cleanup from wiping the legacy SPA assets
-(`app.js`, `dashboard.html`, `public/v2`, `public/tenant`) that
+(`app.js`, `dashboard.html`, `public/ops`, `public/tenant`) that
 share the directory.
 
 ## Build pipeline

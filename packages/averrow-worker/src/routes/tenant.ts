@@ -286,7 +286,7 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
   // newer handlers and tenant pages would render blank against the
   // legacy shape — exactly the bug we just hit.
   //
-  // POST + PATCH stay here because /v2 (averrow-ops) consumes the
+  // POST + PATCH stay here because /ops (averrow-ops) consumes the
   // legacy create + update handlers and they don't need the tenant
   // totals envelope.
   router.post("/api/orgs/:orgId/takedowns", async (request: Request & { params: Record<string, string> }, env: Env) => {

@@ -117,7 +117,7 @@ export interface AgentResult {
    *  'failed' would be dishonest (the agent did real work and did not
    *  throw) and 'success' is what let three months of zero working AI
    *  read as healthy. 'partial' is the existing honest value — the
-   *  diagnostics endpoint, /v2/agents ("degraded"), and the admin
+   *  diagnostics endpoint, /ops/agents ("degraded"), and the admin
    *  metrics rollups all already split success/partial/failed.
    *
    *  Safe with respect to the orphan sweeps: every orphan predicate

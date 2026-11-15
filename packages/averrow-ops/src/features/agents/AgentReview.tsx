@@ -1,7 +1,7 @@
 /**
  * Single-agent review screen (AGENT_STANDARD §12.1).
  *
- * Reached via /v2/agents/:id/review. Shows the approval row + recent
+ * Reached via /ops/agents/:id/review. Shows the approval row + recent
  * agent_runs + recent agent_outputs (all from the review-bundle
  * endpoint) and lets a super_admin approve, reject, or request
  * changes.

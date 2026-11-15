@@ -493,7 +493,7 @@ export function useDeleteSubscription() {
   });
 }
 
-// Used by /v2/notifications archive page. Distinct from
+// Used by /ops/notifications archive page. Distinct from
 // useNotifications() (bell preview) because:
 //   - This one supports filters + search + cursor pagination.
 //   - It deduplicates the queryKey by filter so navigating between

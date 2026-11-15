@@ -278,7 +278,7 @@ batch `runAbuseClassifierBackfill`, then the determination sweeper, and is
 dispatched via `executeAgent` from the dedicated `17 * * * *` cron
 (`src/cron/orchestrator.ts`, only when there are pending rows or recent
 undelivered determinations), so every run writes `agent_runs` + emits `agent_events` and surfaces
-in Flight Control, platform-diagnostics, and the `/v2/agents` mesh. It can
+in Flight Control, platform-diagnostics, and the `/ops/agents` mesh. It can
 also be triggered manually via `/api/internal/agents/abuse_mailbox_classifier/run`.
 
 The standalone `POST /api/admin/abuse-mailbox/run-classifier` drain

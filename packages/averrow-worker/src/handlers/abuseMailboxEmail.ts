@@ -310,8 +310,8 @@ export async function handleAbuseMailboxEmail(
           `${throttle.domain_count_last_window} from this domain / ` +
           `${throttle.org_count_last_window} to this org / ` +
           `${throttle.global_count_last_window} overall in the last hour (counts capped at each limit).`,
-        // Path is basename-relative — `/v2/admin/...` would get
-        // double-prefixed by React Router's basename="/v2" and 404.
+        // Path is basename-relative — `/ops/admin/...` would get
+        // double-prefixed by React Router's basename="/ops" and 404.
         link: "/admin/abuse-mailbox",
         audience: "super_admin",
         groupKey: `abuse_mailbox_flood_detected:${throttle.reason ?? "unknown"}:${throttleDim}`,

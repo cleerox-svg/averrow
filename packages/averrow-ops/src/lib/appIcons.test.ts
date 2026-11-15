@@ -14,10 +14,10 @@ import { inflateSync } from 'node:zlib';
 const OPS = resolve(__dirname, '../..');
 const PUBLIC = join(OPS, 'public');
 
-/** Map a /v2/... URL to its file in public/ (Vite copies public/ to /v2/). */
+/** Map a /ops/... URL to its file in public/ (Vite copies public/ to /ops/). */
 function publicFile(url: string): string {
-  expect(url.startsWith('/v2/')).toBe(true);
-  return join(PUBLIC, url.slice('/v2/'.length));
+  expect(url.startsWith('/ops/')).toBe(true);
+  return join(PUBLIC, url.slice('/ops/'.length));
 }
 
 interface Png { width: number; height: number; colorType: number; bitDepth: number; idat: Buffer }
@@ -118,9 +118,9 @@ describe('manifest icons', () => {
 describe('index.html icon links', () => {
   it('apple-touch-icon is the 180px PNG and favicon links (svg + ico) resolve', () => {
     const html = readFileSync(join(OPS, 'index.html'), 'utf8');
-    expect(html).toContain('<link rel="apple-touch-icon" href="/v2/apple-touch-icon.png" />');
+    expect(html).toContain('<link rel="apple-touch-icon" href="/ops/apple-touch-icon.png" />');
     const hrefs = [...html.matchAll(/<link rel="(?:icon|apple-touch-icon)"[^>]*href="([^"]+)"/g)].map((m) => m[1]);
-    expect(hrefs).toEqual(expect.arrayContaining(['/v2/favicon.svg', '/v2/favicon.ico']));
+    expect(hrefs).toEqual(expect.arrayContaining(['/ops/favicon.svg', '/ops/favicon.ico']));
     for (const href of hrefs) expect(existsSync(publicFile(href)), href).toBe(true);
   });
 });
@@ -132,16 +132,16 @@ describe('service worker', () => {
     const block = /const SHELL_PRECACHE = \[([\s\S]*?)\];/.exec(sw);
     expect(block).not.toBeNull();
     const urls = [...block![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    expect(urls).toEqual(expect.arrayContaining(['/v2/icon-192.png', '/v2/notification-badge.png']));
+    expect(urls).toEqual(expect.arrayContaining(['/ops/icon-192.png', '/ops/notification-badge.png']));
     for (const url of urls) {
-      if (url === '/v2/' || url === '/v2/index.html') continue; // built by Vite, not in public/
+      if (url === '/ops/' || url === '/ops/index.html') continue; // built by Vite, not in public/
       expect(existsSync(publicFile(url)), url).toBe(true);
     }
   });
 
   it('push notifications use the PNG icon and PNG badge', () => {
-    expect(sw).toContain("icon: '/v2/icon-192.png'");
-    expect(sw).toContain("badge: '/v2/notification-badge.png'");
+    expect(sw).toContain("icon: '/ops/icon-192.png'");
+    expect(sw).toContain("badge: '/ops/notification-badge.png'");
   });
 });
 

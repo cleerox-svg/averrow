@@ -395,7 +395,7 @@ function brandLayout(opts: BrandLayoutOptions): string {
   //
   // Source asset (facelift Phase 4): the R3 mark, docs/brand/logo/
   // mark-red.svg rendered to packages/averrow-ops/public/email/
-  // averrow-mark-r3.png (shipped at /v2/email/) and re-served by the
+  // averrow-mark-r3.png (shipped at /ops/email/) and re-served by the
   // Worker route /email/averrow-mark-r3.png (EMAIL_LOGO_URL,
   // handlers/emailAssets.ts) with the same one-year immutable
   // Cache-Control the PR-BF _headers rule gives the old PNGs (public/ is

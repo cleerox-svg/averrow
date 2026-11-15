@@ -1,3 +1,4 @@
+import { OPS_BASE_PATH } from './src/lib/basePath';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { appearanceHtml } from '../shared/scripts/appearance-html';
@@ -24,7 +25,7 @@ export default defineConfig({
   // the JS via `define` — a sha in the bundle would change the entry hash on
   // every commit and fire the "new version" banner after backend-only deploys.
   plugins: [react(), appearanceHtml(), buildMeta({ sha: buildSha, builtAt })],
-  base: '/v2/',
+  base: `${OPS_BASE_PATH}/`,
   define: {
     __APP_VERSION__: JSON.stringify(platformVersion),
   },
@@ -34,7 +35,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../averrow-worker/public/v2',
+    outDir: `../averrow-worker/public${OPS_BASE_PATH}`,
     emptyOutDir: true,
   },
   server: {

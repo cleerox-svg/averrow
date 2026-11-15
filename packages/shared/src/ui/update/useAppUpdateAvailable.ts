@@ -14,7 +14,7 @@ import { currentAssets, isNewBuildAvailable } from './appUpdate';
 export const UPDATE_MIN_GAP_MS = 60_000;
 export const UPDATE_INTERVAL_MS = 30 * 60_000;
 
-/** `shellUrl`: the app's own shell, `/v2/` (ops) or `/tenant/` (tenant). */
+/** `shellUrl`: the app's own shell, `/ops/` (ops) or `/tenant/` (tenant). */
 export function useAppUpdateAvailable(shellUrl: string): boolean {
   const [available, setAvailable] = React.useState(false);
 

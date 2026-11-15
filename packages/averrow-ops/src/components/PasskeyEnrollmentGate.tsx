@@ -22,6 +22,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { OPS_SHELL_URL } from '@/lib/basePath';
 import { useToast } from '@/components/ui/Toast';
 import { isPasskeySupported, registerPasskey, signInWithPasskey } from '@/lib/passkeys';
 import { AverrowMark } from '@/components/brand/AverrowMark';
@@ -60,8 +61,8 @@ export function PasskeyEnrollmentGate() {
     try {
       // Mints a full session (method='passkey'), replacing this
       // enrollment-scoped session. Host-side hydration (login audit F3):
-      // this gate already lives at /v2/, so the legacy hard-nav to
-      // /v2/#token=… is a SAME-PATH hash change that never reloads the
+      // this gate already lives at /ops/, so the legacy hard-nav to
+      // /ops/#token=… is a SAME-PATH hash change that never reloads the
       // document — the AuthProvider (which only reads the hash on mount)
       // never consumes the token, so the button hangs on "Waiting for
       // passkey…" until a manual refresh. Instead, set the new full-session
@@ -69,7 +70,7 @@ export function PasskeyEnrollmentGate() {
       // self-unmounts the moment `passkey_required` flips false. No reload.
       const ok = await signInWithPasskey({
         email: user.email,
-        returnTo: '/v2/',
+        returnTo: OPS_SHELL_URL,
         onSuccess: async (accessToken) => {
           api.setTokens(accessToken, '');
           await refreshUser();

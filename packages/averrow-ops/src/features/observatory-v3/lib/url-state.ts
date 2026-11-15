@@ -3,7 +3,7 @@
  *
  * Pure parse/serialise/merge functions (unit-tested) plus a thin
  * `useObservatoryUrlState` hook over React Router's `useSearchParams` (the app
- * mounts at basename /v2, so the shareable URL is /v2/observatory?...).
+ * mounts at basename /ops, so the shareable URL is /ops/observatory?...).
  *
  * Canonical form: only non-default values are written, unknown / invalid values
  * fall back to the default, and selection (`node`/`arc`/`sel`) only survives on

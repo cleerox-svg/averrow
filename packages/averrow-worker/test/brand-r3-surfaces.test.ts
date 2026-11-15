@@ -138,7 +138,7 @@ describe("server-rendered pages", () => {
 
   it("shared chrome links the R3 apple-touch icon and has one footer mark", () => {
     const html = wrapPage("T", "d", "");
-    expect(html).toContain('<link rel="apple-touch-icon" href="/v2/apple-touch-icon.png">');
+    expect(html).toContain('<link rel="apple-touch-icon" href="/ops/apple-touch-icon.png">');
     expect(html).not.toContain("footer-orbital-mark");
     expect(existsSync(resolve(REPO, "packages/averrow-ops/public/apple-touch-icon.png"))).toBe(true);
   });
@@ -174,7 +174,7 @@ describe("emails", () => {
     }
   }
 
-  it("the hosted logo is a 144x144 PNG shipped in the ops public dir (built to /v2/email/, served via /email/)", () => {
+  it("the hosted logo is a 144x144 PNG shipped in the ops public dir (built to /ops/email/, served via /email/)", () => {
     const file = resolve(REPO, "packages/averrow-ops/public/email/averrow-mark-r3.png");
     expect(existsSync(file)).toBe(true);
     const buf = readFileSync(file);
@@ -315,7 +315,7 @@ describe("contrast (WCAG AA 4.5:1)", () => {
 describe("CSP", () => {
   // Google Fonts stay allowed: the honeypot pages (src/honeypot.ts) still
   // load them by design, and the FACELIFT=false revert path of the ops
-  // index.html (served through the Worker on /v2 deep links) does too.
+  // index.html (served through the Worker on /ops deep links) does too.
   it("still allows Google Fonts for the pages that need them", () => {
     const csp = buildContentSecurityPolicy("/status");
     expect(csp).toContain("https://fonts.googleapis.com");

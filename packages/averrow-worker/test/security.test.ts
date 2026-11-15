@@ -55,7 +55,7 @@ describe("applySecurityHeaders", () => {
   });
 
   it("scopes Turnstile sources to the scan paths only (appsec L1)", () => {
-    for (const path of [undefined, "/api/brand-scan/public", "/v2/", "/scanner", "/assessment", "/legacy"]) {
+    for (const path of [undefined, "/api/brand-scan/public", "/ops/", "/scanner", "/assessment", "/legacy"]) {
       const csp = applySecurityHeaders(makeResponse(), path).headers.get("Content-Security-Policy")!;
       expect(csp).not.toContain("challenges.cloudflare.com");
       expect(directive(csp, "frame-src")).toBe("");

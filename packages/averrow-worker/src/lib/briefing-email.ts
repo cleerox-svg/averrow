@@ -12,6 +12,7 @@
  */
 import { logger } from "./logger";
 import type { Env } from "../types";
+import { OPS_BASE } from "./app-paths";
 import type { ComprehensiveBriefing } from "../handlers/briefing";
 import { emailShell, escapeHtml, headerStatusBadge } from "./email-layout";
 
@@ -534,7 +535,7 @@ function buildBriefingBody(b: ComprehensiveBriefing): string {
   const ctaBlock = `
   <tr><td style="padding:10px 28px 24px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
-      <a class="av-cta" href="https://averrow.com/v2/admin" style="display:inline-block;padding:13px 28px;background-color:${COLOR.primary};background:${COLOR.primary};color:#FFFFFF;font-family:${FONT_MONO};font-size:11px;font-weight:700;letter-spacing:0.16em;text-decoration:none;border-radius:8px;text-transform:uppercase;">Open Admin Dashboard</a>
+      <a class="av-cta" href="https://averrow.com${OPS_BASE}/admin" style="display:inline-block;padding:13px 28px;background-color:${COLOR.primary};background:${COLOR.primary};color:#FFFFFF;font-family:${FONT_MONO};font-size:11px;font-weight:700;letter-spacing:0.16em;text-decoration:none;border-radius:8px;text-transform:uppercase;">Open Admin Dashboard</a>
     </td></tr></table>
   </td></tr>`;
 
@@ -628,8 +629,8 @@ export async function sendPlatformEscalationEmail(
   }
 
   const subject = `[Averrow ${alert.severity.toUpperCase()}] ${alert.title}`;
-  // Notification links are SPA-relative (React Router basename "/v2").
-  const link = alert.link.startsWith("http") ? alert.link : `https://averrow.com/v2${alert.link}`;
+  // Notification links are SPA-relative (React Router basename "/ops").
+  const link = alert.link.startsWith("http") ? alert.link : `https://averrow.com${OPS_BASE}${alert.link}`;
   const body = `
 <div style="background:${COLOR.bgCard};border:1px solid ${COLOR.borderHard};border-radius:12px;padding:20px;">
   <div style="font-family:${FONT_MONO};font-size:11px;letter-spacing:0.08em;color:${COLOR.orange};margin-bottom:8px;">PLATFORM ALERT · ${escapeHtml(alert.severity.toUpperCase())}</div>

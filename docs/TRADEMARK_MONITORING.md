@@ -2,7 +2,7 @@
 
 The trademark module gives a **unified, mark-centric view of brand misuse**:
 which marks a brand owns (`trademark_assets`) and where they're being misused
-(`trademark_findings`). It surfaces in the staff ops SPA (`/v2 → Trademarks`)
+(`trademark_findings`). It surfaces in the staff ops SPA (`/ops → Trademarks`)
 and the customer tenant app (`/tenant → Trademark Infringement`, entitlement
 `trademark`).
 
@@ -48,7 +48,7 @@ no AI tokens are spent. Findings link to the brand's wordmark asset via
 
 ### Where it shows up
 
-- **Ops:** `GET /api/trademarks/overview` → `features/trademarks/Trademarks.tsx` (`/v2/trademarks`).
+- **Ops:** `GET /api/trademarks/overview` → `features/trademarks/Trademarks.tsx` (`/ops/trademarks`).
 - **Tenant:** existing `GET /api/orgs/:orgId/modules/trademark[/brands/:id]` handlers + the `Trademark` / `BrandTrademarkFindings` pages — already wired; they light up once the scanner runs.
 
 ### Customer-uploaded assets (free, no external API)

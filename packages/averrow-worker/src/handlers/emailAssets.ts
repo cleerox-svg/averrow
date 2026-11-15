@@ -4,7 +4,7 @@
  * Gmail's image proxy refuses to show an image whose revalidation fails
  * instead of serving its stale copy (PR-BB / PR-BF). The old logos got a
  * one-year `immutable` header from the frozen legacy `public/_headers`;
- * the R3 PNG ships in the ops build (`/v2/email/averrow-mark-r3.png`),
+ * the R3 PNG ships in the ops build (`/ops/email/averrow-mark-r3.png`),
  * which that file can't cover without touching the freeze. So emails
  * reference `/email/averrow-mark-r3.png` instead: no static asset exists at
  * that path, the asset layer misses and the request reaches the Worker
@@ -15,11 +15,12 @@
  */
 
 import type { Env } from "../types";
+import { OPS_BASE } from "../lib/app-paths";
 
 /** Public path emails reference (EMAIL_LOGO_URL). */
 export const EMAIL_LOGO_PATH = "/email/averrow-mark-r3.png";
 /** Where the ops build actually ships the file. */
-export const EMAIL_LOGO_ASSET_PATH = "/v2/email/averrow-mark-r3.png";
+export const EMAIL_LOGO_ASSET_PATH = `${OPS_BASE}/email/averrow-mark-r3.png`;
 export const EMAIL_LOGO_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 export async function handleEmailLogo(request: Request, env: Env): Promise<Response> {

@@ -12,32 +12,32 @@ import { buildMeta } from '../../../../shared/scripts/build-meta';
 const page = (script: string, extra = '') =>
   `<!doctype html><html><head><meta name="averrow-build-sha" content="abc"><script type="module" crossorigin src="${script}"></script>${extra}</head><body></body></html>`;
 const reply = (body: string, status = 200) => vi.fn(async () => new Response(body, { status }));
-const A = '/v2/assets/index-A.js';
+const A = '/ops/assets/index-A.js';
 
 describe('isNewBuildAvailable', () => {
   it('true when the shell names a different entry', async () => {
-    expect(await isNewBuildAvailable([A], '/v2/', reply(page('/v2/assets/index-NEW.js')))).toBe(true);
+    expect(await isNewBuildAvailable([A], '/ops/', reply(page('/ops/assets/index-NEW.js')))).toBe(true);
   });
   it('false when the shell names the same assets; a different meta sha alone is not an update', async () => {
     const same = page(A).replace('content="abc"', 'content="zzz"');
-    expect(await isNewBuildAvailable([A], '/v2/', reply(same))).toBe(false);
+    expect(await isNewBuildAvailable([A], '/ops/', reply(same))).toBe(false);
   });
   it('catches a CSS-only or chunk-only change', async () => {
-    const css = '<link rel="stylesheet" href="/v2/assets/index-NEW.css">';
-    expect(await isNewBuildAvailable([A], '/v2/', reply(page(A, css)))).toBe(true);
-    const chunk = '<link rel="modulepreload" href="/v2/assets/vendor-NEW.js">';
-    expect(await isNewBuildAvailable([A, '/v2/assets/vendor-OLD.js'], '/v2/', reply(page(A, chunk)))).toBe(true);
+    const css = '<link rel="stylesheet" href="/ops/assets/index-NEW.css">';
+    expect(await isNewBuildAvailable([A], '/ops/', reply(page(A, css)))).toBe(true);
+    const chunk = '<link rel="modulepreload" href="/ops/assets/vendor-NEW.js">';
+    expect(await isNewBuildAvailable([A, '/ops/assets/vendor-OLD.js'], '/ops/', reply(page(A, chunk)))).toBe(true);
   });
   it('a page that has preloaded extra lazy chunks is not an update', async () => {
-    expect(await isNewBuildAvailable([A, '/v2/assets/lazy-X.js'], '/v2/', reply(page(A)))).toBe(false);
+    expect(await isNewBuildAvailable([A, '/ops/assets/lazy-X.js'], '/ops/', reply(page(A)))).toBe(false);
   });
   it('false on any doubt: offline, error status, foreign page, nothing to compare', async () => {
     const offline = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
-    expect(await isNewBuildAvailable([A], '/v2/', offline)).toBe(false);
-    expect(await isNewBuildAvailable([A], '/v2/', reply(page('/v2/assets/index-B.js'), 503))).toBe(false);
-    expect(await isNewBuildAvailable([A], '/v2/', reply('<html>captive portal</html>'))).toBe(false);
-    expect(await isNewBuildAvailable([], '/v2/', reply(page('/v2/assets/index-B.js')))).toBe(false);
-    expect(await isNewBuildAvailable(null, '/v2/', reply(page('/v2/assets/index-B.js')))).toBe(false);
+    expect(await isNewBuildAvailable([A], '/ops/', offline)).toBe(false);
+    expect(await isNewBuildAvailable([A], '/ops/', reply(page('/ops/assets/index-B.js'), 503))).toBe(false);
+    expect(await isNewBuildAvailable([A], '/ops/', reply('<html>captive portal</html>'))).toBe(false);
+    expect(await isNewBuildAvailable([], '/ops/', reply(page('/ops/assets/index-B.js')))).toBe(false);
+    expect(await isNewBuildAvailable(null, '/ops/', reply(page('/ops/assets/index-B.js')))).toBe(false);
   });
   it('probes the given shell URL from the network, never a cache', async () => {
     const f = reply(page('/tenant/assets/index-A.js'));
@@ -51,19 +51,19 @@ describe('isNewBuildAvailable', () => {
 describe('currentAssets / assetsInHtml', () => {
   it('collects js + css asset paths from the document, ignoring other tags', () => {
     document.head.innerHTML =
-      '<script type="module" src="https://x.test/v2/assets/index-Z.js"></script>' +
-      '<link rel="stylesheet" href="/v2/assets/index-Z.css"><link rel="preload" href="/v2/assets/font.woff2">' +
-      '<link rel="icon" href="/v2/favicon.svg">';
-    expect([...currentAssets()].sort()).toEqual(['/v2/assets/index-Z.css', '/v2/assets/index-Z.js']);
-    expect(currentBuildScript()).toBe('/v2/assets/index-Z.js');
+      '<script type="module" src="https://x.test/ops/assets/index-Z.js"></script>' +
+      '<link rel="stylesheet" href="/ops/assets/index-Z.css"><link rel="preload" href="/ops/assets/font.woff2">' +
+      '<link rel="icon" href="/ops/favicon.svg">';
+    expect([...currentAssets()].sort()).toEqual(['/ops/assets/index-Z.css', '/ops/assets/index-Z.js']);
+    expect(currentBuildScript()).toBe('/ops/assets/index-Z.js');
     document.head.innerHTML = '<script type="module" src="/src/main.tsx"></script>';
     expect(currentAssets().size).toBe(0);
     expect(currentBuildScript()).toBeNull();
     document.head.innerHTML = '';
   });
   it('assetsInHtml finds js and css refs only', () => {
-    expect([...assetsInHtml(page(A, '<link href="/v2/assets/a.css"><link href="/v2/assets/f.woff2">'))].sort())
-      .toEqual(['/v2/assets/a.css', A]);
+    expect([...assetsInHtml(page(A, '<link href="/ops/assets/a.css"><link href="/ops/assets/f.woff2">'))].sort())
+      .toEqual(['/ops/assets/a.css', A]);
   });
 });
 
@@ -108,7 +108,7 @@ describe('AppUpdateNotice', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000);
-    document.head.innerHTML = '<script type="module" src="/v2/assets/index-OLD.js"></script>';
+    document.head.innerHTML = '<script type="module" src="/ops/assets/index-OLD.js"></script>';
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -121,9 +121,9 @@ describe('AppUpdateNotice', () => {
 
   it('keeps a persistent empty polite live region, and renders nothing / fetches nothing in dev', async () => {
     document.head.innerHTML = '';
-    const f = reply(page('/v2/assets/index-NEW.js'));
+    const f = reply(page('/ops/assets/index-NEW.js'));
     vi.stubGlobal('fetch', f);
-    render(<AppUpdateNotice shellUrl="/v2/" />);
+    render(<AppUpdateNotice shellUrl="/ops/" />);
     await act(async () => { window.dispatchEvent(new Event('focus')); });
     expect(f).not.toHaveBeenCalled();
     const region = screen.getByRole('status');
@@ -133,15 +133,15 @@ describe('AppUpdateNotice', () => {
 
   it('renders the banner INTO the live region once a visible check finds a newer build, then stops polling', async () => {
     setVisibility('visible');
-    const f = reply(page('/v2/assets/index-OLD.js'));
+    const f = reply(page('/ops/assets/index-OLD.js'));
     vi.stubGlobal('fetch', f);
-    render(<AppUpdateNotice shellUrl="/v2/" />);
+    render(<AppUpdateNotice shellUrl="/ops/" />);
     const region = screen.getByRole('status');
     await act(async () => { window.dispatchEvent(new Event('focus')); });
     expect(f).toHaveBeenCalledTimes(1);
     expect(region).toBeEmptyDOMElement();
 
-    f.mockImplementation(async () => new Response(page('/v2/assets/index-NEW.js')));
+    f.mockImplementation(async () => new Response(page('/ops/assets/index-NEW.js')));
     await act(async () => { vi.advanceTimersByTime(UPDATE_MIN_GAP_MS + 1); });
     await act(async () => { window.dispatchEvent(new Event('online')); });
     expect(screen.getByRole('status')).toBe(region);
@@ -152,15 +152,15 @@ describe('AppUpdateNotice', () => {
   });
 
   it('a failed lazy chunk (vite:preloadError) raises the same banner', async () => {
-    render(<AppUpdateNotice shellUrl="/v2/" />);
+    render(<AppUpdateNotice shellUrl="/ops/" />);
     await act(async () => { window.dispatchEvent(new Event('vite:preloadError')); });
     expect(screen.getByTestId('app-update-banner')).toBeInTheDocument();
   });
 
   it('does not check while the tab is hidden, and honours the minimum gap', async () => {
-    const f = reply(page('/v2/assets/index-OLD.js'));
+    const f = reply(page('/ops/assets/index-OLD.js'));
     vi.stubGlobal('fetch', f);
-    render(<AppUpdateNotice shellUrl="/v2/" />);
+    render(<AppUpdateNotice shellUrl="/ops/" />);
     setVisibility('hidden');
     await act(async () => { window.dispatchEvent(new Event('focus')); });
     expect(f).not.toHaveBeenCalled();
