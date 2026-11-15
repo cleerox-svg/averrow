@@ -1,6 +1,6 @@
 # MISP Galaxy (threat-actor cluster): licence snapshot
 
-- **Feed:** `actor_reference` (`packages/averrow-worker/src/feeds/actorReference.ts`, migration 0335)
+- **Feed:** `actor_reference` (`packages/averrow-worker/src/feeds/actorReference.ts`, migration 0334)
 - **Data URL:** https://raw.githubusercontent.com/MISP/misp-galaxy/main/clusters/threat-actor.json
 - **Licence URL:** https://github.com/MISP/misp-galaxy/blob/main/LICENSE.md (same text in the README "License" section)
 - **Checked:** 2026-11-15 (fetched live, generic User-Agent)

@@ -8,7 +8,7 @@ import {
 
 /**
  * MISP Galaxy threat-actor cluster → `actor_reference` +
- * `actor_reference_aliases` (feed key `actor_reference`, migration 0335).
+ * `actor_reference_aliases` (feed key `actor_reference`, migration 0334).
  *
  * Reference data, not IOCs (same pattern as spamhaus_asn_drop): writes no
  * threats and always reports itemsNew = 0, so it never wakes Sentinel. It

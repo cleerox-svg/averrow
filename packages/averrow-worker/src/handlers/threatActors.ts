@@ -401,7 +401,7 @@ export async function handleGetThreatActor(request: Request, env: Env, id: strin
       newsMentions = articles.results;
     }
 
-    // Reference entry (MISP Galaxy, migration 0335) for this actor's name
+    // Reference entry (MISP Galaxy, migration 0334) for this actor's name
     // or one of its aliases — only when it resolves unambiguously, else
     // null. Display-only: it never renames or re-attributes the actor.
     // Staff-only (this route is requireStaff); no tenant reader.

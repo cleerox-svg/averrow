@@ -1,6 +1,6 @@
 /**
  * Threat-actor REFERENCE data: the MISP Galaxy `threat-actor` cluster
- * (feeds/actorReference.ts, migration 0335), and the one name → reference
+ * (feeds/actorReference.ts, migration 0334), and the one name → reference
  * resolver.
  *
  * Reference data ONLY. Nothing here writes `threat_actors`,

@@ -105,7 +105,7 @@ import { cf_radar_bots } from "./cf_radar_bots";
 // threats and always reports itemsNew = 0 (never triggers Sentinel).
 import { spamhaus_asn_drop } from "./spamhausAsnDrop";
 // MISP Galaxy threat-actor cluster → actor_reference reference tables
-// (migration 0335). Names/aliases only, never attribution; writes no
+// (migration 0334). Names/aliases only, never attribution; writes no
 // threats and always reports itemsNew = 0 (never triggers Sentinel).
 import { actor_reference } from "./actorReference";
 

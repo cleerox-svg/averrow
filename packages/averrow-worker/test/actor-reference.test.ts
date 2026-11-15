@@ -1,6 +1,6 @@
 /**
  * MISP Galaxy threat-actor reference (feeds/actorReference.ts,
- * lib/actor-reference.ts, migration 0335).
+ * lib/actor-reference.ts, migration 0334).
  *
  * Fixtures mirror the live `clusters/threat-actor.json` shape checked on
  * 2026-11-15 (top-level authors/category/description/name/source/type/uuid/
@@ -421,7 +421,7 @@ describe.skipIf(!hasSqlite())("lookupActorReference", () => {
     const { env } = await loaded();
     expect(await lookupActorReference(env.DB, ["Nobody Here"])).toBeNull();
     expect(await lookupActorReference(env.DB, ["", "-"])).toBeNull();
-    const bare = openMigratedDb({ exclude: ["0335_actor_reference.sql"] });
+    const bare = openMigratedDb({ exclude: ["0334_actor_reference.sql"] });
     expect(await lookupActorReference(d1FromSqlite(bare), ["APT28"])).toBeNull();
   });
 });
