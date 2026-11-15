@@ -146,10 +146,16 @@ class NameSet {
 }
 
 /** Resolve `p` or reject after `ms`, whichever comes first. */
+/** Our own deadline fired (a timer can fire a millisecond before the clock
+ *  reaches the deadline, so the clock alone cannot tell the two apart). */
+class SpfWalkTimeout extends Error {
+  constructor() { super('spf walk lookup timed out'); }
+}
+
 async function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('spf walk lookup timed out')), ms);
+    timer = setTimeout(() => reject(new SpfWalkTimeout()), ms);
   });
   try {
     return await Promise.race([p, timeout]);
@@ -220,8 +226,8 @@ export async function walkSpfTree(
           : spf.length > 1 ? { kind: 'multiple' }
           : parsed ? { kind: 'ok', record: parsed } : { kind: 'none' };
       }
-    } catch {
-      res = { kind: 'unknown', reason: now() >= deadline ? 'time_budget' : 'lookup_error' };
+    } catch (err) {
+      res = { kind: 'unknown', reason: err instanceof SpfWalkTimeout || now() >= deadline ? 'time_budget' : 'lookup_error' };
     }
     cache.set(name, res);
     return res;
