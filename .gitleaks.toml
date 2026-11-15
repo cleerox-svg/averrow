@@ -12,6 +12,10 @@ paths = [
   '''packages/(averrow-worker|trust-radar)/src/lib/google-service-account\.ts''',
   # Test generates a throwaway RSA key at runtime.
   '''packages/(averrow-worker|trust-radar)/test/google-service-account\.test\.ts''',
+  # Vendored public IOK phishing-kit rules (phish.report, ODbL). A rule matches
+  # a kit's Firebase asset URL, whose download token is the indicator itself,
+  # not a credential of ours (reviewed 2026-11-15).
+  '''packages/averrow-worker/src/data/iok/rules\.json''',
 ]
 commits = [
   # imprsn8 default-admin hash (decommissioned in 2a021e28; credential dead).
