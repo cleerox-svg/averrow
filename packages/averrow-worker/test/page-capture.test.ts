@@ -50,6 +50,7 @@ import {
 import { applySecurityHeaders } from "../src/middleware/security";
 import { signJWT } from "../src/lib/jwt";
 import { pageCaptureAgent } from "../src/agents/pageCapture";
+import { NetworkCollector, type NetworkEvidence } from "../src/lib/page-capture-network";
 import { bulkInsertThreats, insertThreat as feedInsertThreat } from "../src/lib/feedRunner";
 import type { ThreatRow } from "../src/feeds/types";
 import type { Env, JWTPayload, UserRole } from "../src/types";
@@ -1060,6 +1061,19 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
       expect(log.every((l) => !l.error)).toBe(true);
     });
 
+    it("subset_fields: stored per match; rows written before the column read as title / js / css only", async () => {
+      const { loadKitMatches } = await import("../src/lib/iok-kit-matches");
+      rawDb.exec(`INSERT INTO page_captures (id, threat_id, target_url, status) VALUES ('pc_s', 't1', 'https://x.test/', 'captured')`);
+      rawDb.exec(`INSERT INTO page_capture_kit_matches (capture_id, rule_id, rule_title, approx_fields_json, subset_fields_json, ruleset_commit) VALUES
+        ('pc_s', 'new-row', 'N', '["cookies","html"]', '["cookies"]', 'c'),
+        ('pc_s', 'old-row', 'O', '["html","title","js"]', NULL, 'c')`);
+      const got = (await loadKitMatches(db, ["pc_s"])).get("pc_s")!;
+      expect(got.map((m) => [m.rule_id, m.approximate_fields, m.subset_fields])).toEqual([
+        ["new-row", ["cookies", "html"], ["cookies"]],
+        ["old-row", ["html", "title", "js"], ["title", "js"]],
+      ]);
+    });
+
     it("re-evaluating under a refreshed ruleset replaces the capture's rows (stale matches removed)", async () => {
       const { recordKitMatches } = await import("../src/lib/iok-kit-matches");
       const { IOK_RULESET } = await import("../src/lib/iok-ruleset");
@@ -1152,6 +1166,175 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
     });
   });
 
+  // ─── Network evidence (migration 0335) ────────────────────────────
+  describe("network evidence", () => {
+    const SERVED = "<html><title>Sign in</title><form action=\"/post.php\"></form></html>";
+    async function evidence(over: { headers?: Record<string, string>; body?: string; cookies?: Array<Record<string, unknown>> } = {}) {
+      const c = new NetworkCollector();
+      c.noteRequest("GET", "https://acme-sso-login.com/signin", "document");
+      c.noteRequest("POST", "https://acme-sso-login.com/gate.php", "xhr");
+      return c.finish(
+        {
+          url: () => "https://acme-sso-login.com/signin", status: () => 200,
+          // Content-Length present, no Content-Encoding: the only case where the size is known without CDP events.
+          headers: () => over.headers ?? { "content-type": "text/html", "x-powered-by": "PHP/8.1", "content-length": String(new TextEncoder().encode(over.body ?? SERVED).byteLength) },
+          buffer: async () => new TextEncoder().encode(over.body ?? SERVED),
+        },
+        {
+          url: () => "https://acme-sso-login.com/signin",
+          cookies: async () => over.cookies ?? [{ name: "PHPSESSID", value: "SECRETVALUE123", domain: "acme-sso-login.com", path: "/", secure: true, httpOnly: true }],
+        },
+      );
+    }
+    async function captureOnce(network?: NetworkEvidence, html = SERVED): Promise<string> {
+      insertThreat("t1");
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const fd = fakeDriver({ "https://acme-sso-login.com/": raw({ html, network }) });
+      await runPageCapture(env, { driver: fd.driver, now: () => NOW, resolve: resolveHost });
+      return String(rows(`SELECT id FROM page_captures`)[0]!["id"]);
+    }
+    const netKey = (id: string): string => `captures/2026/10/${id}/network.json`;
+
+    it("stores ONE compact JSON object beside the other evidence, hashed in D1 and in meta.json", async () => {
+      const id = await captureOnce(await evidence());
+      const obj = r2.store.get(netKey(id))!;
+      expect(obj.contentType).toBe("application/json");
+      const parsed = JSON.parse(new TextDecoder().decode(obj.bytes)) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ version: 1, capture_id: id, status: "complete", requests_complete: true });
+      expect((parsed["main_response"] as { body: string }).body).toBe(SERVED);
+      expect((parsed["cookies"] as Array<{ name: string; value: string }>)[0]).toMatchObject({ name: "PHPSESSID", value: "SECRETVALUE123" });
+      expect((parsed["requests"] as unknown[]).length).toBe(2);
+
+      const digest = await sha(obj.bytes);
+      expect(obj.custom).toMatchObject({ capture_id: id, sha256: digest });
+      expect(capRow(id)).toMatchObject({
+        status: "captured", net_evidence_status: "complete", net_evidence_sha256: digest, net_requests: 2, net_headers: 3, net_cookies: 1,
+      });
+      const meta = JSON.parse(new TextDecoder().decode(r2.store.get(`captures/2026/10/${id}/meta.json`)!.bytes)) as Record<string, unknown>;
+      expect((meta["objects"] as Record<string, { sha256: string; key: string }>)["network"]).toMatchObject({ key: netKey(id), sha256: digest });
+      expect(meta["network"]).toEqual({ status: "complete", requests: 2, cookies: 1, headers: 3, body_bytes: SERVED.length });
+      // No header / cookie value, body or request URL in meta.json or in D1.
+      const metaText = JSON.stringify(meta);
+      expect(metaText).not.toContain("SECRETVALUE123");
+      expect(metaText).not.toContain("PHP/8.1");
+      expect(JSON.stringify(capRow(id))).not.toContain("SECRETVALUE123");
+      // meta_sha256 still covers the final meta.json.
+      expect(capRow(id)["meta_sha256"]).toBe(await sha(r2.store.get(`captures/2026/10/${id}/meta.json`)!.bytes));
+    });
+
+    it("never writes header / cookie values to a log line or an agent_events row", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const info = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        await captureOnce(await evidence());
+        const emitted = JSON.stringify([...warn.mock.calls, ...info.mock.calls]);
+        expect(emitted).not.toContain("SECRETVALUE123");
+        // Nothing the evidence holds reaches D1: every capture / match / evidence row is clean.
+        const d1 = JSON.stringify([
+          ...rows(`SELECT * FROM page_captures`), ...rows(`SELECT * FROM page_capture_kit_matches`), ...rows(`SELECT * FROM takedown_evidence`),
+        ]);
+        expect(d1).not.toContain("SECRETVALUE123");
+        expect(d1).not.toContain("PHP/8.1");
+      } finally {
+        warn.mockRestore();
+        info.mockRestore();
+      }
+    });
+
+    it("a capture without network evidence (older driver) is stored exactly as before: NULL flags, no object", async () => {
+      const id = await captureOnce(undefined);
+      expect(capRow(id)).toMatchObject({ status: "captured", net_evidence_status: null, net_evidence_sha256: null, net_requests: null, net_cookies: null });
+      expect(r2.store.has(netKey(id))).toBe(false);
+    });
+
+    it("failed collection: capture still succeeds, flagged 'failed', no object", async () => {
+      const failed = await new NetworkCollector().finish(null, null);
+      const id = await captureOnce(failed);
+      expect(capRow(id)).toMatchObject({ status: "captured", net_evidence_status: "failed", net_evidence_sha256: null });
+      expect(r2.store.has(netKey(id))).toBe(false);
+    });
+
+    it("the R2 write of network.json failing flags 'failed' but never fails the capture, and IOK falls back to the approximations", async () => {
+      const put = r2.bucket.put.bind(r2.bucket);
+      (r2.bucket as unknown as { put: unknown }).put = async (key: string, ...rest: unknown[]) => {
+        if (key.endsWith("/network.json")) throw new Error("r2 put failed");
+        return (put as (k: string, ...r: unknown[]) => Promise<unknown>)(key, ...rest);
+      };
+      const KIT = "<html><form><input type=\"hidden\" name=\"X-CSRF-Token\" value=\"63c2690a6e94180ff183110c4cd9ff7719014722\"></form></html>";
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const id = await captureOnce(await evidence({ body: KIT }), KIT);
+        expect(capRow(id)).toMatchObject({ status: "captured", net_evidence_status: "failed", net_evidence_sha256: null, net_requests: null });
+        // Evaluated without the artifact it could not store: html is the DOM stand-in again.
+        expect(rows(`SELECT rule_id, approx_fields_json FROM page_capture_kit_matches`)).toEqual([
+          { rule_id: "123-reg-63c26", approx_fields_json: JSON.stringify(["html"]) },
+        ]);
+        expect(JSON.stringify(warn.mock.calls)).not.toContain("r2 put failed"); // reason class only
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("kit matching reads the stored artifacts: html exact, so approximate_fields is empty", async () => {
+      const KIT = "<html><form><input type=\"hidden\" name=\"X-CSRF-Token\" value=\"63c2690a6e94180ff183110c4cd9ff7719014722\"></form></html>";
+      await captureOnce(await evidence({ body: KIT }), KIT);
+      expect(rows(`SELECT rule_id, approx_fields_json FROM page_capture_kit_matches`)).toEqual([
+        { rule_id: "123-reg-63c26", approx_fields_json: "[]" },
+      ]);
+    });
+
+    it("a script-injected string matches on an old capture and not on one that has the response as served", async () => {
+      const KIT = "<html><form><input type=\"hidden\" name=\"X-CSRF-Token\" value=\"63c2690a6e94180ff183110c4cd9ff7719014722\"></form></html>";
+      // DOM has the kit string, the served response does not.
+      await captureOnce(await evidence({ body: "<html><script>/* builds the form later */</script></html>" }), KIT);
+      expect(rows(`SELECT rule_id FROM page_capture_kit_matches`)).toEqual([]);
+    });
+
+    it("the kimsuky negation rule fires only with exact headers, end to end", async () => {
+      const FAKE = ["<meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1252\">", "<body bgcolor=\"white\">", "<center>",
+        "<h1>404 Not Found</h1>", "</center>", "<hr>", "<center>nginx</center>"].join("\n");
+      const id = await captureOnce(await evidence({ body: FAKE, headers: { server: "Apache", "content-type": "text/html", "content-length": String(FAKE.length) } }), FAKE);
+      expect(rows(`SELECT rule_id, approx_fields_json FROM page_capture_kit_matches`).map((r) => r["rule_id"])).toContain("kimsuky-nginx-fake-error-9b43f670");
+      expect(capRow(id)["kit_eval_status"]).toBe("complete");
+    });
+
+    it("the kimsuky rule does not fire on a capture without headers", async () => {
+      const FAKE = ["<meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1252\">", "<body bgcolor=\"white\">", "<center>",
+        "<h1>404 Not Found</h1>", "</center>", "<hr>", "<center>nginx</center>"].join("\n");
+      const id = await captureOnce(undefined, FAKE);
+      expect(rows(`SELECT rule_id FROM page_capture_kit_matches`).map((r) => r["rule_id"])).not.toContain("kimsuky-nginx-fake-error-9b43f670");
+      expect(capRow(id)["kit_eval_status"]).toBe("complete"); // a not-applicable rule is not a partial evaluation
+    });
+
+    it("the sweep deletes network.json for every expired capture, whatever net_evidence_status says", async () => {
+      const seed = (id: string, status: string | null): void => {
+        rawDb.prepare(
+          `INSERT INTO page_captures (id, threat_id, target_url, status, desktop_key, html_key, expires_at, net_evidence_status, net_evidence_sha256)
+           VALUES (?, 't', 'https://x.com/', 'captured', ?, ?, '2026-10-11 00:00:00', ?, 'abc')`,
+        ).run(id, `captures/2026/04/${id}/desktop.png`, `captures/2026/04/${id}/page.html`, status);
+      };
+      seed("with", "complete");
+      seed("part", "partial");
+      seed("none", null);
+      seed("fail", "failed");
+      const r = await sweepExpiredCaptures(db, r2.bucket, NOW);
+      expect(r.expired).toBe(4);
+      // Every expired capture's sibling network.json is deleted, whatever status was recorded
+      // (a put that committed and then threw leaves an object with no status; deleting a missing key is a no-op).
+      for (const id of ["with", "part", "none", "fail"]) expect(r2.deleted).toContain(`captures/2026/04/${id}/network.json`);
+      // The hash trail stays, like the other hashes.
+      expect(capRow("with")).toMatchObject({ status: "expired", net_evidence_sha256: "abc" });
+    });
+
+    it("expiry sweep removes a freshly stored object end to end", async () => {
+      const id = await captureOnce(await evidence());
+      expect(r2.store.has(netKey(id))).toBe(true);
+      rawDb.prepare(`UPDATE page_captures SET expires_at = '2026-10-11 00:00:00' WHERE id = ?`).run(id);
+      await sweepExpiredCaptures(db, r2.bucket, NOW);
+      expect(r2.store.has(netKey(id))).toBe(false);
+    });
+  });
+
   describe("retention sweep", () => {
     const seedStored = (id: string, status: string, expiresAt: string): void => {
       rawDb.prepare(
@@ -1165,7 +1348,7 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
       seedStored("oldblk", "blocked", "2026-10-11 00:00:00");
       seedStored("live", "captured", "2027-01-01 00:00:00");
       const r = await sweepExpiredCaptures(db, r2.bucket, NOW);
-      expect(r).toMatchObject({ expired: 2, objectsDeleted: 8 });
+      expect(r).toMatchObject({ expired: 2, objectsDeleted: 10 }); // 4 keys + meta.json + network.json per capture
       expect(capRow("old")).toMatchObject({ status: "expired", desktop_key: null, mobile_key: null, html_key: null, desktop_sha256: "d" });
       expect(capRow("live")).toMatchObject({ status: "captured" });
       expect(r2.deleted).toContain("captures/2026/04/old/meta.json");

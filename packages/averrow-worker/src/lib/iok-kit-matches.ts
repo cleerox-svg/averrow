@@ -71,15 +71,16 @@ export async function recordKitMatches(
   for (const m of evaluation.matches.slice(0, IOK_MAX_MATCHES)) {
     stmts.push(db.prepare(
       `INSERT INTO page_capture_kit_matches
-         (capture_id, rule_id, rule_title, rule_tags_json, approx_fields_json, ruleset_commit, matched_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+         (capture_id, rule_id, rule_title, rule_tags_json, approx_fields_json, subset_fields_json, ruleset_commit, matched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(capture_id, rule_id) DO UPDATE SET
          rule_title = excluded.rule_title,
          rule_tags_json = excluded.rule_tags_json,
          approx_fields_json = excluded.approx_fields_json,
+         subset_fields_json = excluded.subset_fields_json,
          ruleset_commit = excluded.ruleset_commit,
          matched_at = excluded.matched_at`,
-    ).bind(captureId, m.rule_id, m.title, JSON.stringify(m.tags), JSON.stringify(m.approximate_fields), commit, ts));
+    ).bind(captureId, m.rule_id, m.title, JSON.stringify(m.tags), JSON.stringify(m.approximate_fields), JSON.stringify(m.subset_fields), commit, ts));
   }
   stmts.push(
     db.prepare(`UPDATE page_captures SET kit_ruleset_commit = ?, kit_evaluated_at = ?, kit_eval_status = ? WHERE id = ?`)
@@ -105,6 +106,9 @@ export interface KitMatchView {
   tags: string[];
   /** Non-exact evidence fields the rule reads; [] = exact fields only. */
   approximate_fields: IokField[];
+  /** Part of `approximate_fields` that is incomplete evidence (a subset: this
+   *  match is real, but other rules may have been missed), not an approximation. */
+  subset_fields: IokField[];
   ruleset_commit: string;
   matched_at: string;
 }
@@ -138,6 +142,12 @@ function parseFields(raw: string | null): IokField[] {
   return parseTags(raw).filter((f): f is IokField => (IOK_FIELDS as readonly string[]).includes(f));
 }
 
+/** Rows written before subset_fields_json existed: title / js / css only. */
+function subsetOf(subsetJson: string | null, approxJson: string | null): IokField[] {
+  if (subsetJson !== null) return parseFields(subsetJson);
+  return parseFields(approxJson).filter((f) => f === "title" || f === "js" || f === "css");
+}
+
 function parseTags(raw: string | null): string[] {
   if (!raw) return [];
   try {
@@ -158,13 +168,13 @@ export async function loadKitMatches(db: Pick<D1Database, "prepare">, captureIds
   const ids = [...new Set(captureIds)].slice(0, 90);
   if (ids.length === 0) return out;
   const res = await db.prepare(
-    `SELECT capture_id, rule_id, rule_title, rule_tags_json, approx_fields_json, ruleset_commit, matched_at
+    `SELECT capture_id, rule_id, rule_title, rule_tags_json, approx_fields_json, subset_fields_json, ruleset_commit, matched_at
        FROM page_capture_kit_matches
       WHERE capture_id IN (${ids.map(() => "?").join(", ")})
       ORDER BY capture_id, rule_id`,
   ).bind(...ids).all<{
     capture_id: string; rule_id: string; rule_title: string; rule_tags_json: string | null;
-    approx_fields_json: string | null; ruleset_commit: string; matched_at: string;
+    approx_fields_json: string | null; subset_fields_json: string | null; ruleset_commit: string; matched_at: string;
   }>();
   for (const r of res.results ?? []) {
     const list = out.get(r.capture_id) ?? [];
@@ -173,6 +183,7 @@ export async function loadKitMatches(db: Pick<D1Database, "prepare">, captureIds
       title: r.rule_title,
       tags: parseTags(r.rule_tags_json),
       approximate_fields: parseFields(r.approx_fields_json),
+      subset_fields: subsetOf(r.subset_fields_json, r.approx_fields_json),
       ruleset_commit: r.ruleset_commit,
       matched_at: iso(r.matched_at) ?? r.matched_at,
     });

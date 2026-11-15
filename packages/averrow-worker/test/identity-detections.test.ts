@@ -371,14 +371,14 @@ describe.skipIf(!hasSqlite())("IdP detections drill-down (real SQLite)", () => {
     expect(d!.captures.map((c) => [c.id, c.kit_matching])).toEqual([
       ["pc_k1", {
         ruleset_commit: "abc123", evaluated_at: "2026-10-10T10:06:00Z", status: "complete", attribution: "Rules: IOK by phish.report (ODbL)",
-        matches: [{ rule_id: "okta-kit-1", title: "Okta kit 1", tags: ["kit", "target.okta"], approximate_fields: ["html"], ruleset_commit: "abc123", matched_at: "2026-10-10T10:06:00Z" }],
+        matches: [{ rule_id: "okta-kit-1", title: "Okta kit 1", tags: ["kit", "target.okta"], approximate_fields: ["html"], subset_fields: [], ruleset_commit: "abc123", matched_at: "2026-10-10T10:06:00Z" }],
       }],
       // Evaluated on clipped input, nothing matched → says "truncated", not a clean result.
       ["pc_k2", { ruleset_commit: "abc123", evaluated_at: "2026-10-09T10:06:00Z", status: "truncated", attribution: "Rules: IOK by phish.report (ODbL)", matches: [] }],
       // Budget ran out: the matches found are shown under "partial", never under "not checked".
       ["pc_k3", {
         ruleset_commit: "abc123", evaluated_at: "2026-10-08T10:06:00Z", status: "partial", attribution: "Rules: IOK by phish.report (ODbL)",
-        matches: [{ rule_id: "okta-kit-2", title: "Okta kit 2", tags: [], approximate_fields: [], ruleset_commit: "abc123", matched_at: "2026-10-08T10:06:00Z" }],
+        matches: [{ rule_id: "okta-kit-2", title: "Okta kit 2", tags: [], approximate_fields: [], subset_fields: [], ruleset_commit: "abc123", matched_at: "2026-10-08T10:06:00Z" }],
       }],
     ]);
     const kitSql = log.find((l) => l.sql.includes("FROM page_capture_kit_matches"))!;

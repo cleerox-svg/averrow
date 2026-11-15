@@ -97,7 +97,7 @@ describe('Page capture group', () => {
   it('shows the kit match block under a captured page', async () => {
     await open([cap({ kit_matching: {
       ruleset_commit: '142f762aa12994cbd26ddf7d40d40c07ac01bd66', evaluated_at: '2026-11-15T10:00:00Z', status: 'complete',
-      matches: [{ rule_id: 'r1', title: 'Okta kit', tags: ['okta'], approximate_fields: [], ruleset_commit: 'x', matched_at: '2026-11-15T10:00:00Z' }],
+      matches: [{ rule_id: 'r1', title: 'Okta kit', tags: ['okta'], approximate_fields: [], subset_fields: [], ruleset_commit: 'x', matched_at: '2026-11-15T10:00:00Z' }],
       attribution: 'Rules: IOK by phish.report (ODbL)',
     } })]);
     const block = document.querySelector('[data-kit-match]') as HTMLElement;

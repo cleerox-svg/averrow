@@ -30,7 +30,13 @@ function MatchRow({ m }: { m: KitMatch }) {
   const [allTags, setAllTags] = useState(false);
   const tags = allTags ? m.tags : m.tags.slice(0, KIT_VISIBLE_TAGS);
   const hidden = m.tags.length - tags.length;
-  const approx = m.approximate_fields.length > 0;
+  // Two different caveats: an APPROXIMATE field (older capture's html / requests) can over-match;
+  // a SUBSET field (title, js, css, cookies, cut headers) is incomplete, so the match is real
+  // but other rules may have been missed.
+  const subset = m.subset_fields ?? [];
+  const approxFields = m.approximate_fields.filter((f) => !subset.includes(f));
+  const approx = approxFields.length > 0;
+  const incomplete = subset.length > 0;
   return (
     <li className="py-2" style={{ borderTop: '1px solid var(--border-base)' }}>
       {/* Third-party string: a React text node only, never HTML or markdown. */}
@@ -55,7 +61,13 @@ function MatchRow({ m }: { m: KitMatch }) {
       {approx && (
         <p data-approximate className="m-0 mt-1 text-[12px]" style={MUTED}>
           <strong style={{ color: 'var(--text-primary)' }}>Approximate match.</strong>{' '}
-          Matched on the rendered page ({m.approximate_fields.join(', ')}); may over-match.
+          Matched on the rendered page ({approxFields.join(', ')}); may over-match.
+        </p>
+      )}
+      {incomplete && (
+        <p data-subset className="m-0 mt-1 text-[12px]" style={MUTED}>
+          <strong style={{ color: 'var(--text-primary)' }}>Partial evidence.</strong>{' '}
+          Only part of the capture's {subset.join(', ')} data was available, so this match stands but other rules may have been missed.
         </p>
       )}
     </li>

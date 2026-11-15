@@ -100,6 +100,104 @@ Identity Threats detection detail (and attach it to takedowns).
 - Internal (AVERROW_INTERNAL_SECRET): `POST /api/internal/captures/backfill?days=7&limit=200`
   and `POST /api/internal/agents/page_capture/run`.
 
+## Network evidence (2026-11-15, migration 0335)
+A capture also stores ONE compact JSON object, `captures/{yyyy}/{mm}/{id}/network.json`,
+so the IOK rules read the real `html`, `headers`, `requests` and `cookies`
+(`lib/page-capture-network.ts`, wired in `lib/page-capture-browser.ts`).
+
+- **What the Browser Rendering puppeteer API gives us, and what we store.**
+  Nothing is fetched: the collector reads what the browser already did.
+
+  | Artifact | Source | Stored |
+  |---|---|---|
+  | Main response headers | `page.goto()`'s `HTTPResponse.headers()` (lower-cased names; repeated headers joined with `\n`) | `Canonical-Name: value`, one entry per value, sorted (the form IOK renders); ≤ 100 entries, value ≤ 4096 chars |
+  | Main response body as served (pre-JS) | `HTTPResponse.buffer()` (CDP `Network.getResponseBody`: the whole decoded body as one base64 message), **only when its decoded size is known to be ≤ 2 MB** (see below) | text in the JSON object, decoded with the response's charset, cut at 2 MB (`NET_MAX_BODY_BYTES` = the stored HTML cap) |
+  | Request log | the `request` event the driver already handles (every frame, redirects included): method, resource type, URL | ≤ 300 distinct entries, URL ≤ 2 KB; `b: 1` marks a request our interception aborted; later (mobile reload) requests are ignored |
+  | Cookies | `page.cookies()` at the end of the desktop capture (own origin: URL-scoped, then domain-checked) | ≤ 50, name ≤ 128, value ≤ 512, plus domain / path / secure / httpOnly; the jar is cleared at the start of each capture so a previous capture's cookies cannot appear |
+
+  Not obtainable here, so not claimed: third-party cookies, WebSocket and
+  service-worker traffic (not seen by request interception), external
+  script / stylesheet bodies (not needed: `js` / `css` stay inline-only
+  subsets), headers of earlier redirect hops (the final response's headers
+  are what IOK's `headers` means).
+- **Body size gate (the body can exhaust the isolate otherwise).**
+  `Content-Length` is the compressed size and is absent for chunked / endless
+  responses, so it cannot bound a decompression bomb. The driver therefore
+  asks the browser for the body only when the decoded size is known:
+  (1) CDP `Network.dataReceived` (decoded chunk length) summed per request id
+  on the capture's own CDP session, once `Network.loadingFinished` arrived —
+  a running total above 2 MB means `too_large` immediately, never read;
+  (2) without those events, a `Content-Length` ≤ 2 MB with no
+  `Content-Encoding` and no chunked transfer. Anything else is recorded as
+  `unavailable` / `too_large` and never fetched (`bodyFetchVerdict`). A body
+  that arrives after the 3 s read deadline is dropped, and its size was
+  already bounded by the gate. `html` then stays the rendered-DOM
+  approximation for that capture.
+- **Other documents and encodings.** `matches_final` records whether the
+  main response URL is the document the page ended on (fragment ignored); after
+  a JS / meta-refresh navigation headers and body belong to an earlier
+  document, so `html` and `headers` are a subset, never exact, and a rule that
+  negates them does not run. The body is decoded with the response's charset;
+  only clean UTF-8 or pure ASCII is "text exact" (IOK compares raw bytes), so
+  a windows-1252 page with non-ASCII bytes, invalid UTF-8 or an unsupported
+  label makes `html` a subset.
+- **Cookie jar.** The browser context is shared inside a run, so each capture
+  starts with `Network.clearBrowserCookies` on its own CDP session (opening
+  the session and the clear each time-boxed to 1 s). If either fails or times
+  out, this capture records NO cookies (`cookies: null`) rather than risk
+  attributing a previous page's; an empty / unparseable page host also drops
+  all cookies.
+- **Request log freeze.** The log stops at the desktop settle point
+  (`freeze()`): "complete" means up to then; a request issued afterwards is
+  not in it.
+- **Fidelity switch** (`IokEvidence.fidelity`, `lib/iok-engine.ts`): `html` is
+  exact when the raw body was stored uncut; `headers` exact when the header
+  list is complete; `requests` exact when the log is complete (no cap hit and
+  no request our own interception aborted for the SSRF guard, the host cap or
+  a non-http scheme — a blocked response cannot have requested what it would
+  have; media / font aborts do not count); `cookies` is always a subset (page
+  origin only). A cut artifact is a subset. Without network evidence (older
+  captures, a failed collection, a failed R2 write) the old approximations
+  apply. A match lists the fields that were not exact on that capture.
+- **Negation:** a rule that negates a field is evaluated only when that field
+  is exact on the capture; otherwise it is `not_applicable` (never matches,
+  not a budget skip, `kit_eval_status` unchanged). An empty header list must
+  not make `not nginxHeader` true.
+- **Storage / privacy:** header and cookie values can carry tracking ids, so
+  they exist only in the private R2 object (same bucket, 180-day lifecycle +
+  daily sweep, the sweep deleting `network.json` for EVERY expired capture
+  whatever its recorded status — a put that committed and then threw leaves an
+  object with no status; the R2 lifecycle rule on the `captures/` prefix is the
+  backstop and must exist in prod: **owner check** (see Deploy dependencies);
+  SHA-256 in `page_captures.net_evidence_sha256` and in
+  `meta.json` `objects.network`). D1 holds only `net_evidence_status`
+  (`complete` | `partial` | `failed` | NULL = none / older capture) and the
+  counters `net_requests`, `net_headers`, `net_cookies`. There is no staff or
+  tenant route for the object, no value in logs, `agent_outputs` or
+  `meta.json` (counters only) — pinned by `test/iok-kit-matches-exposure.test.ts`.
+- **Failure isolation:** every collector call is bounded and never throws; a
+  hung body / cookie read is cut after at most 3 s and runs while the
+  screenshot is taken; a failure only sets the status flag, and the capture,
+  the screenshots and the DOM-based matching are unaffected.
+- **Unverified against the real service** (only a fake page was tested):
+  (a) that `response.buffer()` on the main document returns the decoded body
+  while request interception is on and the page is `waitUntil: load`; (b)
+  that a second CDP session on the page receives `Network.dataReceived` /
+  `loadingFinished` for the main document with the same request id as
+  Puppeteer's `HTTPRequest.id` (typed `@internal`, present at runtime in
+  1.4.0) — if not, only the strict `Content-Length` path applies and
+  compressed pages keep the DOM approximation; (c) that `page.cookies()`
+  returns JS-set cookies; (d) that `Network.clearBrowserCookies` /
+  `Network.enable` are permitted in Browser Rendering (a refusal means no
+  cookies and no size events, never a failed capture); (e) extra wall time /
+  CPU per capture — the body and cookie reads overlap the desktop screenshot.
+  **After the first deploy check:** the `net_evidence_status` distribution
+  (complete / partial / failed / NULL), how often `html` is still the DOM
+  approximation (`partial` with no body), the capture success rate against
+  the previous week (`page_captures.status`, `agent_runs` of `page_capture`),
+  and capture duration (`agent_runs` duration, `captured_at - claimed`);
+  roll back by reverting the driver wiring if any regresses.
+
 ## Kit matching (IOK rules, 2026-11-15, migration 0333)
 After a capture is stored, the agent matches it against the open IOK
 phishing-kit ruleset (phish.report, ODbL; `docs/licences/iok.md`). No new
@@ -108,11 +206,12 @@ fetching: the evidence is what the capture already holds.
 - **Ruleset:** vendored and compiled at dev time by
   `scripts/vendor-iok-rules.ts` (`pnpm vendor:iok --src <IOK checkout>`) into
   `src/data/iok/rules.json`, with `LICENSE` and `SOURCE.md` (origin, commit,
-  counts, drop reasons, refresh steps). Commit `142f762a`: 266 rules, 258
-  kept, 8 dropped (2 need `headers`, 1 needs `cookies`, 2 have a regex that
-  is not on the allowlist, 1 negates a non-exact field, 2 carry a
+  counts, drop reasons, refresh steps). Commit `142f762a`: 266 rules, 262
+  kept, 4 dropped (2 have a regex that is not on the allowlist, 2 carry a
   credential-shaped token in a match value — third-party tokens are not
-  vendored). About 130 KB.
+  vendored). Before migration 0335 it was 258 kept / 8 dropped: the 3 rules
+  using `headers` / `cookies` and the 1 negating `html` are now kept. About
+  132 KB.
 - **Evidence** (`buildIokEvidence`, `lib/iok-engine.ts`):
 
   | IOK field | What we evaluate | Fidelity |
@@ -121,12 +220,16 @@ fetching: the evidence is what the capture already holds.
   | `hostname` | host of `final_url` (else target) | exact |
   | `title` | `page_title` (final title only) | subset: can miss |
   | `js` / `css` | inline `<script>` / `<style>` bodies only | subset: can miss |
-  | `html` | the rendered HTML; the raw server response is not stored | approximate: can miss and over-match (script-injected markup) |
-  | `requests` | redirect chain, final URL, and URLs the DOM's own start tags reference (`src=`, `<link rel=stylesheet\|icon\|preload\|modulepreload\|manifest>`) | approximate: can miss (fetch/XHR) and over-match (referenced, never requested) |
-  | `cookies`, `headers` | not stored; rules using them are dropped | none |
+  | `html` | the main response as served (network evidence); else the rendered HTML | exact with network evidence; otherwise approximate: can miss and over-match (script-injected markup) |
+  | `requests` | the browser's request log (network evidence); else redirect chain, final URL, and URLs the DOM's own start tags reference | exact with a complete log; otherwise approximate: can miss (fetch/XHR) and over-match (referenced, never requested) |
+  | `headers` | the main response's headers (network evidence) | exact when complete; no data without network evidence |
+  | `cookies` | the page origin's cookies (network evidence) | subset (IOK also reads third-party cookies); no data without network evidence |
 
-  Under `not` only an exact field is allowed; such rules are dropped. Positive
-  use of an approximate field is kept: the over-match is bounded to "the
+  Under `not` only a field that can be exact is allowed (`dom`, `hostname`,
+  `html`, `requests`, `headers`); a rule negating `title` / `js` / `css` /
+  `cookies` is dropped, and a rule negating `html` / `requests` / `headers`
+  runs only where that field is exact on the capture (see Network evidence).
+  Positive use of an approximate field is kept: the over-match is bounded to "the
   kit's string is in the rendered page" or "the page's markup points at the
   kit's file", and each match lists the non-exact fields its rule reads
   (`approximate_fields`). `src=` inside script text, comments, `<noscript>`
@@ -158,8 +261,8 @@ fetching: the evidence is what the capture already holds.
   or enter takedown text. The only reader is the staff detection detail
   (`captures[].kit_matching`, with the attribution string). No tenant or
   public API returns them (`test/iok-kit-matches-exposure.test.ts`).
-- **Not done:** captures stored before 0333 are not backfilled; no ops UI
-  renders the field yet.
+- **Not done:** captures stored before 0333 / 0335 are not backfilled (their
+  kit matching keeps the approximations); no staff route serves `network.json`.
 
 ## UI (ops)
 In the detection detail panel (`DetectionsSection.tsx`), a **Page capture**
@@ -179,6 +282,9 @@ group above Data points:
 1. Create R2 bucket `averrow-phish-captures` with a lifecycle rule: prefix
    `captures/`, delete objects after 180 days.
 2. Browser Rendering available on the account (Workers Paid).
+3. (Migration 0335) the lifecycle rule in (1) also covers `network.json` — it
+   holds header and cookie values and is the last line of defence if a sweep
+   is missed. Confirm it exists in prod.
 Merge only after (1) exists — deploy fails on a missing bucket binding.
 
 ## Risks

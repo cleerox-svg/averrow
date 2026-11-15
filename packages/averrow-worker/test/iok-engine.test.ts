@@ -16,6 +16,7 @@ import {
   IOK_FIELDS,
   IOK_FIELD_FIDELITY,
   IOK_LIST_MAX,
+  IOK_NEGATABLE_FIELDS,
   IOK_MAX_MATCHES,
   IOK_REGEX_INPUT_MAX,
   IOK_TEXT_MAX,
@@ -182,14 +183,11 @@ describe("IOK compiler — vendor-time conversion and drops", () => {
   });
 
   it.each([
-    [{ title: "t", detection: { c: { "cookies|startswith": "cazanova=" }, condition: "c" } }, "field not stored: cookies"],
-    [{ title: "t", detection: { h: { "headers|contains": "Server: nginx" }, condition: "h" } }, "field not stored: headers"],
+    [{ title: "t", detection: { c: { "cookies|startswith": "cazanova=" }, d: { "dom|contains": "x" }, condition: "d and not c" } }, "negated non-exact field: cookies"],
     [{ title: "t", detection: { h: { "ip|contains": "1" }, condition: "h" } }, "unknown field: ip"],
     [{ title: "t", detection: { k: ["just", "keywords"], condition: "k" } }, "keyword selection unsupported"],
     [{ title: "t", detection: { k: { "html|cidr": "10.0.0.0/8" }, condition: "k" } }, "unsupported modifier: cidr"],
     [{ title: "t", detection: { k: { "html|contains": "x" }, condition: "k | count() > 3" } }, "aggregation condition unsupported"],
-    [{ title: "t", detection: { a: { "html|contains": "x" }, b: { "html|contains": "y" }, condition: "a and not b" } }, "negated non-exact field: html"],
-    [{ title: "t", detection: { a: { "html|contains": "x" }, b: { "requests|contains": "y" }, condition: "a and not (b)" } }, "negated non-exact field: requests"],
     [{ title: "t", detection: { a: { "dom|contains": "x" }, b: { "title": "Real" }, condition: "a and not b" } }, "negated non-exact field: title"],
     [{ title: "t", detection: { a: { "dom|contains": "x" }, b: { "js|contains": "y" }, condition: "a and not b" } }, "negated non-exact field: js"],
     [{ title: "t", detection: { a: { "html|re": "token=[a-f0-9]{32}" }, condition: "a" } }, "regex not on allowlist"],
@@ -245,10 +243,10 @@ describe("IOK compiler — vendor-time conversion and drops", () => {
   it("compileIndicators parses YAML, sorts, counts drop reasons; serializeRuleSet round-trips", () => {
     const res = compileIndicators([
       { file: "b.yml", text: "title: B\ndetection:\n  s:\n    html|contains: 'kit-b'\n  condition: s\ntags:\n  - kit\n" },
-      { file: "a.yml", text: "title: A\ndetection:\n  c:\n    cookies|contains: x\n  condition: c\n" },
+      { file: "a.yml", text: "title: A\ndetection:\n  c:\n    ip|contains: x\n  condition: c\n" },
       { file: "c.yml", text: "title: [unclosed\n" },
     ], { repository: "r", commit: "c".repeat(40), commit_date: "2025-01-01", vendored_at: "2026-11-15", licence: "ODbL-1.0", attribution: IOK_ATTRIBUTION });
-    expect(res.ruleset.stats).toEqual({ total: 3, kept: 1, dropped: 2, dropped_by_reason: { "field not stored: cookies": 1, "yaml parse error": 1 } });
+    expect(res.ruleset.stats).toEqual({ total: 3, kept: 1, dropped: 2, dropped_by_reason: { "unknown field": 1, "yaml parse error": 1 } });
     expect(res.ruleset.rules.map((r) => r.id)).toEqual(["b"]);
     const text = serializeRuleSet(res.ruleset);
     expect(JSON.parse(text)).toEqual(res.ruleset);
@@ -464,7 +462,7 @@ describe("IOK evidence — built only from what a capture stores", () => {
 
   it("falls back to the target host, and handles empty / missing values", () => {
     const e = buildIokEvidence({ html: "", title: null, finalUrl: null, targetUrl: "https://t.test/", redirectChain: [] });
-    expect(e).toEqual({ html: "", dom: "", title: [], hostname: "t.test", js: [], css: [], requests: [], clipped: false });
+    expect(e).toEqual({ html: "", dom: "", title: [], hostname: "t.test", js: [], css: [], requests: [], headers: [], cookies: [], fidelity: {}, clipped: false });
   });
 
   it("caps text / list sizes and stays linear on hostile markup", () => {
@@ -550,7 +548,7 @@ describe("vendored IOK ruleset (src/data/iok)", () => {
       refs(r.cond, false, out);
       for (const [n, neg] of out) {
         expect(r.sel[n], `${r.id}: ${n}`).toBeDefined();
-        if (neg) for (const g of r.sel[n]!) for (const m of g) expect(IOK_FIELD_FIDELITY[m.f]).toBe("exact");
+        if (neg) for (const g of r.sel[n]!) for (const m of g) expect(IOK_NEGATABLE_FIELDS).toContain(m.f);
       }
     }
   });
@@ -567,7 +565,9 @@ describe("vendored IOK ruleset (src/data/iok)", () => {
     });
     const out = evaluateIokRules(rs, benign);
     expect(out).toMatchObject({ matches: [], status: "complete", budget_exhausted: false, regex_rejected: 0 });
-    expect(out.evaluated).toBe(rs.rules.length);
+    // The two rules that negate headers / html are not applicable without the artifacts.
+    expect(out.not_applicable).toBe(2);
+    expect(out.evaluated + out.not_applicable).toBe(rs.rules.length);
   });
 
   it("evaluates a worst-case 1 MB page within the work budget", () => {
@@ -575,6 +575,6 @@ describe("vendored IOK ruleset (src/data/iok)", () => {
     const e = buildIokEvidence({ html, title: "t", finalUrl: "https://h.test/", targetUrl: null, redirectChain: [] });
     const out = evaluateIokRules(rs, e);
     expect(out.budget_exhausted).toBe(false);
-    expect(out.evaluated).toBe(rs.rules.length);
+    expect(out.evaluated + out.not_applicable).toBe(rs.rules.length);
   });
 });
