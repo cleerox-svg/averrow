@@ -3,10 +3,10 @@ name: Deploy — Averrow Worker
 # Canonical production deploy for the Averrow Worker.
 #
 # Builds the averrow-ops React SPA (formerly averrow-ui, rebadged
-# in v3 Phase D2) before wrangler deploy so the /v2/* assets land
-# in packages/averrow-worker/public/v2/ before the worker bundle is
+# in v3 Phase D2) before wrangler deploy so the /ops/* assets land
+# in packages/averrow-worker/public/ops/ before the worker bundle is
 # shipped. That directory is gitignored — without this build step
-# the deployed worker has no SPA assets and every /v2/* path
+# the deployed worker has no SPA assets and every /ops/* path
 # returns 404 (ERR_INVALID_RESPONSE).
 #
 # A separate Cloudflare Workers Build Git integration exists; this
@@ -74,7 +74,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build React UI (averrow-ops — staff /v2)
+      - name: Build React UI (averrow-ops — staff /ops)
         working-directory: packages/averrow-ops
         run: pnpm run build
 
@@ -86,8 +86,7 @@ jobs:
       # generate-sitemap.mjs + sync-to-worker.mjs which overlay-copy
       # the artifacts into packages/averrow-worker/public/. Without this
       # step the Worker deploys with no Astro output and every public
-      # page falls through to the dashboard.html SPA fallback in
-      # routes/public.ts:356. Added 2026-05 after R7 cutover went
+      # page is missing. Added 2026-05 after R7 cutover went
       # live missing this step — see docs/archive/audit-screenshots-2026-05/r8-*.png.
       - name: Build Astro marketing site (@averrow/marketing — /)
         working-directory: packages/averrow-marketing
