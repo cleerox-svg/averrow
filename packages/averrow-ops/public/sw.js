@@ -317,7 +317,16 @@ self.addEventListener('push', (event) => {
 // 2026-04-30: tapping a platform alert opened the old UI).
 function opsPath(path) {
   if (!path) return '/ops/';
-  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    // Same-origin absolute links only; a notification never opens another site.
+    try {
+      const u = new URL(path);
+      if (u.origin !== self.location.origin) return '/ops/';
+      return opsPath(u.pathname + u.search + u.hash);
+    } catch (e) {
+      return '/ops/';
+    }
+  }
   if (path.startsWith('/ops/') || path === '/ops') return path;
   // An in-flight payload from before the move (/v2 was retired 2026-11-15).
   if (path === '/v2' || path.startsWith('/v2/')) return '/ops' + path.slice(3);

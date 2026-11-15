@@ -224,7 +224,8 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     // session is valid, removed on EVERY path that loses it (logout, 401, failed
     // /me, no cookie session) — synchronously, before any host redirect to `/`.
     if (appHint) {
-      if (u) setAppHint(appHint);
+      // Staff who open the customer app keep the staff app as their home.
+      if (u) setAppHint(appHint === 'tenant' && u.role !== 'client' ? 'ops' : appHint);
       else clearAppHint();
     }
   }, [saveCachedUser, appHint]);
