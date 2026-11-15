@@ -119,9 +119,22 @@ const IPV4_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
  * the work set (and never aborts a run).
  */
 export function dnsblQueryName(domain: string, zone: string): string | null {
+  const d = validDnsName(domain);
+  if (d === null || `${d}.${zone}`.length > MAX_DNS_NAME) return null;
+  return d;
+}
+
+/**
+ * Normalise `domain` (trim, lowercase, drop one trailing dot) and return it
+ * only when it is a queryable public-looking DNS name: not an IP literal,
+ * at most 253 characters, at least two labels, every label LDH (underscore
+ * allowed, e.g. `_spf.example.com`), non-numeric TLD. Null otherwise.
+ * Shared by the DNSBL feeds and the SPF include-tree walk (lib/spf-walk.ts).
+ */
+export function validDnsName(domain: string): string | null {
   const d = domain.trim().toLowerCase().replace(/\.$/, "");
   if (d === "" || d.includes(":") || d.includes("[") || IPV4_RE.test(d)) return null;
-  if (`${d}.${zone}`.length > MAX_DNS_NAME) return null;
+  if (d.length > MAX_DNS_NAME) return null;
   const labels = d.split(".");
   if (labels.length < 2) return null;
   if (!labels.every((l) => LABEL_RE.test(l))) return null;

@@ -432,11 +432,17 @@ export interface EmailSecurityScan {
   dmarc_rua: string | null;
   dmarc_ruf: string | null;
   dmarc_raw: string | null;
-  spf_exists: number;
+  /** NULL = SPF not checked: the root lookup failed (migration 0332). */
+  spf_exists: number | null;
   spf_policy: string | null;
   spf_includes: number;
   spf_too_many_lookups: number;
   spf_raw: string | null;
+  /** Migration 0332 — NULL on rows scanned before the SPF tree walk. */
+  spf_lookup_count?: number | null;
+  spf_void_lookups?: number | null;
+  spf_walk_status?: string | null;
+  spf_findings?: string | null;
   dkim_exists: number;
   dkim_selectors_found: string | null;
   dkim_raw: string | null;

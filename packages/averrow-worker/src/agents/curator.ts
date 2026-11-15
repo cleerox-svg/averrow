@@ -13,7 +13,7 @@
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
-import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
+import { runEmailSecurityScan, saveEmailSecurityScan, previousSpfLoader } from "../email-security";
 import { discoverSocialProfiles } from "../lib/social-discovery";
 
 // Known-safe infrastructure domains — threats targeting these are false positives
@@ -114,7 +114,7 @@ export const curatorAgent: AgentModule = {
         });
         let scanResult;
         try {
-          scanResult = await Promise.race([runEmailSecurityScan(domain), timeoutPromise]);
+          scanResult = await Promise.race([runEmailSecurityScan(domain, { previousSpf: previousSpfLoader(db, brand.id) }), timeoutPromise]);
         } finally {
           if (timer !== undefined) clearTimeout(timer);
         }

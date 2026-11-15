@@ -172,7 +172,7 @@ export function ActiveThreatsCard({ threats }: { threats: any[] }) {
 
 const EMAIL_PROTOCOLS = ['SPF', 'DKIM', 'DMARC', 'MX'] as const;
 
-function getEmailStatus(protocol: string, emailSec: any) {
+export function getEmailStatus(protocol: string, emailSec: any) {
   if (!emailSec) return { status: 'MISSING', hint: '' };
 
   if (protocol === 'MX') {
@@ -187,6 +187,9 @@ function getEmailStatus(protocol: string, emailSec: any) {
   }
 
   if (protocol === 'SPF') {
+    // spf_exists null = the latest scan could not look the record up (DNS
+    // failure): unknown, not missing.
+    if (emailSec.spf_exists === null) return { status: 'UNKNOWN', hint: 'not checked' };
     if (!emailSec.spf_exists) return { status: 'MISSING', hint: '' };
     if (emailSec.spf_too_many_lookups) return { status: 'PARTIAL', hint: '>10 lookups' };
     const hint = emailSec.spf_raw
@@ -221,6 +224,7 @@ const EMAIL_STATUS_CLASSES: Record<string, string> = {
   MISSING: 'bg-[var(--sev-critical-bg)] text-[var(--sev-critical-text)] border-[var(--sev-critical-border)]',
   PARTIAL: 'bg-[var(--sev-medium-bg)] text-[var(--sev-medium-text)] border-[var(--sev-medium-border)]',
   NONE:    'bg-[var(--sev-medium-bg)] text-[var(--sev-medium-text)] border-[var(--sev-medium-border)]',
+  UNKNOWN: 'bg-[var(--bg-card)] text-[var(--text-tertiary)] border-[var(--border-base)]',
 };
 
 function getGradeClass(grade: string | null): string {

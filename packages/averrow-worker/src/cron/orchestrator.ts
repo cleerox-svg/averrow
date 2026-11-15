@@ -1367,7 +1367,7 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     ).first<{ n: number }>();
     const emailPending = pendingEmail?.n ?? 0;
     if (emailPending > 0) {
-      const { runEmailSecurityScan, saveEmailSecurityScan } = await import('../email-security');
+      const { runEmailSecurityScan, saveEmailSecurityScan, previousSpfLoader } = await import('../email-security');
       const brandsToScan = await env.DB.prepare(`
         SELECT b.id, COALESCE(b.canonical_domain, LOWER(b.name)) AS domain
         FROM brands b
@@ -1381,7 +1381,7 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
       let scanned = 0;
       for (const brand of brandsToScan.results) {
         try {
-          const scanResult = await runEmailSecurityScan(brand.domain);
+          const scanResult = await runEmailSecurityScan(brand.domain, { previousSpf: previousSpfLoader(env.DB, brand.id) });
           await saveEmailSecurityScan(env.DB, brand.id, scanResult);
           await env.DB.prepare(
             "UPDATE brands SET email_security_score = ?, email_security_grade = ?, email_security_dmarc_policy = ?, email_security_scanned_at = datetime('now') WHERE id = ?"

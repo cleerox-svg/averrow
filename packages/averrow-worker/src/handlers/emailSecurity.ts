@@ -12,7 +12,7 @@
 
 import { json } from '../lib/cors';
 import { normalizePublicHostname } from '../lib/public-hostname';
-import { runEmailSecurityScan, saveEmailSecurityScan } from '../email-security';
+import { runEmailSecurityScan, saveEmailSecurityScan, previousSpfLoader } from '../email-security';
 import type { BIMIResult } from '../email-security';
 import { createAlert } from '../lib/alerts';
 import { cachedValue } from '../lib/cached-value';
@@ -82,7 +82,7 @@ export async function handleGetEmailSecurityHistory(
     `).bind(brandId, limit).all<{
       id: number;
       scanned_at: string;
-      spf_exists: number;
+      spf_exists: number | null; // NULL = SPF not checked (root lookup failed) — counted as not passing
       dkim_exists: number;
       dmarc_exists: number;
       dmarc_policy: string | null;
@@ -97,7 +97,9 @@ export async function handleGetEmailSecurityHistory(
         (row.mx_exists ? 1 : 0);
       return {
         scanned_at:   row.scanned_at,
-        spf_exists:   !!row.spf_exists,
+        // null = SPF not checked on that scan (root lookup failed); it is
+        // not counted in protocols_passing.
+        spf_exists:   row.spf_exists === null ? null : !!row.spf_exists,
         dkim_exists:  !!row.dkim_exists,
         dmarc_exists: !!row.dmarc_exists,
         dmarc_policy: row.dmarc_policy,
@@ -136,7 +138,7 @@ export async function handleScanBrandEmailSecurity(
       return json({ success: false, error: 'Brand has no domain or name' }, 400, origin);
     }
 
-    const result = await runEmailSecurityScan(domain);
+    const result = await runEmailSecurityScan(domain, { previousSpf: previousSpfLoader(env.DB, brand.id) });
     await saveEmailSecurityScan(env.DB, brand.id, result);
 
     // Fetch previous BIMI/DMARC state for change detection
@@ -214,7 +216,7 @@ export async function handleScanAllEmailSecurity(
 
     for (const brand of brandsToScan.results) {
       try {
-        const result = await runEmailSecurityScan(brand.domain);
+        const result = await runEmailSecurityScan(brand.domain, { previousSpf: previousSpfLoader(env.DB, brand.id) });
         await saveEmailSecurityScan(env.DB, brand.id, result);
 
         // Fetch previous state for change detection
@@ -296,8 +298,11 @@ export async function handlePublicEmailSecurity(
     // Run live scan
     const result = await runEmailSecurityScan(domain);
 
-    // Cache result for 1 hour
-    await env.CACHE.put(cacheKey, JSON.stringify(result), { expirationTtl: 3600 });
+    // Cache result for 1 hour — but not a scan whose SPF root lookup failed
+    // (SPF "not checked"), so the next request checks again.
+    if (result.spf.walk_status !== 'root_error') {
+      await env.CACHE.put(cacheKey, JSON.stringify(result), { expirationTtl: 3600 });
+    }
 
     // Anonymous path: read-only. It used to persist the scan onto a
     // matching brand and run emitBIMIAlerts, which let any visitor create

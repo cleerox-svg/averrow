@@ -15,13 +15,17 @@
 // brand_scans.public_view, so the results link renders the same answer
 // for as long as the row exists (90-day retention).
 
-import { runEmailSecurityScan, type EmailSecurityResult } from "../email-security";
+import {
+  runEmailSecurityScan, CAPPED_SCAN_SPF_BUDGET,
+  type EmailSecurityResult, type EmailSecurityScanOptions,
+} from "../email-security";
 import { normalizePublicHostname } from "./public-hostname";
 import { registrableDomain } from "./registrable-domain";
 import { isMailOrSaasProviderDomain } from "./freemail";
 
 export type EmailGrade = "A+" | "A" | "B" | "C" | "D" | "F";
-export type SpfStatus = "pass" | "soft" | "neutral" | "missing";
+/** `unchecked`: the SPF root lookup failed — not the same as missing. */
+export type SpfStatus = "pass" | "soft" | "neutral" | "missing" | "unchecked";
 export type DmarcPolicy = "reject" | "quarantine" | "none" | "missing";
 
 export interface PublicEmailView {
@@ -71,7 +75,7 @@ export interface StoredPublicView {
 }
 
 const GRADES: readonly EmailGrade[] = ["A+", "A", "B", "C", "D", "F"];
-const SPF: readonly SpfStatus[] = ["pass", "soft", "neutral", "missing"];
+const SPF: readonly SpfStatus[] = ["pass", "soft", "neutral", "missing", "unchecked"];
 const DMARC: readonly DmarcPolicy[] = ["reject", "quarantine", "none", "missing"];
 
 export function isEmailGrade(v: unknown): v is EmailGrade {
@@ -84,7 +88,8 @@ export function isEmailGrade(v: unknown): v is EmailGrade {
  * (RFC 7208 §4.7), and `+all` authorises every sender, which we also
  * report as neutral (the record exists but does not restrict anyone).
  */
-export function spfStatusFrom(exists: boolean, policy: string | null): SpfStatus {
+export function spfStatusFrom(exists: boolean, policy: string | null, notChecked = false): SpfStatus {
+  if (notChecked) return "unchecked";
   if (!exists) return "missing";
   if (policy === "-all") return "pass";
   if (policy === "~all") return "soft";
@@ -107,7 +112,7 @@ export function dmarcPolicyFrom(exists: boolean, policy: string | null): DmarcPo
 export function toPublicEmailView(r: EmailSecurityResult): PublicEmailView {
   return {
     grade: isEmailGrade(r.grade) ? r.grade : "F",
-    spf: { status: spfStatusFrom(r.spf.exists, r.spf.policy) },
+    spf: { status: spfStatusFrom(r.spf.exists, r.spf.policy, r.spf.walk_status === "root_error") },
     dkim: { found: r.dkim.exists },
     dmarc: { policy: dmarcPolicyFrom(r.dmarc.exists, r.dmarc.policy) },
     mx: { present: r.mx.exists },
@@ -171,18 +176,22 @@ export class EmailScanTimeoutError extends Error {
 
 /**
  * runEmailSecurityScan bounded by a wall-clock timeout (L6). The DNS
- * lookups keep running in the background but the caller is released.
+ * lookups keep running in the background but the caller is released. The
+ * SPF root lookup + include-tree walk share CAPPED_SCAN_SPF_BUDGET (3 s
+ * root, 6.5 s total) so SPF fits inside the 8 s cap; `opts.previousSpf`
+ * lets a brand-scoped caller carry a failed root lookup forward.
  */
 export async function runEmailSecurityScanWithin(
   domain: string,
   budgetMs: number = EMAIL_SCAN_BUDGET_MS,
+  opts: EmailSecurityScanOptions = {},
 ): Promise<EmailSecurityResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new EmailScanTimeoutError()), budgetMs);
   });
   try {
-    return await Promise.race([runEmailSecurityScan(domain), timeout]);
+    return await Promise.race([runEmailSecurityScan(domain, { spfBudget: CAPPED_SCAN_SPF_BUDGET, ...opts }), timeout]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

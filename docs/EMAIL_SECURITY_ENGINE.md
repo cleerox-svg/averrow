@@ -35,12 +35,32 @@ Extracted fields:
 
 ### SPF Check
 
-Queries `{domain}` for TXT records containing `v=spf1`.
+Queries `{domain}` for TXT records (`lib/doh.ts` `dohTxtLookupDetailed`, uncached) and keeps those that are SPF records (`v=spf1` followed by a space or the end). The record is parsed by `lib/spf-record.ts` (RFC 7208) and its include tree is walked by `lib/spf-walk.ts`.
+
+**Parser** (`parseSpfRecord`, pure): mechanisms with qualifiers (`+` default, `-`, `~`, `?`) — `all`, `include`, `a`, `mx`, `ptr`, `exists`, `ip4`, `ip6` — plus the `redirect=` / `exp=` modifiers (unknown modifiers are ignored). Syntax errors (unknown mechanism, missing or forbidden argument, bad address or CIDR length, duplicate `redirect`/`exp`, malformed macro) are fixed strings that never echo record text. Terms after the first `all` are never evaluated (§5.1) and `redirect` is ignored when the record has an `all` (§6.1), so neither counts.
+
+**Include-tree walk** (`walkSpfTree`): follows every evaluated `include:` and an applicable `redirect=` and counts, as a worst-case receiver evaluation would:
+- DNS-querying terms (`include`, `a`, `mx`, `ptr`, `exists`, `redirect`) against the RFC 7208 §4.6.4 limit of 10 (`SPF_MAX_DNS_LOOKUPS`). A duplicate include counts per occurrence but is fetched once.
+- Void lookups (an include / redirect target that is NXDOMAIN or has no TXT answers) against the limit of 2 (`SPF_MAX_VOID_LOOKUPS`). `a` / `mx` / `ptr` / `exists` are counted but not resolved, so the void count covers include / redirect targets only.
+- Loops (a target already on the current include path, including the root), targets with no SPF record, targets with more than one SPF record, `ptr` use and syntax errors anywhere in the tree.
+
+Hard bounds per walk — the amplification defence, since the records come from third-party DNS and the public endpoint takes attacker-chosen domains: the walk stops as soon as more than 10 lookups are proven (a receiver permerrors there too; the count is then reported as "at least N"), and since every followed target is itself a counted lookup a walk issues at most ~11 queries; `SPF_WALK_MAX_QUERIES` = 25 DoH queries (the root query is separate) is defence in depth. Also: `SPF_WALK_BUDGET_MS` = 4 s wall time (each query gets only what is left and is raced against it), `SPF_WALK_MAX_DEPTH` = 6 levels of nesting, `SPF_WALK_MAX_VISITS` = 60 record evaluations, every term of a record is scanned cheaply (so a long flattened ip4/ip6 list keeps its trailing `all`, `redirect=` and lookup counts; ip4/ip6 terms never make a walk unknown) and only the record text is bounded, at `SPF_MAX_RECORD_LENGTH` = 64 KiB (`lib/spf-record.ts`; longer → parsed up to the bound, walk `unknown`, reason `record_too_long`), names deduped, and no per-target work after any cap. A name is queried only if it is a valid public DNS name (`spfWalkName`: no macros, no IP literals, no malformed / over-long names, no `localhost`/`local`/`internal`/`corp`/`home`/`lan`/`arpa`/`test`/`invalid`/`example`/`onion`/`alt`/… TLDs).
+
+**Honesty rule** (as in `lib/dnsbl-doh.ts`): a failed or timed-out lookup, a macro or invalid name, or a cap being reached makes the walk `unknown` — never pass, never fail. Counts are then lower bounds; a limit is reported exceeded only when the part that WAS read already exceeds it. A failed include is never counted as a void lookup or a missing record.
 
 Extracted fields:
-- `policy` — The `all` mechanism: `-all` (hard fail), `~all` (soft fail), `?all` (neutral), `+all` (pass all)
-- `includes` — Count of `include:` mechanisms
-- `tooManyLookups` — Whether total DNS lookups exceed 10 (includes + redirects + a + mx records)
+- `policy` — effective `all`: `-all`, `~all`, `?all`, `+all` (a bare `all` is `+all`); for a record without `all`, the `all` reached through its `redirect=` chain (null when none or not read)
+- `includes` — count of evaluated `include:` mechanisms in the root record
+- `tooManyLookups` — PROVEN more than 10 DNS lookups across the tree
+- `lookupCount`, `voidLookups` — tree totals (lower bounds when `walkStatus = unknown`)
+- `walkStatus` — `complete` | `unknown` | `no_record` | `not_walked` (multiple records: a permerror before any evaluation, so the tree is not walked) | `root_error` (see below) | `carried_legacy` (a root failure carried forward a scan stored before migration 0332, which has no walk data; treated as SPF-uncertain by grade-change detection).
+- `findings` — `[{ code, names?, count?, atLeast? }]`; `names` are validated DNS names (≤ 5), `count` a number (`atLeast` = lower bound), never record text. Codes: `lookup_limit_exceeded`, `void_lookup_limit_exceeded`, `multiple_records` (at the domain), `include_multiple_records` (at an include target), `pass_all` (the effective root policy), `include_pass_all` (`+all` / bare `all` in a record reached through an include — recommendation only), `neutral_all`, `ptr_mechanism`, `syntax_error`, `include_loop`, `include_target_missing` (no SPF record, or the target does not exist — also the dangling-include / re-registration risk), `walk_incomplete`, `root_lookup_failed`.
+
+**Root lookup failure.** When the domain's own TXT lookup fails, the SPF record was not read, so the scan never reports or stores "no SPF record". Brand scans (Cartographer, orchestrator, curator, the staff scan routes, and the brand-scoped qualified-report rescan) pass `previousSpfLoader(db, brandId)`: it is called only on that failure and returns the SPF of the brand's latest scan whose SPF WAS checked (`spf_exists IS NOT NULL`), which is carried forward unchanged (same score) with the `root_lookup_failed` finding ("the result shown is from the previous scan"). With no such scan (first scan, public check, or the read failed) SPF is "not checked": `walkStatus = root_error`, `rootError`, 0 SPF points, the recommendation "Could not check the SPF record…" instead of "No SPF record found", stored with `spf_exists` NULL (never a confirmed 0), no grade-change alert from it (see below), and the public check does not cache it. Readers show it as unknown, never missing: `/history` returns `spf_exists: null` (not counted in `protocols_passing`), the brand-threat correlator `has_spf: null`, the ops brand card an `UNKNOWN` ("not checked") pill; the live scans with no history show `unchecked`: the free-scan stored view (`SpfStatus` `unchecked`, "Could not be checked" in the emailed report), `brand_scans.spf_policy`, the scan report's `spf.status` and the qualified report's SPF line (which also skips the "tighten SPF" step).
+
+Findings become recommendations on the scan result; there is no SPF alert type.
+
+**Cost per caller.** The wall-clock-capped scans (public free scan, scan-only qualified report: `EMAIL_SCAN_BUDGET_MS` 8 s) share one SPF budget, `CAPPED_SCAN_SPF_BUDGET`: 3 s root lookup, root + walk within 6.5 s. Every other caller keeps the defaults: the SPF branch adds at worst a 5 s root lookup + a 4 s walk (≤ 25 subrequests, in practice ≤ ~11) per scanned domain and runs in parallel with the DKIM probes. Cartographer Phase 3 (≤ 50 brands/run, budget-checked before each brand) adds ≤ ~1,300 subrequests against the 50,000 per-invocation limit (`wrangler.toml` `[limits]`); the orchestrator's first-scan pass (≤ 10 brands), the curator (≤ 100 brands in waves of 5, 25 s per-brand race), the admin scan-all (≤ 100) and the single-domain routes stay well inside it. The public scan keeps its 8 s wall-clock cap. The walk runs for every caller: making it opt-in or capping walks per run would grade the same DNS differently depending on which caller scanned it, which grade-change alerting would then report as a change.
 
 ### DKIM Check
 
@@ -95,7 +115,14 @@ scores 95, still A+, and only domains reporting to Averrow lost 5 points.)
 | Testing mode (`t=y`, or legacy `pct` < 100) | enforcing policy scores one level lower (reject earns 12, quarantine earns 4) |
 | `np=none` (or `sp=none` with no `np`) under quarantine / reject | -5 |
 
-**Rubric version.** `EMAIL_SCORE_RUBRIC_VERSION` (`src/email-security.ts`, currently 2; 1 = the pre-RFC 9989 rubric, stored as NULL) is stamped on every `email_security_scans` row as `score_rubric_version` (migration 0328). Grade-change detection compares two scans only when the previous scan was graded under the current version: the orchestrator's alert pass (`findEmailGradeChanges`, `lib/email-grade-change.ts`) requires `score_rubric_version = <current>` on the previous row, and Cartographer's band-crossing notification skips a previous scan with a different or NULL version (`isRubricOnlyGradeChange`). The first rescan after a rubric change therefore updates the stored grade silently instead of telling a customer their protection changed when their DNS did not. **Every future change to `calculateEmailSecurityScore` must bump the constant.**
+**Rubric version.** `EMAIL_SCORE_RUBRIC_VERSION` (`src/email-security.ts`, currently 3; 1 = the pre-RFC 9989 rubric, stored as NULL; 2 = RFC 9989 DMARC; 3 = SPF include-tree walk) is stamped on every `email_security_scans` row as `score_rubric_version` (migration 0328). Grade-change detection compares two scans only when the previous scan was graded under the current version: the orchestrator's alert pass (`findEmailGradeChanges`, `lib/email-grade-change.ts`) requires `score_rubric_version = <current>` on the previous row, and Cartographer's band-crossing notification skips a previous scan with a different or NULL version (`isRubricOnlyGradeChange`). The first rescan after a rubric change therefore updates the stored grade silently instead of telling a customer their protection changed when their DNS did not. **Every future change to `calculateEmailSecurityScore` must bump the constant.**
+
+**SPF uncertainty.** Two scans of unchanged DNS can grade differently when one SPF walk completed and the other ended `unknown` (an unreadable redirect target loses the policy credit; an include timeout can hide a >10 lookup count), or when the root lookup failed and SPF was not checked. Grade-change detection suppresses a pair ONLY when that uncertainty fully explains it (`isSpfUncertaintyOnlyGradeChange`, `lib/email-grade-change.ts`, used by both the orchestrator's `findEmailGradeChanges` and Cartographer):
+1. Neither scan uncertain → never suppressed.
+2. Both SPF checks ran → the root-record facts must be unchanged (`spf_exists`, the domain's own record text — which holds its `all` qualifier — and multiple records). Any root change is a real DNS change and always alerts (e.g. `v=spf1 include:<blackholed> +all`). The current scan is then re-scored with its walk-derived SPF part (lookup count / limit, loop, void lookups, tree findings, and the redirect-derived `all` when the record has none) held to the previous scan's.
+3. One side not checked → the current scan is re-scored with the previous scan's whole SPF part.
+
+It is suppressed only if that re-scored grade equals the previous grade, so a DMARC / DKIM / MX change that coincides with an SPF timeout still alerts. A not-checked scan is never the baseline: when the previous scan's SPF was not checked, both detectors compare against that scan with the SPF columns of the brand's last CHECKED scan (same rubric; `loadGradeBaseline`) and re-compute both grades, so `-all` → root failure → `+all` alerts on the third scan. The orchestrator compares against the scan that set `brands.email_security_scanned_at` (not a later row written by another path). The rule needs the scorer, so it runs in JS: the SQL finds candidates (and returns the previous scan id), then two rows per candidate are read and compared.
 
 ### SPF (30 points max)
 
@@ -105,7 +132,11 @@ scores 95, still A+, and only domains reporting to Averrow lost 5 points.)
 | Hard fail (`-all`) | +15 |
 | Soft fail (`~all`) | +10 |
 | Neutral (`?all`) | +3 |
-| Under 10 DNS lookups | +5 |
+| Not over 10 DNS lookups | +5 |
+| `+all` or a bare `all` (authorises every sender) | SPF scores 0 in total |
+| Permerror: PROVEN more than 10 lookups across the include tree, a proven include loop, or more than one SPF record at the domain | only the +10 record credit (no policy points, no +5) |
+
+Rubric 3. Scored permerrors are only the three above. Void lookups, `ptr`, syntax errors, include targets with no SPF record or with multiple SPF records, and `+all` inside an include are recommendations only (the void-lookup limit is a SHOULD in RFC 7208, a target's problem is the provider's to fix, and parser strictness should not move a grade). An unread include adds and removes nothing; a count that already exceeds 10 in the part that was read is proven and scored. An unreadable redirect target is the exception: the effective `all` is then unknown (null), which earns no policy credit, so it DOES lower the score (and grade-change alerting holds it to the previous scan, see above). A root lookup failure is carried forward or scored as not checked (see SPF Check).
 
 ### DKIM (20 points max)
 
@@ -141,7 +172,7 @@ The engine generates actionable recommendations based on findings:
 - **No DMARC reporting:** "No DMARC aggregate reporting configured."
 - **No SPF:** "CRITICAL: No SPF record found."
 - **SPF soft fail:** "SPF soft-fail detected. Upgrade to '-all'."
-- **SPF too many lookups:** "SPF record exceeds 10 DNS lookups."
+- **SPF findings** (`spfFindingRecommendations`): over the lookup limit ("SPF needs N DNS lookups (limit 10)…", "at least N" when the walk stopped at the limit or was incomplete), void lookups over 2, multiple records, `+all`, `+all` in an included record, deprecated `ptr`, syntax error, include loop, include target with no SPF record / nonexistent (re-registration risk), include target with multiple records, "the SPF include tree could not be fully checked" for an unknown walk, "result shown is from the previous scan" for a carried root failure. A not-checked scan says "Could not check the SPF record" instead of "No SPF record found". Rows stored before migration 0332 carry only the boolean and keep the old "SPF record exceeds 10 DNS lookups." text.
 - **No DKIM:** "No DKIM signing detected."
 - **No MX:** "No MX records found."
 - **All good:** "Excellent! This domain has strong email authentication configured."
@@ -180,7 +211,7 @@ The stats endpoint provides aggregate views: grade distribution, DMARC policy di
 Results are stored in `email_security_scans` with full record details:
 
 - All DMARC fields (exists, policy, pct, rua, ruf, raw record)
-- All SPF fields (exists, policy, includes count, too many lookups, raw record)
+- All SPF fields (exists, policy, includes count, too many lookups, raw record); since migration 0332 also `spf_lookup_count`, `spf_void_lookups`, `spf_walk_status` and `spf_findings` (JSON, codes and validated names only; `parseStoredSpfFindings` drops anything else on read). The brand report rebuilds its SPF recommendations from these columns.
 - DKIM fields (exists, selectors found as JSON)
 - MX fields (exists, providers as JSON)
 - Composite score and grade
