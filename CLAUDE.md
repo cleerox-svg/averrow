@@ -1681,6 +1681,7 @@ threat_cube_velocity      ← OLAP cube: hourly country × weaponization flag (v
 takedown_outcome_daily    ← Daily takedown outcome rollup by country / provider, rolling 90d, cube_healer hour-0 (migration 0299)
 spamhaus_asn_drop         ← Spamhaus ASN-DROP reference rows (migration 0327), one per ASN (`AS<digits>`), `removed_at` NULL = listed; written only by the `spamhaus_asn_drop`
                             feed (daily; never threats, itemsNew=0); read by `GET /api/providers/:id`. Credit The Spamhaus Project in-product
+actor_reference           ← MISP Galaxy threat-actor REFERENCE list + `actor_reference_aliases` (migration 0335, feed `actor_reference`, CC0); staff display only (`reference` on `GET /api/threat-actors/:id`), never renames or attributes an actor
 hosting_providers         ← Provider registry with pre-computed threat counts
 provider_threat_stats     ← Per-period (today/7d/30d/all) provider rollups written by Cartographer
 lookalike_domains         ← Typosquat scanner results

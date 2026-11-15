@@ -4,6 +4,7 @@ import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedValue } from "../lib/cached-value";
+import { lookupActorReference } from "../lib/actor-reference";
 import type { Env } from "../types";
 
 // Helper: safely query a table that may not exist, returning a fallback
@@ -400,10 +401,17 @@ export async function handleGetThreatActor(request: Request, env: Env, id: strin
       newsMentions = articles.results;
     }
 
+    // Reference entry (MISP Galaxy, migration 0335) for this actor's name
+    // or one of its aliases — only when it resolves unambiguously, else
+    // null. Display-only: it never renames or re-attributes the actor.
+    // Staff-only (this route is requireStaff); no tenant reader.
+    const reference = await lookupActorReference(env.DB, actorNames);
+
     return json({
       success: true,
       data: {
         ...actor,
+        reference,
         infrastructure: infrastructure.results,
         targets: targets.results,
         linked_threat_count: linkedThreats,

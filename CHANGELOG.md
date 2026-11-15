@@ -6,6 +6,11 @@ All notable changes to the Averrow platform are documented here.
 
 ## [Unreleased]
 
+### Threat-actor reference list (MISP Galaxy), staff-only, reference data only
+- New daily context feed `actor_reference` (`feeds/actorReference.ts`, migration 0335) pulls the MISP Galaxy threat-actor cluster (`clusters/threat-actor.json`, 1,118 actors / 2,481 alias rows on 2026-11-15; CC0 1.0, snapshot `docs/licences/misp_galaxy.md`) into `actor_reference` + `actor_reference_aliases`. Writes no threats (`itemsNew` 0), change-guarded (an unchanged file costs one read, no writes), body capped at 8 MB, fails the pull on a wrong/garbled/empty file or fewer than 500 actors, and stamps `removed_at` only on a complete pull that keeps >= 80% of live rows.
+- `lib/actor-reference.ts`: `normalizeActorName` ("APT-28" / "apt 28" -> `apt28`) and `lookupActorReference`. An alias listed under several actors (30 such keys upstream) resolves to nothing; a name and alias pointing at different actors resolve to nothing.
+- `GET /api/threat-actors/:id` (staff) gains `reference`: the matched MISP entry (name, aliases, country, suspected sponsor, source credit, `matched_on`) or null. **No actor name, alias, attribution or tenant surface changes**; nothing writes from it. Wiring it into Attributor is left for an owner decision.
+
 ### Legacy pre-React app deleted (2026-11-15, owner decision)
 - **Removed the original vanilla-JS app and its server-rendered homepage.** Deleted `packages/averrow-worker/public/{app.js,styles.css,dashboard.html,manifest.json}` and `src/templates/homepage.ts`. The `/legacy` page, the old-path redirect table (`/observatory`, `/brands`, `/admin/*` to `/ops/...`) and the public endpoints only the old app read (`GET /api/v1/public/geo`, `GET /api/v1/public/feeds`, plus the `certificates_today` and `brands_tracked` aliases on `/api/v1/public/stats`) are gone. `/legacy`, the old paths, `/dashboard.html`, `/app.js`, `/styles.css` and root `/manifest.json` are now plain 404s. `/login` still redirects to `/ops/login`; marketing pages are untouched.
 - **The "frozen forever" rule for these files is retired** (CLAUDE.md sections 3, 11, 12). Screenshots of the old app (mock data) and the last commit that still contains its code are in `docs/history/legacy-app/`.
