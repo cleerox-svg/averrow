@@ -32,11 +32,19 @@
  * failure (previousSpfLoader), so a "not checked" row only exists for a
  * brand with no earlier checked scan (or when that read failed).
  *
+ * A not-checked row is never the baseline. When the previous scan's SPF
+ * was not checked (spf_exists NULL), the baseline is that scan with its SPF
+ * columns replaced by the brand's last CHECKED scan's (same rubric), and
+ * both grades are re-computed (loadGradeBaseline) — so "-all (A) → root
+ * failure (lower) → +all" alerts on the third scan, and a non-SPF change
+ * already reported against the not-checked scan does not alert twice.
+ *
  * The rule needs the score function, so it runs in JS: the SQL below finds
  * candidates (bounded to brands scanned in the last 23h — seeks
  * idx_brands_email_scan_due + idx_ess_brand_scanned; see the caller for the
  * window/dedupe rationale) and findEmailGradeChanges filters them, reading
- * two rows per candidate (candidates are brands whose grade changed — few).
+ * two rows per candidate (+1 when the previous scan was not checked). The
+ * "current" scan is the one that set brands.email_security_scanned_at.
  */
 
 import {
@@ -61,13 +69,17 @@ export interface EmailGradeChange {
 
 export const EMAIL_GRADE_CHANGES_SQL = `
   SELECT b.id AS brand_id, b.name, b.email_security_grade AS current_grade,
-         ess.email_security_grade AS previous_grade, ess.id AS previous_scan_id
+         b.email_security_scanned_at AS current_scanned_at,
+         ess.email_security_grade AS previous_grade, ess.id AS previous_scan_id,
+         ess.scanned_at AS previous_scanned_at
   FROM brands b
   JOIN email_security_scans ess ON ess.brand_id = b.id
   WHERE b.email_security_scanned_at >= datetime('now', '-23 hours')
     AND b.email_security_grade IS NOT NULL
     AND ess.email_security_grade IS NOT NULL
-    AND b.email_security_grade != ess.email_security_grade
+    -- A not-checked previous scan is a candidate even at the same grade:
+    -- its grade is not the baseline (see header).
+    AND (b.email_security_grade != ess.email_security_grade OR ess.spf_exists IS NULL)
     AND ess.scanned_at < b.email_security_scanned_at
     AND ess.scanned_at = (
       SELECT MAX(e2.scanned_at) FROM email_security_scans e2
@@ -77,24 +89,83 @@ export const EMAIL_GRADE_CHANGES_SQL = `
 `;
 
 const SCAN_BY_ID_SQL = `SELECT ${STORED_EMAIL_SCAN_COLUMNS} FROM email_security_scans WHERE id = ?`;
-const LATEST_SCAN_SQL = `
+/** The scan that set brands.email_security_scanned_at (saved just before
+ *  the brands UPDATE, so its scanned_at is <= the brand's). */
+const CURRENT_SCAN_SQL = `
   SELECT ${STORED_EMAIL_SCAN_COLUMNS} FROM email_security_scans
-  WHERE brand_id = ? ORDER BY scanned_at DESC LIMIT 1`;
+  WHERE brand_id = ? AND scanned_at <= ? ORDER BY scanned_at DESC LIMIT 1`;
+/** The brand's last scan whose SPF was checked, before `scanned_at`. */
+const LAST_CHECKED_SCAN_SQL = `
+  SELECT ${STORED_EMAIL_SCAN_COLUMNS} FROM email_security_scans
+  WHERE brand_id = ? AND spf_exists IS NOT NULL AND score_rubric_version = ? AND scanned_at < ?
+  ORDER BY scanned_at DESC LIMIT 1`;
+
+/** Grade of a stored row under the current scorer. */
+export function gradeOfStoredRow(row: StoredEmailScanRow): string {
+  return calculateEmailSecurityScore(scanInputFromStoredRow(row)).grade;
+}
+
+/** `row` with its SPF columns taken from `spfFrom`. */
+export function withSpfColumnsOf(row: StoredEmailScanRow, spfFrom: StoredEmailScanRow): StoredEmailScanRow {
+  return {
+    ...row,
+    spf_exists: spfFrom.spf_exists,
+    spf_policy: spfFrom.spf_policy,
+    spf_too_many_lookups: spfFrom.spf_too_many_lookups,
+    spf_raw: spfFrom.spf_raw ?? null,
+    spf_lookup_count: spfFrom.spf_lookup_count ?? null,
+    spf_void_lookups: spfFrom.spf_void_lookups ?? null,
+    spf_walk_status: spfFrom.spf_walk_status ?? null,
+    spf_findings: spfFrom.spf_findings ?? null,
+  };
+}
+
+/**
+ * Baseline for a grade comparison whose previous scan did NOT check SPF:
+ * that scan with the SPF columns of the brand's last checked scan before
+ * it (current rubric). Null when the previous scan was checked or no
+ * checked scan exists (the previous row then stays the baseline).
+ */
+export async function loadGradeBaseline(
+  db: D1Database,
+  brandId: string | number,
+  previousRow: StoredEmailScanRow,
+  previousScannedAt: string,
+  rubricVersion: number = EMAIL_SCORE_RUBRIC_VERSION,
+): Promise<StoredEmailScanRow | null> {
+  if (previousRow.spf_exists !== null) return null;
+  const checked = await db.prepare(LAST_CHECKED_SCAN_SQL)
+    .bind(brandId, rubricVersion, previousScannedAt).first<StoredEmailScanRow>();
+  return checked ? withSpfColumnsOf(previousRow, checked) : null;
+}
 
 export async function findEmailGradeChanges(
   db: D1Database,
   rubricVersion: number = EMAIL_SCORE_RUBRIC_VERSION,
 ): Promise<EmailGradeChange[]> {
-  const res = await db.prepare(EMAIL_GRADE_CHANGES_SQL).bind(rubricVersion)
-    .all<EmailGradeChange & { previous_scan_id: number }>();
+  const res = await db.prepare(EMAIL_GRADE_CHANGES_SQL).bind(rubricVersion).all<EmailGradeChange & {
+    previous_scan_id: number; previous_scanned_at: string; current_scanned_at: string;
+  }>();
   const out: EmailGradeChange[] = [];
   for (const c of res.results) {
     const [previous, current] = await Promise.all([
       db.prepare(SCAN_BY_ID_SQL).bind(c.previous_scan_id).first<StoredEmailScanRow>(),
-      db.prepare(LATEST_SCAN_SQL).bind(c.brand_id).first<StoredEmailScanRow>(),
+      db.prepare(CURRENT_SCAN_SQL).bind(c.brand_id, c.current_scanned_at).first<StoredEmailScanRow>(),
     ]);
-    if (previous && current && isSpfUncertaintyOnlyGradeChange(previous, current)) continue;
-    out.push({ brand_id: c.brand_id, name: c.name, current_grade: c.current_grade, previous_grade: c.previous_grade });
+    let previousGrade = c.previous_grade;
+    let currentGrade = c.current_grade;
+    let baseline = previous;
+    if (previous && current) {
+      const substituted = await loadGradeBaseline(db, c.brand_id, previous, c.previous_scanned_at, rubricVersion);
+      if (substituted) {
+        baseline = substituted;
+        previousGrade = gradeOfStoredRow(substituted);
+        currentGrade = gradeOfStoredRow(current);
+      }
+    }
+    if (previousGrade === currentGrade) continue;
+    if (baseline && current && isSpfUncertaintyOnlyGradeChange(baseline, current)) continue;
+    out.push({ brand_id: c.brand_id, name: c.name, current_grade: currentGrade, previous_grade: previousGrade });
   }
   return out;
 }
@@ -112,7 +183,8 @@ type SpfCertainty = 'certain' | 'walk_unknown' | 'not_checked';
 
 function spfCertainty(spf: SpfResult): SpfCertainty {
   if (spf.rootError) return 'not_checked';
-  return spf.walkStatus === 'unknown' ? 'walk_unknown' : 'certain';
+  // A carried pre-0332 row has real SPF values but no walk data.
+  return spf.walkStatus === 'unknown' || spf.walkStatus === 'carried_legacy' ? 'walk_unknown' : 'certain';
 }
 
 function normRecord(r: string): string {
@@ -185,4 +257,35 @@ export function isSpfUncertaintyOnlyChange(
   current: EmailSecurityResult,
 ): boolean {
   return !!previousRow && isSpfUncertaintyOnlyGradeChange(previousRow, storedRowFromResult(current));
+}
+
+/**
+ * Cartographer's grade-change decision for a fresh scan `result` against
+ * the brand's previous stored scan (read before this scan was saved) and
+ * the grade the brand row held. A not-checked previous scan is replaced by
+ * loadGradeBaseline (grades then re-computed for both sides); a change SPF
+ * uncertainty fully explains is not a change. The rubric check stays with
+ * the caller.
+ */
+export async function resolveScanGradeChange(
+  db: D1Database,
+  brandId: string | number,
+  previousScan: (StoredEmailScanRow & { scanned_at: string }) | undefined,
+  existingGrade: string | null,
+  result: EmailSecurityResult,
+): Promise<{ isChange: boolean; previousGrade: string | null; currentGrade: string }> {
+  let baseline: StoredEmailScanRow | undefined = previousScan;
+  let previousGrade = existingGrade;
+  let currentGrade = result.grade;
+  if (previousScan) {
+    const substituted = await loadGradeBaseline(db, brandId, previousScan, previousScan.scanned_at);
+    if (substituted) {
+      baseline = substituted;
+      previousGrade = gradeOfStoredRow(substituted);
+      currentGrade = gradeOfStoredRow(storedRowFromResult(result));
+    }
+  }
+  const isChange = !!previousGrade && previousGrade !== currentGrade
+    && !isSpfUncertaintyOnlyChange(baseline, result);
+  return { isChange, previousGrade, currentGrade };
 }

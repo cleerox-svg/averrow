@@ -167,7 +167,8 @@ export function deterministicPlan(input: QualifiedReportInput): string {
     steps.push("Publish a DMARC policy and move it to quarantine, then reject, once legitimate senders pass.");
   }
   const spf = input.spfPolicy;
-  if (!spf || spf === "missing" || (spf !== "-all" && spf !== "pass")) {
+  // "unchecked" = the SPF lookup failed: nothing is known to tighten.
+  if (spf !== "unchecked" && (!spf || spf === "missing" || (spf !== "-all" && spf !== "pass"))) {
     steps.push("Tighten SPF to end in -all so only your listed mail servers can send as your domain.");
   }
   if (input.totalThreats > 0) {

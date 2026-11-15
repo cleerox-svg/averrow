@@ -17,6 +17,7 @@ import {
   walkSpfTree,
   SPF_MAX_DNS_LOOKUPS,
   SPF_MAX_VOID_LOOKUPS,
+  SPF_WALK_BUDGET_MS,
   type SpfTxtLookup,
   type SpfWalkResult,
 } from './lib/spf-walk';
@@ -146,12 +147,17 @@ export async function checkDmarc(domain: string): Promise<DmarcResult> {
  *   root_error — the domain's own TXT lookup failed and nothing was carried
  *                forward: SPF was NOT checked (stored spf_exists is NULL,
  *                never a confirmed 0)
- *  A root failure whose previous scan was carried forward keeps that scan's
+ *   carried_legacy — a root failure carried forward a scan stored before
+ *                migration 0332 (no walk data): SPF values are real but the
+ *                walk-derived part is unknown, so grade-change detection
+ *                treats it as SPF-uncertain
+ *  A root failure carrying forward a post-0332 scan keeps that scan's
  *  status and adds the `root_lookup_failed` finding. */
-export type SpfWalkStatusStored = 'complete' | 'unknown' | 'no_record' | 'not_walked' | 'root_error';
+export type SpfWalkStatusStored =
+  | 'complete' | 'unknown' | 'no_record' | 'not_walked' | 'root_error' | 'carried_legacy';
 
 export const SPF_WALK_STATUSES: readonly SpfWalkStatusStored[] = [
-  'complete', 'unknown', 'no_record', 'not_walked', 'root_error',
+  'complete', 'unknown', 'no_record', 'not_walked', 'root_error', 'carried_legacy',
 ];
 
 export function storedSpfWalkStatus(v: string | null | undefined): SpfWalkStatusStored | null {
@@ -250,8 +256,31 @@ export function spfNotChecked(): SpfResult {
  */
 export function carrySpfForward(previous: SpfResult): SpfResult {
   const findings = (previous.findings ?? []).filter((f) => f.code !== 'root_lookup_failed');
-  return { ...previous, rootError: false, findings: [...findings, { code: 'root_lookup_failed' }] };
+  return {
+    ...previous,
+    rootError: false,
+    // A pre-0332 row has no walk status: never store it as 'no_record' next
+    // to spf_exists = 1.
+    walkStatus: previous.walkStatus ?? 'carried_legacy',
+    findings: [...findings, { code: 'root_lookup_failed' }],
+  };
 }
+
+/** Shared time budget for the SPF root lookup + include-tree walk. */
+export interface SpfCheckBudget {
+  /** Timeout of the domain's own TXT lookup. */
+  rootTimeoutMs: number;
+  /** Root lookup + walk together; the walk gets what is left (≤ SPF_WALK_BUDGET_MS). */
+  totalMs: number;
+}
+
+/**
+ * Budget for the wall-clock-capped scans (public free scan, scan-only
+ * report: EMAIL_SCAN_BUDGET_MS = 8 s, lib/free-scan-view.ts): 3 s root +
+ * walk within 6.5 s total, so SPF finishes inside the cap with headroom.
+ * Other callers keep the 5 s root timeout + 4 s walk.
+ */
+export const CAPPED_SCAN_SPF_BUDGET: SpfCheckBudget = { rootTimeoutMs: 3_000, totalMs: 6_500 };
 
 /**
  * Build the SPF result from the root TXT answers and the walk (pure;
@@ -341,10 +370,12 @@ export async function checkSpf(
   domain: string,
   lookup: SpfTxtLookup = spfTxtLookup,
   previous?: PreviousSpfLoader,
+  budget?: SpfCheckBudget,
 ): Promise<SpfResult> {
+  const start = Date.now();
   let root: { status: 'ok' | 'nxdomain' | 'error'; records: string[] };
   try {
-    root = await lookup(domain, SPF_ROOT_TIMEOUT_MS);
+    root = await lookup(domain, budget ? budget.rootTimeoutMs : SPF_ROOT_TIMEOUT_MS);
   } catch {
     root = { status: 'error', records: [] };
   }
@@ -356,7 +387,10 @@ export async function checkSpf(
   const spfRecords = root.status === 'ok' ? selectSpfRecords(root.records) : [];
   const parsed = spfRecords.length === 1 ? parseSpfRecord(spfRecords[0]) : null;
   // Multiple records are a permerror before any evaluation — not walked.
-  const walk = parsed ? await walkSpfTree(domain, parsed, lookup) : null;
+  const walkOpts = budget
+    ? { budgetMs: Math.max(0, Math.min(SPF_WALK_BUDGET_MS, budget.totalMs - (Date.now() - start))) }
+    : {};
+  const walk = parsed ? await walkSpfTree(domain, parsed, lookup, walkOpts) : null;
   return buildSpfResult(domain, root.status, root.records, walk);
 }
 
@@ -893,6 +927,9 @@ export interface EmailSecurityScanOptions {
   /** Brand scans pass `previousSpfLoader(db, brandId)` so a failed SPF root
    *  lookup carries the previous scan forward instead of "not checked". */
   previousSpf?: PreviousSpfLoader;
+  /** Shared SPF root + walk budget (CAPPED_SCAN_SPF_BUDGET for the
+   *  wall-clock-capped scans); default 5 s root + 4 s walk. */
+  spfBudget?: SpfCheckBudget;
 }
 
 export async function runEmailSecurityScan(
@@ -903,7 +940,7 @@ export async function runEmailSecurityScan(
 
   const [dmarc, spf, dkim, mx] = await Promise.all([
     checkDmarc(domain),
-    checkSpf(domain, undefined, opts.previousSpf),
+    checkSpf(domain, undefined, opts.previousSpf, opts.spfBudget),
     checkDkim(domain),
     checkMx(domain),
   ]);

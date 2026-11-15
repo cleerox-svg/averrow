@@ -20,6 +20,8 @@
 --                               never a confirmed 0 — the column has no NOT
 --                               NULL constraint, DEFAULT 0 only applies when
 --                               the column is omitted)
+--                               | carried_legacy (a root failure carried
+--                               forward a pre-0332 scan with no walk data)
 --   spf_findings      TEXT    — JSON array of {code, names?, count?};
 --                               codes and validated DNS names only, never
 --                               record text

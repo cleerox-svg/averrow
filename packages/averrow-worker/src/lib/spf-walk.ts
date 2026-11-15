@@ -18,8 +18,10 @@
  * permerrors at that point too), so the reported count is then "at least"
  * (`stoppedAtLimit`). Every followed target is itself a counted lookup, so
  * a walk issues at most ~11 queries before that stop; the query cap below
- * is defence in depth. Records with more than SPF_MAX_TERMS_PER_RECORD
- * terms are parsed only up to the cap (walk `unknown`, reason `term_cap`).
+ * is defence in depth. Every term of a record is scanned (ip4/ip6 terms
+ * cost nothing and never make a walk unknown); only a record longer than
+ * SPF_MAX_RECORD_LENGTH (64 KiB) is cut, making the walk `unknown`
+ * (reason `record_too_long`).
  *
  * Amplification defence. The records walked come from third-party DNS and
  * the public scan endpoint takes attacker-chosen domains, so an attacker
@@ -78,7 +80,7 @@ export type SpfTxtLookup = (name: string, timeoutMs: number) => Promise<{ status
 export type SpfWalkStatus = 'complete' | 'unknown';
 
 export type SpfWalkIncompleteReason =
-  | 'lookup_error' | 'query_cap' | 'time_budget' | 'depth_cap' | 'visit_cap' | 'term_cap'
+  | 'lookup_error' | 'query_cap' | 'time_budget' | 'depth_cap' | 'visit_cap' | 'record_too_long'
   | 'invalid_name' | 'macro';
 
 export interface SpfWalkResult {
@@ -237,7 +239,7 @@ export async function walkSpfTree(
   ): Promise<SpfQualifier | null> {
     if (halted) return null;
     if (++visits > maxVisits) { stop('visit_cap'); return null; }
-    if (rec.truncated) reasons.add('term_cap');
+    if (rec.truncated) reasons.add('record_too_long');
     if (rec.syntaxErrors.length > 0) syntaxErrorAt.add(name);
     if (rec.usesPtr) ptrAt.add(name);
     if (viaInclude && rec.allQualifier === '+') includePassAllAt.add(name);

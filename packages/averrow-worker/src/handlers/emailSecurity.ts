@@ -97,7 +97,9 @@ export async function handleGetEmailSecurityHistory(
         (row.mx_exists ? 1 : 0);
       return {
         scanned_at:   row.scanned_at,
-        spf_exists:   !!row.spf_exists,
+        // null = SPF not checked on that scan (root lookup failed); it is
+        // not counted in protocols_passing.
+        spf_exists:   row.spf_exists === null ? null : !!row.spf_exists,
         dkim_exists:  !!row.dkim_exists,
         dmarc_exists: !!row.dmarc_exists,
         dmarc_policy: row.dmarc_policy,

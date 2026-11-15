@@ -26,7 +26,8 @@ export interface BrandThreatAssessment {
   // Email security posture
   email_security_grade: string | null;
   has_dmarc: boolean;
-  has_spf: boolean;
+  /** null = the latest scan could not check SPF (root lookup failed). */
+  has_spf: boolean | null;
   has_dkim: boolean;
   dmarc_policy: string | null;
 
@@ -98,7 +99,7 @@ export async function correlateBrandThreats(
     WHERE brand_id = ?
     ORDER BY scanned_at DESC LIMIT 1
   `).bind(brandId).first<{
-    has_dmarc: number; has_spf: number; has_dkim: number; dmarc_policy: string | null;
+    has_dmarc: number; has_spf: number | null; has_dkim: number; dmarc_policy: string | null;
   }>().catch(() => null);
 
   // 3. Query spam_trap_captures for last 30 days
@@ -272,7 +273,7 @@ export async function correlateBrandThreats(
 
     email_security_grade: grade ?? null,
     has_dmarc: !!(emailScan?.has_dmarc),
-    has_spf: !!(emailScan?.has_spf),
+    has_spf: emailScan && emailScan.has_spf === null ? null : !!(emailScan?.has_spf),
     has_dkim: !!(emailScan?.has_dkim),
     dmarc_policy: dmarcPolicy,
 

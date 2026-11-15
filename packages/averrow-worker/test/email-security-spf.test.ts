@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { hasSqlite, openMigratedDb, d1FromSqlite, sqliteTimestampHoursAgo, type SqliteDb } from "./sqlite-d1-harness";
 import {
+  CAPPED_SCAN_SPF_BUDGET,
   EMAIL_SCORE_RUBRIC_VERSION,
   buildSpfResult,
   calculateEmailSecurityScore,
@@ -24,7 +25,10 @@ import {
   type SpfResult,
   type StoredEmailScanRow,
 } from "../src/email-security";
-import { findEmailGradeChanges, isSpfUncertaintyOnlyGradeChange, isSpfUncertaintyOnlyChange } from "../src/lib/email-grade-change";
+import {
+  findEmailGradeChanges, isSpfUncertaintyOnlyGradeChange, isSpfUncertaintyOnlyChange, resolveScanGradeChange,
+} from "../src/lib/email-grade-change";
+import { EMAIL_SCAN_BUDGET_MS } from "../src/lib/free-scan-view";
 import { emailRecommendationInput } from "../src/handlers/reports";
 import type { SpfTxtLookup } from "../src/lib/spf-walk";
 
@@ -500,5 +504,164 @@ describe.skipIf(!hasSqlite())("storage + grade-change detection (migration 0332)
     insertScan(row({ spf_exists: null, spf_raw: null, spf_policy: null, spf_walk_status: "root_error" }), sqliteTimestampHoursAgo(2));
     const prev = await previousSpfLoader(db, "b1")();
     expect(prev).toMatchObject({ exists: true, tooManyLookups: true, walkStatus: "complete" });
+  });
+});
+
+// ─── Fix round 2 ───────────────────────────────────────────────────────────
+
+describe("long flattened ip4 lists", () => {
+  it("110 × ip4 + -all scores exactly like a short -all record", async () => {
+    const ips = Array.from({ length: 110 }, (_, i) => `ip4:198.51.100.${i}`).join(" ");
+    const long = await checkSpf("acme.com", dns({ "acme.com": ok(`v=spf1 ${ips} -all`) }));
+    const short = await checkSpf("acme.com", dns({ "acme.com": ok("v=spf1 ip4:198.51.100.1 -all") }));
+    expect(long).toMatchObject({ policy: "-all", walkStatus: "complete", tooManyLookups: false, lookupCount: 0 });
+    expect(long.findings).toEqual([]);
+    expect(score(long)).toBe(score(short));
+    expect(score(long)).toBe(95);
+  });
+});
+
+describe("shared SPF budget for wall-clock-capped scans", () => {
+  it("CAPPED_SCAN_SPF_BUDGET fits inside the 8 s free-scan cap", () => {
+    expect(CAPPED_SCAN_SPF_BUDGET.rootTimeoutMs).toBe(3_000);
+    expect(CAPPED_SCAN_SPF_BUDGET.totalMs).toBeLessThan(EMAIL_SCAN_BUDGET_MS);
+  });
+
+  it("the root lookup gets rootTimeoutMs and the walk only what is left of totalMs", async () => {
+    const timeouts: Array<[string, number]> = [];
+    const lookup: SpfTxtLookup = async (name, timeoutMs) => {
+      timeouts.push([name, timeoutMs]);
+      if (name === "acme.com") {
+        await new Promise((r) => setTimeout(r, 60));
+        return { status: "ok", records: ["v=spf1 include:_spf.acme.com -all"] };
+      }
+      return { status: "ok", records: ["v=spf1 -all"] };
+    };
+    await checkSpf("acme.com", lookup, undefined, { rootTimeoutMs: 3_000, totalMs: 1_000 });
+    expect(timeouts[0]).toEqual(["acme.com", 3_000]);
+    expect(timeouts[1]![0]).toBe("_spf.acme.com");
+    expect(timeouts[1]![1]).toBeLessThanOrEqual(1_000 - 50);
+  });
+
+  it("without a budget the defaults stay (5 s root)", async () => {
+    const timeouts: number[] = [];
+    await checkSpf("acme.com", async (_n, t) => { timeouts.push(t); return { status: "ok", records: ["v=spf1 -all"] }; });
+    expect(timeouts).toEqual([5_000]);
+  });
+});
+
+describe("carrying a pre-0332 scan forward", () => {
+  const legacy: SpfResult = { exists: true, policy: "-all", includes: 0, tooManyLookups: false, raw: ROOT, walkStatus: null, findings: [] };
+
+  it("is stored as carried_legacy, never no_record next to spf_exists = 1", async () => {
+    const spf = await checkSpf("acme.com", dns({ "acme.com": { status: "error", records: [] } }), async () => legacy);
+    expect(spf.walkStatus).toBe("carried_legacy");
+    expect(spf.exists).toBe(true);
+  });
+
+  it("counts as SPF-uncertain: the next real walk does not raise a walk-only alert", () => {
+    const carried = row({ spf_walk_status: "carried_legacy", spf_lookup_count: null, spf_findings: JSON.stringify([{ code: "root_lookup_failed" }]) });
+    const walked = overLimitRow();
+    expect(grade(carried)).not.toBe(grade(walked));
+    expect(isSpfUncertaintyOnlyGradeChange(carried, walked)).toBe(true);
+    // A root-record change still alerts.
+    expect(isSpfUncertaintyOnlyGradeChange(carried, overLimitRow({ spf_raw: "v=spf1 +all", spf_policy: "+all" }))).toBe(false);
+  });
+});
+
+describe.skipIf(!hasSqlite())("a not-checked scan is never the baseline (both detectors)", () => {
+  let raw: SqliteDb;
+  let db: D1Database;
+
+  beforeEach(() => {
+    raw = openMigratedDb();
+    db = d1FromSqlite(raw);
+  });
+
+  const COLS = [
+    "dmarc_exists", "dmarc_policy", "dmarc_pct", "dmarc_rua", "dmarc_sp", "dmarc_np", "dmarc_t",
+    "spf_exists", "spf_policy", "spf_too_many_lookups", "spf_raw", "spf_lookup_count", "spf_void_lookups",
+    "spf_walk_status", "spf_findings", "dkim_exists", "dkim_selectors_found", "mx_exists", "mx_providers",
+  ] as const;
+
+  function insertScan(r: StoredEmailScanRow, scannedAt: string): void {
+    raw.prepare(
+      `INSERT INTO email_security_scans (brand_id, domain, email_security_score, email_security_grade, score_rubric_version, scanned_at, ${COLS.join(", ")})
+       VALUES (?, ?, ?, ?, ?, ?, ${COLS.map(() => "?").join(", ")})`,
+    ).run("b1", "acme.example", 0, grade(r), EMAIL_SCORE_RUBRIC_VERSION, scannedAt, ...COLS.map((c) => r[c] ?? null));
+  }
+  function brand(gradeNow: string, scannedAt: string): void {
+    raw.prepare(
+      "INSERT INTO brands (id, name, canonical_domain, email_security_grade, email_security_scanned_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("b1", "Acme", "acme.example", gradeNow, scannedAt);
+  }
+
+  // No DKIM: -all scores 75 (B, "good"); SPF 0 scores 45 (D, "bad").
+  const scan1 = row({ dkim_exists: 0, dkim_selectors_found: "[]" });
+  const scan2NotChecked = row({
+    dkim_exists: 0, dkim_selectors_found: "[]",
+    spf_exists: null, spf_policy: null, spf_raw: null, spf_lookup_count: null,
+    spf_walk_status: "root_error", spf_findings: JSON.stringify([{ code: "root_lookup_failed" }]),
+  });
+  const scan3PassAll = row({
+    dkim_exists: 0, dkim_selectors_found: "[]",
+    spf_raw: "v=spf1 +all", spf_policy: "+all", spf_lookup_count: 0,
+    spf_findings: JSON.stringify([{ code: "pass_all" }]),
+  });
+  const T1 = sqliteTimestampHoursAgo(16 * 24);
+  const T2 = sqliteTimestampHoursAgo(8 * 24);
+  const T3 = sqliteTimestampHoursAgo(1);
+
+  it("fixtures", () => {
+    expect([grade(scan1), grade(scan2NotChecked), grade(scan3PassAll)]).toEqual(["B", "D", "D"]);
+  });
+
+  it("orchestrator: the not-checked scan itself raises nothing", async () => {
+    insertScan(scan1, T1);
+    insertScan(scan2NotChecked, T3);
+    brand("D", T3);
+    expect(await findEmailGradeChanges(db)).toEqual([]);
+  });
+
+  it("orchestrator: -all (B) → not checked (D) → +all (D) alerts B → D on the third scan", async () => {
+    insertScan(scan1, T1);
+    insertScan(scan2NotChecked, T2);
+    insertScan(scan3PassAll, T3);
+    brand("D", T3);
+    expect(await findEmailGradeChanges(db)).toEqual([
+      { brand_id: "b1", name: "Acme", current_grade: "D", previous_grade: "B" },
+    ]);
+  });
+
+  it("orchestrator: -all → not checked → -all again is not a change", async () => {
+    insertScan(scan1, T1);
+    insertScan(scan2NotChecked, T2);
+    insertScan(scan1, T3);
+    brand("B", T3);
+    expect(await findEmailGradeChanges(db)).toEqual([]);
+  });
+
+  it("Cartographer: the same sequence is a B → D change", async () => {
+    insertScan(scan1, T1);
+    insertScan(scan2NotChecked, T2);
+    const change = await resolveScanGradeChange(db, "b1", { ...scan2NotChecked, scanned_at: T2 }, "D", resultFor(scan3PassAll));
+    expect(change).toEqual({ isChange: true, previousGrade: "B", currentGrade: "D" });
+    const same = await resolveScanGradeChange(db, "b1", { ...scan2NotChecked, scanned_at: T2 }, "D", resultFor(scan1));
+    expect(same.isChange).toBe(false);
+  });
+
+  it("the current scan is the one that set brands.email_security_scanned_at, not a later row", async () => {
+    insertScan(overLimitRow(), T1);
+    insertScan(timedOutRow(), T2);            // pure timeout flip → suppressed
+    brand("A+", T2);
+    insertScan(timedOutRow({ dmarc_policy: "none" }), T3);  // written later by another path
+    expect(await findEmailGradeChanges(db)).toEqual([]);
+  });
+
+  it("qualifiedReport passes previousSpfLoader to its brand-scoped scan", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const src = readFileSync(resolve(__dirname, "../src/handlers/qualifiedReport.ts"), "utf8");
+    expect(src).toMatch(/runEmailSecurityScanWithin\(domain, EMAIL_SCAN_BUDGET_MS,\s*brandId != null \? \{ previousSpf: previousSpfLoader\(env\.DB, brandId\) \}/);
   });
 });

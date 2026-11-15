@@ -208,7 +208,10 @@ export async function handleScanReport(
     const emailSection = {
       grade: emailResult.grade,
       spf: {
-        status: emailGradeToStatus(emailResult.spf.exists, emailResult.spf.policy),
+        // 'unchecked' when the SPF root lookup failed — not 'missing'.
+        status: emailResult.spf.walk_status === 'root_error'
+          ? 'unchecked'
+          : emailGradeToStatus(emailResult.spf.exists, emailResult.spf.policy),
         record: emailResult.spf.record ?? undefined,
       },
       dkim: {

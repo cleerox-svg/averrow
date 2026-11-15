@@ -52,6 +52,7 @@ function spfLabel(v: string | null): string {
     case "-all": case "pass": case "hardfail": return "Enforced (-all)";
     case "~all": case "soft": case "softfail": return "Soft fail (~all) — not enforced";
     case "?all": case "neutral": case "+all": case "none": return "Neutral — does not restrict senders";
+    case "unchecked": return "Could not be checked (DNS lookup failed)";
     case null: case "missing": case "": return "Not configured";
     default: return v;
   }

@@ -53,14 +53,22 @@ export interface ParsedSpfRecord {
   /** A `ptr` mechanism is evaluated (deprecated, §5.5). */
   usesPtr: boolean;
   syntaxErrors: string[];
-  /** More than SPF_MAX_TERMS_PER_RECORD terms; only the first ones were
-   *  parsed, so everything derived from this record is a lower bound. */
+  /** Longer than SPF_MAX_RECORD_LENGTH; only that prefix was parsed, so
+   *  everything derived from this record is a lower bound. */
   truncated: boolean;
 }
 
-/** Terms parsed per record (CPU bound). A legitimate record has a few
- *  dozen at most — a 10-lookup tree needs far fewer. */
-export const SPF_MAX_TERMS_PER_RECORD = 100;
+/**
+ * Bound on the record text parsed (CPU). Every term up to it is scanned —
+ * one cheap regex per term, no per-term I/O — so a long flattened ip4/ip6
+ * list keeps its trailing `all`, `redirect=` and lookup counts. 64 KiB is
+ * the largest TXT RRset a DNS message can carry; a real record is far
+ * shorter. The expensive work (following includes) is bounded by the walk
+ * (lib/spf-walk.ts), which stops as soon as >10 lookups are proven.
+ */
+export const SPF_MAX_RECORD_LENGTH = 65_536;
+/** Syntax-error strings kept per record. */
+const MAX_SYNTAX_ERRORS = 20;
 
 const LOOKUP_MECHANISMS: ReadonlySet<SpfMechanismName> = new Set(['include', 'a', 'mx', 'ptr', 'exists']);
 const MODIFIER_RE = /^([a-z][a-z0-9_.-]*)=(.*)$/i;
@@ -105,14 +113,19 @@ function cidrOk(bits: string | undefined, max: number): boolean {
  */
 export function parseSpfRecord(record: string | null | undefined): ParsedSpfRecord | null {
   if (!record || !isSpfRecord(record)) return null;
-  const allTerms = record.trim().split(/\s+/);
-  // CPU bound: a TXT RRset can carry thousands of terms; only the first
-  // SPF_MAX_TERMS_PER_RECORD are parsed (`truncated` → the walk is unknown).
-  const truncated = allTerms.length - 1 > SPF_MAX_TERMS_PER_RECORD;
-  const terms = allTerms.slice(1, SPF_MAX_TERMS_PER_RECORD + 1);
+  const trimmed = record.trim();
+  const truncated = trimmed.length > SPF_MAX_RECORD_LENGTH;
+  // Over the bound: parse the prefix up to the last whole term.
+  const text = truncated
+    ? trimmed.slice(0, SPF_MAX_RECORD_LENGTH).replace(/\s+\S*$/, '')
+    : trimmed;
+  const terms = text.split(/\s+/).slice(1);
 
   const mechanisms: SpfMechanism[] = [];
-  const syntaxErrors: string[] = [];
+  const errorList: string[] = [];
+  const syntaxErrors = {
+    push(e: string): void { if (errorList.length < MAX_SYNTAX_ERRORS) errorList.push(e); },
+  };
   let redirect: string | null = null;
   let exp: string | null = null;
   let sawRedirect = false;
@@ -223,7 +236,7 @@ export function parseSpfRecord(record: string | null | undefined): ParsedSpfReco
     lookupTerms,
     includeTargets,
     usesPtr,
-    syntaxErrors,
+    syntaxErrors: errorList,
     truncated,
   };
 }

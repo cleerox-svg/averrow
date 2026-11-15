@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseSpfRecord, SPF_MAX_TERMS_PER_RECORD } from "../src/lib/spf-record";
+import { parseSpfRecord, SPF_MAX_RECORD_LENGTH } from "../src/lib/spf-record";
 import {
   walkSpfTree,
   spfWalkName,
@@ -199,20 +199,43 @@ describe("walkSpfTree — hard caps and honesty", () => {
     expect(w.incompleteReasons).toEqual(["query_cap"]);
   });
 
-  it("a 5,000-include record: parse capped, limit proven, zero queries", async () => {
+  it("a 5,000-include record (~140 KB): cut at 64 KiB, limit proven, zero queries, fast", async () => {
     const huge = `v=spf1 ${Array.from({ length: 5_000 }, (_, i) => `include:h${i}.attacker.com`).join(" ")} -all`;
+    const t0 = Date.now();
     const parsed = root(huge);
     expect(parsed.truncated).toBe(true);
-    expect(parsed.includeTargets.length).toBe(SPF_MAX_TERMS_PER_RECORD);
+    expect(parsed.includeTargets.length).toBeGreaterThan(2_000);
     const { lookup, queried } = fakeDns({});
-    const t0 = Date.now();
     const w = await walkSpfTree("acme.com", parsed, lookup);
     expect(Date.now() - t0).toBeLessThan(500);
     expect(queried).toEqual([]);
     expect(w.stoppedAtLimit).toBe(true);
-    expect(w.lookupCount).toBe(SPF_MAX_TERMS_PER_RECORD);
+    expect(w.lookupCount).toBe(parsed.includeTargets.length);
     expect(w.status).toBe("unknown");
-    expect(w.incompleteReasons).toEqual(["term_cap"]);
+    expect(w.incompleteReasons).toEqual(["record_too_long"]);
+  });
+
+  it("2,000 includes under 64 KiB: every term scanned (trailing -all kept), limit proven, zero queries", async () => {
+    const big = `v=spf1 ${Array.from({ length: 2_000 }, (_, i) => `include:h${i}.attacker.com`).join(" ")} -all`;
+    expect(big.length).toBeLessThan(SPF_MAX_RECORD_LENGTH);
+    const parsed = root(big);
+    expect(parsed.truncated).toBe(false);
+    expect(parsed.allQualifier).toBe("-");
+    const { lookup, queried } = fakeDns({});
+    const w = await walkSpfTree("acme.com", parsed, lookup);
+    expect(queried).toEqual([]);
+    expect(w).toMatchObject({ stoppedAtLimit: true, lookupCount: 2_000, status: "complete", effectiveAllQualifier: "-" });
+  });
+
+  it("a record over 64 KiB is cut at the bound and the walk is unknown", async () => {
+    const huge = `v=spf1 ${Array.from({ length: 5_000 }, (_, i) => `ip4:192.0.${i % 250}.${i % 250}`).join(" ")} -all`;
+    expect(huge.length).toBeGreaterThan(SPF_MAX_RECORD_LENGTH);
+    const parsed = root(huge);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.syntaxErrors).toEqual([]);
+    const w = await walkSpfTree("acme.com", parsed, fakeDns({}).lookup);
+    expect(w.status).toBe("unknown");
+    expect(w.incompleteReasons).toEqual(["record_too_long"]);
   });
 
   it("an included record with +all is reported (not the root policy)", async () => {

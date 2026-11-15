@@ -26,7 +26,7 @@ import {
   runEmailSecurityScan, saveEmailSecurityScan, previousSpfLoader,
   STORED_EMAIL_SCAN_COLUMNS, type StoredEmailScanRow,
 } from "../email-security";
-import { isRubricOnlyGradeChange, isSpfUncertaintyOnlyChange } from "../lib/email-grade-change";
+import { isRubricOnlyGradeChange, resolveScanGradeChange } from "../lib/email-grade-change";
 import { createNotification } from "../lib/notifications";
 import { emitIntelNotification, renderIntelRecommendedAction } from "../lib/intel-templates";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
@@ -1074,15 +1074,15 @@ export const cartographerAgent: AgentModule = {
       // That same latest scan's stored columns (migration 0332): a grade
       // change fully explained by SPF-check uncertainty is not notified
       // (isSpfUncertaintyOnlyGradeChange, lib/email-grade-change.ts).
-      const prevScanByBrand = new Map<string, StoredEmailScanRow>();
+      const prevScanByBrand = new Map<string, StoredEmailScanRow & { scanned_at: string }>();
       if (brandsToScan.results.length > 0) {
         const ids = brandsToScan.results.map((b) => b.id);
         const rv = await env.DB.prepare(`
-          SELECT e.brand_id, e.score_rubric_version, ${STORED_EMAIL_SCAN_COLUMNS}
+          SELECT e.brand_id, e.score_rubric_version, e.scanned_at, ${STORED_EMAIL_SCAN_COLUMNS}
           FROM email_security_scans e
           WHERE e.brand_id IN (${ids.map(() => '?').join(',')})
             AND e.scanned_at = (SELECT MAX(e2.scanned_at) FROM email_security_scans e2 WHERE e2.brand_id = e.brand_id)
-        `).bind(...ids).all<StoredEmailScanRow & { brand_id: string | number; score_rubric_version: number | null }>();
+        `).bind(...ids).all<StoredEmailScanRow & { brand_id: string | number; score_rubric_version: number | null; scanned_at: string }>();
         for (const r of rv.results) {
           rubricByBrand.set(String(r.brand_id), r.score_rubric_version);
           prevScanByBrand.set(String(r.brand_id), r);
@@ -1093,7 +1093,8 @@ export const cartographerAgent: AgentModule = {
         // Each scan is several sequential DoH lookups (5s timeout each);
         // stop starting new ones once the run budget is spent. The SPF
         // branch (run in parallel with the DKIM probes) is at worst a 5 s
-        // root lookup + a 4 s / 25-query include-tree walk, so 50 brands
+        // root lookup + a 4 s / 25-query include-tree walk (in practice the
+        // walk stops after ~11 queries at a proven >10 lookups), so 50 brands
         // add at most ~1,300 subrequests (limit 50,000); time stays bounded
         // by this per-brand budget check. A failed SPF root lookup carries
         // the last checked scan forward (one extra read, only then).
@@ -1121,11 +1122,18 @@ export const cartographerAgent: AgentModule = {
           // per brand before this fix.
           // A grade computed under an older scoring rubric is not a
           // baseline — the stored grade was updated above, silently.
-          if (brand.existing_grade && brand.existing_grade !== result.grade
-              && !isRubricOnlyGradeChange(rubricByBrand.get(String(brand.id)))
-              && !isSpfUncertaintyOnlyChange(prevScanByBrand.get(String(brand.id)), result)) {
-            const prev = gradeBand(brand.existing_grade);
-            const next = gradeBand(result.grade);
+          // A scan whose SPF was not checked is never the baseline either,
+          // and a change SPF-check uncertainty fully explains is not one
+          // (resolveScanGradeChange, lib/email-grade-change.ts).
+          const change = await resolveScanGradeChange(
+            env.DB, brand.id, prevScanByBrand.get(String(brand.id)), brand.existing_grade, result,
+          );
+          const baselineGrade = change.previousGrade ?? "";  // non-empty whenever isChange
+          const newGrade = change.currentGrade;
+          if (change.isChange
+              && !isRubricOnlyGradeChange(rubricByBrand.get(String(brand.id)))) {
+            const prev = gradeBand(baselineGrade);
+            const next = gradeBand(newGrade);
             const crossed =
               (prev === 'good' && next === 'bad') ||
               (prev === 'bad' && next === 'good');
@@ -1143,10 +1151,10 @@ export const cartographerAgent: AgentModule = {
                   brandId: String(brand.id),
                   type: 'email_security_change',
                   title: `${brandName?.name ?? brand.domain} email security ${dropped ? 'degraded' : 'improved'}`,
-                  message: `Grade changed from ${brand.existing_grade} to ${result.grade}`,
+                  message: `Grade changed from ${baselineGrade} to ${newGrade}`,
                   severity: dropped ? 'high' : 'info',
                   link: `/brands/${brand.id}`,
-                  metadata: { brand_id: brand.id, prev_grade: brand.existing_grade, new_grade: result.grade },
+                  metadata: { brand_id: brand.id, prev_grade: baselineGrade, new_grade: newGrade },
                 });
               } catch (notifErr) {
                 console.error('[cartographer] notification error:', notifErr);

@@ -43,7 +43,7 @@ import { json } from "../lib/cors";
 import { runSyncAgent } from "../lib/agentRunner";
 import { qualifiedReportAgent, deterministicNarrative, deterministicPlan } from "../agents/qualified-report";
 import type { QualifiedReportInput, QualifiedReportOutput } from "../agents/qualified-report";
-import { saveEmailSecurityScan, type EmailSecurityResult } from "../email-security";
+import { saveEmailSecurityScan, previousSpfLoader, type EmailSecurityResult } from "../email-security";
 import {
   isEmailGrade, parseStoredPublicView, runEmailSecurityScanWithin, EMAIL_SCAN_BUDGET_MS, AUTO_REPORT_GENERATED_BY,
   type StoredPublicView,
@@ -172,7 +172,7 @@ function emailFromView(view: StoredPublicView): ReportPayload["email_security"] 
 function emailFromEngine(scan: EmailSecurityResult): ReportPayload["email_security"] {
   return {
     grade: scan.grade,
-    spf: scan.spf.policy ?? (scan.spf.exists ? "neutral" : null),
+    spf: scan.spf.walk_status === "root_error" ? "unchecked" : scan.spf.policy ?? (scan.spf.exists ? "neutral" : null),
     dmarc: scan.dmarc.exists ? scan.dmarc.policy : null,
     dkim_found: scan.dkim.exists,
     mx_count: scan.mx.exists ? Math.max(1, scan.mx.providers.length) : 0,
@@ -370,10 +370,10 @@ async function buildFullReportPayload(
       ORDER BY domain LIMIT ?
     `).bind(brandId, REPORT_LOOKALIKE_NAME_CAP).all<{ domain: string }>() : none<{ domain: string }>(),
     env.DB.prepare(`
-      SELECT spf_policy, dmarc_policy, dkim_exists, mx_exists, mx_providers, email_security_grade, scanned_at
+      SELECT spf_exists, spf_policy, dmarc_policy, dkim_exists, mx_exists, mx_providers, email_security_grade, scanned_at
       FROM email_security_scans WHERE domain = ?
       ORDER BY scanned_at DESC LIMIT 1
-    `).bind(domain).first<{ spf_policy: string | null; dmarc_policy: string | null; dkim_exists: number | null; mx_exists: number | null; mx_providers: string | null; email_security_grade: string | null; scanned_at: string | null }>(),
+    `).bind(domain).first<{ spf_exists: number | null; spf_policy: string | null; dmarc_policy: string | null; dkim_exists: number | null; mx_exists: number | null; mx_providers: string | null; email_security_grade: string | null; scanned_at: string | null }>(),
     // The free scan this lead came from, else the latest free scan of the
     // domain (idx_brand_scans_domain). Holds the registered lookalike names
     // and the email view checked at scan time.
@@ -402,7 +402,10 @@ async function buildFullReportPayload(
       : Infinity;
     if (scanAgeMs > EMAIL_SCAN_STALE_MS) {
       try {
-        const scan = await runEmailSecurityScanWithin(domain, EMAIL_SCAN_BUDGET_MS);
+        // Brand-scoped: a failed SPF root lookup carries the brand's last
+        // checked scan forward instead of storing "not checked".
+        const scan = await runEmailSecurityScanWithin(domain, EMAIL_SCAN_BUDGET_MS,
+          brandId != null ? { previousSpf: previousSpfLoader(env.DB, brandId) } : {});
         fresh = emailFromEngine(scan);
         // Persist for next time (brand_id is required on the scans table).
         if (brandId != null) {
@@ -412,7 +415,8 @@ async function buildFullReportPayload(
     }
     email = fresh ?? {
       grade: emailScanRow?.email_security_grade ?? brandRow?.email_security_grade ?? "F",
-      spf: emailScanRow?.spf_policy ?? null,
+      // spf_exists NULL = the stored scan could not check SPF (not "missing").
+      spf: emailScanRow && emailScanRow.spf_exists === null ? "unchecked" : emailScanRow?.spf_policy ?? null,
       dmarc: emailScanRow?.dmarc_policy ?? null,
       dkim_found: emailScanRow?.dkim_exists === 1,
       mx_count: emailScanRow?.mx_providers

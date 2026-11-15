@@ -111,7 +111,7 @@ export function useBrandNarratives(brandId: string, limit: number = 5) {
 
 export interface EmailSecurityHistoryPoint {
   scanned_at:        string;
-  spf_exists:        boolean;
+  spf_exists:        boolean | null;   // null = SPF not checked on that scan (DNS lookup failed)
   dkim_exists:       boolean;
   dmarc_exists:      boolean;
   dmarc_policy:      string | null;

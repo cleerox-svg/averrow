@@ -427,7 +427,11 @@ export async function runPublicScan(env: Env, domain: string): Promise<PublicSca
     getScanLookalikes(env, scanDomain),
   ]);
 
-  const spfPolicy = legacySpfPolicy(email.spf.exists, email.spf.policy);
+  // brand_scans.spf_policy: "unchecked" when the SPF root lookup failed —
+  // never null, which readers show as "not configured".
+  const spfPolicy = email.spf.walk_status === "root_error"
+    ? "unchecked"
+    : legacySpfPolicy(email.spf.exists, email.spf.policy);
   const dmarcPolicy = email.dmarc.exists ? (email.dmarc.policy ?? "none") : null;
 
   const id = crypto.randomUUID();
