@@ -63,3 +63,6 @@ export * from './update';
 // R3 brand marks (facelift P3-5): AverrowMark (tile / bare), AverrowLockup
 // (mark + wordmark, no tagline) and the legacy <-> R3 toggle classes.
 export * from './brand';
+
+// Shell modules (top bar): AccountMenu, SearchTrigger, NotificationBell + rows.
+export * from './shell';
