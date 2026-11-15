@@ -58,6 +58,8 @@ export const SPF_WALK_MAX_DEPTH = 6;
 export const SPF_WALK_MAX_VISITS = 60;
 /** Names reported per finding list. */
 const MAX_NAMES_REPORTED = 5;
+/** Cap on `targets` / `resolvedTargets` (visits are capped at 60 anyway). */
+export const SPF_WALK_MAX_TARGETS_REPORTED = 64;
 
 /** Reserved / internal TLDs that are never queried (RFC 2606, 6761, 6762,
  *  8375, 9476 and common private-network suffixes). */
@@ -104,9 +106,20 @@ export interface SpfWalkResult {
   multipleRecordsAt: string[];
   syntaxErrorAt: string[];
   missingRecordAt: string[];
+  /** Subset of `missingRecordAt` whose TXT answer was NXDOMAIN (the name does
+   *  not exist at all), as opposed to existing with no SPF record. Input to
+   *  the dangling-include check (lib/spf-dangling.ts). */
+  nxdomainAt: string[];
   ptrAt: string[];
   /** `+all` / bare `all` in a record reached through an include. */
   includePassAllAt: string[];
+  /** Every include / redirect target name the walk followed (validated,
+   *  ≤ SPF_WALK_MAX_TARGETS_REPORTED). Input to the newly-registered check
+   *  (email-security.ts): is a name still in the tree? */
+  targets: string[];
+  /** Subset of `targets` whose TXT answer showed the name EXISTS (records,
+   *  or NOERROR with no TXT) — never NXDOMAIN, never a failed lookup. */
+  resolvedTargets: string[];
 }
 
 export interface SpfWalkOptions {
@@ -120,22 +133,29 @@ export interface SpfWalkOptions {
 
 type Fetched =
   | { kind: 'ok'; record: ParsedSpfRecord }
-  | { kind: 'void' }       // NXDOMAIN / no TXT answers
+  | { kind: 'void'; nx: boolean }  // NXDOMAIN / no TXT answers
   | { kind: 'none' }       // TXT answers, none of them SPF
   | { kind: 'multiple' }   // more than one SPF record (permerror)
   | { kind: 'unknown'; reason: SpfWalkIncompleteReason };
 
 class NameSet {
   private readonly s = new Set<string>();
-  add(n: string): void { if (this.s.size < MAX_NAMES_REPORTED) this.s.add(n); }
+  constructor(private readonly cap: number = MAX_NAMES_REPORTED) {}
+  add(n: string): void { if (this.s.size < this.cap) this.s.add(n); }
   list(): string[] { return [...this.s]; }
 }
 
 /** Resolve `p` or reject after `ms`, whichever comes first. */
+/** Our own deadline fired (a timer can fire a millisecond before the clock
+ *  reaches the deadline, so the clock alone cannot tell the two apart). */
+class SpfWalkTimeout extends Error {
+  constructor() { super('spf walk lookup timed out'); }
+}
+
 async function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('spf walk lookup timed out')), ms);
+    timer = setTimeout(() => reject(new SpfWalkTimeout()), ms);
   });
   try {
     return await Promise.race([p, timeout]);
@@ -173,8 +193,11 @@ export async function walkSpfTree(
   const multipleRecordsAt = new NameSet();
   const syntaxErrorAt = new NameSet();
   const missingRecordAt = new NameSet();
+  const nxdomainAt = new NameSet();
   const ptrAt = new NameSet();
   const includePassAllAt = new NameSet();
+  const targets = new NameSet(SPF_WALK_MAX_TARGETS_REPORTED);
+  const resolvedTargets = new NameSet(SPF_WALK_MAX_TARGETS_REPORTED);
   const cache = new Map<string, Fetched>();
 
   function stop(reason: SpfWalkIncompleteReason): void {
@@ -195,7 +218,7 @@ export async function walkSpfTree(
       if (answer.status === 'error') {
         res = { kind: 'unknown', reason: 'lookup_error' };
       } else if (answer.status === 'nxdomain' || answer.records.length === 0) {
-        res = { kind: 'void' };
+        res = { kind: 'void', nx: answer.status === 'nxdomain' };
       } else {
         const spf = selectSpfRecords(answer.records);
         const parsed = spf.length === 1 ? parseSpfRecord(spf[0]) : null;
@@ -203,8 +226,8 @@ export async function walkSpfTree(
           : spf.length > 1 ? { kind: 'multiple' }
           : parsed ? { kind: 'ok', record: parsed } : { kind: 'none' };
       }
-    } catch {
-      res = { kind: 'unknown', reason: now() >= deadline ? 'time_budget' : 'lookup_error' };
+    } catch (err) {
+      res = { kind: 'unknown', reason: err instanceof SpfWalkTimeout || now() >= deadline ? 'time_budget' : 'lookup_error' };
     }
     cache.set(name, res);
     return res;
@@ -221,13 +244,21 @@ export async function walkSpfTree(
     if (name === null) { reasons.add('invalid_name'); return null; }
     if (path.includes(name)) { loopAt.add(name); return null; }
     if (depth > maxDepth) { reasons.add('depth_cap'); return null; }
+    targets.add(name);
     const f = await fetchSpf(name);
+    if (f.kind === 'ok' || f.kind === 'none' || f.kind === 'multiple' || (f.kind === 'void' && !f.nx)) {
+      resolvedTargets.add(name);
+    }
     switch (f.kind) {
       case 'unknown':
         if (f.reason === 'lookup_error') reasons.add(f.reason);
         else stop(f.reason); // query cap / time budget: nothing more can be read
         return null;
-      case 'void': voidLookups++; missingRecordAt.add(name); return null;
+      case 'void':
+        voidLookups++;
+        missingRecordAt.add(name);
+        if (f.nx) nxdomainAt.add(name);
+        return null;
       case 'none': missingRecordAt.add(name); return null;
       case 'multiple': multipleRecordsAt.add(name); return null;
       case 'ok': return visit(name, f.record, depth, [...path, name], viaInclude);
@@ -274,7 +305,10 @@ export async function walkSpfTree(
     multipleRecordsAt: multipleRecordsAt.list(),
     syntaxErrorAt: syntaxErrorAt.list(),
     missingRecordAt: missingRecordAt.list(),
+    nxdomainAt: nxdomainAt.list(),
     ptrAt: ptrAt.list(),
     includePassAllAt: includePassAllAt.list(),
+    targets: targets.list(),
+    resolvedTargets: resolvedTargets.list(),
   };
 }

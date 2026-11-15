@@ -20,6 +20,7 @@
  * - DMARC source IP geo enrichment
  */
 
+import { spfRdapChecker } from "../lib/spf-dangling";
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
 import {
@@ -1105,6 +1106,7 @@ export const cartographerAgent: AgentModule = {
         try {
           const result = await runEmailSecurityScan(brand.domain, {
             previousSpf: previousSpfLoader(env.DB, brand.id),
+            spfRdap: spfRdapChecker(env),
           });
           await saveEmailSecurityScan(env.DB, brand.id, result);
           await env.DB.prepare(`

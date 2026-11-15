@@ -57,8 +57,8 @@ function overLimitZone(extra: Zone = {}): Zone {
 const TEN_INCLUDES = Array.from({ length: 10 }, (_, i) => `include:i${i}.acme.com`).join(" ");
 
 describe("rubric version", () => {
-  it("is 3 (SPF tree walk changed scoring)", () => {
-    expect(EMAIL_SCORE_RUBRIC_VERSION).toBe(3);
+  it("is 4 (dangling-include confirmation changed scoring)", () => {
+    expect(EMAIL_SCORE_RUBRIC_VERSION).toBe(4);
   });
 });
 
@@ -121,11 +121,11 @@ describe("checkSpf → findings", () => {
     expect(generateRecommendations(scanWith(spf)).join("\n")).toMatch(/soft-fail/);
   });
 
-  it("void lookups > 2, ptr, missing / multi-record / +all include targets, syntax errors → recommendations only", async () => {
+  it("void lookups > 2, ptr, missing / multi-record include targets, syntax errors → recommendations only", async () => {
+    // (an include ending in +all is scored since rubric 4 — see email-security-spf-dangling.test.ts)
     const spf = await checkSpf("acme.com", dns({
-      "acme.com": ok("v=spf1 ptr include:gone1.com include:gone2.com include:gone3.com include:multi.acme.com include:lax.acme.com include:bad.acme.com -all"),
+      "acme.com": ok("v=spf1 ptr include:gone1.com include:gone2.com include:gone3.com include:multi.acme.com include:bad.acme.com -all"),
       "multi.acme.com": ok("v=spf1 -all", "v=spf1 ~all"),
-      "lax.acme.com": ok("v=spf1 +all"),
       "bad.acme.com": ok("v=spf1 foo -all"),
     }));
     expect(spf.walkStatus).toBe("complete");
@@ -133,15 +133,15 @@ describe("checkSpf → findings", () => {
     const codes = (spf.findings ?? []).map((f) => f.code);
     expect(codes).toEqual(expect.arrayContaining([
       "void_lookup_limit_exceeded", "ptr_mechanism", "include_target_missing",
-      "include_multiple_records", "include_pass_all", "syntax_error",
+      "include_multiple_records", "syntax_error",
     ]));
     expect(codes).not.toContain("pass_all");
+    expect(codes).not.toContain("include_pass_all");
     expect(score(spf)).toBe(95);
     const recs = spfFindingRecommendations(spf).join("\n");
     expect(recs).toMatch(/3 void lookups \(limit 2\)/);
     expect(recs).toMatch(/deprecated "ptr"/);
     expect(recs).toMatch(/gone1\.com.*re-registered/);
-    expect(recs).toMatch(/included SPF record ends in "\+all" \(lax\.acme\.com\)/);
   });
 
   it("a proven include loop is a scored permerror", async () => {
@@ -484,7 +484,7 @@ describe.skipIf(!hasSqlite())("storage + grade-change detection (migration 0332)
     expect(stored).toEqual({
       spf_exists: 1, spf_lookup_count: 12, spf_void_lookups: 1, spf_walk_status: "complete",
       spf_findings: '[{"code":"lookup_limit_exceeded","count":12}]', spf_too_many_lookups: 1,
-      score_rubric_version: 3,
+      score_rubric_version: 4,
     });
   });
 

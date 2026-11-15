@@ -28,6 +28,30 @@
  *      re-scored with the previous scan's whole SPF part.
  *   Suppressed only if that re-scored grade equals the previous grade — so
  *   a DMARC/DKIM/MX change that coincides with an SPF timeout still alerts.
+ * Dangling-include rule (rubric 4). An `include_target_unverified` finding
+ * (RDAP could not confirm whether an NXDOMAIN include target is
+ * registered) on the CURRENT scan is NOT treated as a walk-unknown scan:
+ * only the dangling-include verdict is held — the current scan is re-scored
+ * with the previous scan's `include_target_unregistered` / `_unverified` /
+ * `_newly_registered` finding in place of its own, with the root facts
+ * required unchanged. Suppressed only if that equals the previous grade, so
+ * a real downgrade elsewhere in the same tree (lookup limit newly exceeded,
+ * an include now `+all`) still alerts. The hold is one-way: previous
+ * `unverified` → current `unregistered` is the first CONFIRMATION and
+ * alerts, unless the most recent earlier scan with a certain verdict for
+ * that name was also unregistered (it was alerted then and only went
+ * unverified in between) — the caller reads that history
+ * (danglingEscalationAlreadyAlerted, ≤ 10 rows, only for that transition).
+ * Newly-registered rule (rubric 4). `include_target_newly_registered`
+ * keeps SPF at 0 for ≤ 30 days after an unregistered include target is
+ * registered (takeover guard, email-security.ts). A grade change explained
+ * only by that finding appearing or lapsing (root record unchanged) is
+ * suppressed: the current scan is re-scored with the previous scan's whole
+ * dangling verdict family (unregistered / unverified / newly registered). So a takeover never sends an "improved"
+ * notification, neither when it happens nor when the 30 days run out.
+ * Removing the include from the domain's own record changes the root facts
+ * and does alert; an include removed further down the tree (a vendor's
+ * record) does not — accepted.
  * Brand scans carry the last CHECKED scan's SPF forward over a root lookup
  * failure (previousSpfLoader), so a "not checked" row only exists for a
  * brand with no earlier checked scan (or when that read failed).
@@ -52,9 +76,13 @@ import {
   SPF_ROOT_FINDING_CODES,
   STORED_EMAIL_SCAN_COLUMNS,
   calculateEmailSecurityScore,
+  parseStoredSpfFindings,
   scanInputFromStoredRow,
+  spfFromStoredRow,
+  storedSpfWalkStatus,
   storedRowFromResult,
   type EmailSecurityResult,
+  type SpfFindingCode,
   type SpfResult,
   type StoredEmailScanRow,
 } from '../email-security';
@@ -87,6 +115,12 @@ export const EMAIL_GRADE_CHANGES_SQL = `
     )
     AND ess.score_rubric_version = ?
 `;
+
+/** Earlier checked scans (newest first), for the dangling escalation rule. */
+const PRIOR_DANGLING_SCANS_SQL = `
+  SELECT spf_walk_status, spf_findings FROM email_security_scans
+  WHERE brand_id = ? AND spf_exists IS NOT NULL AND score_rubric_version = ? AND scanned_at < ?
+  ORDER BY scanned_at DESC LIMIT 10`;
 
 const SCAN_BY_ID_SQL = `SELECT ${STORED_EMAIL_SCAN_COLUMNS} FROM email_security_scans WHERE id = ?`;
 /** The scan that set brands.email_security_scanned_at (saved just before
@@ -164,7 +198,11 @@ export async function findEmailGradeChanges(
       }
     }
     if (previousGrade === currentGrade) continue;
-    if (baseline && current && isSpfUncertaintyOnlyGradeChange(baseline, current)) continue;
+    if (baseline && current) {
+      const escalationAlreadyAlerted = await danglingEscalationAlreadyAlerted(
+        db, c.brand_id, baseline, current, c.previous_scanned_at, rubricVersion);
+      if (isSpfUncertaintyOnlyGradeChange(baseline, current, { escalationAlreadyAlerted })) continue;
+    }
     out.push({ brand_id: c.brand_id, name: c.name, current_grade: currentGrade, previous_grade: previousGrade });
   }
   return out;
@@ -184,7 +222,94 @@ type SpfCertainty = 'certain' | 'walk_unknown' | 'not_checked';
 function spfCertainty(spf: SpfResult): SpfCertainty {
   if (spf.rootError) return 'not_checked';
   // A carried pre-0332 row has real SPF values but no walk data.
+  // (An unverified dangling include is NOT walk uncertainty: it is held on
+  // its own — holdDanglingVerdict.)
   return spf.walkStatus === 'unknown' || spf.walkStatus === 'carried_legacy' ? 'walk_unknown' : 'certain';
+}
+
+const DANGLING_CODES = new Set<SpfFindingCode>([
+  'include_target_unregistered', 'include_target_unverified', 'include_target_newly_registered',
+]);
+
+function hasUnverifiedInclude(spf: SpfResult): boolean {
+  return (spf.findings ?? []).some((f) => f.code === 'include_target_unverified');
+}
+
+function namesOf(spf: SpfResult, code: SpfFindingCode): Set<string> {
+  const out = new Set<string>();
+  for (const f of spf.findings ?? []) if (f.code === code) for (const n of f.names ?? []) out.add(n);
+  return out;
+}
+
+/** The name that went from `include_target_unverified` (previous) to
+ *  `include_target_unregistered` (current), or null. */
+export function danglingEscalationName(previous: SpfResult, current: SpfResult): string | null {
+  const unverified = namesOf(previous, 'include_target_unverified');
+  const prevUnregistered = namesOf(previous, 'include_target_unregistered');
+  for (const n of namesOf(current, 'include_target_unregistered')) {
+    if (unverified.has(n) && !prevUnregistered.has(n)) return n;
+  }
+  return null;
+}
+
+/** Dangling verdict a stored scan is CERTAIN of for `name`: 'unregistered'
+ *  (unregistered or newly registered — SPF was 0 and that was alerted),
+ *  'other' (a complete walk with no unverified verdict for it), or null
+ *  (unverified, or the walk was incomplete). */
+export function certainDanglingVerdict(spf: SpfResult, name: string): 'unregistered' | 'other' | null {
+  if (namesOf(spf, 'include_target_unverified').has(name)) return null;
+  if (namesOf(spf, 'include_target_unregistered').has(name)
+    || namesOf(spf, 'include_target_newly_registered').has(name)) return 'unregistered';
+  return spf.walkStatus === 'complete' ? 'other' : null;
+}
+
+/**
+ * For a previous `unverified` → current `unregistered` pair: true when the
+ * most recent scan before `beforeScannedAt` with a certain verdict for that
+ * name was also unregistered (already alerted). One read of ≤ 10 rows, made
+ * only for that transition; false otherwise (or on a read error → alert).
+ */
+export async function danglingEscalationAlreadyAlerted(
+  db: D1Database,
+  brandId: string | number,
+  baseline: StoredEmailScanRow,
+  current: StoredEmailScanRow,
+  beforeScannedAt: string,
+  rubricVersion: number = EMAIL_SCORE_RUBRIC_VERSION,
+): Promise<boolean> {
+  const name = danglingEscalationName(spfFromStoredRow(baseline), spfFromStoredRow(current));
+  if (!name) return false;
+  try {
+    const rows = await db.prepare(PRIOR_DANGLING_SCANS_SQL).bind(brandId, rubricVersion, beforeScannedAt)
+      .all<Pick<StoredEmailScanRow, 'spf_walk_status' | 'spf_findings'>>();
+    for (const r of rows.results ?? []) {
+      const verdict = certainDanglingVerdict({
+        exists: true, policy: null, includes: 0, tooManyLookups: false, raw: null,
+        walkStatus: storedSpfWalkStatus(r.spf_walk_status), findings: parseStoredSpfFindings(r.spf_findings),
+      }, name);
+      if (verdict !== null) return verdict === 'unregistered';
+    }
+  } catch {
+    // unknown history → alert
+  }
+  return false;
+}
+
+function hasNewlyRegistered(spf: SpfResult): boolean {
+  return (spf.findings ?? []).some((f) => f.code === 'include_target_newly_registered');
+}
+
+/** `current` with its whole dangling-include verdict family (unregistered /
+ *  unverified / newly registered) replaced by `previous`'s; every other part
+ *  of `current` is kept. */
+function holdDanglingVerdict(current: SpfResult, previous: SpfResult): SpfResult {
+  return {
+    ...current,
+    findings: [
+      ...(current.findings ?? []).filter((f) => !DANGLING_CODES.has(f.code)),
+      ...(previous.findings ?? []).filter((f) => DANGLING_CODES.has(f.code)),
+    ],
+  };
 }
 
 function normRecord(r: string): string {
@@ -229,22 +354,58 @@ function holdWalkPart(current: SpfResult, previous: SpfResult): SpfResult {
 export function isSpfUncertaintyOnlyGradeChange(
   previousRow: StoredEmailScanRow,
   currentRow: StoredEmailScanRow,
+  opts: { escalationAlreadyAlerted?: boolean } = {},
 ): boolean {
   const previous = scanInputFromStoredRow(previousRow);
   const current = scanInputFromStoredRow(currentRow);
+  const previousGrade = calculateEmailSecurityScore(previous).grade;
+  // Previous unverified → current unregistered: the first confirmation
+  // alerts, unless an earlier certain verdict was already unregistered.
+  if (danglingEscalationName(previous.spf, current.spf) !== null) {
+    if (!opts.escalationAlreadyAlerted) return false;
+    if (!sameSpfRootFacts(previous.spf, current.spf)) return false;
+    const previousAsConfirmed = holdDanglingVerdict(previous.spf, current.spf);
+    return calculateEmailSecurityScore({ ...previous, spf: previousAsConfirmed }).grade
+      === calculateEmailSecurityScore(current).grade;
+  }
+  // An unverified dangling include on the CURRENT scan (RDAP could not
+  // confirm, rubric 4) holds ONLY the dangling-include verdict to the
+  // previous scan's: the current scan is re-scored with the previous
+  // verdict, so a real change elsewhere in the same tree (e.g. the lookup
+  // limit newly exceeded) still alerts.
+  let held = false;
+  let currentSpf = current.spf;
+  if (hasUnverifiedInclude(current.spf)) {
+    currentSpf = holdDanglingVerdict(currentSpf, previous.spf);
+    held = true;
+  }
+  // A newly-registered include target appearing or lapsing (takeover guard)
+  // with the domain's own record unchanged: the WHOLE dangling family is
+  // swapped from the previous scan (as above), so an appearing finding
+  // (previous unregistered) keeps SPF at 0 and a lapsing one re-adds it —
+  // either way any other change in the same scan still shows.
+  if (hasNewlyRegistered(previous.spf) !== hasNewlyRegistered(currentSpf)
+      && sameSpfRootFacts(previous.spf, currentSpf)) {
+    currentSpf = holdDanglingVerdict(currentSpf, previous.spf);
+    held = true;
+  }
   const pc = spfCertainty(previous.spf);
-  const cc = spfCertainty(current.spf);
-  if (pc === 'certain' && cc === 'certain') return false;
+  const cc = spfCertainty(currentSpf);
+  if (pc === 'certain' && cc === 'certain') {
+    if (!held) return false;
+    if (!sameSpfRootFacts(previous.spf, currentSpf)) return false;
+    return calculateEmailSecurityScore({ ...current, spf: currentSpf }).grade === previousGrade;
+  }
 
   let heldSpf: SpfResult;
   if (pc === 'not_checked' || cc === 'not_checked') {
     heldSpf = previous.spf;
   } else {
-    if (!sameSpfRootFacts(previous.spf, current.spf)) return false;
-    heldSpf = holdWalkPart(current.spf, previous.spf);
+    if (!sameSpfRootFacts(previous.spf, currentSpf)) return false;
+    heldSpf = holdWalkPart(currentSpf, previous.spf);
   }
   const rescored = calculateEmailSecurityScore({ ...current, spf: heldSpf }).grade;
-  return rescored === calculateEmailSecurityScore(previous).grade;
+  return rescored === previousGrade;
 }
 
 /**
@@ -255,8 +416,9 @@ export function isSpfUncertaintyOnlyGradeChange(
 export function isSpfUncertaintyOnlyChange(
   previousRow: StoredEmailScanRow | undefined,
   current: EmailSecurityResult,
+  opts: { escalationAlreadyAlerted?: boolean } = {},
 ): boolean {
-  return !!previousRow && isSpfUncertaintyOnlyGradeChange(previousRow, storedRowFromResult(current));
+  return !!previousRow && isSpfUncertaintyOnlyGradeChange(previousRow, storedRowFromResult(current), opts);
 }
 
 /**
@@ -285,7 +447,12 @@ export async function resolveScanGradeChange(
       currentGrade = gradeOfStoredRow(storedRowFromResult(result));
     }
   }
+  let escalationAlreadyAlerted = false;
+  if (previousScan && baseline && previousGrade && previousGrade !== currentGrade) {
+    escalationAlreadyAlerted = await danglingEscalationAlreadyAlerted(
+      db, brandId, baseline, storedRowFromResult(result), previousScan.scanned_at);
+  }
   const isChange = !!previousGrade && previousGrade !== currentGrade
-    && !isSpfUncertaintyOnlyChange(baseline, result);
+    && !isSpfUncertaintyOnlyChange(baseline, result, { escalationAlreadyAlerted });
   return { isChange, previousGrade, currentGrade };
 }
