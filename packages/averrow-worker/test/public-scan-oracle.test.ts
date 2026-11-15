@@ -38,7 +38,6 @@ const { handlePublicBrandScan, handlePublicBrandScanResult } = await import("../
 const { handlePublicAssess, handlePublicLeadCapture, handlePublicMonitor } = await import("../src/handlers/public");
 const { registerScanRoutes } = await import("../src/routes/scan");
 const { registerPublicRoutes } = await import("../src/routes/public");
-const { renderHomepage } = await import("../src/templates/homepage");
 
 // ─── D1 stub driven by a per-test responder ────────────────────────────
 
@@ -140,16 +139,6 @@ describe("free scan result lookup", () => {
     expect(JSON.stringify(body)).not.toMatch(/feed|trust_score/i);
     // The SELECT never reads the staff columns.
     expect(s.calls[0]!.sql).not.toMatch(/feed_mentions|trust_score/);
-  });
-});
-
-describe("legacy homepage widget", () => {
-  it("hands results to /scan and renders no score/threat copy itself", () => {
-    const html = renderHomepage();
-    expect(html).toContain("window.location.href = '/scan/?id=' + encodeURIComponent(data.data.id)");
-    expect(html).not.toContain("function summaryFor");
-    expect(html).not.toContain("feedMentions");
-    expect(html).not.toContain("/api/leads");
   });
 });
 

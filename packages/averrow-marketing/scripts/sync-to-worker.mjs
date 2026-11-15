@@ -4,8 +4,8 @@
  * directory. Runs after `astro build` (see package.json scripts).
  *
  * Why this exists: writing Astro's outDir directly into public/
- * causes Astro's outDir cleanup to wipe legacy SPA assets that
- * share the directory (app.js, dashboard.html, public/ops, etc.).
+ * causes Astro's outDir cleanup to wipe the SPA builds that
+ * share the directory (public/ops, public/tenant, etc.).
  * Going through dist/ + post-build copy lets us overlay without
  * destroying anything.
  *

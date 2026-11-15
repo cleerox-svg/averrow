@@ -1,12 +1,10 @@
 // Pins the worker-side deep links into the ops SPA's workspace `?tab=` URLs
 // (ops UI consolidation PR4).
 //
-//  1. registerPublicRoutes' LEGACY_REDIRECTS: old standalone paths must 302 to
-//     the canonical /ops workspace URL (driven through the REAL router).
-//  2. Platform notification templates must deep-link only to URLs the SPA
+//  1. Platform notification templates must deep-link only to URLs the SPA
 //     actually serves. Before PR4 they pointed at /admin/agents and
 //     /admin/feeds, which 404 inside the SPA.
-//  3. Source pins on the agent/feed runner notification links, which are inline
+//  2. Source pins on the agent/feed runner notification links, which are inline
 //     string literals inside large side-effecting functions.
 //
 // The SPA and worker can't import each other, so CANONICAL_* below are an
@@ -18,10 +16,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Router } from "itty-router";
-import type { IRequest, RouterType } from "itty-router";
-import { registerPublicRoutes } from "../src/routes/public";
-import type { Env } from "../src/types";
 import * as T from "../src/lib/platform-templates";
 
 // In-app (basename-relative, no /ops) canonical URLs.
@@ -29,51 +23,6 @@ const AGENTS = "/admin/operations?tab=agents"; // WORKSPACE_TABS.agents
 const FEEDS = "/admin/operations?tab=feeds"; // WORKSPACE_TABS.feeds
 const ADMIN = "/admin"; // <Route path="admin"> AdminDashboard
 const CANONICAL_PLATFORM_LINKS: readonly string[] = [AGENTS, FEEDS, ADMIN];
-
-function makeRouter(): RouterType<IRequest> {
-  const router = Router();
-  registerPublicRoutes(router);
-  return router;
-}
-
-async function get(path: string): Promise<Response> {
-  const req = new Request(`https://averrow.com${path}`, { method: "GET" });
-  const res = (await makeRouter().fetch(req, {} as Env)) as Response | undefined;
-  if (!res) throw new Error(`route did not match: ${path}`);
-  return res;
-}
-
-describe("legacy standalone paths redirect to workspace tab URLs", () => {
-  const CASES: Array<[string, string]> = [
-    ["/admin/organizations", "https://averrow.com/ops/admin/customers"],
-    ["/admin/feeds", "https://averrow.com/ops/admin/operations?tab=feeds"],
-    ["/admin/agent-config", "https://averrow.com/ops/admin/operations?tab=agents"],
-    ["/admin/audit", "https://averrow.com/ops/admin/governance?tab=audit"],
-    ["/admin/takedowns", "https://averrow.com/ops/console?tab=takedowns"],
-    ["/brands", "https://averrow.com/ops/explore?tab=brands"],
-    // Unchanged entries guard against collateral damage to the table.
-    ["/admin", "https://averrow.com/ops/admin"],
-    ["/admin/dashboard", "https://averrow.com/ops/admin"],
-    ["/admin/users", "https://averrow.com/ops/admin/users"],
-    ["/admin/spam-trap", "https://averrow.com/ops/admin/spam-trap"],
-    ["/observatory", "https://averrow.com/ops/"],
-  ];
-  for (const [from, location] of CASES) {
-    it(`${from} -> 302 ${location}`, async () => {
-      const res = await get(from);
-      expect(res.status).toBe(302);
-      expect(res.headers.get("Location")).toBe(location);
-    });
-  }
-
-  it("preserves the request origin (staging/preview hosts)", async () => {
-    const req = new Request("https://staging.averrow.com/admin/feeds");
-    const res = (await makeRouter().fetch(req, {} as Env)) as Response;
-    expect(res.headers.get("Location")).toBe(
-      "https://staging.averrow.com/ops/admin/operations?tab=feeds",
-    );
-  });
-});
 
 describe("platform notification templates deep-link to canonical SPA URLs", () => {
   const agentRun = { agent_id: "nexus", run_id: "run_1", minutes_running: 30 };

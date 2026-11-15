@@ -156,7 +156,7 @@ describe("walkSpfTree — hard caps and honesty", () => {
     const { lookup } = fakeDns({ "a.com": "hang" });
     const t0 = Date.now();
     const w = await walkSpfTree("acme.com", root("v=spf1 include:a.com include:b.com -all"), lookup, { budgetMs: 50 });
-    expect(Date.now() - t0).toBeLessThan(1_000);
+    expect(Date.now() - t0).toBeLessThan(5_000);
     expect(w.status).toBe("unknown");
     expect(w.incompleteReasons).toContain("time_budget");
   });

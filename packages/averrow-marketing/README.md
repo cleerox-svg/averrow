@@ -10,8 +10,7 @@ All R1–R7 phases are merged. The Astro build is the canonical
 marketing surface; the inline TypeScript templates that used to
 serve `/`, `/platform`, `/about`, `/pricing`, `/security`,
 `/contact`, `/report-abuse`, `/blog`, and `/changelog` are
-retired. `homepage.ts` is kept solely to power `/legacy` and
-`/assess/<id>/results`, which are Worker-only flows.
+retired (and the old `homepage.ts` / `/legacy` page was deleted on 2026-11-15).
 
 ## Architecture
 
@@ -42,9 +41,8 @@ Astro builds with `output: 'static'`. The artifacts land in
 `./dist/`, then `sync-to-worker.mjs` overlay-copies them into
 `packages/averrow-worker/public/` so the averrow Worker's
 `[assets]` binding serves them. Going through `dist/` + sync
-keeps Astro's outDir cleanup from wiping the legacy SPA assets
-(`app.js`, `dashboard.html`, `public/ops`, `public/tenant`) that
-share the directory.
+keeps Astro's outDir cleanup from wiping the SPA builds
+(`public/ops`, `public/tenant`) that share the directory.
 
 ## Build pipeline
 

@@ -9,8 +9,8 @@
  *   - no hard-coded `detection_time_label`, no `latest_insight_summary`;
  *   - one threat total: `total_threats` (number) and `threats_detected`
  *     (formatted string) come from the same all-time threats count;
- *   - `threats_today` exists and the legacy `certificates_today` alias
- *     equals it (frozen public/app.js still reads the alias);
+ *   - `threats_today` exists; the legacy `certificates_today` /
+ *     `brands_tracked` aliases are gone (legacy SPA deleted 2026-11-15);
  *   - `proof` shape + each definition (30-day lookalike registrations,
  *     component-collapsed live operations, tier-scoped monitored brands,
  *     catalog size); velocity is NOT published (no prod index, G16);
@@ -96,7 +96,8 @@ describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-deri
     expect(typeof d.threats_detected).toBe("string");
 
     expect(d).toHaveProperty("threats_today");
-    expect(d.certificates_today).toBe(d.threats_today);
+    expect(d).not.toHaveProperty("certificates_today");
+    expect(d).not.toHaveProperty("brands_tracked");
     expect(d.threats_classified_today).toBe(d.threats_today);
 
     // Keys the marketing build consumes keep their types.

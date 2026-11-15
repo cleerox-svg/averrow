@@ -44,7 +44,7 @@ import {
 import { handleThreatFeedStats } from "../handlers/threatAssessment";
 
 // /api/providers/{worst,improving,movers} were retired in PR-D (2026-10):
-// no client outside the frozen legacy public/app.js. Explore → Providers
+// no client outside the legacy pre-React SPA (deleted 2026-11-15). Explore → Providers
 // "Cooling" uses /api/providers/v2?sort=cooling instead.
 export const RETIRED_PROVIDER_SUBPATHS: ReadonlySet<string> = new Set(["worst", "improving", "movers"]);
 

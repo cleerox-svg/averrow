@@ -27,16 +27,14 @@ import type { Env } from "../types";
 //   - `detection_time_label` ("<5min") removed — it was a hard-coded,
 //     unmeasured constant.
 //   - `threats_today` is the correctly named "threats first bucketed today"
-//     count. `certificates_today` is kept ONLY as a deprecated alias because
-//     the frozen legacy SPA (public/app.js) reads it; it is not a
-//     certificate count.
+//     count. The deprecated `certificates_today` alias (it was never a
+//     certificate count) was removed with the legacy SPA (2026-11-15).
 //   - `latest_insight_summary` removed: it published 80 chars of internal
-//     agent output that can name brands (customer-data risk). public/app.js
-//     reads it defensively (falsy → generic tile).
+//     agent output that can name brands (customer-data risk).
 //   - `proof` added — measured, cached aggregates (lib/public-proof.ts).
 
-/** Base aggregates, one cachedValue so anonymous traffic (the legacy SPA
- *  re-polls every 60s) reaches D1 at most once per TTL. */
+/** Base aggregates, one cachedValue so anonymous traffic (the free-scan
+ *  and marketing pages) reaches D1 at most once per TTL. */
 interface PublicStatsBase {
   active_threats: number;
   brands_monitored: number;
@@ -114,14 +112,8 @@ export async function handlePublicStats(request: Request, env: Env): Promise<Res
         threats_classified_today: base.threats_today,
         providers_mapped: base.providers_mapped,
         threat_types: base.threat_types,
-        // Legacy aliases — read by the frozen legacy SPA (public/app.js).
-        brands_tracked: base.brands_monitored,
-        /** @deprecated Mislabelled: this is threats today, not
-         *  certificates. Kept only because public/app.js reads it. */
-        certificates_today: base.threats_today,
         // ── Marketing homepage shape (formatted strings) ──
-        // brands_monitored is a NUMBER above (the legacy SPA count-up
-        // animation does arithmetic on it), so the marketing string form
+        // brands_monitored is a NUMBER above, so the marketing string form
         // is exposed under brands_monitored_label. NOTE: that label is the
         // brand CATALOG size (incl. passive tier='tracked'), not monitored
         // coverage — use proof.monitored_brands / proof.brands_in_catalog.
@@ -134,84 +126,6 @@ export async function handlePublicStats(request: Request, env: Env): Promise<Res
         proof,
       },
     }, 200, origin);
-  } catch (err) {
-    return json({ success: false, error: "An internal error occurred" }, 500, origin);
-  }
-}
-
-// ─── GET /api/v1/public/geo ──────────────────────────────────────
-
-export async function handlePublicGeo(request: Request, env: Env): Promise<Response> {
-  const origin = request.headers.get("Origin");
-  try {
-    const rows = await env.DB.prepare(
-      `SELECT latitude as lat, longitude as lng,
-              CASE WHEN confidence_score >= 80 THEN 'critical'
-                   WHEN confidence_score >= 60 THEN 'high'
-                   WHEN confidence_score >= 40 THEN 'medium'
-                   ELSE 'low' END as severity
-       FROM threats
-       WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-       ORDER BY created_at DESC LIMIT 500`
-    ).all<{ lat: number; lng: number; severity: string }>();
-
-    return json({ success: true, data: rows.results }, 200, origin);
-  } catch (err) {
-    return json({ success: false, error: "An internal error occurred" }, 500, origin);
-  }
-}
-
-// ─── GET /api/v1/public/feeds ────────────────────────────────────
-//
-// Disclosure register L19: this endpoint used to publish every enabled
-// feed's name, vendor, description (method), health and per-feed daily
-// volume — the source list for competitors and a coverage/blind-spot map
-// for attackers (T3). It now returns aggregate counts only.
-//
-// Shape stays tolerable for the frozen legacy SPA (public/app.js
-// loadFeeds): `data` is an EMPTY ARRAY, which the SPA treats as "nothing to
-// render" (`if (!grid || !feeds.length) return`). The counts ride beside it.
-// `by_category` groups on feed_configs.feed_type (generic: e.g. ingest /
-// enrichment) — never on feed names.
-
-export interface PublicFeedsSummary {
-  total_sources: number;
-  by_category: Record<string, number>;
-}
-
-export const PUBLIC_FEEDS_TTL_S = 3600;
-
-/** Generic category allowlist. feed_type is free text on an admin-editable
- *  table, so anything outside the known generic values collapses to
- *  `other` rather than risk echoing a feed-specific label. */
-const PUBLIC_FEED_CATEGORIES = new Set(["ingest", "enrichment", "social"]);
-
-export function publicFeedCategory(feedType: string | null | undefined): string {
-  const t = (feedType ?? "ingest").toLowerCase();
-  return PUBLIC_FEED_CATEGORIES.has(t) ? t : "other";
-}
-
-export async function handlePublicFeeds(request: Request, env: Env): Promise<Response> {
-  const origin = request.headers.get("Origin");
-  try {
-    const summary = await cachedValue<PublicFeedsSummary>(env, "public.feeds.summary.v1", PUBLIC_FEEDS_TTL_S, async () => {
-      const rows = await env.DB.prepare(
-        `SELECT feed_type AS category, COUNT(*) AS n
-           FROM feed_configs
-          WHERE enabled = 1
-          GROUP BY feed_type`
-      ).all<{ category: string | null; n: number }>();
-      const by_category: Record<string, number> = {};
-      let total = 0;
-      for (const r of rows.results ?? []) {
-        const cat = publicFeedCategory(r.category);
-        by_category[cat] = (by_category[cat] ?? 0) + r.n;
-        total += r.n;
-      }
-      return { total_sources: total, by_category };
-    });
-
-    return json({ success: true, data: [], ...summary }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }

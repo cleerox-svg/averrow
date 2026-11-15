@@ -6,6 +6,11 @@ All notable changes to the Averrow platform are documented here.
 
 ## [Unreleased]
 
+### Legacy pre-React app deleted (2026-11-15, owner decision)
+- **Removed the original vanilla-JS app and its server-rendered homepage.** Deleted `packages/averrow-worker/public/{app.js,styles.css,dashboard.html,manifest.json}` and `src/templates/homepage.ts`. The `/legacy` page, the old-path redirect table (`/observatory`, `/brands`, `/admin/*` to `/ops/...`) and the public endpoints only the old app read (`GET /api/v1/public/geo`, `GET /api/v1/public/feeds`, plus the `certificates_today` and `brands_tracked` aliases on `/api/v1/public/stats`) are gone. `/legacy`, the old paths, `/dashboard.html`, `/app.js`, `/styles.css` and root `/manifest.json` are now plain 404s. `/login` still redirects to `/ops/login`; marketing pages are untouched.
+- **The "frozen forever" rule for these files is retired** (CLAUDE.md sections 3, 11, 12). Screenshots of the old app (mock data) and the last commit that still contains its code are in `docs/history/legacy-app/`.
+- Owner follow-up: `.claude/agents/*` and `docs/CLAUDE_SUBAGENTS.md` still say "never touch `public/`, `app.js`, `styles.css`".
+
 ### Staff app: phishing-kit rule matches on identity detections
 - The identity-threat detection detail shows a "Kit match" block under the page capture (`features/identity-threats/KitMatch.tsx`), reading `captures[].kit_matching` from the existing detail response (no new request). States: not checked, checked with no match (with a caveat when the check was `truncated` or `partial`), and matches (rule title as plain text, tags, an "approximate" note when a rule read non-exact fields). Always shows "Rules: IOK by phish.report (ODbL)", the short ruleset commit and the check date. Context for an analyst only: no severity styling, no alert. The detections list has no kit field, so no list indicator (would need a backend change).
 

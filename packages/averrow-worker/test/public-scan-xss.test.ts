@@ -16,7 +16,6 @@ import { registerPublicRoutes } from "../src/routes/public";
 import {
   handlePublicBrandScan, handlePublicBrandScanResult, handleLeadCapture,
 } from "../src/handlers/brandScan";
-import { renderHomepage } from "../src/templates/homepage";
 import type { Env } from "../src/types";
 
 const MALICIOUS = "<img src=x onerror=alert(1)>.com";
@@ -166,14 +165,5 @@ describe("POST /assess (form route)", () => {
     expect(res.headers.get("Location")).toBe("https://averrow.com/");
     expect(s.sqls).toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
-  });
-});
-
-describe("homepage widget template", () => {
-  it("homepage scan widget escapes the domain and error text, and drops the feed pill", () => {
-    const html = renderHomepage();
-    expect(html).not.toContain("feedMentions");
-    expect(html).toContain(">Scanning ' + esc(domain)");
-    expect(html).toContain("esc(data.error || 'Unknown error')");
   });
 });
