@@ -398,7 +398,8 @@ export function computeLayout({ width, placement, feeds, labelOf }: LayoutInput)
   if (ext) {
     const stubs = placement.stages.sources.map((id) => ({ x: nodes[id]!.x - nodes[id]!.r - 3, y: nodes[id]!.y }));
     if (stubs.length) {
-      externalBus = { x: gutters[0]! + 16, y0: ext.y, y1: Math.max(...stubs.map((s) => s.y)), stubs };
+      const ys = stubs.map((s) => s.y);
+      externalBus = { x: gutters[0]! + 16, y0: Math.min(ext.y, ...ys), y1: Math.max(ext.y, ...ys), stubs };
     }
   }
 
@@ -499,12 +500,24 @@ export function edgePath(layout: Layout, a: LayoutNode, b: LayoutNode): Pt[] {
 }
 
 /** Point at fraction p (0..1) of a polyline's length. */
-export function pointAt(path: readonly Pt[], p: number): Pt {
-  const cum = [0];
-  for (let i = 1; i < path.length; i++) {
-    cum.push(cum[i - 1]! + Math.hypot(path[i]!.x - path[i - 1]!.x, path[i]!.y - path[i - 1]!.y));
+const lengthCache = new WeakMap<readonly Pt[], { cum: number[]; total: number }>();
+
+/** Cumulative lengths of a polyline, cached per path array (paths are cached upstream). */
+function lengths(path: readonly Pt[]): { cum: number[]; total: number } {
+  let hit = lengthCache.get(path);
+  if (!hit) {
+    const cum = [0];
+    for (let i = 1; i < path.length; i++) {
+      cum.push(cum[i - 1]! + Math.hypot(path[i]!.x - path[i - 1]!.x, path[i]!.y - path[i - 1]!.y));
+    }
+    hit = { cum, total: cum[cum.length - 1]! };
+    lengthCache.set(path, hit);
   }
-  const total = cum[cum.length - 1]!;
+  return hit;
+}
+
+export function pointAt(path: readonly Pt[], p: number): Pt {
+  const { cum, total } = lengths(path);
   if (total === 0) return path[0]!;
   const target = Math.min(Math.max(p, 0), 1) * total;
   let i = 1;

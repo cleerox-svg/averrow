@@ -56,12 +56,14 @@ describe('node activity', () => {
 });
 
 describe('open runs are capped at the snapshot', () => {
-  it('stops showing an open run as running 60s after generated_at', () => {
+  it('stops showing an open run as running 90s after generated_at', () => {
     expect(laneActivity(index, 'cartographer', NOW + 30_000).running).toBe(true);
-    const late = laneActivity(index, 'cartographer', NOW + 61_000);
+    const late = laneActivity(index, 'cartographer', NOW + 91_000);
     expect(late.running).toBe(false);
     expect(late.emitting).toBe(false);
-    expect(activeMembers(index, 'feeds:ingest', NOW + 61_000).get('c2_intel_feeds')?.running ?? false).toBe(false);
+    expect(late.stale).toBe(true);
+    expect(laneActivity(index, 'cartographer', NOW + 30_000).stale).toBe(false);
+    expect(activeMembers(index, 'feeds:ingest', NOW + 91_000).get('c2_intel_feeds')?.running ?? false).toBe(false);
   });
 });
 
@@ -85,7 +87,20 @@ describe('EVENT edge follows pivot_detected events, not nexus runs', () => {
 
   it('keeps a pending event in flight until the snapshot goes stale', () => {
     expect(edgeActivity(index, e, NOW + 30_000).emitting).toBe(true);
-    expect(edgeActivity(index, e, NOW + 61_000).emitting).toBe(false);
+    expect(edgeActivity(index, e, NOW + 91_000).emitting).toBe(false);
+  });
+
+  it('stops animating a pending event 10 minutes after it was written', () => {
+    const old = indexTimeline({
+      ...TIMELINE_FIXTURE,
+      events: [{ ...TIMELINE_FIXTURE.events[0]!, created_at: new Date(NOW - 11 * 60_000).toISOString() }],
+    }, FEEDS_FIXTURE);
+    expect(edgeActivity(old, e, NOW).emitting).toBe(false);
+    const recent = indexTimeline({
+      ...TIMELINE_FIXTURE,
+      events: [{ ...TIMELINE_FIXTURE.events[0]!, created_at: new Date(NOW - 9 * 60_000).toISOString() }],
+    }, FEEDS_FIXTURE);
+    expect(edgeActivity(recent, e, NOW).emitting).toBe(true);
   });
 
   it('ignores events from other sources', () => {
@@ -132,7 +147,7 @@ describe('particle gating', () => {
 
   it('never rides a detail edge, even when its source is live', () => {
     const e = edge('news_watcher', 'analyst');
-    const live = { running: true, progress: 0.5, failed: false, emitting: true, records: 100, lastStartMs: NOW };
+    const live = { running: true, progress: 0.5, failed: false, emitting: true, records: 100, lastStartMs: NOW, stale: false };
     expect(edgeParticles(e, live, NOW, false)).toEqual([]);
     const d = EDGES.find((x) => x.tier === 'detail' && x.from === 'cube_healer')!;
     expect(edgeParticles(d, live, NOW, false)).toEqual([]);
@@ -154,7 +169,7 @@ describe('particle gating', () => {
     expect(particleCount(10)).toBeLessThan(particleCount(5_000));
     expect(particleCount(1e12)).toBe(MAX_PARTICLES);
     const e = edge('nexus', 'observer');
-    const act = { running: true, progress: 0, failed: false, emitting: true, records: 1e9, lastStartMs: NOW };
+    const act = { running: true, progress: 0, failed: false, emitting: true, records: 1e9, lastStartMs: NOW, stale: false };
     expect(edgeParticles(e, act, NOW, false)).toHaveLength(MAX_PARTICLES);
     for (const p of edgeParticles(e, act, NOW, false)) {
       expect(p).toBeGreaterThanOrEqual(0);

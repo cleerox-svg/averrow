@@ -234,6 +234,7 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
     ctx.beginPath();
     ctx.moveTo(ext.x + ext.r, ext.y);
     ctx.lineTo(bus.x, ext.y);
+    ctx.moveTo(bus.x, bus.y0);
     ctx.lineTo(bus.x, bus.y1);
     ctx.stroke();
     for (const s of bus.stubs) {
@@ -288,8 +289,9 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
     if (e.mechanism === 'EVENT') {
       const m = pointAt(path, 0.5);
       ctx.font = `500 10px ${MONO}`;
-      ctx.textAlign = 'left';
-      haloText(ctx, c, e.via ?? 'event', m.x + 6, m.y - 6, dim ? c('--text-muted', 0.4) : c('--primary-text'));
+      // Centred above the midpoint so it clears both end nodes.
+      ctx.textAlign = 'center';
+      haloText(ctx, c, e.via ?? 'event', m.x, m.y - 8, dim ? c('--text-muted', 0.4) : c('--primary-text'));
     }
 
     if (!dim) {
@@ -472,6 +474,8 @@ function tooltipFor(p: DrawParams, focus: string | null): Tip | null {
   let l2: string;
   if (!p.hasTimeline) {
     l2 = st.failed ? 'last run failed' : 'timeline unavailable';
+  } else if (st.stale) {
+    l2 = `status unknown since ${fmtClock(st.lastStartMs ?? now)} UTC`;
   } else if (st.running) {
     l2 = `running since ${fmtClock(st.lastStartMs ?? now)} UTC`;
   } else if (st.lastStartMs !== null) {
@@ -573,6 +577,7 @@ export function FlowCanvas({
       const act = hasTimeline ? laneActivity(index, id, now) : IDLE;
       if (a?.circuit_state === 'tripped') return 'circuit tripped';
       if (act.running) return 'running';
+      if (act.stale) return 'status unknown';
       if (act.failed) return 'last run failed';
       if (a?.circuit_state === 'manual_pause' || a?.lifecycle === 'paused') return 'paused';
       return 'idle';
@@ -610,10 +615,16 @@ export function FlowCanvas({
           const hit = pointer(e);
           if (pointerType.current === 'touch') {
             // First tap previews (tooltip + neighbourhood), second tap selects.
-            if (!hit) { armed.current = null; onHover(null); return; }
+            if (!hit) {
+              armed.current = null;
+              if (dotHoverRef.current) { dotHoverRef.current = null; draw(); }
+              onHover(null);
+              return;
+            }
             if (armed.current === hit.id && byName.has(hit.id)) { armed.current = null; onSelect(hit.id); return; }
             armed.current = hit.id;
             dotHoverRef.current = hit.dot ?? null;
+            draw();
             onHover(hit.id);
             return;
           }

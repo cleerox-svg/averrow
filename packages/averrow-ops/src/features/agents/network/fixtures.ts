@@ -140,6 +140,7 @@ export const TIMELINE_FIXTURE: AgentTimeline = {
     // nexus: a workflow run that completed 2 seconds before the snapshot.
     run('nexus', 2.55, 150, 'success', 41, { clipped_start: false }),
     // Run writers that are not registered agents.
+    run('campaign_hunter', 20, 90, 'success', 2),
     run('daily_briefing', 59, 200, 'success', 1, { source: 'agent_runs' }),
   ],
   pulls: [

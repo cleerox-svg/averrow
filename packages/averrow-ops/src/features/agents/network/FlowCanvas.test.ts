@@ -119,4 +119,25 @@ describe('drawFlow', () => {
     drawFlow(ctx, params());
     expect(rec.calls.some(([k, a]) => k === 'fillText' && a[0] === 'inl')).toBe(true);
   });
+
+  it('says status unknown, not ok, for an open run past the snapshot cap', () => {
+    const { ctx, rec } = recorder();
+    drawFlow(ctx, params({ focus: 'cartographer', now: NOW + 100_000 }));
+    const lines = rec.calls.filter(([k]) => k === 'fillText').map(([, a]) => String(a[0]));
+    expect(lines.some((l) => l.startsWith('status unknown since'))).toBe(true);
+    expect(lines.some((l) => l.endsWith('· ok'))).toBe(false);
+  });
+
+  it('places the pivot_detected label above the edge, clear of both end nodes', () => {
+    const { ctx, rec } = recorder();
+    drawFlow(ctx, params());
+    const call = rec.calls.find(([k, a]) => k === 'fillText' && a[0] === 'pivot_detected')!;
+    const [, x, y] = call[1] as [string, number, number];
+    const half = 'pivot_detected'.length * 3; // mock measureText: 6px per char
+    const nexus = layout.nodes.nexus!;
+    const observer = layout.nodes.observer!;
+    expect(x - half).toBeGreaterThan(nexus.x + nexus.r);
+    expect(x + half).toBeLessThan(observer.x - observer.r);
+    expect(y).toBeLessThan(nexus.y);
+  });
 });

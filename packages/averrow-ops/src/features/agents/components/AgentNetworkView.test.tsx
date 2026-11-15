@@ -19,10 +19,12 @@ const get = api.get as unknown as ReturnType<typeof vi.fn>;
 
 // ── canvas stub: a 2D context that records arcs ───────────────────────
 const arcs: number[][] = [];
+const texts: string[] = [];
 function stubContext(): CanvasRenderingContext2D {
   const base: Record<string, unknown> = {
     measureText: (t: string) => ({ width: t.length * 6 }),
     arc: (...a: number[]) => { arcs.push(a); },
+    fillText: (s: string) => { texts.push(s); },
   };
   return new Proxy(base, {
     get: (t, k) => (k in t ? t[k as string] : () => undefined),
@@ -64,6 +66,7 @@ function pointer(el: Element, x: number, y: number, type = 'pointermove') {
 
 beforeEach(() => {
   arcs.length = 0;
+  texts.length = 0;
   frames = [];
   reduced = false;
   installMatchMedia();
@@ -333,6 +336,54 @@ describe('AgentNetworkView', () => {
     });
   });
 
+  describe('full screen portal, focus trap and selection', () => {
+    const renderInCard = (onSelect = vi.fn()) => renderWithProviders(
+      <div data-testid="card" style={{ overflow: 'hidden', backdropFilter: 'blur(4px)' }}>
+        <AgentNetworkView agents={AGENTS_FIXTURE} selectedAgent={null} onSelect={onSelect} />
+      </div>,
+    );
+
+    it('renders the overlay in <body>, outside a clipping Card ancestor', async () => {
+      renderInCard();
+      await tapeCanvas();
+      expect(within(screen.getByTestId('card')).queryByRole('dialog')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+      const dialog = await screen.findByRole('dialog', { name: /full screen/i });
+      expect(dialog.parentElement).toBe(document.body);
+      expect(screen.getByTestId('card').contains(dialog)).toBe(false);
+      fireEvent.keyDown(dialog, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    });
+
+    it('traps Tab inside the dialog in both directions', async () => {
+      renderInCard();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+      const dialog = await screen.findByRole('dialog', { name: /full screen/i });
+      const items = Array.from(dialog.querySelectorAll<HTMLElement>('button, [tabindex]:not([tabindex="-1"])'));
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      act(() => last.focus());
+      fireEvent.keyDown(last, { key: 'Tab' });
+      expect(document.activeElement).toBe(first);
+      act(() => first.focus());
+      fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
+      expect(document.activeElement).toBe(last);
+    });
+
+    it('selecting an agent in full screen leaves full screen first, then selects', async () => {
+      const onSelect = vi.fn();
+      renderInCard(onSelect);
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+      await screen.findByRole('dialog', { name: /full screen/i });
+      fireEvent.click(screen.getByRole('button', { name: 'Pathfinder' }));
+      expect(onSelect).toHaveBeenCalledWith('pathfinder');
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(document.body.style.overflow).toBe('');
+    });
+  });
+
   describe('touch', () => {
     it('first tap previews a node, second tap selects it', async () => {
       const onSelect = vi.fn();
@@ -352,6 +403,19 @@ describe('AgentNetworkView', () => {
       expect(screen.getByTestId('agent-network')).toHaveAttribute('data-hover', 'observer');
       tap();
       expect(onSelect).toHaveBeenCalledWith('observer');
+    });
+  });
+
+  describe('tape labels', () => {
+    it('truncates a long lane name but always shows its tag', async () => {
+      renderView();
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(1));
+      act(() => { frames.splice(0).forEach((f) => f()); });
+      expect(texts.some((s) => s.endsWith('· on demand'))).toBe(true);
+      const lane = texts.find((s) => s.endsWith('· on demand'))!;
+      expect(lane).toContain('…');
+      expect(lane.startsWith('Campaign')).toBe(true);
     });
   });
 

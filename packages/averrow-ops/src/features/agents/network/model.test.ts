@@ -222,6 +222,13 @@ describe('layout', () => {
     expect(layout.columns.map((c) => c.label)).not.toContain('SOURCES');
     expect(layout.nodes[EXTERNAL_SOURCE]).toBeDefined();
     expect(layout.externalBus?.stubs).toHaveLength(placement.stages.sources.length);
+    const bus = layout.externalBus!;
+    for (const s of bus.stubs) {
+      expect(s.y).toBeGreaterThanOrEqual(bus.y0);
+      expect(s.y).toBeLessThanOrEqual(bus.y1);
+    }
+    expect(layout.nodes[EXTERNAL_SOURCE]!.y).toBeGreaterThanOrEqual(bus.y0);
+    expect(layout.nodes[EXTERNAL_SOURCE]!.y).toBeLessThanOrEqual(bus.y1);
   });
 
   it('interpolates points along a path by length', () => {

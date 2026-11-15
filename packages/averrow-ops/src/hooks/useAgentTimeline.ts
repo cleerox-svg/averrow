@@ -9,7 +9,7 @@
 // advances it with the client clock since the payload arrived, so the tape and
 // progress rings keep moving without extra requests and a skewed client clock
 // cannot make a run look finished early. Open runs are only known open as of
-// `generated_at`: readers cap them at generated_at + 60s (see activity.ts).
+// `generated_at`: readers cap them at generated_at + 90s (see activity.ts), longer than the 60s refetch so the cap never flickers.
 // The key starts with 'agents' so agent mutations that invalidate ['agents']
 // refresh it too.
 

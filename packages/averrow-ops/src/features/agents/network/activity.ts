@@ -28,8 +28,10 @@ export interface Span {
 }
 
 /** An open run is only known to be open as of generated_at; the response is
- *  cached up to ~60s, so never extend one past generated_at + this. */
-export const OPEN_RUN_CAP_MS = 60_000;
+ *  cached up to ~60s and refetched every 60s, so never extend one past generated_at + this (90s keeps the cap from flickering between refetches). */
+export const OPEN_RUN_CAP_MS = 90_000;
+/** A pending pivot event stays "in flight" this long after it was written. */
+export const EVENT_WAIT_MS = 10 * 60_000;
 
 export interface TimelineIndex {
   /** Latest instant an open span may be drawn as still running. */
@@ -121,10 +123,12 @@ export interface NodeActivity {
   records: number;
   /** Start of the latest run, or null. */
   lastStartMs: number | null;
+  /** The latest run is open but the snapshot is too old to say it still is. */
+  stale: boolean;
 }
 
 export const IDLE: NodeActivity = {
-  running: false, progress: 0, failed: false, emitting: false, records: 0, lastStartMs: null,
+  running: false, progress: 0, failed: false, emitting: false, records: 0, lastStartMs: null, stale: false,
 };
 
 function expectedMs(spans: Span[]): number {
@@ -160,10 +164,12 @@ function computeLaneActivity(index: TimelineIndex, lane: string, now: number): N
   let records = 0;
   let lastStartMs: number | null = null;
   let lastFinished: Span | null = null;
+  let latest: Span | null = null;
   const exp = index.expected.get(lane) ?? DEFAULT_EXPECTED_MS;
   for (const s of spans) {
     if (s.startMs > now) continue;
     if (lastStartMs === null || s.startMs > lastStartMs) lastStartMs = s.startMs;
+    if (!latest || s.startMs >= latest.startMs) latest = s;
     if (s.endMs === null) {
       // Past the cap the run may have finished after the snapshot: unknown, not running.
       if (now > index.capMs) continue;
@@ -182,6 +188,7 @@ function computeLaneActivity(index: TimelineIndex, lane: string, now: number): N
   return {
     running, progress, emitting, records, lastStartMs,
     failed: !!lastFinished && lastFinished.status === 'failed',
+    stale: !!latest && latest.endMs === null && now > index.capMs,
   };
 }
 
@@ -203,10 +210,10 @@ export function edgeActivity(index: TimelineIndex, edge: NetworkEdge, now: numbe
     for (const ev of index.events) {
       if (ev.source !== edge.from || (ev.target !== null && ev.target !== edge.to) || ev.createdMs > now) continue;
       const inTail = now - ev.createdMs <= TRANSIT_TAIL_MS;
-      const waiting = ev.status === 'pending' && now <= index.capMs;
+      const waiting = ev.status === 'pending' && now <= index.capMs && now - ev.createdMs <= EVENT_WAIT_MS;
       if (inTail || waiting) { n++; if (last === null || ev.createdMs > last) last = ev.createdMs; }
     }
-    return n === 0 ? IDLE : { running: false, progress: 0, failed: false, emitting: true, records: n, lastStartMs: last };
+    return n === 0 ? IDLE : { running: false, progress: 0, failed: false, emitting: true, records: n, lastStartMs: last, stale: false };
   }
   // threats -> sentinel is the same-tick ingest hand-off; the other hub
   // edges read the table after anything that writes it.

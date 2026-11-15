@@ -51,10 +51,9 @@ function contentWidth(el: Element): number {
 }
 
 /** Content-box width of an element (padding excluded), 0 until measured. */
-export function useElementWidth(ref: { current: Element | null }): number {
+export function useElementWidth(el: Element | null): number {
   const [w, setW] = useState(0);
   useEffect(() => {
-    const el = ref.current;
     if (!el) return;
     const read = () => setW(Math.round(contentWidth(el)));
     read();
@@ -62,7 +61,7 @@ export function useElementWidth(ref: { current: Element | null }): number {
     const ro = new ResizeObserver(read);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [ref]);
+  }, [el]);
   return w;
 }
 
@@ -85,12 +84,20 @@ export function fitCanvas(
   return ctx;
 }
 
-/** Repaint callback for a device-pixel-ratio change (zoom, moving screens). */
+/** Repaint callback for a device-pixel-ratio change (zoom, moving screens).
+ *  A resolution query only matches one ratio, so re-arm it after each change. */
 function watchDpr(onChange: () => void): () => void {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {};
-  const mql = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
-  mql.addEventListener?.('change', onChange);
-  return () => mql.removeEventListener?.('change', onChange);
+  let mql: MediaQueryList | null = null;
+  let handler: (() => void) | null = null;
+  const detach = () => { if (mql && handler) mql.removeEventListener?.('change', handler); };
+  const arm = () => {
+    mql = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    handler = () => { onChange(); detach(); arm(); };
+    mql.addEventListener?.('change', handler);
+  };
+  arm();
+  return detach;
 }
 
 export const IDLE_REPAINT_MS = 1000;

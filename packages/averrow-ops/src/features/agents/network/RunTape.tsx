@@ -116,8 +116,13 @@ export function RunTape({
       ctx.font = `${lit || selected === lane.id ? 600 : 500} 11px ${SANS}`;
       ctx.textAlign = 'right';
       ctx.fillStyle = lane.muted ? c('--text-muted') : lit ? c('--text-primary') : c('--text-secondary');
+      // Truncate the name, never the tag: the tag says why the lane is muted.
       const tag = lane.tag ? ` · ${lane.tag}` : '';
-      ctx.fillText(`${lane.label}${tag}`.slice(0, 26), g.gx - 10, y + g.lh / 2 + 4);
+      const room = g.gx - 18 - ctx.measureText(tag).width;
+      let name = lane.label;
+      while (name.length > 1 && ctx.measureText(name).width > room) name = name.slice(0, -1);
+      if (name !== lane.label) name = `${name.trimEnd()}…`;
+      ctx.fillText(`${name}${tag}`, g.gx - 10, y + g.lh / 2 + 4);
 
       for (const s of index.lanes.get(lane.id) ?? []) {
         const open = s.endMs === null;

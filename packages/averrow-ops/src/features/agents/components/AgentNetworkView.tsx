@@ -14,6 +14,7 @@
 // Motion stops under the OS reduced-motion setting or the Pause control.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Maximize2, Minimize2, Pause, Play, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import { useReducedMotion } from '@averrow/shared/ui';
 import type { Agent } from '@/hooks/useAgents';
@@ -23,7 +24,7 @@ import { FlowCanvas, agentLabel } from '../network/FlowCanvas';
 import { RunTape } from '../network/RunTape';
 import { indexTimeline } from '../network/activity';
 import { MIN_LAYOUT_WIDTH, placeAgents } from '../network/model';
-import { useElementWidth } from '../network/useCanvasLoop';
+import { useElementWidth, useMountedElement } from '../network/useCanvasLoop';
 
 const ZOOM_MIN = 0.6;
 const ZOOM_MAX = 1.6;
@@ -118,10 +119,14 @@ function Swatch({ kind }: { kind: SwatchKind }) {
   }
 }
 
-export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetworkViewProps) {
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgent }: AgentNetworkViewProps) {
+  // The wrapper element is state, not a bare ref: full screen re-mounts it
+  // inside a portal and the width observer must follow.
+  const [, setWrapEl, wrapEl] = useMountedElement<HTMLDivElement>();
   const exitRef = useRef<HTMLButtonElement | null>(null);
-  const width = useElementWidth(wrapRef);
+  const width = useElementWidth(wrapEl);
   const osReduced = useReducedMotion();
   const [paused, setPaused] = useState(false);
   // Pause and the OS preference share one static path for both canvases.
@@ -159,21 +164,44 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
     return () => { document.body.style.overflow = prev; };
   }, [fullscreen]);
 
+  // The detail panel lives outside the overlay, so choosing an agent in full
+  // screen leaves full screen first and then selects.
+  const onSelect = (name: string) => {
+    if (fullscreen) setFullscreen(false);
+    onSelectAgent(name);
+  };
+
+  // Tab cycles inside the dialog while it is open.
+  const trapTab = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!fullscreen || e.key !== 'Tab' || !wrapEl) return;
+    const items = Array.from(wrapEl.querySelectorAll<HTMLElement>(FOCUSABLE))
+      .filter((el) => el.getAttribute('aria-hidden') !== 'true');
+    if (!items.length) return;
+    const first = items[0]!;
+    const last = items[items.length - 1]!;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !wrapEl.contains(active))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (active === last || !wrapEl.contains(active))) { e.preventDefault(); first.focus(); }
+  };
+
   const layoutWidth = Math.max(width, MIN_LAYOUT_WIDTH);
   const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 10) / 10));
   const pct = `${Math.round(zoom * 100)}%`;
 
   const truncated = timeline && (timeline.truncated.runs || timeline.truncated.pulls || timeline.truncated.events);
 
-  return (
+  const content = (
     <div
-      ref={wrapRef}
+      ref={setWrapEl}
       data-testid="agent-network"
       data-hover={hoverId ?? ''}
       role={fullscreen ? 'dialog' : undefined}
       aria-modal={fullscreen ? true : undefined}
       aria-label={fullscreen ? 'Agent network, full screen' : undefined}
-      onKeyDown={(e) => { if (fullscreen && e.key === 'Escape') { e.stopPropagation(); setFullscreen(false); } }}
+      onKeyDown={(e) => {
+        if (fullscreen && e.key === 'Escape') { e.stopPropagation(); setFullscreen(false); return; }
+        trapTab(e);
+      }}
       className={fullscreen ? 'fixed inset-0 z-50 overflow-auto p-4 space-y-3' : 'space-y-3'}
       style={fullscreen ? { background: 'var(--bg-page)' } : undefined}
     >
@@ -314,4 +342,8 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
       </section>
     </div>
   );
+
+  // Portal to <body>: a Card ancestor (backdrop-filter, overflow hidden)
+  // would otherwise be the containing block of the fixed overlay.
+  return fullscreen ? createPortal(content, document.body) : content;
 }
