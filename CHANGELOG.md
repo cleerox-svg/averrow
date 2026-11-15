@@ -6,6 +6,9 @@ All notable changes to the Averrow platform are documented here.
 
 ## [Unreleased]
 
+### Staff app: phishing-kit rule matches on identity detections
+- The identity-threat detection detail shows a "Kit match" block under the page capture (`features/identity-threats/KitMatch.tsx`), reading `captures[].kit_matching` from the existing detail response (no new request). States: not checked, checked with no match (with a caveat when the check was `truncated` or `partial`), and matches (rule title as plain text, tags, an "approximate" note when a rule read non-exact fields). Always shows "Rules: IOK by phish.report (ODbL)", the short ruleset commit and the check date. Context for an analyst only: no severity styling, no alert. The detections list has no kit field, so no list indicator (would need a backend change).
+
 ### Staff app moved from `/v2` to `/ops` (2026-11-15, hard cut)
 - **The staff back office now lives at `https://averrow.com/ops/`.** `/v2` and `/v2/*` return a plain 404: no redirect, no transition service worker. Old bookmarks, emailed links and chat links to `/v2/...` are broken on purpose (owner decision). Customer app is unchanged at `/tenant/`.
 - **Installed PWAs must be reinstalled.** The manifest `id`, `start_url` and `scope` are now `/ops/` (a new app identity) and the service worker is `/ops/sw.js`. The old `/v2/` installation can no longer load; on the next visit to `/ops/` the page unregisters any leftover `/v2/` service worker (best effort). Remove the old home-screen icon and install again from `/ops/`.

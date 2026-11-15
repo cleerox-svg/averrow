@@ -99,6 +99,29 @@ export interface IdentityDetectionList {
 
 export type PageCaptureStatus = 'queued' | 'capturing' | 'captured' | 'failed' | 'blocked' | 'expired';
 
+export type KitEvalStatus = 'complete' | 'truncated' | 'partial';
+/** Evidence fields a kit rule reads (worker `IOK_FIELDS`); only non-exact ones appear in `approximate_fields`. */
+export type KitField = 'html' | 'dom' | 'title' | 'hostname' | 'js' | 'css' | 'requests';
+
+/** One phishing-kit (IOK) rule that matched a capture's stored evidence. Context only. */
+export interface KitMatch {
+  rule_id: string;
+  title: string;                  // third-party text: render as text only
+  tags: string[];
+  approximate_fields: KitField[]; // [] = exact fields only
+  ruleset_commit: string;
+  matched_at: string;
+}
+
+/** `captures[].kit_matching`; null status / ruleset_commit / evaluated_at = never evaluated. */
+export interface KitMatching {
+  ruleset_commit: string | null;
+  evaluated_at: string | null;
+  status: KitEvalStatus | null;
+  matches: KitMatch[];
+  attribution: string;
+}
+
 /** One headless page capture (docs/PHISH_PAGE_CAPTURE_SPEC_2026-10.md). URLs are staff-API paths. */
 export interface PageCapture {
   id: string;
@@ -117,6 +140,7 @@ export interface PageCapture {
   screenshot_mobile_url: string | null;
   html_download_url: string | null;
   sha256: { desktop: string | null; mobile: string | null; html: string | null };
+  kit_matching: KitMatching;
 }
 
 export interface IdentityDetectionDetail extends IdentityDetectionListItem {
