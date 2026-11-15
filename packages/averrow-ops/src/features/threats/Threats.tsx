@@ -14,6 +14,7 @@ import {
 import { ThreatInflowChart } from './ThreatInflowChart';
 import { MultiFeedConsensusPanel } from './MultiFeedConsensusPanel';
 import { PanelHeader } from './PanelHeader';
+import { ThreatInfobloxReference } from './InfobloxReference';
 import { sentenceCase } from '@/lib/sentence-case';
 import { THREATS_CARD_VARIANT } from './threatsCard';
 import './threats.css';
@@ -231,9 +232,11 @@ export function Threats() {
                 status !== 'active'         && { label: 'Re-open',         to: 'active' },
               ].filter(Boolean) as Array<{ label: string; to: string }>)
             : [];
-          if (!brandId && !actorId && transitions.length === 0) return null;
+          const hasActions = !!brandId || !!actorId || transitions.length > 0;
           return (
-            <div className="thr-actions">
+            <>
+            <ThreatInfobloxReference threatId={r.id} open />
+            {hasActions && <div className="thr-actions">
               {brandId && <button type="button" className="tt-link" onClick={() => navigate(`/brands/${brandId}`)}>↗ Brand</button>}
               {actorId && <button type="button" className="tt-link" onClick={() => navigate(tabUrl('actors', { focus: actorId }))}>↗ Threat actor</button>}
               {transitions.length > 0 && (
@@ -252,7 +255,8 @@ export function Threats() {
                   ))}
                 </span>
               )}
-            </div>
+            </div>}
+            </>
           );
         }}
       />
