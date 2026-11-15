@@ -28,6 +28,15 @@
  *      re-scored with the previous scan's whole SPF part.
  *   Suppressed only if that re-scored grade equals the previous grade — so
  *   a DMARC/DKIM/MX change that coincides with an SPF timeout still alerts.
+ * Dangling-include rule (rubric 4). An `include_target_unverified` finding
+ * (RDAP could not confirm whether an NXDOMAIN include target is
+ * registered) on either side is NOT treated as a walk-unknown scan: only
+ * the dangling-include verdict is held — the current scan is re-scored with
+ * the previous scan's `include_target_unregistered` / `_unverified` finding
+ * in place of its own, with the root facts required unchanged. Suppressed
+ * only if that equals the previous grade, so a real downgrade elsewhere in
+ * the same tree (lookup limit newly exceeded, an include now `+all`) still
+ * alerts.
  * Brand scans carry the last CHECKED scan's SPF forward over a root lookup
  * failure (previousSpfLoader), so a "not checked" row only exists for a
  * brand with no earlier checked scan (or when that read failed).
@@ -183,11 +192,28 @@ type SpfCertainty = 'certain' | 'walk_unknown' | 'not_checked';
 
 function spfCertainty(spf: SpfResult): SpfCertainty {
   if (spf.rootError) return 'not_checked';
-  // An RDAP lookup that could not confirm a dangling include (rubric 4):
-  // the include_target_unregistered finding may be missing only for that reason.
-  if ((spf.findings ?? []).some((f) => f.code === 'include_target_unverified')) return 'walk_unknown';
   // A carried pre-0332 row has real SPF values but no walk data.
+  // (An unverified dangling include is NOT walk uncertainty: it is held on
+  // its own — holdDanglingVerdict.)
   return spf.walkStatus === 'unknown' || spf.walkStatus === 'carried_legacy' ? 'walk_unknown' : 'certain';
+}
+
+const DANGLING_CODES = new Set(['include_target_unregistered', 'include_target_unverified']);
+
+function hasUnverifiedInclude(spf: SpfResult): boolean {
+  return (spf.findings ?? []).some((f) => f.code === 'include_target_unverified');
+}
+
+/** `current` with its dangling-include verdict (unregistered / unverified)
+ *  replaced by `previous`'s; every other part of `current` is kept. */
+function holdDanglingVerdict(current: SpfResult, previous: SpfResult): SpfResult {
+  return {
+    ...current,
+    findings: [
+      ...(current.findings ?? []).filter((f) => !DANGLING_CODES.has(f.code)),
+      ...(previous.findings ?? []).filter((f) => DANGLING_CODES.has(f.code)),
+    ],
+  };
 }
 
 function normRecord(r: string): string {
@@ -235,19 +261,31 @@ export function isSpfUncertaintyOnlyGradeChange(
 ): boolean {
   const previous = scanInputFromStoredRow(previousRow);
   const current = scanInputFromStoredRow(currentRow);
+  const previousGrade = calculateEmailSecurityScore(previous).grade;
+  // An unverified dangling include (RDAP could not confirm, rubric 4) on
+  // either side holds ONLY the dangling-include verdict to the previous
+  // scan's: the current scan is re-scored with the previous verdict, so a
+  // real change elsewhere in the same tree (e.g. the lookup limit newly
+  // exceeded) still alerts.
+  const danglingUncertain = hasUnverifiedInclude(previous.spf) || hasUnverifiedInclude(current.spf);
+  const currentSpf = danglingUncertain ? holdDanglingVerdict(current.spf, previous.spf) : current.spf;
   const pc = spfCertainty(previous.spf);
-  const cc = spfCertainty(current.spf);
-  if (pc === 'certain' && cc === 'certain') return false;
+  const cc = spfCertainty(currentSpf);
+  if (pc === 'certain' && cc === 'certain') {
+    if (!danglingUncertain) return false;
+    if (!sameSpfRootFacts(previous.spf, currentSpf)) return false;
+    return calculateEmailSecurityScore({ ...current, spf: currentSpf }).grade === previousGrade;
+  }
 
   let heldSpf: SpfResult;
   if (pc === 'not_checked' || cc === 'not_checked') {
     heldSpf = previous.spf;
   } else {
-    if (!sameSpfRootFacts(previous.spf, current.spf)) return false;
-    heldSpf = holdWalkPart(current.spf, previous.spf);
+    if (!sameSpfRootFacts(previous.spf, currentSpf)) return false;
+    heldSpf = holdWalkPart(currentSpf, previous.spf);
   }
   const rescored = calculateEmailSecurityScore({ ...current, spf: heldSpf }).grade;
-  return rescored === calculateEmailSecurityScore(previous).grade;
+  return rescored === previousGrade;
 }
 
 /**

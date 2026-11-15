@@ -108,6 +108,47 @@ async function loadBootstrap(env: Env): Promise<IanaBootstrap | null> {
   }
 }
 
+/** Where an RDAP base URL came from. */
+export type RdapServerSource = "bootstrap" | "static_fallback";
+
+export interface RdapServer {
+  base: string;
+  source: RdapServerSource;
+}
+
+/**
+ * Resolve a domain's TLD to its RDAP base URL AND say where it came from:
+ * `bootstrap` = the IANA bootstrap map (authoritative), `static_fallback` =
+ * the hand-curated STATIC_FALLBACK table (bootstrap unavailable, or TLD not
+ * in it). Null when neither has a server. Callers that must not act on a
+ * guessed server (rdapDomainRegistration) refuse `static_fallback`.
+ */
+export async function resolveRdapServer(
+  env: Env,
+  domain: string,
+): Promise<RdapServer | null> {
+  const tld = domain.split(".").pop()?.toLowerCase();
+  if (!tld) return null;
+
+  const bootstrap = await loadBootstrap(env);
+  if (bootstrap) {
+    for (const [tlds, servers] of bootstrap.services) {
+      if (tlds.includes(tld) && servers.length > 0) {
+        // Prefer https; fall back to first listed.
+        const httpsServer = servers.find((s) => s.startsWith("https://"));
+        const base = httpsServer ?? servers[0] ?? null;
+        return base ? { base, source: "bootstrap" } : null;
+      }
+    }
+  }
+
+  // Bootstrap fetch failed OR TLD not in the IANA map — fall back
+  // to the static top-TLD list. Covers the long tail of phishing
+  // domains we see (mostly .com / .net / .org / .io / .xyz / .top).
+  const fallback = STATIC_FALLBACK[tld];
+  return fallback ? { base: fallback, source: "static_fallback" } : null;
+}
+
 /**
  * Resolve a domain's TLD to its authoritative RDAP base URL.
  * Returns null if no server is registered for the TLD.
@@ -119,22 +160,10 @@ export async function getRdapServerForDomain(
   env: Env,
   domain: string,
 ): Promise<string | null> {
-  const tld = domain.split(".").pop()?.toLowerCase();
-  if (!tld) return null;
+  return (await resolveRdapServer(env, domain))?.base ?? null;
+}
 
-  const bootstrap = await loadBootstrap(env);
-  if (bootstrap) {
-    for (const [tlds, servers] of bootstrap.services) {
-      if (tlds.includes(tld) && servers.length > 0) {
-        // Prefer https; fall back to first listed.
-        const httpsServer = servers.find((s) => s.startsWith("https://"));
-        return httpsServer ?? servers[0] ?? null;
-      }
-    }
-  }
-
-  // Bootstrap fetch failed OR TLD not in the IANA map — fall back
-  // to the static top-TLD list. Covers the long tail of phishing
-  // domains we see (mostly .com / .net / .org / .io / .xyz / .top).
-  return STATIC_FALLBACK[tld] ?? null;
+/** Test hook: forget the in-memory bootstrap. */
+export function resetRdapBootstrapMemoryForTests(): void {
+  memoryBootstrap = null;
 }

@@ -11,7 +11,7 @@
  * failures are logged but never block the pipeline.
  */
 
-import { getRdapServerForDomain } from "./rdap-bootstrap";
+import { getRdapServerForDomain, resolveRdapServer } from "./rdap-bootstrap";
 import { validDnsName } from "./dnsbl-doh";
 import type { Env } from "../types";
 
@@ -91,14 +91,61 @@ export async function rdapLookup(
 /** Whether a domain is registered, as far as RDAP can say. */
 export type DomainRegistration = "registered" | "unregistered" | "unknown";
 
+/** Byte cap on an RDAP error body (a 404 is a few hundred bytes). */
+const RDAP_ERROR_BODY_MAX_BYTES = 8 * 1024;
+/** Byte cap on an RDAP domain object. */
+const RDAP_DOMAIN_BODY_MAX_BYTES = 256 * 1024;
+
+/** Body text, or null when it is larger than `maxBytes` or unreadable. */
+async function readCappedText(res: Response, maxBytes: number): Promise<string | null> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try { await reader.cancel(); } catch { /* ignore */ }
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return new TextDecoder().decode(buf);
+}
+
+function parseJsonObject(text: string | null): Record<string, unknown> | null {
+  if (text === null) return null;
+  try {
+    const v: unknown = JSON.parse(text);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Registered / unregistered / unknown for ONE domain, through the same
- * IANA-bootstrap server resolution as rdapLookup (KV-cached bootstrap, no
- * aggregator). Unlike rdapLookup it keeps the failure mode: only an HTTP 404
- * from the TLD's own RDAP server is "unregistered" and only a 200 domain
- * object is "registered". A timeout, a 429 / 5xx, a TLD with no RDAP server,
- * an unparseable body or an invalid name is "unknown" — never "unregistered".
- * `timeoutMs` bounds bootstrap + request together. Never throws.
+ * Registered / unregistered / unknown for ONE domain. A false
+ * "unregistered" scores a brand's SPF 0 under a CRITICAL "anyone can
+ * register it" recommendation, so every doubt is `unknown`:
+ *   - the RDAP base must come from the IANA bootstrap (never the static
+ *     fallback table) and be https;
+ *   - redirects are not followed (`redirect: 'manual'`); any 3xx is unknown;
+ *   - "unregistered" needs HTTP 404 AND an RDAP answer: content-type
+ *     application/rdap+json, or a (size-capped) JSON body with errorCode 404.
+ *     A plain-HTML / proxy 404 is unknown;
+ *   - "registered" needs HTTP 200 with an RDAP domain object.
+ * Timeouts, 429 / 5xx, other statuses, a TLD with no bootstrap server,
+ * unparseable bodies and invalid names are unknown. `timeoutMs` bounds
+ * bootstrap + request together. Never throws.
  */
 export async function rdapDomainRegistration(
   env: Env,
@@ -111,20 +158,29 @@ export async function rdapDomainRegistration(
   try {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const server = await Promise.race([
-      getRdapServerForDomain(env, name),
+      resolveRdapServer(env, name),
       new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); }),
     ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
-    if (!server) return "unknown";
+    if (!server || server.source !== "bootstrap") return "unknown";
+    if (!server.base.toLowerCase().startsWith("https://")) return "unknown";
     const remaining = deadline - Date.now();
     if (remaining < 1) return "unknown";
-    const base = server.endsWith("/") ? server : `${server}/`;
+    const base = server.base.endsWith("/") ? server.base : `${server.base}/`;
+    const signal = AbortSignal.timeout(remaining);
     const res = await fetch(`${base}domain/${encodeURIComponent(name)}`, {
       headers: { Accept: "application/rdap+json" },
-      signal: AbortSignal.timeout(remaining),
+      redirect: "manual",
+      signal,
     });
-    if (res.status === 404) return "unregistered";
-    if (!res.ok) return "unknown";
-    const body = (await res.json()) as { objectClassName?: unknown };
+    if (res.status >= 300 && res.status < 400) return "unknown";
+    if (res.status === 404) {
+      const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+      if (contentType.includes("application/rdap+json")) return "unregistered";
+      const body = parseJsonObject(await readCappedText(res, RDAP_ERROR_BODY_MAX_BYTES));
+      return body && body.errorCode === 404 ? "unregistered" : "unknown";
+    }
+    if (res.status !== 200) return "unknown";
+    const body = parseJsonObject(await readCappedText(res, RDAP_DOMAIN_BODY_MAX_BYTES));
     return body && body.objectClassName === "domain" ? "registered" : "unknown";
   } catch {
     return "unknown";

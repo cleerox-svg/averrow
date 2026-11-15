@@ -22,7 +22,9 @@ import {
   type SpfWalkResult,
 } from './lib/spf-walk';
 import {
+  confidentRegistrable,
   pickDanglingCandidate,
+  SPF_RDAP_MIN_REMAINING_MS,
   SPF_RDAP_TIMEOUT_MS,
   type SpfRdapCheck,
 } from './lib/spf-dangling';
@@ -110,7 +112,10 @@ export interface DmarcResult {
  *       CONFIRMS is unregistered (`include_target_unregistered`) scores 0
  *       for SPF, like `+all`: whoever registers it can publish `+all` and
  *       pass SPF for the domain. An unconfirmed lookup (`unknown`) changes
- *       nothing (2026-11)
+ *       nothing. An included record ending in `+all` (`include_pass_all`)
+ *       also scores 0 for SPF, the same as a root `+all` (was a
+ *       recommendation only under rubric 3), so a registered-and-hijacked
+ *       include never scores better than the unregistered one (2026-11)
  */
 export const EMAIL_SCORE_RUBRIC_VERSION = 4;
 
@@ -406,19 +411,34 @@ export async function checkSpf(
     : {};
   const walk = parsed ? await walkSpfTree(domain, parsed, lookup, walkOpts) : null;
   const result = buildSpfResult(domain, root.status, root.records, walk);
-  if (rdap && walk && walk.nxdomainAt.length > 0) {
-    return confirmDanglingInclude(result, walk, lookup, rdap, budget ? budget.totalMs - (Date.now() - start) : null);
+  if (walk && walk.nxdomainAt.length > 0) {
+    const remainingMs = budget ? budget.totalMs - (Date.now() - start) : null;
+    if (rdap) return confirmDanglingInclude(result, walk, lookup, rdap, remainingMs);
+    // No RDAP on this path (the lead report): keep the previous scan's
+    // dangling-include verdict while its target is still NXDOMAIN, so a
+    // stored scan made without RDAP does not flip the grade.
+    if (previous) return carryDanglingVerdictForward(result, walk, lookup, previous, remainingMs);
   }
   return result;
+}
+
+const DANGLING_VERDICT_CODES: ReadonlySet<SpfFindingCode> = new Set<SpfFindingCode>([
+  'include_target_unregistered', 'include_target_unverified',
+]);
+
+function withFinding(result: SpfResult, finding: SpfFinding): SpfResult {
+  return { ...result, findings: [...(result.findings ?? []), finding] };
 }
 
 /**
  * Dangling-include check: one candidate, one RDAP verdict (lib/spf-dangling.ts).
  * `unregistered` adds `include_target_unregistered` (scored, rubric 4);
- * `unknown` adds `include_target_unverified` (informational — makes grade-change
- * alerting treat SPF as uncertain, never touches the score); `registered`
- * adds nothing. `remainingMs` (capped scans) skips the check when too little
- * of the shared budget is left. Never throws.
+ * `unknown` adds `include_target_unverified` (informational — grade-change
+ * alerting holds only the dangling-include part, never touches the score);
+ * `registered` adds nothing. `remainingMs` (capped scans) bounds the DNS
+ * probes, then the RDAP lookup gets min(what is left, SPF_RDAP_TIMEOUT_MS);
+ * under SPF_RDAP_MIN_REMAINING_MS left the candidate is reported unverified
+ * without a lookup. Never throws.
  */
 async function confirmDanglingInclude(
   result: SpfResult,
@@ -427,27 +447,71 @@ async function confirmDanglingInclude(
   rdap: SpfRdapCheck,
   remainingMs: number | null,
 ): Promise<SpfResult> {
-  if (remainingMs !== null && remainingMs < SPF_RDAP_TIMEOUT_MS) return result;
+  const deadline = remainingMs === null ? undefined : Date.now() + remainingMs;
   try {
-    const candidate = await pickDanglingCandidate(walk.nxdomainAt, lookup);
+    const candidate = await pickDanglingCandidate(walk.nxdomainAt, lookup, { deadline });
     if (!candidate) return result;
-    const verdict = await rdap(candidate.registrable, SPF_RDAP_TIMEOUT_MS);
     const names = validNames([candidate.registrable]);
-    if (verdict === 'unregistered') {
-      return { ...result, findings: [...(result.findings ?? []), { code: 'include_target_unregistered', names }] };
-    }
-    if (verdict === 'unknown') {
-      return { ...result, findings: [...(result.findings ?? []), { code: 'include_target_unverified', names }] };
-    }
+    const left = deadline === undefined ? SPF_RDAP_TIMEOUT_MS : deadline - Date.now();
+    if (left < SPF_RDAP_MIN_REMAINING_MS) return withFinding(result, { code: 'include_target_unverified', names });
+    const verdict = await rdap(candidate.registrable, Math.min(left, SPF_RDAP_TIMEOUT_MS));
+    if (verdict === 'unregistered') return withFinding(result, { code: 'include_target_unregistered', names });
+    if (verdict === 'unknown') return withFinding(result, { code: 'include_target_unverified', names });
   } catch {
     // never fail the scan over the extra check
   }
   return result;
 }
 
+/**
+ * For a scan made WITHOUT an RDAP checker but with a previous-scan loader
+ * (handlers/qualifiedReport.ts, a brand-scoped lead report): carry the
+ * previous scan's `include_target_unregistered` / `include_target_unverified`
+ * finding forward as-is when the same registrable domain is still a
+ * candidate in this walk (an NXDOMAIN include target whose registrable
+ * domain is itself NXDOMAIN — ≤ 1 DoH probe, no RDAP). Otherwise nothing is
+ * added. One D1 read, made only when the walk saw an NXDOMAIN target.
+ * Never throws.
+ */
+async function carryDanglingVerdictForward(
+  result: SpfResult,
+  walk: SpfWalkResult,
+  lookup: SpfTxtLookup,
+  previous: PreviousSpfLoader,
+  remainingMs: number | null,
+): Promise<SpfResult> {
+  try {
+    const prev = await previous();
+    const finding = (prev?.findings ?? []).find((f) => DANGLING_VERDICT_CODES.has(f.code));
+    const name = finding?.names?.[0];
+    if (!finding || !name) return result;
+    const targets = walk.nxdomainAt.filter((t) => confidentRegistrable(t) === name);
+    if (targets.length === 0) return result;
+    const deadline = remainingMs === null ? undefined : Date.now() + remainingMs;
+    const candidate = await pickDanglingCandidate(targets, lookup, { deadline });
+    if (!candidate || candidate.registrable !== name) return result;
+    return withFinding(result, { code: finding.code, names: validNames([name]) });
+  } catch {
+    return result;
+  }
+}
+
 /** A CONFIRMED unregistered include/redirect target (rubric 4: SPF scores 0). */
 export function hasUnregisteredInclude(spf: SpfResult): boolean {
   return (spf.findings ?? []).some((f) => f.code === 'include_target_unregistered');
+}
+
+/** An included record ends in `+all` (rubric 4: SPF scores 0, like a root
+ *  `+all` — anyone reaching that include passes SPF for the domain). */
+export function hasIncludePassAll(spf: SpfResult): boolean {
+  return (spf.findings ?? []).some((f) => f.code === 'include_pass_all');
+}
+
+/** SPF authorises every sender (rubric 4): root `+all` (incl. a bare `all`
+ *  or a redirect target's `+all`), an included `+all`, or a confirmed
+ *  unregistered include target. Scores 0 for SPF. */
+export function spfAuthorisesAnySender(spf: SpfResult): boolean {
+  return spf.policy === '+all' || hasIncludePassAll(spf) || hasUnregisteredInclude(spf);
 }
 
 /**
@@ -738,13 +802,16 @@ export function calculateEmailSecurityScore(scan: EmailSecurityScanInput): { sco
   //     else SPF is not checked (exists=false → 0 points; recommendations
   //     say "could not check", and grade-change alerting holds SPF to the
   //     previous scan — lib/email-grade-change.ts).
-  //   - Void lookups, ptr, syntax errors, include targets with no or
-  //     multiple SPF records, and `+all` inside an include are
-  //     recommendations only.
+  //   - Void lookups, ptr, syntax errors and include targets with no or
+  //     multiple SPF records are recommendations only.
   //   Rubric 4: an include/redirect target RDAP confirms is UNREGISTERED
   //   scores 0 for SPF, like `+all` — anyone can register it and pass SPF.
-  //   An unconfirmed (`unknown`) lookup changes nothing.
-  if (scan.spf.exists && scan.spf.policy !== '+all' && !hasUnregisteredInclude(scan.spf)) {
+  //   An unconfirmed (`unknown`) lookup changes nothing. An included record
+  //   ending in `+all` (`include_pass_all`) also scores 0, the same as a root
+  //   `+all`: it passes every sender, and it is what a hijacked dangling
+  //   include looks like once registered — so a takeover never reads as an
+  //   improvement over the unregistered state.
+  if (scan.spf.exists && !spfAuthorisesAnySender(scan.spf)) {
     score += 10; // Has SPF record
     if (!isSpfPermerror(scan.spf)) {
       if (scan.spf.policy === '-all') score += 15;      // Hard fail
@@ -882,7 +949,7 @@ export function spfFindingRecommendations(spf: SpfResult): string[] {
         recs.push(`CRITICAL: SPF include chain loops back on itself${list(f.names)} — receivers hit the lookup limit and return permerror, so SPF fails for all your mail.`);
         break;
       case 'include_pass_all':
-        recs.push(`WARNING: An included SPF record ends in "+all"${list(f.names)} — any sender that reaches that include passes SPF for your domain. Remove the include or ask its owner to fix it.`);
+        recs.push(`CRITICAL: An included SPF record ends in "+all"${list(f.names)}, which authorizes every server on the internet to send as your domain — the same as "+all" in your own record (SPF scores 0). Remove the include or ask its owner to fix it.`);
         break;
       case 'root_lookup_failed':
         recs.push('The SPF record could not be re-checked on this scan (DNS lookup failed); the result shown is from the previous scan.');
