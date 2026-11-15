@@ -287,7 +287,8 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
     if (parsed.lineCapped) warnings.push(`${f.file}: line cap reached`);
     // The total cap squeezed this file (maxRows can reach 0): say so, and its
     // over-cap rows are removed below like any row the file no longer keeps.
-    if (fileCap < perFileCap && parsed.capped > 0) {
+    const squeezed = fileCap < perFileCap && parsed.capped > 0;
+    if (squeezed) {
       warnings.push(`${f.file}: total row cap reached (kept ${parsed.rows.length}, ${parsed.capped} not kept)`);
     }
 
@@ -376,7 +377,9 @@ export async function runInfobloxReference(env: Env, opts: InfobloxRunOptions = 
     // file and re-applies the guard; the body's sha + run count go to pending_*.
     await db.prepare(FILE_UPSERT_SQL).bind(
       f.file, f.label, f.kind, f.publication,
-      removalSkipped ? null : etag, removalSkipped ? null : sha,
+      // Squeezed by the total cap → no stamp either: the file is re-read
+      // next run, so it picks up room freed by other files.
+      removalSkipped || squeezed ? null : etag, removalSkipped || squeezed ? null : sha,
       live.size - fileRemoved, parsed.capped, stamp,
       removalSkipped ? sha : null, removalSkipped ? sameBodyRuns : 0,
     ).run();

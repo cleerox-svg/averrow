@@ -307,7 +307,10 @@ describe.skipIf(!hasSqlite())("infoblox_reference feed", () => {
     expect(count(raw, "SELECT COUNT(*) AS n FROM infoblox_reference WHERE source_file = ? AND removed_at IS NULL", FILES[1]!.file)).toBe(0);
     const f = raw.prepare("SELECT rows_loaded, content_sha256 FROM infoblox_reference_files WHERE source_file = ?").all(FILES[1]!.file)[0] as { rows_loaded: number; content_sha256: string | null };
     expect(f.rows_loaded).toBe(0);
-    expect(f.content_sha256).not.toBeNull();
+    // No stamp while squeezed, so the file is re-read once room frees up.
+    expect(f.content_sha256).toBeNull();
+    await runInfobloxReference(env, { files: FILES });
+    expect(count(raw, "SELECT COUNT(*) AS n FROM infoblox_reference WHERE source_file = ? AND removed_at IS NULL", FILES[1]!.file)).toBe(41);
   });
 
   it("does not follow redirects: a 3xx fails the file", async () => {
