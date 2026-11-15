@@ -15,6 +15,7 @@ import {
   generateRecommendations,
   hasNewlyRegisteredInclude,
   hasUnregisteredInclude,
+  carrySpfForward,
   utcDayNumber,
   parseStoredSpfFindings,
   scanInputFromStoredRow,
@@ -814,5 +815,23 @@ describe("an unconfirmed RDAP lookup carries the previous certain verdict", () =
   it("no previous verdict → unverified as before", async () => {
     const spf = await checkSpf("acme.com", dns({ "acme.com": ok(root) }), async () => prevSpf(), undefined, async () => "unknown");
     expect(codes(spf)).toContain("include_target_unverified");
+  });
+});
+
+describe("carrySpfForward — a stale newly-registered finding is not stored", () => {
+  const base = {
+    exists: true, policy: "-all", includes: 1, tooManyLookups: false, raw: "v=spf1 include:gone-vendor.com -all",
+    recordCount: 1, lookupCount: 1, voidLookups: 0, walkStatus: "complete", rootError: false,
+  } as unknown as Parameters<typeof carrySpfForward>[0];
+  const today = utcDayNumber(Date.now());
+
+  it("drops it past 30 days (so a later re-dangled include is not held back)", () => {
+    const carried = carrySpfForward({ ...base, findings: [{ code: "include_target_newly_registered", names: ["gone-vendor.com"], count: today - 31 }] });
+    expect((carried.findings ?? []).map((f) => f.code)).toEqual(["root_lookup_failed"]);
+  });
+
+  it("keeps it while in force", () => {
+    const carried = carrySpfForward({ ...base, findings: [{ code: "include_target_newly_registered", names: ["gone-vendor.com"], count: today - 5 }] });
+    expect((carried.findings ?? []).map((f) => f.code)).toEqual(["include_target_newly_registered", "root_lookup_failed"]);
   });
 });

@@ -284,7 +284,11 @@ export function spfNotChecked(): SpfResult {
  * `root_lookup_failed` finding.
  */
 export function carrySpfForward(previous: SpfResult): SpfResult {
-  const findings = (previous.findings ?? []).filter((f) => f.code !== 'root_lookup_failed');
+  // A newly-registered finding past its 30 days is dropped here, so a stored
+  // row never holds a stale one (the grade-change hold reads presence only).
+  const nowMs = Date.now();
+  const findings = (previous.findings ?? []).filter((f) => f.code !== 'root_lookup_failed'
+    && (f.code !== 'include_target_newly_registered' || isActiveNewlyRegistered(f, nowMs)));
   return {
     ...previous,
     rootError: false,
