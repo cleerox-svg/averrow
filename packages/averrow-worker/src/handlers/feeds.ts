@@ -163,7 +163,7 @@ export async function handleTriggerFeed(request: Request, env: Env, feedName: st
     // Bust the feeds_overview cache so the UI sees the new pull
     // immediately (was stale up to 5 min after PR #1178 added KV).
     try {
-      await env.CACHE.delete('feeds_overview:v1');
+      await env.CACHE.delete('feeds_overview:v2');
       await env.CACHE.delete('feeds_aggregate_stats:v1');
     } catch { /* ignore */ }
 
@@ -180,7 +180,7 @@ export async function handleTriggerAll(request: Request, env: Env): Promise<Resp
   try {
     const result = await runAllFeeds(env, feedModules);
     try {
-      await env.CACHE.delete('feeds_overview:v1');
+      await env.CACHE.delete('feeds_overview:v2');
       await env.CACHE.delete('feeds_aggregate_stats:v1');
     } catch { /* ignore */ }
     return json({ success: true, data: result }, 200, origin);
@@ -279,7 +279,9 @@ export async function handleFeedQuota(request: Request, env: Env): Promise<Respo
 // pattern as /api/agents (see CLAUDE.md §8).
 export async function handleFeedsOverview(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const cacheKey = 'feeds_overview:v1';
+  // v2 — adds fc.feed_type ('ingest' | 'enrichment' | 'social', migration
+  // 0051) so the ops Agents Network view can place each feed by its role.
+  const cacheKey = 'feeds_overview:v2';
   try {
     const cached = await env.CACHE.get(cacheKey);
     if (cached) return json(JSON.parse(cached), 200, origin);
@@ -304,6 +306,7 @@ export async function handleFeedsOverview(request: Request, env: Env): Promise<R
           fc.retry_delay_seconds,
           fc.paused_reason,
           fc.consecutive_failure_threshold,
+          fc.feed_type,
           fs.consecutive_failures,
           fs.last_error,
           COUNT(fph.id) as total_pulls,
@@ -409,7 +412,7 @@ export async function handleUnpauseFeed(request: Request, env: Env, feedName: st
     ]);
 
     try {
-      await env.CACHE.delete('feeds_overview:v1');
+      await env.CACHE.delete('feeds_overview:v2');
       await env.CACHE.delete('feeds_aggregate_stats:v1');
     } catch { /* ignore */ }
 
@@ -448,7 +451,7 @@ export async function handlePauseFeed(request: Request, env: Env, feedName: stri
     // Bust the feeds_overview cache so the UI reflects the new state
     // without a stale-cache window.
     try {
-      await env.CACHE.delete('feeds_overview:v1');
+      await env.CACHE.delete('feeds_overview:v2');
       await env.CACHE.delete('feeds_aggregate_stats:v1');
     } catch { /* ignore */ }
 
@@ -488,7 +491,7 @@ export async function handleFeedPullHistory(request: Request, env: Env, feedName
 // Navigator Phase B every 15 min (see cron/navigator.ts); the 900s TTL
 // outlives that cadence so real page loads hit warm cache (a 300s TTL
 // would leave the cache cold for ~2/3 of each warm cycle). Busted
-// alongside feeds_overview:v1 on every feed mutation below.
+// alongside feeds_overview:v2 on every feed mutation below.
 export async function handleFeedsAggregateStats(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const cacheKey = 'feeds_aggregate_stats:v1';

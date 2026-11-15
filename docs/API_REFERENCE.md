@@ -257,7 +257,7 @@ Same `requireStaff` gate; handler `handlers/observatoryEvents.ts`. Feeds the Int
 | DELETE | `/api/feeds/:id` | — | Stub — always returns `501` ("Feed deletion via API deferred to v2 admin module") |
 | POST | `/api/feeds/trigger-all` | Admin | Trigger all feeds |
 | POST | `/api/feeds/trigger-tier/:tier` | Admin | Trigger feeds by tier |
-| GET | `/api/feeds/overview` | User | Aggregated feed-health overview (tier summary, last-run freshness) |
+| GET | `/api/feeds/overview` | Staff | Aggregated feed-health overview (tier summary, last-run freshness). Each row carries `feed_type` (`ingest` \| `enrichment` \| `social`, `feed_configs.feed_type`, migration 0051) so the ops Agents Network view can place a feed by role. KV cache `feeds_overview:v2` (300s), busted by every feed mutation. |
 | GET | `/api/feeds/aggregate-stats` | User | Aggregate statistics across all feeds |
 | GET | `/api/feeds/:id/history` | User | Per-feed run / pull history |
 
@@ -265,7 +265,8 @@ Same `requireStaff` gate; handler `handlers/observatoryEvents.ts`. Feeds the Int
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/agents` | User | List all agents |
+| GET | `/api/agents` | Staff | List all agents (one row per registered AgentModule). Navigator appears exactly once: its row folds the legacy `fast_tick` agent_id history into `navigator`. Each row carries `lifecycle` (`active` \| `paused` \| `shadow` \| `retired`) = the module's `AgentModule.status` (descriptive, not a dispatch gate; default `active`). KV cache `agents_list:v5` (900s), busted by toggle / reset-circuit / threshold. |
+| GET | `/api/agents/timeline?window=1h` | Staff | Individual runs for the ops Agents Network view's run tape. `window` must be `1h` (the default when omitted); any other value → 400. Response `data`: `window`, `generated_at`, `window_start`, `window_end` (= `generated_at`; all ISO UTC `Z`); `runs[]` `{ id, agent_id, source: 'agent_runs'\|'workflow', started_at, completed_at\|null, status: 'success'\|'partial'\|'failed'\|'running', open, clipped_start, duration_ms\|null, records_processed, error (≤200 chars)\|null }`; `pulls[]` `{ id, feed_name, started_at, completed_at, status, open, clipped_start, records_ingested, records_rejected, duration_ms, error }`; `events[]` `{ id, event_type: 'pivot_detected', source_agent, target_agent, created_at, status }`; `truncated { runs, pulls, events }`. A row is included when `[started_at, completed_at ?? now]` overlaps the window; `partial`/`running` with no `completed_at` is `status:'running', open:true`; `clipped_start` = started before `window_start`. Legacy `fast_tick` rows read as `navigator`. Sources: `agent_runs` (started since window − 30 min via `idx_agent_runs_started`, plus open runs from the last 6h via `idx_agent_runs_open`), `feed_pull_history` (started since window − 15 min, `idx_feed_pulls_started`), NEXUS workflow lifecycle rows from `agent_activity_log` (last 5h, `idx_activity_agent`) folded into `source:'workflow'` runs with id `wf:<instance_id>` (records = clusters written; unclosed ≥3h → failed "no completion event"), and `agent_events` `pivot_detected` (`idx_agent_events_type_created`). Bounds: ≤60 runs per agent and ≤400 total (newest kept), ≤300 pulls, ≤50 events, each list oldest-first; a dropped row sets its `truncated` flag. Cached via `cachedValue` key `agents_timeline:v1:1h`, 60s TTL, 30s live freshness (stale-while-revalidate); not Navigator-warmed. |
 | GET | `/api/agents/stats` | User | Agent statistics |
 | GET | `/api/agents/runs` | User | Recent agent runs |
 | GET | `/api/agents/outputs` | User | Recent agent outputs |

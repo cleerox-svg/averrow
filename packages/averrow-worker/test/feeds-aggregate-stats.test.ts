@@ -8,7 +8,7 @@
  *      SUM(records_ingested) over feed_pull_history (44.6K rows and
  *      growing forever — a full-table SCAN on every call).
  *   2. The endpoint is now KV-cached under 'feeds_aggregate_stats:v1'
- *      (TTL 300s), busted alongside 'feeds_overview:v1' at every feed
+ *      (TTL 300s), busted alongside 'feeds_overview:v2' at every feed
  *      mutation site (pause/unpause/trigger).
  *
  * D1 is faked the same hand-rolled way as search.test.ts /
@@ -161,21 +161,21 @@ describe("feed mutations bust feeds_aggregate_stats:v1", () => {
     env = made.env;
     kv = made.kv;
     // Pre-seed both cache keys as if a prior stats/overview call warmed them.
-    kv.store.set("feeds_overview:v1", JSON.stringify({ stale: true }));
+    kv.store.set("feeds_overview:v2", JSON.stringify({ stale: true }));
     kv.store.set("feeds_aggregate_stats:v1", JSON.stringify({ stale: true }));
   });
 
-  it("handlePauseFeed busts both feeds_overview:v1 and feeds_aggregate_stats:v1", async () => {
+  it("handlePauseFeed busts both feeds_overview:v2 and feeds_aggregate_stats:v1", async () => {
     const res = await handlePauseFeed(mutateReq(), env, "some_feed");
     expect(res.status).toBe(200);
-    expect(kv.store.has("feeds_overview:v1")).toBe(false);
+    expect(kv.store.has("feeds_overview:v2")).toBe(false);
     expect(kv.store.has("feeds_aggregate_stats:v1")).toBe(false);
   });
 
-  it("handleUnpauseFeed busts both feeds_overview:v1 and feeds_aggregate_stats:v1", async () => {
+  it("handleUnpauseFeed busts both feeds_overview:v2 and feeds_aggregate_stats:v1", async () => {
     const res = await handleUnpauseFeed(mutateReq(), env, "some_feed");
     expect(res.status).toBe(200);
-    expect(kv.store.has("feeds_overview:v1")).toBe(false);
+    expect(kv.store.has("feeds_overview:v2")).toBe(false);
     expect(kv.store.has("feeds_aggregate_stats:v1")).toBe(false);
   });
 

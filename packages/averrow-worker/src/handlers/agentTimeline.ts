@@ -1,0 +1,661 @@
+/**
+ * GET /api/agents/timeline?window=1h — individual agent runs, feed pulls and
+ * pivot_detected events that overlap the last hour, for the ops Agents
+ * Network view (flow canvas + run tape). requireStaff (routes/agents.ts).
+ *
+ * Sources (every read is index-backed and bounded; reads go through a read
+ * replica session, nothing here writes D1):
+ *
+ *   1. agent_runs started since window_start − 30 min      idx_agent_runs_started (0319)
+ *   2. agent_runs still open, started in the last 6 h       idx_agent_runs_open (0320, pinned)
+ *   3. feed_pull_history started since window_start − 15 min idx_feed_pulls_started (0319)
+ *   4. NEXUS workflow lifecycle rows from agent_activity_log
+ *      (agent_id='nexus', last 5 h)                          idx_activity_agent (0047, pinned)
+ *   5. agent_events pivot_detected since window_start        idx_agent_events_type_created (0298)
+ *
+ * A row is kept when `[started_at, completed_at ?? now]` overlaps the window
+ * (`overlapsWindow`); the SQL lower bounds are only a superset pre-filter.
+ *
+ * Timestamp formats: agent_runs / agent_activity_log / agent_events default
+ * to SQLite text ('YYYY-MM-DD HH:MM:SS'); feedRunner writes feed_pull_history
+ * started_at as ISO ('…T…Z') and completed_at as SQLite text. Every value is
+ * normalised to ISO UTC 'Z' by `normalizeTs`. The started_at windows (1, 3)
+ * are written as two plain ranges (`sinceRangeBinds`), one per stored format,
+ * which SQLite serves as a MULTI-INDEX OR over idx_*_started and which is
+ * exact for both formats (a single SQLite-text bound would also pull in every
+ * ISO row of the bound's date). Those statements carry no ORDER BY: with one
+ * the planner walks the whole started_at index instead (pinned by
+ * test/agent-timeline.test.ts); ordering and bounds are applied in JS.
+ *
+ * Cached via cachedValue `agents_timeline:v1:1h`, 60 s TTL, 30 s live
+ * freshness (stale-while-revalidate). No Navigator warm.
+ */
+
+import { json } from "../lib/cors";
+import { cachedValue } from "../lib/cached-value";
+import { getDbContext, getReadSession } from "../lib/db";
+import { newTally, addToTally, recordD1Reads, type D1Tally } from "../lib/analytics";
+import type { Env } from "../types";
+
+// ─── Contract ───────────────────────────────────────────────────────
+
+export type TimelineStatus = "success" | "partial" | "failed" | "running";
+
+export interface TimelineRun {
+  id: string;
+  agent_id: string;
+  source: "agent_runs" | "workflow";
+  started_at: string;
+  completed_at: string | null;
+  status: TimelineStatus;
+  open: boolean;
+  clipped_start: boolean;
+  duration_ms: number | null;
+  records_processed: number;
+  error: string | null;
+}
+
+export interface TimelinePull {
+  id: string;
+  feed_name: string;
+  started_at: string;
+  completed_at: string | null;
+  status: TimelineStatus;
+  open: boolean;
+  clipped_start: boolean;
+  records_ingested: number;
+  records_rejected: number;
+  duration_ms: number | null;
+  error: string | null;
+}
+
+export interface TimelineEvent {
+  id: string;
+  event_type: "pivot_detected";
+  source_agent: string;
+  target_agent: string | null;
+  created_at: string;
+  status: string;
+}
+
+export interface AgentTimelineData {
+  window: "1h";
+  generated_at: string;
+  window_start: string;
+  window_end: string;
+  runs: TimelineRun[];
+  pulls: TimelinePull[];
+  events: TimelineEvent[];
+  truncated: { runs: boolean; pulls: boolean; events: boolean };
+}
+
+export interface AgentTimelineBody {
+  success: true;
+  data: AgentTimelineData;
+}
+
+// ─── Knobs ──────────────────────────────────────────────────────────
+
+export const AGENT_TIMELINE_CACHE_KEY = "agents_timeline:v1:1h";
+export const AGENT_TIMELINE_TTL_S = 60;
+export const AGENT_TIMELINE_FRESH_S = 30;
+
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+export const TIMELINE_WINDOW_MS = HOUR;
+/** Runs that started this long before window_start can still overlap it. */
+export const RUN_LOOKBACK_MS = 30 * MIN;
+export const PULL_LOOKBACK_MS = 15 * MIN;
+/** Open (never finalized) agent_runs older than this are the reaper's job. */
+export const OPEN_RUN_LOOKBACK_MS = 6 * HOUR;
+/** NEXUS workflow events are folded over this much history. */
+export const WORKFLOW_LOOKBACK_MS = 5 * HOUR;
+/** An unclosed workflow run older than this is reported failed. */
+export const WORKFLOW_STALE_MS = 3 * HOUR;
+
+export const MAX_RUNS_PER_AGENT = 60;
+export const MAX_RUNS_TOTAL = 400;
+export const MAX_PULLS = 300;
+export const MAX_EVENTS = 50;
+export const MAX_ERROR_CHARS = 200;
+/** Safety nets on the SQL reads; hitting one sets the truncated flag. */
+export const RUN_SQL_LIMIT = 3000;
+export const PULL_SQL_LIMIT = 2000;
+export const ACTIVITY_SQL_LIMIT = 500;
+
+const WORKFLOW_AGENT_ID = "nexus";
+
+// ─── Pure helpers ───────────────────────────────────────────────────
+
+/**
+ * Normalise a stored D1 timestamp to ISO UTC ('…Z'). Accepts SQLite text
+ * ('YYYY-MM-DD HH:MM[:SS[.sss]]'), ISO with or without a zone, and returns
+ * null for null / empty / unparseable input. Zone-less values are UTC (that
+ * is what SQLite's datetime() and the worker's writers mean).
+ */
+export function normalizeTs(raw: string | null | undefined): string | null {
+  const ms = tsMs(raw);
+  return ms === null ? null : new Date(ms).toISOString();
+}
+
+/** Epoch ms of a stored timestamp, or null. Same parsing as normalizeTs. */
+export function tsMs(raw: string | null | undefined): number | null {
+  if (typeof raw !== "string") return null;
+  let s = raw.trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
+  const ms = Date.parse(s);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** SQLite datetime() text for an epoch ms ('YYYY-MM-DD HH:MM:SS'). */
+export function toSqliteTs(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+}
+
+/**
+ * `col >= <since>` for a TEXT column holding either stored format, as two
+ * plain ranges SQLite serves as a MULTI-INDEX OR over an index on `col`:
+ *   - SQLite-text rows on the bound's date: [sqliteBound, 'YYYY-MM-DDT')
+ *   - every ISO row from the bound on, and every row of a later date (both
+ *     formats compare on the date first): >= isoBound
+ * Bind with `sinceRangeBinds`. `col` is a fixed identifier, never input.
+ */
+export function sinceRangeBinds(sinceMs: number): [string, string, string] {
+  // Whole-second ISO bound with '.000Z': at an equal second, both '…:SSZ'
+  // and '…:SS.sssZ' rows sort >= it ('Z' > '.'), matching datetime().
+  const sec = Math.floor(sinceMs / 1000) * 1000;
+  const iso = new Date(sec).toISOString();
+  return [toSqliteTs(sec), `${iso.slice(0, 10)}T`, iso];
+}
+
+/** Map a stored run/pull status + completed_at to the timeline status. */
+export function timelineStatus(
+  status: string | null | undefined,
+  completedAt: string | null | undefined,
+): { status: TimelineStatus; open: boolean } {
+  const done = tsMs(completedAt) !== null;
+  if (!done && (status === "partial" || status === "running")) return { status: "running", open: true };
+  if (status === "success" || status === "failed" || status === "partial") return { status, open: false };
+  // 'running' with completed_at set, or an unknown value: finished, outcome unclear.
+  return { status: "partial", open: false };
+}
+
+/**
+ * True when `[start, end ?? (open ? now : start)]` overlaps
+ * `[windowStart, windowEnd]`. A closed row with no completed_at is a point.
+ */
+export function overlapsWindow(
+  startMs: number,
+  endMs: number | null,
+  open: boolean,
+  windowStartMs: number,
+  windowEndMs: number,
+): boolean {
+  const end = endMs ?? (open ? windowEndMs : startMs);
+  return startMs <= windowEndMs && end >= windowStartMs;
+}
+
+export function clipError(msg: string | null | undefined): string | null {
+  if (typeof msg !== "string" || !msg) return null;
+  return msg.length > MAX_ERROR_CHARS ? `${msg.slice(0, MAX_ERROR_CHARS - 1)}…` : msg;
+}
+
+/** Legacy Navigator rows were written as agent_id='fast_tick'. */
+export function normalizeAgentId(agentId: string): string {
+  return agentId === "fast_tick" ? "navigator" : agentId;
+}
+
+function durationOf(startMs: number, endMs: number | null, stored: number | null | undefined): number | null {
+  if (typeof stored === "number" && Number.isFinite(stored) && stored >= 0) return stored;
+  return endMs === null ? null : Math.max(0, endMs - startMs);
+}
+
+const byStartDesc = <T extends { started_at: string }>(a: T, b: T): number =>
+  a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0;
+
+/**
+ * Keep the newest `perAgent` runs per agent, then the newest `total`
+ * overall. Returned oldest-first (timeline order).
+ */
+export function boundRuns(
+  runs: TimelineRun[],
+  perAgent = MAX_RUNS_PER_AGENT,
+  total = MAX_RUNS_TOTAL,
+): { runs: TimelineRun[]; truncated: boolean } {
+  const sorted = [...runs].sort(byStartDesc);
+  const perCount = new Map<string, number>();
+  const kept: TimelineRun[] = [];
+  let truncated = false;
+  for (const r of sorted) {
+    const n = perCount.get(r.agent_id) ?? 0;
+    if (n >= perAgent) { truncated = true; continue; }
+    if (kept.length >= total) { truncated = true; continue; }
+    perCount.set(r.agent_id, n + 1);
+    kept.push(r);
+  }
+  return { runs: kept.reverse(), truncated };
+}
+
+/** Keep the newest `max` items (by `key`), returned oldest-first. */
+export function boundNewest<T>(items: T[], max: number, key: (t: T) => string): { items: T[]; truncated: boolean } {
+  const sorted = [...items].sort((a, b) => (key(a) < key(b) ? 1 : key(a) > key(b) ? -1 : 0));
+  return { items: sorted.slice(0, max).reverse(), truncated: sorted.length > max };
+}
+
+// ─── NEXUS workflow fold ────────────────────────────────────────────
+
+export interface ActivityRow {
+  id: string;
+  event_type: string;
+  message: string | null;
+  metadata_json: string | null;
+  created_at: string;
+}
+
+/** Keys of batch_complete metadata that together make NEXUS's
+ *  `totalClustersWritten` (workflows/nexusRun.ts log-complete step). */
+const CLUSTER_COUNT_KEYS = [
+  "clustersWritten",
+  "cert_serial_clusters",
+  "cert_san_clusters",
+  "per_ip_clusters",
+  "subnet24_clusters",
+  "registrar_clusters",
+] as const;
+
+function parseMeta(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const v: unknown = JSON.parse(raw);
+    return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function clustersWritten(meta: Record<string, unknown>): number {
+  let n = 0;
+  for (const k of CLUSTER_COUNT_KEYS) {
+    const v = meta[k];
+    if (typeof v === "number" && Number.isFinite(v)) n += v;
+  }
+  return n;
+}
+
+interface OpenWf {
+  run: TimelineRun;
+  startedMs: number;
+  hasStarted: boolean;
+}
+
+/**
+ * Fold NEXUS lifecycle rows (any order; sorted here) into runs.
+ *
+ * Only `workflow_dispatched` carries an instance id, so the rest pair by
+ * time order:
+ *   workflow_dispatched      opens a run (id `wf:<instance_id>`, else `wf:<row id>`)
+ *   started                  sets started_at of the NEWEST open run not yet started
+ *                            (a workflow starts seconds after its dispatch); opens
+ *                            one if none — its dispatch was outside the lookback
+ *   batch_complete           closes the oldest STARTED open run (else the oldest
+ *                            open run) → success, records = clusters written
+ *                            (best effort, `CLUSTER_COUNT_KEYS`)
+ *   workflow_failed          closes the same way → failed, with its error
+ *   workflow_dispatch_failed zero-length failed run
+ *   workflow_cooldown_skip   ignored (no run happened); any other type ignored
+ * Before each started / completion row, open runs already >= 3 h old at that
+ * row's time are closed as failed "no completion event", so a lost run can
+ * never absorb a later run's events. A completion with nothing open becomes a
+ * zero-length run at its own time. Still open at the end: < 3 h old →
+ * running/open, otherwise failed "no completion event" (completed_at null).
+ */
+export function foldWorkflowEvents(rows: ActivityRow[], nowMs: number, agentId = WORKFLOW_AGENT_ID): TimelineRun[] {
+  const sorted = rows
+    .map((r) => ({ r, ms: tsMs(r.created_at) }))
+    .filter((x): x is { r: ActivityRow; ms: number } => x.ms !== null)
+    .sort((a, b) => a.ms - b.ms || (a.r.id < b.r.id ? -1 : a.r.id > b.r.id ? 1 : 0));
+
+  const out: TimelineRun[] = [];
+  const open: OpenWf[] = [];
+
+  const newRun = (id: string, ms: number): TimelineRun => ({
+    id,
+    agent_id: agentId,
+    source: "workflow",
+    started_at: new Date(ms).toISOString(),
+    completed_at: null,
+    status: "running",
+    open: true,
+    clipped_start: false,
+    duration_ms: null,
+    records_processed: 0,
+    error: null,
+  });
+  const close = (wf: OpenWf, ms: number, status: "success" | "failed", records: number, err: string | null) => {
+    const run = wf.run;
+    run.completed_at = new Date(ms).toISOString();
+    run.status = status;
+    run.open = false;
+    run.duration_ms = Math.max(0, ms - wf.startedMs);
+    run.records_processed = records;
+    run.error = err;
+    out.push(run);
+  };
+
+  const expireBefore = (atMs: number) => {
+    for (let i = open.length - 1; i >= 0; i--) {
+      const wf = open[i]!;
+      if (atMs - wf.startedMs < WORKFLOW_STALE_MS) continue;
+      wf.run.status = "failed";
+      wf.run.open = false;
+      wf.run.error = "no completion event";
+      out.push(wf.run);
+      open.splice(i, 1);
+    }
+  };
+
+  for (const { r, ms } of sorted) {
+    const meta = parseMeta(r.metadata_json);
+    switch (r.event_type) {
+      case "workflow_dispatched": {
+        const inst = typeof meta["instance_id"] === "string" && meta["instance_id"] ? meta["instance_id"] : r.id;
+        open.push({ run: newRun(`wf:${inst}`, ms), startedMs: ms, hasStarted: false });
+        break;
+      }
+      case "started": {
+        expireBefore(ms);
+        let wf: OpenWf | undefined;
+        for (let i = open.length - 1; i >= 0 && !wf; i--) if (!open[i]!.hasStarted) wf = open[i];
+        if (wf) {
+          wf.hasStarted = true;
+          wf.startedMs = ms;
+          wf.run.started_at = new Date(ms).toISOString();
+        } else {
+          open.push({ run: newRun(`wf:${r.id}`, ms), startedMs: ms, hasStarted: true });
+        }
+        break;
+      }
+      case "batch_complete":
+      case "workflow_failed": {
+        expireBefore(ms);
+        const idx = open.findIndex((o) => o.hasStarted);
+        const picked = open.splice(idx >= 0 ? idx : 0, 1)[0];
+        const wf = picked ?? { run: newRun(`wf:${r.id}`, ms), startedMs: ms, hasStarted: true };
+        if (r.event_type === "batch_complete") {
+          close(wf, ms, "success", clustersWritten(meta), null);
+        } else {
+          const e = typeof meta["error"] === "string" ? meta["error"] : r.message;
+          close(wf, ms, "failed", 0, clipError(e) ?? "workflow failed");
+        }
+        break;
+      }
+      case "workflow_dispatch_failed": {
+        const wf: OpenWf = { run: newRun(`wf:${r.id}`, ms), startedMs: ms, hasStarted: true };
+        const e = typeof meta["error"] === "string" ? meta["error"] : r.message;
+        close(wf, ms, "failed", 0, clipError(e) ?? "workflow dispatch failed");
+        break;
+      }
+      default:
+        // workflow_cooldown_skip and unrelated activity: no run.
+        break;
+    }
+  }
+
+  for (const wf of open) {
+    if (nowMs - wf.startedMs >= WORKFLOW_STALE_MS) {
+      wf.run.status = "failed";
+      wf.run.open = false;
+      wf.run.error = "no completion event";
+    }
+    out.push(wf.run);
+  }
+  return out;
+}
+
+// ─── Row shaping ────────────────────────────────────────────────────
+
+interface RunRow {
+  id: string;
+  agent_id: string;
+  started_at: string;
+  completed_at: string | null;
+  duration_ms: number | null;
+  status: string;
+  records_processed: number | null;
+  error_message: string | null;
+}
+
+interface PullRow {
+  id: string;
+  feed_name: string;
+  started_at: string;
+  completed_at: string | null;
+  duration_ms: number | null;
+  status: string;
+  records_ingested: number | null;
+  records_rejected: number | null;
+  error_message: string | null;
+}
+
+interface EventRow {
+  id: string;
+  source_agent: string;
+  target_agent: string | null;
+  created_at: string;
+  status: string | null;
+}
+
+/** agent_runs rows (both reads, possibly overlapping) → windowed runs. */
+export function shapeRuns(rows: RunRow[], windowStartMs: number, windowEndMs: number): TimelineRun[] {
+  const seen = new Set<string>();
+  const out: TimelineRun[] = [];
+  for (const r of rows) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    const startMs = tsMs(r.started_at);
+    if (startMs === null) continue;
+    const endMs = tsMs(r.completed_at);
+    const { status, open } = timelineStatus(r.status, r.completed_at);
+    if (!overlapsWindow(startMs, endMs, open, windowStartMs, windowEndMs)) continue;
+    out.push({
+      id: r.id,
+      agent_id: normalizeAgentId(r.agent_id),
+      source: "agent_runs",
+      started_at: new Date(startMs).toISOString(),
+      completed_at: endMs === null ? null : new Date(endMs).toISOString(),
+      status,
+      open,
+      clipped_start: startMs < windowStartMs,
+      duration_ms: open ? null : durationOf(startMs, endMs, r.duration_ms),
+      records_processed: r.records_processed ?? 0,
+      error: clipError(r.error_message),
+    });
+  }
+  return out;
+}
+
+/** Folded workflow runs → windowed runs (sets clipped_start). */
+export function windowRuns(runs: TimelineRun[], windowStartMs: number, windowEndMs: number): TimelineRun[] {
+  const out: TimelineRun[] = [];
+  for (const r of runs) {
+    const startMs = tsMs(r.started_at);
+    if (startMs === null) continue;
+    if (!overlapsWindow(startMs, tsMs(r.completed_at), r.open, windowStartMs, windowEndMs)) continue;
+    out.push({ ...r, clipped_start: startMs < windowStartMs });
+  }
+  return out;
+}
+
+export function shapePulls(rows: PullRow[], windowStartMs: number, windowEndMs: number): TimelinePull[] {
+  const out: TimelinePull[] = [];
+  for (const r of rows) {
+    const startMs = tsMs(r.started_at);
+    if (startMs === null) continue;
+    const endMs = tsMs(r.completed_at);
+    const { status, open } = timelineStatus(r.status, r.completed_at);
+    if (!overlapsWindow(startMs, endMs, open, windowStartMs, windowEndMs)) continue;
+    out.push({
+      id: r.id,
+      feed_name: r.feed_name,
+      started_at: new Date(startMs).toISOString(),
+      completed_at: endMs === null ? null : new Date(endMs).toISOString(),
+      status,
+      open,
+      clipped_start: startMs < windowStartMs,
+      records_ingested: r.records_ingested ?? 0,
+      records_rejected: r.records_rejected ?? 0,
+      duration_ms: open ? null : durationOf(startMs, endMs, r.duration_ms),
+      error: clipError(r.error_message),
+    });
+  }
+  return out;
+}
+
+// ─── D1 reads ───────────────────────────────────────────────────────
+
+type ReadDb = Pick<D1Database, "prepare">;
+
+async function readAll<T>(stmt: D1PreparedStatement, tally: D1Tally): Promise<T[]> {
+  const r = await stmt.all<T>();
+  addToTally(tally, r.meta);
+  return r.results ?? [];
+}
+
+/**
+ * Build the timeline. Exported for tests; `nowMs` is injectable so window
+ * edges are deterministic.
+ */
+export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1Tally = newTally()): Promise<AgentTimelineData> {
+  const windowEndMs = nowMs;
+  const windowStartMs = nowMs - TIMELINE_WINDOW_MS;
+
+  const [windowRunRows, openRunRows, pullRows, activityRows, eventRows] = await Promise.all([
+    // 1. Runs started near/in the window. MULTI-INDEX OR on
+    //    idx_agent_runs_started; no ORDER BY (see file header).
+    readAll<RunRow>(db.prepare(
+      `SELECT id, agent_id, started_at, completed_at, duration_ms, status, records_processed, error_message
+         FROM agent_runs
+        WHERE (started_at >= ? AND started_at < ?) OR started_at >= ?
+        LIMIT ?`,
+    ).bind(...sinceRangeBinds(windowStartMs - RUN_LOOKBACK_MS), RUN_SQL_LIMIT), tally),
+
+    // 2. Still-open runs that started before (1)'s bound. The WHERE repeats
+    //    idx_agent_runs_open's partial-index predicate (migration 0320)
+    //    verbatim so SQLite can use it; INDEXED BY pins it (same reason as
+    //    lib/agent-runs-reaper.ts). The SQLite-text bound is a superset for
+    //    ISO rows, which only over-includes a handful of open rows.
+    readAll<RunRow>(db.prepare(
+      `SELECT id, agent_id, started_at, completed_at, duration_ms, status, records_processed, error_message
+         FROM agent_runs INDEXED BY idx_agent_runs_open
+        WHERE completed_at IS NULL AND status IN ('partial', 'running')
+          AND started_at >= ?`,
+    ).bind(toSqliteTs(nowMs - OPEN_RUN_LOOKBACK_MS)), tally),
+
+    // 3. Feed pulls started near/in the window (idx_feed_pulls_started).
+    readAll<PullRow>(db.prepare(
+      `SELECT id, feed_name, started_at, completed_at, duration_ms, status,
+              records_ingested, records_rejected, error_message
+         FROM feed_pull_history
+        WHERE (started_at >= ? AND started_at < ?) OR started_at >= ?
+        LIMIT ?`,
+    ).bind(...sinceRangeBinds(windowStartMs - PULL_LOOKBACK_MS), PULL_SQL_LIMIT), tally),
+
+    // 4. NEXUS workflow lifecycle. agent_activity_log also holds per-message
+    //    abuse-mailbox rows etc., so it is read ONLY through
+    //    idx_activity_agent (agent_id, created_at DESC), pinned.
+    readAll<ActivityRow>(db.prepare(
+      `SELECT id, event_type, message, metadata_json, created_at
+         FROM agent_activity_log INDEXED BY idx_activity_agent
+        WHERE agent_id = ? AND created_at >= ?
+        ORDER BY created_at ASC
+        LIMIT ?`,
+    ).bind(WORKFLOW_AGENT_ID, toSqliteTs(nowMs - WORKFLOW_LOOKBACK_MS), ACTIVITY_SQL_LIMIT), tally),
+
+    // 5. The one event edge (nexus → observer), idx_agent_events_type_created.
+    readAll<EventRow>(db.prepare(
+      `SELECT id, source_agent, target_agent, created_at, status
+         FROM agent_events
+        WHERE event_type = 'pivot_detected' AND created_at >= ?
+        ORDER BY created_at DESC
+        LIMIT ?`,
+    ).bind(toSqliteTs(windowStartMs), MAX_EVENTS + 1), tally),
+  ]);
+
+  const runs = [
+    ...shapeRuns([...windowRunRows, ...openRunRows], windowStartMs, windowEndMs),
+    ...windowRuns(foldWorkflowEvents(activityRows, nowMs), windowStartMs, windowEndMs),
+  ];
+  const boundedRuns = boundRuns(runs);
+
+  const pulls = boundNewest(shapePulls(pullRows, windowStartMs, windowEndMs), MAX_PULLS, (p) => p.started_at);
+
+  const events: TimelineEvent[] = [];
+  for (const e of eventRows) {
+    const ms = tsMs(e.created_at);
+    if (ms === null || ms < windowStartMs || ms > windowEndMs) continue;
+    events.push({
+      id: e.id,
+      event_type: "pivot_detected",
+      source_agent: e.source_agent,
+      target_agent: e.target_agent,
+      created_at: new Date(ms).toISOString(),
+      status: e.status ?? "pending",
+    });
+  }
+  const boundedEvents = boundNewest(events, MAX_EVENTS, (e) => e.created_at);
+
+  const generatedAt = new Date(nowMs).toISOString();
+  return {
+    window: "1h",
+    generated_at: generatedAt,
+    window_start: new Date(windowStartMs).toISOString(),
+    window_end: generatedAt,
+    runs: boundedRuns.runs,
+    pulls: pulls.items,
+    events: boundedEvents.items,
+    truncated: {
+      runs: boundedRuns.truncated || windowRunRows.length >= RUN_SQL_LIMIT || activityRows.length >= ACTIVITY_SQL_LIMIT,
+      pulls: pulls.truncated || pullRows.length >= PULL_SQL_LIMIT,
+      events: boundedEvents.truncated || eventRows.length > MAX_EVENTS,
+    },
+  };
+}
+
+// ─── Handler ────────────────────────────────────────────────────────
+
+export async function handleAgentTimeline(
+  request: Request,
+  env: Env,
+  execCtx?: Pick<ExecutionContext, "waitUntil">,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const windowParam = new URL(request.url).searchParams.get("window") ?? "1h";
+  if (windowParam !== "1h") {
+    return json({ success: false, error: "window must be 1h" }, 400, origin);
+  }
+  try {
+    const value = await cachedValue<AgentTimelineBody>(
+      env,
+      AGENT_TIMELINE_CACHE_KEY,
+      AGENT_TIMELINE_TTL_S,
+      async () => {
+        const tally = newTally();
+        const db = getReadSession(env, getDbContext(request));
+        const data = await computeAgentTimeline(db, Date.now(), tally);
+        recordD1Reads(env, "agents_timeline", tally);
+        return { success: true, data };
+      },
+      {
+        staleWhileRevalidate: {
+          freshSeconds: AGENT_TIMELINE_FRESH_S,
+          waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
+        },
+      },
+    );
+    return json(value, 200, origin);
+  } catch {
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}

@@ -263,3 +263,32 @@ describe("handleListAgents — latest-run mapping", () => {
     expect(sentinel!.status).toBe("error");
   });
 });
+
+describe("handleListAgents — Network view fields (2026-11-15)", () => {
+  it("returns exactly one navigator row (module row skipped, fast_tick folded in)", async () => {
+    const recent = new Date(Date.now() - 60_000).toISOString().slice(0, 19).replace("T", " ");
+    const { env } = makeEnv({
+      latestRuns: [{ agent_id: "fast_tick", status: "success", started_at: recent, completed_at: recent, duration_ms: 10, error_message: null }],
+    });
+    const body = await bodyOf(await handleListAgents(req(), env));
+    const nav = body.data.filter((a) => a.agent_id === "navigator");
+    expect(nav).toHaveLength(1);
+    expect(nav[0]!.last_run_at).toBe(recent);
+    expect(body.data.some((a) => a.agent_id === "fast_tick")).toBe(false);
+    const ids = body.data.map((a) => a.agent_id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("every row carries lifecycle from AgentModule.status", async () => {
+    const { agentModules } = await import("../src/agents");
+    const { env } = makeEnv();
+    const body = await bodyOf(await handleListAgents(req(), env));
+    for (const row of body.data) {
+      expect(["active", "paused", "shadow", "retired"]).toContain(row.lifecycle);
+      const mod = agentModules[row.agent_id as string];
+      if (mod) expect(row.lifecycle).toBe(mod.status);
+    }
+    expect(body.data.find((a) => a.agent_id === "brand_report")!.lifecycle).toBe("retired");
+    expect(body.data.find((a) => a.agent_id === "navigator")!.lifecycle).toBe("active");
+  });
+});
