@@ -9,6 +9,7 @@ import {
   handleAgentApiUsage, handleAgentConfig,
   handleResetAgentCircuit, handleUpdateAgentThreshold, handleToggleAgent,
 } from "../handlers/agents";
+import { handleAgentTimeline } from "../handlers/agentTimeline";
 
 export function registerAgentRoutes(router: RouterType<IRequest>): void {
   router.get("/api/agents", async (request: Request, env: Env) => {
@@ -20,6 +21,12 @@ export function registerAgentRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAgentStats(request, env);
+  });
+  // Registered before /api/agents/:name, which would otherwise match it.
+  router.get("/api/agents/timeline", async (request: Request, env: Env, execCtx: ExecutionContext) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAgentTimeline(request, env, execCtx);
   });
   router.get("/api/admin/agents/api-usage", async (request: Request, env: Env) => {
     const ctx = await requireStaff(request, env);

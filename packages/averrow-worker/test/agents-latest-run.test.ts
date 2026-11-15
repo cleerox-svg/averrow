@@ -263,3 +263,60 @@ describe("handleListAgents — latest-run mapping", () => {
     expect(sentinel!.status).toBe("error");
   });
 });
+
+describe("handleListAgents — Network view fields (2026-11-15)", () => {
+  it("returns exactly one navigator row (module row skipped, fast_tick folded in)", async () => {
+    const recent = new Date(Date.now() - 60_000).toISOString().slice(0, 19).replace("T", " ");
+    const { env } = makeEnv({
+      latestRuns: [{ agent_id: "fast_tick", status: "success", started_at: recent, completed_at: recent, duration_ms: 10, error_message: null }],
+    });
+    const body = await bodyOf(await handleListAgents(req(), env));
+    const nav = body.data.filter((a) => a.agent_id === "navigator");
+    expect(nav).toHaveLength(1);
+    expect(nav[0]!.last_run_at).toBe(recent);
+    expect(body.data.some((a) => a.agent_id === "fast_tick")).toBe(false);
+    const ids = body.data.map((a) => a.agent_id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("the navigator row reports its real circuit-breaker state from agent_configs", async () => {
+    const { env } = makeEnv({
+      agentConfigs: [{
+        agent_id: "navigator", enabled: 0, paused_reason: "auto:consecutive_failures",
+        consecutive_failures: 4, consecutive_failure_threshold: 3,
+        paused_at: "2026-11-15 10:00:00", paused_after_n_failures: 3,
+      }],
+    });
+    const body = await bodyOf(await handleListAgents(req(), env));
+    const nav = body.data.filter((a) => a.agent_id === "navigator");
+    expect(nav).toHaveLength(1);
+    expect(nav[0]).toMatchObject({
+      circuit_enabled: 0,
+      circuit_state: "tripped",
+      paused_reason: "auto:consecutive_failures",
+      consecutive_failures: 4,
+      consecutive_failure_threshold: 3,
+      paused_at: "2026-11-15 10:00:00",
+      paused_after_n_failures: 3,
+    });
+  });
+
+  it("a navigator with no agent_configs row reads closed", async () => {
+    const { env } = makeEnv({ agentConfigs: [] });
+    const body = await bodyOf(await handleListAgents(req(), env));
+    expect(body.data.find((a) => a.agent_id === "navigator")).toMatchObject({ circuit_enabled: 1, circuit_state: "closed", paused_reason: null });
+  });
+
+  it("every row carries lifecycle from AgentModule.status", async () => {
+    const { agentModules } = await import("../src/agents");
+    const { env } = makeEnv();
+    const body = await bodyOf(await handleListAgents(req(), env));
+    for (const row of body.data) {
+      expect(["active", "paused", "shadow", "retired"]).toContain(row.lifecycle);
+      const mod = agentModules[row.agent_id as string];
+      if (mod) expect(row.lifecycle).toBe(mod.status);
+    }
+    expect(body.data.find((a) => a.agent_id === "brand_report")!.lifecycle).toBe("retired");
+    expect(body.data.find((a) => a.agent_id === "navigator")!.lifecycle).toBe("active");
+  });
+});

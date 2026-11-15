@@ -1,7 +1,7 @@
 import { json } from "../lib/cors";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { executeAgent, resolveApproval, PROTECTED_FROM_CIRCUIT_BREAKER } from "../lib/agentRunner";
-import type { AgentName, TriggerType } from "../lib/agentRunner";
+import type { AgentName, AgentStatus, TriggerType } from "../lib/agentRunner";
 import { agentModules, trustbotAgent } from "../agents";
 import { BudgetManager } from "../lib/budgetManager";
 import { handler, parsePagination, parseFilters, buildWhereClause, paginatedResponse, success, error, parseBody } from "../lib/handler-utils";
@@ -16,6 +16,7 @@ function getAgentDefinitions(): Array<{
   color: string;
   trigger: TriggerType;
   requiresApproval: boolean;
+  lifecycle: AgentStatus;
 }> {
   return Object.values(agentModules).map(mod => ({
     name: mod.name,
@@ -24,6 +25,11 @@ function getAgentDefinitions(): Array<{
     color: mod.color,
     trigger: mod.trigger,
     requiresApproval: mod.requiresApproval ?? false,
+    // AgentModule.status (AGENT_STANDARD §5) — descriptive lifecycle intent,
+    // NOT a dispatch gate (CLAUDE.md §6). Surfaced so the Agents UI can
+    // collapse retired modules; defaults to 'active' for a module that
+    // omits it at runtime.
+    lifecycle: mod.status ?? 'active',
   }));
 }
 
@@ -41,13 +47,15 @@ const AGENT_SCHEDULES: Record<string, string> = {
   navigator: "5m (cron)",
 };
 
-// ─── Navigator — synthetic agent definition ─────────────────────
+// ─── Navigator — folded agent row ───────────────────────────────
 //
-// Navigator runs on its own */5 cron and is NOT in agentModules (it's a
-// cron handler, not an AgentModule instance — FC observes it but does
-// not dispatch). We synthesize its /api/agents row here so the UI grid
-// treats it like any other agent. Historical rows use agent_id='fast_tick';
-// new rows use 'navigator' — both are aggregated below.
+// Navigator runs on its own */5 cron. It IS registered in agentModules
+// (`agents/index.ts`, `cron/navigator.ts` navigatorAgent — FC observes it
+// but does not dispatch it), but its run history spans two agent_ids:
+// historical rows use agent_id='fast_tick', new rows use 'navigator'.
+// handleListAgents therefore skips the module-derived navigator row and
+// emits ONE folded row that aggregates both ids (before 2026-11-15 it
+// emitted both, so /api/agents returned Navigator twice).
 const NAVIGATOR_IDS = ['navigator', 'fast_tick'] as const;
 const NAVIGATOR_DEF = {
   name: 'navigator',
@@ -57,10 +65,15 @@ const NAVIGATOR_DEF = {
   trigger: 'scheduled' as const,
   requiresApproval: false,
 };
+/** Read at call time, never at module load: agents/index.ts imports modules
+ *  that import this file, so a top-level agentModules read hits the TDZ. */
+function navigatorLifecycle(): AgentStatus {
+  return agentModules['navigator']?.status ?? 'active';
+}
 
 // ─── List all agent definitions + their latest run ──────────────
 export const handleListAgents = handler(async (_request, env, ctx) => {
-  // KV cache: 8 parallel queries — cache for 5 minutes. v4 prefix
+  // KV cache: 8 parallel queries — cached 900s (see the put below). v5 prefix
   // invalidates prior shapes:
   //   v1 — pre-recent_ticks (no new field at all)
   //   v2 — recent_ticks present but emitted with `trigger` GROUP BY
@@ -68,7 +81,9 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   //         handler 500'd and the response was never cached.
   //   v3 — pre outputs_per_hour / errors_per_hour. Cards on /agents-v3
   //         could only render single-series sparklines.
-  const cacheKey = 'agents_list:v4';
+  //   v4 — Navigator listed twice (module row + folded synthetic row) and
+  //         no `lifecycle` field.
+  const cacheKey = 'agents_list:v5';
   const cached = await env.CACHE.get(cacheKey);
   if (cached) {
     recordD1Reads(env, "agents_list", newTally());
@@ -380,7 +395,8 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     return ageMs < twoHours ? "active" : "idle";
   }
 
-  const agents = getAgentDefinitions().map((def) => {
+  // Navigator is emitted once, below, as the folded navigator+fast_tick row.
+  const agents = getAgentDefinitions().filter((def) => def.name !== NAVIGATOR_DEF.name).map((def) => {
     const stats = statsMap.get(def.name);
     const latestRun = latestRunMap.get(def.name);
     const config = configMap.get(def.name);
@@ -413,6 +429,7 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
       color: def.color,
       trigger: def.trigger,
       requiresApproval: def.requiresApproval,
+      lifecycle: def.lifecycle,
       status: deriveStatus(def.name),
       schedule: AGENT_SCHEDULES[def.name] ?? "-",
       jobs_24h: wf ? wf.dispatched + wf.dispatch_failed + wf.cooldown_skipped : (stats?.jobs_24h ?? 0),
@@ -445,9 +462,11 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
 
   // Synthesize Navigator — aggregate rows from both the current and legacy
   // agent_ids. Latest-run picks whichever ID has the most recent started_at.
-  // Navigator is not in agent_configs (no circuit breaker), so fields default
-  // to an always-enabled 'closed' state. deriveStatus uses whichever ID had
-  // the latest run.
+  // Circuit-breaker fields come from agent_configs['navigator'], exactly as
+  // for module rows (the breaker keys on the current agent_id, never the
+  // legacy 'fast_tick').
+  const navConfig = configMap.get(NAVIGATOR_DEF.name);
+  const navTripped = navConfig?.enabled === 0 && navConfig.paused_reason === 'auto:consecutive_failures';
   const navLatest = (() => {
     const candidates = NAVIGATOR_IDS.map(id => latestRunMap.get(id)).filter((r): r is NonNullable<typeof r> => !!r);
     if (candidates.length === 0) return undefined;
@@ -495,6 +514,7 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     color: NAVIGATOR_DEF.color,
     trigger: NAVIGATOR_DEF.trigger,
     requiresApproval: NAVIGATOR_DEF.requiresApproval,
+    lifecycle: navigatorLifecycle(),
     status: navStatus,
     schedule: AGENT_SCHEDULES.navigator ?? '5m (cron)',
     jobs_24h: navJobs,
@@ -534,14 +554,16 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     last_output_at: navLastOutput,
     avg_duration_ms: navAvgDur,
     dispatch_source: 'agent_runs' as const,
-    // Navigator has no circuit breaker — FC observes, does not manage.
-    circuit_enabled: 1,
-    circuit_state: 'closed',
-    paused_reason: null,
-    consecutive_failures: 0,
-    consecutive_failure_threshold: null,
-    paused_at: null,
-    paused_after_n_failures: null,
+    // Navigator runs through executeAgent and is NOT in
+    // PROTECTED_FROM_CIRCUIT_BREAKER, so its breaker can trip or be paused
+    // like any module's: read its agent_configs row the same way.
+    circuit_enabled: navConfig?.enabled ?? 1,
+    circuit_state: navTripped ? 'tripped' : (navConfig?.enabled === 0 ? 'manual_pause' : 'closed'),
+    paused_reason: navConfig?.paused_reason ?? null,
+    consecutive_failures: navConfig?.consecutive_failures ?? 0,
+    consecutive_failure_threshold: navConfig?.consecutive_failure_threshold ?? null,
+    paused_at: navConfig?.paused_at ?? null,
+    paused_after_n_failures: navConfig?.paused_after_n_failures ?? null,
   });
 
   // Attribute real rows_read from each of the 9 .all() queries via
@@ -629,7 +651,7 @@ export async function handleTriggerAgent(
     const result = await executeAgent(env, mod, body.input ?? {}, userId, "manual");
 
     // A manual run changes the 24h counts / last-run — reflect immediately.
-    await env.CACHE.delete('agents_list:v4');
+    await env.CACHE.delete('agents_list:v5');
 
     return success(result, origin);
   } catch (err) {
@@ -985,7 +1007,7 @@ export async function handleResetAgentCircuit(
     ]);
 
     // Reflect the cleared breaker immediately (list is KV-cached 5 min).
-    await env.CACHE.delete('agents_list:v4');
+    await env.CACHE.delete('agents_list:v5');
 
     return json({ success: true, data: { agent_id: agentId } }, 200, origin);
   } catch (err) {
@@ -1048,7 +1070,7 @@ export async function handleToggleAgent(
     ).bind(enabled, pausedReason, enabled, enabled, enabled, agentId).run();
 
     // Reflect the pause/resume immediately (list is KV-cached 5 min).
-    await env.CACHE.delete('agents_list:v4');
+    await env.CACHE.delete('agents_list:v5');
 
     return json({ success: true, data: { agent_id: agentId, enabled: !!enabled } }, 200, origin);
   } catch (err) {
