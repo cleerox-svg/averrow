@@ -21,6 +21,8 @@
  *   - rules using a field we do not store (cookies, headers, anything
  *     unknown), keyword selections, aggregations (`|` in the condition), or
  *     a non-exact field under `not` are dropped with a counted reason;
+ *   - a rule whose match value carries a credential-shaped token
+ *     (isTokenLike) is dropped — we do not vendor third-party secrets;
  *   - third-party strings are bounded, never edited: an id outside
  *     letters / digits / `._&-`, a title over MAX_TITLE_LENGTH or a value
  *     over MAX_VALUE_LENGTH drops the rule; tags beyond MAX_TAGS or longer
@@ -50,6 +52,38 @@ export const MAX_TAGS = 20;
 export const MAX_TAG_LENGTH = 100;
 /** Rule ids: letters (any script), digits and `._&-` only. */
 export const RULE_ID_PATTERN = /^[\p{L}\p{N}._&-]{1,120}$/u;
+
+/**
+ * Credential-shaped strings. Some kits embed a live download token or API key
+ * in a URL the rule matches on (e.g. a Firebase `?alt=media&token=<uuid>`).
+ * We do not carry third-party credentials in the repository, so a rule with
+ * such a value is dropped ("token-like value"). Deliberately narrow, so
+ * ordinary indicators survive:
+ *   - a `token` / `key` / `apikey` / `secret` / `password` / `signature` /
+ *     `sig` query parameter, optionally with one `word_` prefix
+ *     (`access_token`, `api_key`, `sentry_key`), after `?`, `&`, `;`, a
+ *     quote, whitespace or at the start, whose value starts with ≥ 16 hex /
+ *     base64 / uuid characters including at least one digit;
+ *   - well-known key prefixes: AWS `AKIA…`, Google `AIza…`, Stripe
+ *     `sk_live_…`, GitHub `ghp_…`, Slack `xoxb-` / `xoxp-`.
+ */
+const TOKEN_PARAM = /(?:^|[?&;\s"'])(?:[a-z0-9]+_)?(?:token|apikey|key|secret|password|signature|sig)=([A-Za-z0-9+/_=-]{16,})/gi;
+const KEY_PREFIXES: readonly RegExp[] = [
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\bAIza[0-9A-Za-z_-]{35}\b/,
+  /\bsk_live_[0-9A-Za-z]{16,}/,
+  /\bghp_[0-9A-Za-z]{36}\b/,
+  /\bxox[bp]-[0-9A-Za-z-]{10,}/,
+];
+
+export function isTokenLike(value: string): boolean {
+  TOKEN_PARAM.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TOKEN_PARAM.exec(value)) !== null) {
+    if (/[0-9]/.test(m[1]!)) return true;
+  }
+  return KEY_PREFIXES.some((re) => re.test(value));
+}
 
 const COMPARATORS: Record<string, IokOp> = {
   contains: "contains",
@@ -118,8 +152,10 @@ function compileFieldMatch(key: string, value: unknown): IokFieldMatch {
   const values = rawValues.map((rv) => {
     if (rv === null || rv === undefined) drop("null match value");
     let s = scalarString(rv);
+    if (isTokenLike(s)) drop("token-like value");
     if (base64) s = Buffer.from(s, "utf8").toString("base64");
     if (s.length > MAX_VALUE_LENGTH) drop("match value too long");
+
     if (op === "re") {
       const t = translateRe2(s);
       if (t.flags) flags = "i";

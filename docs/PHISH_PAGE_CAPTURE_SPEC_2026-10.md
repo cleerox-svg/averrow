@@ -108,9 +108,11 @@ fetching: the evidence is what the capture already holds.
 - **Ruleset:** vendored and compiled at dev time by
   `scripts/vendor-iok-rules.ts` (`pnpm vendor:iok --src <IOK checkout>`) into
   `src/data/iok/rules.json`, with `LICENSE` and `SOURCE.md` (origin, commit,
-  counts, drop reasons, refresh steps). Commit `142f762a`: 266 rules, 260
-  kept, 6 dropped (2 need `headers`, 1 needs `cookies`, 2 have a regex that
-  is not on the allowlist, 1 negates a non-exact field). About 130 KB.
+  counts, drop reasons, refresh steps). Commit `142f762a`: 266 rules, 258
+  kept, 8 dropped (2 need `headers`, 1 needs `cookies`, 2 have a regex that
+  is not on the allowlist, 1 negates a non-exact field, 2 carry a
+  credential-shaped token in a match value — third-party tokens are not
+  vendored). About 130 KB.
 - **Evidence** (`buildIokEvidence`, `lib/iok-engine.ts`):
 
   | IOK field | What we evaluate | Fidelity |

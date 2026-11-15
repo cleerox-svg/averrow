@@ -9,7 +9,7 @@ Rules: IOK by phish.report (ODbL). Source: <https://phish.report/IOK>.
 | Vendored | 2026-11-15 by `scripts/vendor-iok-rules.ts` |
 | Licence | Open Database License (ODbL) 1.0 — full text in `LICENSE` (this directory) |
 | Attribution | "Rules: IOK by phish.report (ODbL)" |
-| `rules.json` | 130443 bytes, format 1 |
+| `rules.json` | 129941 bytes, format 1 |
 
 ## What this directory is
 
@@ -34,17 +34,18 @@ and §4.6 applies: offer this `rules.json` (or the conversion scripts).
 ## Counts
 
 - Indicators in the source: **266**
-- Kept (evaluable on stored capture fields): **260**
-- Dropped: **6**
+- Kept (evaluable on stored capture fields): **258**
+- Dropped: **8**
 
 | Drop reason | Rules |
 |---|---|
 | regex not on allowlist | 2 |
 | field not stored: headers | 2 |
+| token-like value | 2 |
 | field not stored: cookies | 1 |
 | negated non-exact field: html | 1 |
 
-Dropped rules: `cazanova-cookie`, `class-attribute-obfuscation`, `data-content-attribute-obfuscation`, `facebook-parachute`, `fake-404-page`, `kimsuky-nginx-fake-error-9b43f670`.
+Dropped rules: `cazanova-cookie`, `class-attribute-obfuscation`, `data-content-attribute-obfuscation`, `facebook-parachute`, `fake-404-page`, `generic-email-ec34bc68`, `kimsuky-nginx-fake-error-9b43f670`, `transferwise-d777126`.
 
 ## Fields
 
@@ -106,12 +107,16 @@ The rules are third-party input. Before committing a refresh:
 1. Read the `rules.json` diff. Review every new or changed rule by hand:
    what it matches, which fields it reads, whether its strings are specific
    enough to mean a kit.
-2. Read the vendor output for dropped rules. A rule dropped as
+2. A rule dropped as "token-like value" carries a credential-shaped string
+   (a kit's download token or client key) in a match value. It stays
+   dropped: third-party tokens are not vendored, and secret scanning would
+   flag them.
+3. Read the vendor output for dropped rules. A rule dropped as
    "regex not on allowlist" stays dropped unless you add its pattern on
    purpose: read the pattern, time it on adversarial input at 256K chars
    (repeat its own prefix; near-misses of each quantified part), and add an
    entry to `src/lib/iok-regex-allowlist.ts` with the rule id, this commit
    and the measured time. More than a few milliseconds: leave it dropped.
    If a listed pattern changed upstream, its old entry no longer applies.
-3. Re-read the upstream `LICENSE` and README licence section, and update
+4. Re-read the upstream `LICENSE` and README licence section, and update
    `docs/licences/iok.md` if the terms changed.

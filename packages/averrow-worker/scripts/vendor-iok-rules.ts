@@ -214,14 +214,18 @@ The rules are third-party input. Before committing a refresh:
 1. Read the \`rules.json\` diff. Review every new or changed rule by hand:
    what it matches, which fields it reads, whether its strings are specific
    enough to mean a kit.
-2. Read the vendor output for dropped rules. A rule dropped as
+2. A rule dropped as "token-like value" carries a credential-shaped string
+   (a kit's download token or client key) in a match value. It stays
+   dropped: third-party tokens are not vendored, and secret scanning would
+   flag them.
+3. Read the vendor output for dropped rules. A rule dropped as
    "regex not on allowlist" stays dropped unless you add its pattern on
    purpose: read the pattern, time it on adversarial input at 256K chars
    (repeat its own prefix; near-misses of each quantified part), and add an
    entry to \`src/lib/iok-regex-allowlist.ts\` with the rule id, this commit
    and the measured time. More than a few milliseconds: leave it dropped.
    If a listed pattern changed upstream, its old entry no longer applies.
-3. Re-read the upstream \`LICENSE\` and README licence section, and update
+4. Re-read the upstream \`LICENSE\` and README licence section, and update
    \`docs/licences/iok.md\` if the terms changed.
 `;
 }

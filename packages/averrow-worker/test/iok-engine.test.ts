@@ -28,7 +28,7 @@ import {
   type IokRuleSet,
 } from "../src/lib/iok-engine";
 import { IOK_RULESET } from "../src/lib/iok-ruleset";
-import { compileIokRule, parseCondition } from "../scripts/iok-compile";
+import { compileIokRule, isTokenLike, parseCondition } from "../scripts/iok-compile";
 import { IOK_REGEX_ALLOWLIST, isAllowedIokRegex } from "../src/lib/iok-regex-allowlist";
 import { compileIndicators, renderSourceMd, serializeRuleSet, IOK_ATTRIBUTION } from "../scripts/vendor-iok-rules";
 
@@ -216,6 +216,24 @@ describe("IOK compiler — vendor-time conversion and drops", () => {
     expect(r.tags).not.toContain(tags[1]);
     // A 300-char title is kept whole, never trimmed.
     expect(compiled({ ...doc, title: "T".repeat(300) }).title).toBe("T".repeat(300));
+  });
+
+  it("drops a rule whose value carries a credential-shaped token; keeps ordinary indicators", () => {
+    const uuid = ["0a1b2c3d", "4e5f", "4a6b", "8c7d", "9e0f1a2b3c4d"].join("-");
+    const mk = (v: string) => ({ title: "t", detection: { a: { "requests|contains": v }, condition: "a" } });
+    expect(compileIokRule("x", mk(`bootstrap.min.css?alt=media&token=${uuid}`))).toEqual({ ok: false, reason: "token-like value" });
+    expect(compileIokRule("x", mk(`?sentry_key=${"d7".repeat(16)}&sentry_version=7`))).toEqual({ ok: false, reason: "token-like value" });
+    expect(compileIokRule("x", mk("/wp-login.php")).ok).toBe(true);
+    for (const bad of [
+      `https://h/x?key=${"A1b2".repeat(5)}`, `a&signature=${"0f".repeat(10)}`, `sig=${"9a".repeat(8)}`,
+      `x?api_key=${"k9".repeat(12)}`, `password=${"p4ss".repeat(4)}`, `secret=${"s3".repeat(9)}`,
+      `id AKIA${"A1".repeat(8)} x`, `AIza${"b2".repeat(17)}c`, `sk_live_${"c3".repeat(8)}`, `ghp_${"d4".repeat(18)}`, `xoxb-${"1234567890"}-abc`,
+    ]) expect(isTokenLike(bad), bad).toBe(true);
+    for (const ok of [
+      "/wp-login.php", "choose.php", "?token=abc", "token=short1", "?key=value", "monkey=0123456789abcdef0123",
+      "63c2690a6e94180ff183110c4cd9ff7719014722", "name=\"X-CSRF-Token\" value=\"63c2690a6e94180ff183110c4cd9ff77\"",
+      "?token=abcdefghijklmnopqrstuvwx", "/ResourceConfig/urlConfig.json", "https://cdn.test/a.js?v=1234567890abcdef1234",
+    ]) expect(isTokenLike(ok), ok).toBe(false);
   });
 
   it("keeps a negated EXACT field (hostname / dom): `kit and not realDomain`", () => {
@@ -487,6 +505,15 @@ describe("vendored IOK ruleset (src/data/iok)", () => {
     expect(source).toContain(rs.source.commit);
   });
 
+  it("carries no credential-shaped string (no third-party tokens in the repository)", () => {
+    const text = readFileSync(resolve(DATA, "rules.json"), "utf8");
+    expect(text).not.toMatch(/alt=media&token=/);
+    expect(text).not.toMatch(/[?&;"'](?:[a-z0-9]+_)?(?:token|apikey|key|secret|password|signature|sig)=[A-Za-z0-9+/_=-]{16,}/i);
+    expect(text).not.toMatch(/AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|sk_live_[0-9A-Za-z]{16,}|ghp_[0-9A-Za-z]{36}|xox[bp]-[0-9A-Za-z-]{10,}/);
+    expect(rs.stats.dropped_by_reason["token-like value"]).toBe(2);
+    expect(rs.rules.some((r) => r.id === "generic-email-ec34bc68" || r.id === "transferwise-d777126")).toBe(false);
+  });
+
   it("counts are consistent and ids unique", () => {
     expect(rs.stats.kept).toBe(rs.rules.length);
     expect(rs.stats.kept + rs.stats.dropped).toBe(rs.stats.total);
@@ -515,6 +542,7 @@ describe("vendored IOK ruleset (src/data/iok)", () => {
             expect(m.v.length).toBeGreaterThan(0);
             if (m.op === "re") for (const v of m.v) expect(assessRegexSafety(v)).toEqual({ ok: true });
             for (const v of m.v) expect(v.length).toBeLessThanOrEqual(4096);
+            for (const v of m.v) expect(isTokenLike(v), `${r.id}: token-like value`).toBe(false);
           }
         }
       }

@@ -81,7 +81,7 @@ License".
 - Do not add our own rules to `rules.json`. Anything put in that file is
   licensed ODbL with it (§4.4d). Averrow-authored rules belong in a separate
   file.
-- The converted copy leaves out rule descriptions and references, drops 6 of 266 rules and expands `1 of` / `all of` conditions; titles, ids and match values are unchanged (`src/data/iok/SOURCE.md` lists the alterations).
+- The converted copy leaves out rule descriptions and references, drops 8 of 266 rules (two of them because a match value carries a credential-shaped token) and expands `1 of` / `all of` conditions; titles, ids and match values are unchanged (`src/data/iok/SOURCE.md` lists the alterations).
 - A rule match is a signature hit, not a verdict. Matches are context only:
   no alerts, no severity or triage changes, no takedown text.
 - This is our reading of the licence, not legal advice. Re-read the upstream
