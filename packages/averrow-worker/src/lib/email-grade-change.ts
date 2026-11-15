@@ -46,8 +46,8 @@
  * keeps SPF at 0 for ≤ 30 days after an unregistered include target is
  * registered (takeover guard, email-security.ts). A grade change explained
  * only by that finding appearing or lapsing (root record unchanged) is
- * suppressed: the current scan is re-scored with the previous scan's
- * newly-registered finding. So a takeover never sends an "improved"
+ * suppressed: the current scan is re-scored with the previous scan's whole
+ * dangling verdict family (unregistered / unverified / newly registered). So a takeover never sends an "improved"
  * notification, neither when it happens nor when the 30 days run out.
  * Removing the include from the domain's own record changes the root facts
  * and does alert; an include removed further down the tree (a vendor's
@@ -299,19 +299,9 @@ function hasNewlyRegistered(spf: SpfResult): boolean {
   return (spf.findings ?? []).some((f) => f.code === 'include_target_newly_registered');
 }
 
-/** `current` with its newly-registered finding replaced by `previous`'s. */
-function holdNewlyRegistered(current: SpfResult, previous: SpfResult): SpfResult {
-  return {
-    ...current,
-    findings: [
-      ...(current.findings ?? []).filter((f) => f.code !== 'include_target_newly_registered'),
-      ...(previous.findings ?? []).filter((f) => f.code === 'include_target_newly_registered'),
-    ],
-  };
-}
-
-/** `current` with its dangling-include verdict (unregistered / unverified)
- *  replaced by `previous`'s; every other part of `current` is kept. */
+/** `current` with its whole dangling-include verdict family (unregistered /
+ *  unverified / newly registered) replaced by `previous`'s; every other part
+ *  of `current` is kept. */
 function holdDanglingVerdict(current: SpfResult, previous: SpfResult): SpfResult {
   return {
     ...current,
@@ -390,10 +380,13 @@ export function isSpfUncertaintyOnlyGradeChange(
     held = true;
   }
   // A newly-registered include target appearing or lapsing (takeover guard)
-  // with the domain's own record unchanged is held the same way.
+  // with the domain's own record unchanged: the WHOLE dangling family is
+  // swapped from the previous scan (as above), so an appearing finding
+  // (previous unregistered) keeps SPF at 0 and a lapsing one re-adds it —
+  // either way any other change in the same scan still shows.
   if (hasNewlyRegistered(previous.spf) !== hasNewlyRegistered(currentSpf)
       && sameSpfRootFacts(previous.spf, currentSpf)) {
-    currentSpf = holdNewlyRegistered(currentSpf, previous.spf);
+    currentSpf = holdDanglingVerdict(currentSpf, previous.spf);
     held = true;
   }
   const pc = spfCertainty(previous.spf);

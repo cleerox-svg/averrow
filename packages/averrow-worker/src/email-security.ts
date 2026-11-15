@@ -446,7 +446,7 @@ export async function checkSpf(
   let rdapRegistered: string | null = null;
   if (walk && walk.nxdomainAt.length > 0) {
     if (rdap) {
-      const confirmed = await confirmDanglingInclude(result, walk, lookup, rdap, remaining());
+      const confirmed = await confirmDanglingInclude(result, walk, lookup, rdap, remaining(), prevOnce);
       result = confirmed.result;
       rdapRegistered = confirmed.registered;
     } else if (prevOnce) {
@@ -505,7 +505,9 @@ async function flagNewlyRegisteredIncludes(
     if (prior.size === 0) return result;
     const flaggedNow = new Set<string>();
     for (const f of result.findings ?? []) {
-      if (DANGLING_VERDICT_CODES.has(f.code)) for (const n of f.names ?? []) flaggedNow.add(n);
+      if (DANGLING_VERDICT_CODES.has(f.code) || f.code === 'include_target_newly_registered') {
+        for (const n of f.names ?? []) flaggedNow.add(n);
+      }
     }
     const under = (names: readonly string[], reg: string) => names.some((t) => confidentRegistrable(t) === reg);
     let probes = 0;
@@ -564,7 +566,12 @@ function withFinding(result: SpfResult, finding: SpfFinding): SpfResult {
  * `registered` adds nothing. `remainingMs` (capped scans) bounds the DNS
  * probes, then the RDAP lookup gets min(what is left, SPF_RDAP_TIMEOUT_MS);
  * under SPF_RDAP_MIN_REMAINING_MS left the candidate is reported unverified
- * without a lookup. Never throws.
+ * without a lookup. When RDAP is `unknown` or skipped for budget and the
+ * previous scan had `include_target_unregistered` /
+ * `include_target_newly_registered` (still within its 30 days) for the SAME
+ * candidate, that verdict is carried forward (newly registered keeps its
+ * first-seen day) instead of `unverified`, so one flaky lookup never erases
+ * the memory the takeover guard needs (previousVerdictFor). Never throws.
  */
 async function confirmDanglingInclude(
   result: SpfResult,
@@ -572,6 +579,7 @@ async function confirmDanglingInclude(
   lookup: SpfTxtLookup,
   rdap: SpfRdapCheck,
   remainingMs: number | null,
+  previous?: PreviousSpfLoader,
 ): Promise<{ result: SpfResult; registered: string | null }> {
   const deadline = remainingMs === null ? undefined : Date.now() + remainingMs;
   try {
@@ -579,16 +587,16 @@ async function confirmDanglingInclude(
     if (!candidate) return { result, registered: null };
     const names = validNames([candidate.registrable]);
     const left = deadline === undefined ? SPF_RDAP_TIMEOUT_MS : deadline - Date.now();
-    if (left < SPF_RDAP_MIN_REMAINING_MS) {
-      return { result: withFinding(result, { code: 'include_target_unverified', names }), registered: null };
-    }
+    const notConfirmed = async (): Promise<{ result: SpfResult; registered: null }> => {
+      const carried = previous ? await previousVerdictFor(previous, candidate.registrable) : null;
+      return { result: withFinding(result, carried ?? { code: 'include_target_unverified', names }), registered: null };
+    };
+    if (left < SPF_RDAP_MIN_REMAINING_MS) return notConfirmed();
     const verdict = await rdap(candidate.registrable, Math.min(left, SPF_RDAP_TIMEOUT_MS));
     if (verdict === 'unregistered') {
       return { result: withFinding(result, { code: 'include_target_unregistered', names }), registered: null };
     }
-    if (verdict === 'unknown') {
-      return { result: withFinding(result, { code: 'include_target_unverified', names }), registered: null };
-    }
+    if (verdict === 'unknown') return notConfirmed();
     return { result, registered: candidate.registrable };
   } catch {
     // never fail the scan over the extra check
@@ -597,13 +605,39 @@ async function confirmDanglingInclude(
 }
 
 /**
+ * The previous scan's certain dangling verdict for `name`, as a finding to
+ * carry forward: `include_target_unregistered`, or
+ * `include_target_newly_registered` with its first-seen day while it is
+ * still within SPF_NEWLY_REGISTERED_HOLD_DAYS. Null otherwise (or on a
+ * read error).
+ */
+async function previousVerdictFor(previous: PreviousSpfLoader, name: string): Promise<SpfFinding | null> {
+  try {
+    const prev = await previous();
+    const findings = prev?.findings ?? [];
+    const has = (f: SpfFinding) => (f.names ?? []).includes(name);
+    if (findings.some((f) => f.code === 'include_target_unregistered' && has(f))) {
+      return { code: 'include_target_unregistered', names: validNames([name]) };
+    }
+    const newly = findings.find((f) => f.code === 'include_target_newly_registered' && has(f));
+    if (newly && isActiveNewlyRegistered(newly, Date.now())) {
+      return { ...newlyFinding(name, newly.count ?? utcDayNumber(Date.now())) };
+    }
+  } catch {
+    // no history → unverified
+  }
+  return null;
+}
+
+/**
  * For a scan made WITHOUT an RDAP checker but with a previous-scan loader
  * (handlers/qualifiedReport.ts, a brand-scoped lead report): carry the
  * previous scan's `include_target_unregistered` / `include_target_unverified`
- * finding forward as-is when the same registrable domain is still a
- * candidate in this walk (an NXDOMAIN include target whose registrable
- * domain is itself NXDOMAIN — ≤ 1 DoH probe, no RDAP). Otherwise nothing is
- * added. One D1 read, made only when the walk saw an NXDOMAIN target.
+ * / in-force `include_target_newly_registered` (first-seen day kept)
+ * finding forward when the same registrable domain is still a candidate in
+ * this walk (an NXDOMAIN include target whose registrable domain is itself
+ * NXDOMAIN — ≤ 1 DoH probe, no RDAP). Otherwise nothing is added. Uses the
+ * scan's memoised previous-scan read.
  * Never throws.
  */
 async function carryDanglingVerdictForward(
@@ -615,7 +649,8 @@ async function carryDanglingVerdictForward(
 ): Promise<SpfResult> {
   try {
     const prev = await previous();
-    const finding = (prev?.findings ?? []).find((f) => DANGLING_VERDICT_CODES.has(f.code));
+    const finding = (prev?.findings ?? []).find((f) => DANGLING_VERDICT_CODES.has(f.code)
+      || isActiveNewlyRegistered(f, Date.now()));
     const name = finding?.names?.[0];
     if (!finding || !name) return result;
     const targets = walk.nxdomainAt.filter((t) => confidentRegistrable(t) === name);
@@ -623,6 +658,9 @@ async function carryDanglingVerdictForward(
     const deadline = remainingMs === null ? undefined : Date.now() + remainingMs;
     const candidate = await pickDanglingCandidate(targets, lookup, { deadline });
     if (!candidate || candidate.registrable !== name) return result;
+    if (finding.code === 'include_target_newly_registered') {
+      return withFinding(result, newlyFinding(name, finding.count ?? utcDayNumber(Date.now())));
+    }
     return withFinding(result, { code: finding.code, names: validNames([name]) });
   } catch {
     return result;
@@ -634,11 +672,20 @@ export function hasUnregisteredInclude(spf: SpfResult): boolean {
   return (spf.findings ?? []).some((f) => f.code === 'include_target_unregistered');
 }
 
+/** A newly-registered finding is in force: its first-seen day (`count`)
+ *  is at most SPF_NEWLY_REGISTERED_HOLD_DAYS before `nowMs` (no day stored
+ *  → in force). Older ones — e.g. carried unchanged through root-lookup
+ *  failures — score nothing, the same live and on a stored row. */
+export function isActiveNewlyRegistered(f: SpfFinding, nowMs: number): boolean {
+  return f.code === 'include_target_newly_registered'
+    && (typeof f.count !== 'number' || utcDayNumber(nowMs) - f.count <= SPF_NEWLY_REGISTERED_HOLD_DAYS);
+}
+
 /** An include target an earlier scan found unregistered is now registered
  *  (rubric 4: SPF scores 0 for up to 30 days — the new owner can send as
  *  the brand until someone confirms who registered it). */
-export function hasNewlyRegisteredInclude(spf: SpfResult): boolean {
-  return (spf.findings ?? []).some((f) => f.code === 'include_target_newly_registered');
+export function hasNewlyRegisteredInclude(spf: SpfResult, nowMs: number = Date.now()): boolean {
+  return (spf.findings ?? []).some((f) => isActiveNewlyRegistered(f, nowMs));
 }
 
 /** An included record ends in `+all` (rubric 4: SPF scores 0, like a root
@@ -778,7 +825,9 @@ export function storedRowFromResult(result: EmailSecurityResult): StoredEmailSca
  * whose SPF was actually CHECKED (skipping "not checked" rows, so a run of
  * root failures keeps carrying the last real result and never becomes the
  * grade-change baseline), or null when there is none. One read on
- * idx_ess_brand_scanned, made only on a root lookup failure.
+ * idx_ess_brand_scanned, at most once per scan (checkSpf memoises it), made
+ * on a root lookup failure or when the domain's own record has at least one
+ * include / redirect (takeover guard, dangling-verdict carry-forward).
  */
 export function previousSpfLoader(db: D1Database, brandId: number | string): PreviousSpfLoader {
   return async () => {
@@ -1105,6 +1154,7 @@ export function spfFindingRecommendations(spf: SpfResult): string[] {
         recs.push(`CRITICAL: An SPF include points at ${f.names && f.names.length > 0 ? f.names[0] : 'a domain'}, which is not registered. Anyone who registers it can send mail as this domain. Remove the include.`);
         break;
       case 'include_target_newly_registered':
+        if (!isActiveNewlyRegistered(f, Date.now())) break; // past its 30 days: scores nothing
         recs.push(`CRITICAL: ${f.names && f.names.length > 0 ? f.names[0] : 'An SPF include target'} was unregistered on an earlier scan and is now registered. Confirm who registered it, or remove the include.`);
         break;
       case 'include_target_unverified':
