@@ -24,7 +24,7 @@ import { resolve, basename } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { compileIokRule, reasonBucket } from "./iok-compile";
-import { IOK_FIELD_FIDELITY, IOK_UNSTORED_FIELDS, type IokRule, type IokRuleSet } from "../src/lib/iok-engine";
+import { IOK_FIELD_FIDELITY, IOK_NEGATABLE_FIELDS, type IokRule, type IokRuleSet } from "../src/lib/iok-engine";
 import { IOK_REGEX_ALLOWLIST } from "../src/lib/iok-regex-allowlist";
 
 export const IOK_REPOSITORY = "https://github.com/phish-report/IOK";
@@ -114,7 +114,8 @@ export function renderSourceMd(r: VendorResult, rulesBytes: number): string {
   const s = r.ruleset.source;
   const st = r.ruleset.stats;
   const reasons = Object.entries(st.dropped_by_reason).sort((a, b) => b[1] - a[1]);
-  const fidelity = Object.entries(IOK_FIELD_FIDELITY).map(([f, v]) => `| \`${f}\` | ${v} |`).join("\n");
+  const WITH_NETWORK: Record<string, string> = { html: "exact (response body as served; subset if cut)", requests: "exact (request log; subset if cut or a request was blocked)", headers: "exact (main response headers; subset if cut)", cookies: "subset (page origin only)" };
+  const fidelity = Object.entries(IOK_FIELD_FIDELITY).map(([f, v]) => `| \`${f}\` | ${v} | ${WITH_NETWORK[f] ?? v} |`).join("\n");
   return `# IOK ruleset — vendored copy
 
 ${IOK_ATTRIBUTION}. Source: <https://phish.report/IOK>.
@@ -151,7 +152,7 @@ and §4.6 applies: offer this \`rules.json\` (or the conversion scripts).
 ## Counts
 
 - Indicators in the source: **${st.total}**
-- Kept (evaluable on stored capture fields): **${st.kept}**
+- Kept (evaluable on capture evidence): **${st.kept}**
 - Dropped: **${st.dropped}**
 
 | Drop reason | Rules |
@@ -162,34 +163,60 @@ Dropped rules: ${r.dropped.map((d) => `\`${d.id}\``).join(", ") || "none"}.
 
 ## Fields
 
-Evidence comes only from what a page capture already stores (rendered HTML,
-title, final URL, redirect chain). Not stored at all:
-${IOK_UNSTORED_FIELDS.map((f) => `\`${f}\``).join(", ")} (rules using them are dropped).
+Evidence comes from what a page capture stores: the rendered HTML, title,
+final URL and redirect chain, and — for captures made since migration 0335 —
+the network evidence object (main response body as served + headers, the
+browser's request log, own-origin cookies; \`lib/page-capture-network.ts\`).
 
-| IOK field | Fidelity |
-|---|---|
+| IOK field | Capture without network evidence | Capture with network evidence |
+|---|---|---|
 ${fidelity}
 
 - **exact** — the same data IOK evaluates (\`dom\` is the rendered HTML;
-  \`hostname\` is the final URL's host).
+  \`hostname\` is the final URL's host; with network evidence \`html\` is the
+  main response body as served, \`headers\` its headers, \`requests\` the
+  browser's own request log).
 - **subset** — part of what IOK sees: \`title\` is the final title only;
-  \`js\` / \`css\` are inline \`<script>\` / \`<style>\` bodies only. A subset
-  can miss a match. It cannot produce one IOK would not.
-- **approximate** — a stand-in that can miss AND over-match. \`html\` is
-  evaluated against the rendered DOM (the server response is not stored), so
-  a string a script injected matches although it was never in the response.
-  \`requests\` is the redirect chain and final URL plus the sub-resource URLs
-  the DOM's own start tags reference (\`src=\`, \`<link rel=stylesheet|icon|
-  preload|modulepreload|manifest>\`); a referenced URL that was never
-  requested matches, and fetch / XHR requests are missed.
+  \`js\` / \`css\` are inline \`<script>\` / \`<style>\` bodies only; \`cookies\`
+  are the page's own origin only (IOK also reads third-party cookies). A real
+  artifact that a cap cut (body over 2 MB, more than 300 requests, a clipped
+  header or cookie value) is a subset too. A subset can miss a match. It
+  cannot produce one IOK would not.
+- **approximate** — a stand-in that can miss AND over-match, used only when
+  the capture has no network evidence. \`html\` is evaluated against the
+  rendered DOM, so a string a script injected matches although it was never
+  in the response. \`requests\` is the redirect chain and final URL plus the
+  sub-resource URLs the DOM's own start tags reference; a referenced URL that
+  was never requested matches, and fetch / XHR requests are missed.
+- **absent** — \`headers\` / \`cookies\` on a capture without network
+  evidence: an empty list, so a positive match on them never happens.
+- The request log is only treated as exact when nothing cut it: no cap hit,
+  and no request our own interception aborted for the SSRF guard, the host
+  cap or a non-http scheme (a blocked response cannot have requested what it
+  would have requested next). "Complete" means up to the freeze point: the
+  log stops when the desktop capture settles, so a request issued after that
+  (a late timer, the mobile reload) is not in it.
+- \`html\` and \`headers\` are the response to the FIRST navigation. If a JS or
+  meta-refresh navigation followed, they belong to an earlier document than
+  the rendered DOM and are a subset, never exact. \`html\` is also a subset
+  when the body was not clean UTF-8 / ASCII (decoded with the response's
+  charset, but IOK compares raw bytes) or when it was cut.
+- A response body is only read from the browser when its decoded size is
+  known to be at most 2 MB (CDP's decoded byte count, else a plain
+  \`Content-Length\` with no \`Content-Encoding\`); otherwise \`html\` stays the
+  rendered-DOM approximation.
 
-Under \`not\` only an exact field is allowed; other rules are dropped (a
-missed match under negation would be a false positive). Positive use of an
-approximate field is kept: the over-match is bounded to "the kit's literal
-string is in the rendered page" or "the page's own markup points at the
-kit's file", which is the evidence IOK's \`dom\` field targets. Matches are
-staff-only context that never alerts, and each match lists the non-exact
-fields its rule reads (\`approximate_fields\`).
+Under \`not\` only a field that can be exact is allowed (${IOK_NEGATABLE_FIELDS.map((f) => `\`${f}\``).join(", ")});
+a rule negating \`title\`, \`js\`, \`css\` or \`cookies\` is dropped (a missed
+match under negation would be a false positive). A rule that negates
+\`html\`, \`requests\` or \`headers\` is kept but is evaluated only on a capture
+where that field is exact; on any other capture it is not applicable and
+cannot match (an empty header list must not make "not nginx" true). Positive
+use of a non-exact field is kept: the over-match is bounded to "the kit's
+literal string is in the rendered page" or "the page's own markup points at
+the kit's file", which is the evidence IOK's \`dom\` field targets. Matches
+are staff-only context that never alerts, and each match lists the non-exact
+fields its rule reads on that capture (\`approximate_fields\`).
 
 ## Regexes
 

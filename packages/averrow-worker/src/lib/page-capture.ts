@@ -21,6 +21,12 @@
 //                `expires_at` → expired, keys nulled, objects deleted.
 //   * evidence — `linkCaptureEvidence`: takedown_evidence + screenshot_url.
 //
+// Besides the screenshots and the rendered DOM, a capture also stores ONE
+// network evidence object (`<prefix>/network.json`, lib/page-capture-network.ts:
+// main response body as served + headers, the request log, own-origin
+// cookies) so the IOK kit rules read exact `html` / `headers` / `requests` /
+// `cookies`. Staff-only by construction: no reader route exists for it.
+//
 // Security contract: navigation only (the driver never clicks, types or
 // submits), non-http(s) navigations and private/loopback targets refused at
 // every hop, downloads denied, a hard per-page timeout, HTML capped at 2 MB.
@@ -29,6 +35,12 @@
 
 import { assertResolvedHostSafe, CHALLENGE_PHRASES, defaultResolve, type FetchDeps } from "./page-fetch";
 import type { Env } from "../types";
+import {
+  serializeNetworkEvidence,
+  summarizeNetworkEvidence,
+  toIokNetworkInput,
+  type NetworkEvidence,
+} from "./page-capture-network";
 // The vendored ruleset itself (lib/iok-ruleset.ts) is loaded lazily in
 // matchKitRules, keeping the JSON off every other importer's path.
 import { deleteKitMatchesStmt, recordKitMatches, toKitMatchingView, type KitMatchView, type KitMatchingView } from "./iok-kit-matches";
@@ -406,6 +418,10 @@ export interface RawCapture {
   /** The page hit CAPTURE_MAX_HOSTS_PER_PAGE; later new-host requests were
    *  aborted (recorded as a note in page_captures.error). */
   hostCapHit?: boolean;
+  /** Network evidence collected during the capture (sanitised + capped by the
+   *  collector). Absent = the driver collected none (fake drivers, older
+   *  drivers): the capture is stored exactly as before. */
+  network?: NetworkEvidence;
 }
 
 export interface CaptureSession {
@@ -752,6 +768,12 @@ export interface StoredCapture {
   mobileSha: string | null;
   htmlSha: string | null;
   htmlBytes: number;
+  /** Network evidence as STORED in R2 (null = none stored: not collected, or
+   *  collection / the R2 write failed). The IOK evaluation uses only this. */
+  network: NetworkEvidence | null;
+  /** D1 flag: null = no evidence attempted (legacy); 'failed' = attempted, none stored. */
+  netStatus: "complete" | "partial" | "failed" | null;
+  netSha: string | null;
   capturedAt: Date;
   expiresAt: Date;
 }
@@ -797,6 +819,39 @@ export async function storeCapture(
     });
   }
 
+  // Network evidence: its own try/catch — a failure here is a flag, never a
+  // failed capture. No object is written for a 'failed' collection.
+  let network: NetworkEvidence | null = null;
+  let netStatus: StoredCapture["netStatus"] = null;
+  let netSha: string | null = null;
+  let netObject: { key: string; bytes: number } | null = null;
+  if (raw.network) {
+    netStatus = "failed";
+    if (raw.network.status !== "failed") {
+      try {
+        const ser = serializeNetworkEvidence(raw.network, { capture_id: row.id, captured_at: now.toISOString() });
+        const key = `${prefix}/network.json`;
+        const sha = await sha256Hex(ser.bytes);
+        await env.PHISH_CAPTURES.put(key, ser.bytes, {
+          httpMetadata: { contentType: "application/json" },
+          customMetadata: { ...custom, sha256: sha },
+        });
+        network = ser.evidence;
+        netStatus = ser.evidence.status;
+        netSha = sha;
+        netObject = { key, bytes: ser.bytes.byteLength };
+      } catch (err) {
+        // Reason only — never the evidence or the page's content.
+        console.warn(`[page-capture] network evidence not stored for ${row.id}: ${err instanceof Error ? err.name : "error"}`);
+        network = null;
+        netStatus = "failed";
+        netSha = null;
+        netObject = null;
+      }
+    }
+  }
+  const netSummary = network ? summarizeNetworkEvidence(network) : null;
+
   const status: StoredCapture["status"] = antiBotWall ? "blocked" : "captured";
   const expiresAt = addDays(now, CAPTURE_RETENTION_DAYS);
   const key = (n: string): string | null => objects.find((o) => o.name === n)?.key ?? null;
@@ -812,7 +867,12 @@ export async function storeCapture(
     anti_bot_wall: antiBotWall,
     status,
     html_truncated: html.truncated,
-    objects: Object.fromEntries(objects.map((o) => [o.name, { key: o.key, sha256: hashes[o.name], bytes: o.bytes.byteLength }])),
+    objects: {
+      ...Object.fromEntries(objects.map((o) => [o.name, { key: o.key, sha256: hashes[o.name], bytes: o.bytes.byteLength }])),
+      ...(netObject && netSha ? { network: { key: netObject.key, sha256: netSha, bytes: netObject.bytes } } : {}),
+    },
+    // Counters and flags only; the evidence itself is in network.json.
+    network: raw.network ? { status: netStatus, ...(netSummary ?? {}) } : null,
     user_agents: { desktop: DESKTOP_UA, mobile: MOBILE_UA },
     viewports: { desktop: DESKTOP_VIEWPORT, mobile: MOBILE_VIEWPORT },
     queued_at: row.queued_at,
@@ -848,6 +908,9 @@ export async function storeCapture(
     mobileSha: hashes["mobile"] ?? null,
     htmlSha: hashes["html"] ?? null,
     htmlBytes: html.bytes.byteLength,
+    network,
+    netStatus,
+    netSha,
     capturedAt: now,
     expiresAt,
   };
@@ -859,7 +922,8 @@ export async function storeCapture(
             desktop_key = ?, mobile_key = ?, html_key = ?,
             desktop_sha256 = ?, mobile_sha256 = ?, html_sha256 = ?, meta_sha256 = ?,
             html_bytes = ?, anti_bot_wall = ?, error = ?, claimed_at = NULL,
-            captured_at = ?, expires_at = ?
+            captured_at = ?, expires_at = ?,
+            net_evidence_status = ?, net_evidence_sha256 = ?, net_requests = ?, net_headers = ?, net_cookies = ?
       WHERE id = ? AND status = 'capturing'`,
   ).bind(
     stored.status, stored.finalUrl, stored.httpStatus, stored.title,
@@ -868,7 +932,9 @@ export async function storeCapture(
     stored.desktopSha, stored.mobileSha, stored.htmlSha, metaSha,
     stored.htmlBytes, stored.antiBotWall,
     raw.hostCapHit ? HOST_CAP_NOTE : null,
-    d1Ts(now), d1Ts(expiresAt), row.id,
+    d1Ts(now), d1Ts(expiresAt),
+    netStatus, netSha, netSummary ? netSummary.requests : null, netSummary ? netSummary.headers : null, netSummary ? netSummary.cookies : null,
+    row.id,
   ).run();
   if ((upd.meta?.changes ?? 0) === 0) {
     // The reaper took the row back mid-capture (it will be re-captured);
@@ -1087,11 +1153,14 @@ export interface SweepResult {
   ran: boolean;
 }
 
-function metaKeyFor(keys: Array<string | null>): string | null {
+function siblingKeyFor(keys: Array<string | null>, name: string): string | null {
   const k = keys.find((x): x is string => !!x);
   if (!k) return null;
   const slash = k.lastIndexOf("/");
-  return slash > 0 ? `${k.slice(0, slash)}/meta.json` : null;
+  return slash > 0 ? `${k.slice(0, slash)}/${name}` : null;
+}
+function metaKeyFor(keys: Array<string | null>): string | null {
+  return siblingKeyFor(keys, "meta.json");
 }
 
 /**
@@ -1119,7 +1188,13 @@ export async function sweepExpiredCaptures(
     if (bucket) {
       const keys: string[] = [];
       for (const r of rows) {
-        for (const k of [r.desktop_key, r.mobile_key, r.html_key, metaKeyFor([r.desktop_key, r.mobile_key, r.html_key])]) {
+        const own = [r.desktop_key, r.mobile_key, r.html_key];
+        // network.json has no D1 key column: it lives beside the others. It is
+        // deleted for EVERY expired capture whatever its recorded status (a put
+        // that committed and then threw leaves an object with no status;
+        // deleting a missing key is a no-op).
+        const net = siblingKeyFor(own, "network.json");
+        for (const k of [...own, metaKeyFor(own), net]) {
           if (k) keys.push(k);
         }
       }
@@ -1277,6 +1352,8 @@ async function matchKitRules(
       finalUrl: stored.finalUrl,
       targetUrl: row.target_url,
       redirectChain: stored.redirectChain,
+      // Only evidence that was actually stored backs an "exact" field.
+      network: stored.network ? toIokNetworkInput(stored.network) : null,
     }, IOK_RULESET, now);
     stats.kit_evaluated++;
     stats.kit_matches += res.matched;

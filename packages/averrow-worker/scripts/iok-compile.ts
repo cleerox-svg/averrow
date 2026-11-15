@@ -18,9 +18,12 @@
  *     `(?<n>`); the result must be on the hand-reviewed allowlist
  *     (lib/iok-regex-allowlist.ts) AND pass assessRegexSafety, else the rule
  *     is dropped;
- *   - rules using a field we do not store (cookies, headers, anything
- *     unknown), keyword selections, aggregations (`|` in the condition), or
- *     a non-exact field under `not` are dropped with a counted reason;
+ *   - rules using an unknown field, keyword selections, aggregations (`|` in
+ *     the condition), or a field that can never be exact (title, js, css,
+ *     cookies) under `not` are dropped with a counted reason. A rule that
+ *     negates html / requests / headers is KEPT: those fields are exact on a
+ *     capture that holds the real artifact (lib/page-capture-network.ts) and
+ *     the engine evaluates such a rule only there (`not_applicable` else);
  *   - a rule whose match value carries a credential-shaped token
  *     (isTokenLike) is dropped — we do not vendor third-party secrets;
  *   - third-party strings are bounded, never edited: an id outside
@@ -32,9 +35,9 @@
 import { isAllowedIokRegex } from "../src/lib/iok-regex-allowlist";
 import {
   IOK_FIELDS,
-  IOK_FIELD_FIDELITY,
-  IOK_UNSTORED_FIELDS,
+  IOK_NEGATABLE_FIELDS,
   assessRegexSafety,
+  negatedRefs,
   type IokCond,
   type IokField,
   type IokFieldMatch,
@@ -126,7 +129,6 @@ export function translateRe2(src: string): { source: string; flags?: "i" } {
 function compileFieldMatch(key: string, value: unknown): IokFieldMatch {
   const [field, ...mods] = key.split("|");
   if (!field) drop("empty field name");
-  if ((IOK_UNSTORED_FIELDS as readonly string[]).includes(field!)) drop(`field not stored: ${field}`);
   if (!(IOK_FIELDS as readonly string[]).includes(field!)) drop(`unknown field: ${field}`);
   let all = false;
   if (mods.length > 0 && mods[mods.length - 1] === "all") {
@@ -281,23 +283,6 @@ export function parseCondition(cond: string, selections: string[]): IokCond {
   return e;
 }
 
-/** Selection names referenced under an odd number of `not`. */
-export function negatedRefs(c: IokCond, neg = false, out: Set<string> = new Set()): Set<string> {
-  switch (c.t) {
-    case "ref":
-      if (neg) out.add(c.n);
-      break;
-    case "not":
-      negatedRefs(c.c, !neg, out);
-      break;
-    case "and":
-    case "or":
-      for (const x of c.c) negatedRefs(x, neg, out);
-      break;
-  }
-  return out;
-}
-
 function referencedNames(c: IokCond, out: Set<string> = new Set()): Set<string> {
   if (c.t === "ref") out.add(c.n);
   else if (c.t === "not") referencedNames(c.c, out);
@@ -335,7 +320,7 @@ export function compileIokRule(id: string, doc: unknown): CompileResult {
     for (const n of negatedRefs(cond)) {
       for (const g of sel[n] ?? []) {
         for (const m of g) {
-          if (IOK_FIELD_FIDELITY[m.f] !== "exact") drop(`negated non-exact field: ${m.f}`);
+          if (!IOK_NEGATABLE_FIELDS.includes(m.f)) drop(`negated non-exact field: ${m.f}`);
         }
       }
     }

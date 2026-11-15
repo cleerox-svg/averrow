@@ -1688,7 +1688,7 @@ lookalike_domains         ← Typosquat scanner results
 page_captures             ← Phishing-page capture queue + evidence index (migration 0290); R2 keys +
                             SHA-256 per object, 180-day expiry; written by the page_capture agent.
                             `kit_ruleset_commit` / `kit_evaluated_at` / `kit_eval_status` (0333; complete |
-                            truncated | partial, NULL = not checked) record the IOK kit-rule evaluation
+                            truncated | partial, NULL = not checked) record the IOK kit-rule evaluation; `net_evidence_*` / `net_requests` / `net_headers` / `net_cookies` (0335) are counters + a status flag for the private `network.json` evidence object (no reader route)
 page_capture_kit_matches  ← IOK phishing-kit rule matches per capture (migration 0333; PK capture_id + rule_id),
                             replaced on re-evaluation, deleted when the capture expires. Staff-only context:
                             read only by `GET /api/intel/identity-threats/detections/:threatId`, never a

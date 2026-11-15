@@ -24,32 +24,45 @@
 //   - a missing / empty field matches nothing.
 // `1 of x*` / `all of them` are expanded to plain and/or at vendor time.
 //
-// Evidence-field fidelity — what IOK means vs what we have (IOK_FIELD_FIDELITY):
-//   exact       `dom` (the rendered HTML is IOK's `dom`), `hostname`.
+// Evidence-field fidelity — what IOK means vs what a capture holds
+// (IOK_FIELD_FIDELITY is the baseline for a capture WITHOUT network
+// evidence; a capture that has the artifact upgrades the field, see
+// `IokEvidence.fidelity` and lib/page-capture-network.ts):
+//   exact       `dom` (the rendered HTML is IOK's `dom`), `hostname`; and,
+//               when the capture holds the real artifact and nothing was
+//               cut: `html` (the main response body as served), `headers`
+//               (that response's headers, IOK's `Canonical-Name: value`),
+//               `requests` (the browser's own request log).
 //   subset      `title` (final title only), `js` / `css` (INLINE <script> /
-//               <style> bodies only — external files are not stored). A
-//               subset can MISS a match; it cannot invent one.
-//   approximate `html` — evaluated against the rendered DOM because the raw
-//               server response is not stored. It can MISS (a script removed
-//               or rewrote markup; the serializer normalised quoting / case /
-//               entities) and it can OVER-MATCH (the string was added by a
-//               script and was never in the server response).
-//               `requests` — the redirect chain and final URL (real
-//               navigations) plus sub-resource URLs the DOM's own start tags
-//               reference (`src=`, `<link rel=stylesheet|icon|preload|
-//               modulepreload|manifest href=`). It can MISS (fetch / XHR,
-//               CSS-loaded files) and OVER-MATCH (a referenced URL that was
-//               never requested: lazy, blocked, or cut by the host cap).
-// Policy, applied at vendor time (scripts/iok-compile.ts):
-//   - `cookies` / `headers` are not stored: rules that need them are dropped;
-//   - under `not`, only an EXACT field is allowed (a missed match under
-//     negation becomes a false positive): such rules are dropped;
-//   - positive use of an approximate field is KEPT. An over-match there
-//     still means the kit's literal string is in the rendered page, or the
-//     page's own markup points at the kit's file — the same evidence IOK's
-//     `dom` field targets. That is acceptable for a staff-only context
-//     signal that never alerts, and every match lists the non-exact fields
-//     it relied on (`approximate_fields`) so a reader can weigh it.
+//               <style> bodies only — external files are not stored), and
+//               `cookies` (the page's own origin only; IOK also reads
+//               third-party cookies). A real artifact that was cut by a cap
+//               (body over the size cap, request list over 300, a header or
+//               cookie value clipped) is a subset too. A subset can MISS a
+//               match; it cannot invent one.
+//   approximate `html` / `requests` on a capture WITHOUT the artifact —
+//               `html` is evaluated against the rendered DOM (it can MISS
+//               and OVER-MATCH: a string a script injected was never in the
+//               response); `requests` is the redirect chain and final URL
+//               plus sub-resource URLs the DOM's own start tags reference
+//               (misses fetch / XHR, over-matches a referenced URL never
+//               requested).
+//   absent      `headers` / `cookies` on a capture without the artifact:
+//               an empty list, so a positive match on them never happens.
+// Policy, applied at vendor time (scripts/iok-compile.ts) and at run time:
+//   - under `not`, only a field that CAN be exact is allowed (dom, hostname,
+//     html, requests, headers); a rule negating title / js / css / cookies is
+//     dropped (a missed match under negation is a false positive);
+//   - at run time a rule that negates a field is evaluated ONLY on a capture
+//     where that field is exact. On any other capture the rule is NOT
+//     APPLICABLE (counted in `not_applicable`, never matches): an empty
+//     `headers` list must not make `not nginxHeader` true;
+//   - positive use of a non-exact field is KEPT. An over-match there still
+//     means the kit's literal string is in the rendered page, or the page's
+//     own markup points at the kit's file — the same evidence IOK's `dom`
+//     field targets. That is acceptable for a staff-only context signal
+//     that never alerts, and every match lists the non-exact fields its
+//     rule reads (`approximate_fields`) so a reader can weigh it.
 //
 // Safety (rules are third-party input, HTML is attacker input):
 //   - a regex is compiled only if its exact source is on the hand-reviewed
@@ -69,13 +82,15 @@ import { isAllowedIokRegex } from "./iok-regex-allowlist";
 
 // ─── Ruleset shape (src/data/iok/rules.json) ─────────────────────────
 
-export const IOK_FIELDS = ["html", "dom", "title", "hostname", "js", "css", "requests"] as const;
+export const IOK_FIELDS = ["html", "dom", "title", "hostname", "js", "css", "requests", "headers", "cookies"] as const;
 export type IokField = (typeof IOK_FIELDS)[number];
 
 /** `exact` = same data IOK evaluates. `subset` = part of it (can miss, cannot
- *  invent). `approximate` = a stand-in that can both miss and over-match. */
-export type IokFidelity = "exact" | "subset" | "approximate";
+ *  invent). `approximate` = a stand-in that can both miss and over-match.
+ *  `absent` = no data on this capture (the field reads as an empty list). */
+export type IokFidelity = "exact" | "subset" | "approximate" | "absent";
 
+/** Baseline fidelity, for a capture WITHOUT network evidence. */
 export const IOK_FIELD_FIDELITY: Readonly<Record<IokField, IokFidelity>> = {
   dom: "exact",
   hostname: "exact",
@@ -84,10 +99,13 @@ export const IOK_FIELD_FIDELITY: Readonly<Record<IokField, IokFidelity>> = {
   css: "subset",
   html: "approximate",
   requests: "approximate",
+  headers: "absent",
+  cookies: "absent",
 };
 
-/** IOK fields we do not store at all — rules using them are dropped. */
-export const IOK_UNSTORED_FIELDS = ["cookies", "headers"] as const;
+/** Fields a capture can hold exactly (with the real artifact): the only
+ *  ones a rule may negate. title / js / css / cookies are never exact. */
+export const IOK_NEGATABLE_FIELDS: readonly IokField[] = ["dom", "hostname", "html", "requests", "headers"];
 
 export type IokOp = "eq" | "contains" | "startswith" | "endswith" | "re";
 
@@ -368,8 +386,42 @@ export interface IokEvidence {
   js: string[];
   css: string[];
   requests: string[];
+  /** `Name: value` entries of the main response (empty = none / not obtained). */
+  headers?: string[];
+  /** `name=value` entries (empty = none / not obtained). */
+  cookies?: string[];
+  /** Per-field overrides of IOK_FIELD_FIDELITY for THIS capture. */
+  fidelity?: Partial<Record<IokField, IokFidelity>>;
   /** Some input was cut to fit a cap (text, list or item size). */
   clipped?: boolean;
+}
+
+/** The real artifacts of a capture (lib/page-capture-network.ts), as plain data. */
+export interface IokNetworkInput {
+  /** Main response body as served; null = not obtained. */
+  rawHtml: string | null;
+  rawHtmlTruncated: boolean;
+  /** `Name: value`; null = headers not obtained. */
+  headers: string[] | null;
+  headersComplete: boolean;
+  /** `name=value`; null = cookies not read. */
+  cookies: string[] | null;
+  /** Request URLs; null = no log. */
+  requests: string[] | null;
+  requestsComplete: boolean;
+  /** The decoded body is the text IOK would compare (clean UTF-8 / ASCII).
+   *  false = decoded with another charset or lossily: `html` is a subset.
+   *  Absent = true. */
+  rawHtmlTextExact?: boolean;
+  /** Headers and body belong to the document the page ended on. false = a
+   *  JS / meta-refresh navigation followed, so they belong to an earlier
+   *  document: `html` and `headers` are subsets. Absent = true. */
+  mainMatchesFinal?: boolean;
+}
+
+/** Fidelity of a field on THIS capture. */
+export function fidelityOf(ev: Pick<IokEvidence, "fidelity">, f: IokField): IokFidelity {
+  return ev.fidelity?.[f] ?? IOK_FIELD_FIDELITY[f];
 }
 
 export interface IokEvidenceInput {
@@ -379,6 +431,8 @@ export interface IokEvidenceInput {
   finalUrl: string | null;
   targetUrl: string | null;
   redirectChain: string[];
+  /** Real artifacts (response body / headers, request log, cookies) when the capture holds them. */
+  network?: IokNetworkInput | null;
 }
 
 function hostOf(url: string | null): string {
@@ -551,20 +605,51 @@ function scanDom(html: string): DomScan {
   return out;
 }
 
+/** Max chars of one header / cookie entry kept as evidence. */
+const IOK_PAIR_MAX = 8_192;
+
+/** Cap a `name: value` / `name=value` list; true when anything was cut. */
+function capPairs(list: string[]): { out: string[]; clipped: boolean } {
+  let clipped = list.length > IOK_LIST_MAX;
+  const out: string[] = [];
+  for (const e of list.slice(0, IOK_LIST_MAX)) {
+    if (e.length > IOK_PAIR_MAX) {
+      out.push(e.slice(0, IOK_PAIR_MAX));
+      clipped = true;
+    } else {
+      out.push(e);
+    }
+  }
+  return { out, clipped };
+}
+
 /** Build the evidence object from what one capture stores. Pure. */
 export function buildIokEvidence(input: IokEvidenceInput): IokEvidence {
+  const net = input.network ?? null;
   let clipped = input.html.length > IOK_TEXT_MAX;
-  const html = clipped ? input.html.slice(0, IOK_TEXT_MAX) : input.html;
+  const dom = clipped ? input.html.slice(0, IOK_TEXT_MAX) : input.html;
   const base = input.finalUrl ?? input.targetUrl;
-  const scan = scanDom(html);
+  const scan = scanDom(dom);
   clipped = clipped || scan.clipped;
+  const fidelity: Partial<Record<IokField, IokFidelity>> = {};
+
+  // html: the response as served when we have it, else the rendered DOM.
+  let html = dom;
+  if (net && net.rawHtml !== null) {
+    const rawClipped = net.rawHtml.length > IOK_TEXT_MAX;
+    html = rawClipped ? net.rawHtml.slice(0, IOK_TEXT_MAX) : net.rawHtml;
+    clipped = clipped || rawClipped;
+    fidelity.html = net.rawHtmlTruncated || rawClipped || net.rawHtmlTextExact === false || net.mainMatchesFinal === false ? "subset" : "exact";
+  }
 
   const requests: string[] = [];
   const seen = new Set<string>();
+  let requestsCut = false;
   const add = (u: string): void => {
     if (!u || seen.has(u)) return;
     if (requests.length >= IOK_LIST_MAX) {
       clipped = true;
+      requestsCut = true;
       return;
     }
     seen.add(u);
@@ -577,11 +662,34 @@ export function buildIokEvidence(input: IokEvidenceInput): IokEvidence {
     } catch { /* keep as stored */ }
     add(u);
   }
-  for (const r of scan.refs) {
-    try {
-      const u = base ? new URL(decodeAttr(r), base) : new URL(decodeAttr(r));
-      if (u.protocol === "http:" || u.protocol === "https:") add(u.toString());
-    } catch { /* not a URL */ }
+  if (net && net.requests !== null) {
+    // The browser's own request log: nothing is inferred from markup, so a
+    // URL that was never requested cannot match.
+    for (const r of net.requests) add(r);
+    fidelity.requests = net.requestsComplete && !requestsCut ? "exact" : "subset";
+  } else {
+    for (const r of scan.refs) {
+      try {
+        const u = base ? new URL(decodeAttr(r), base) : new URL(decodeAttr(r));
+        if (u.protocol === "http:" || u.protocol === "https:") add(u.toString());
+      } catch { /* not a URL */ }
+    }
+  }
+
+  let headers: string[] = [];
+  if (net && net.headers !== null) {
+    const c = capPairs(net.headers);
+    headers = c.out;
+    clipped = clipped || c.clipped;
+    fidelity.headers = net.headersComplete && !c.clipped && net.mainMatchesFinal !== false ? "exact" : "subset";
+  }
+  let cookies: string[] = [];
+  if (net && net.cookies !== null) {
+    const c = capPairs(net.cookies);
+    cookies = c.out;
+    clipped = clipped || c.clipped;
+    // Own-origin cookies only: IOK also reads third-party ones.
+    fidelity.cookies = "subset";
   }
 
   let title = input.title ?? "";
@@ -591,12 +699,15 @@ export function buildIokEvidence(input: IokEvidenceInput): IokEvidence {
   }
   return {
     html,
-    dom: html,
+    dom,
     title: title ? [title] : [],
     hostname: hostOf(input.finalUrl) || hostOf(input.targetUrl),
     js: scan.js,
     css: scan.css,
     requests,
+    headers,
+    cookies,
+    fidelity,
     clipped,
   };
 }
@@ -607,9 +718,14 @@ export interface IokMatch {
   rule_id: string;
   title: string;
   tags: string[];
-  /** Non-exact fields the rule reads (IOK_FIELD_FIDELITY ≠ exact), sorted.
-   *  Empty = the match rests on exact fields only. */
+  /** Non-exact fields the rule reads on THIS capture (fidelity ≠ exact; a
+   *  field with no data on the capture is left out), sorted. Empty = the
+   *  match rests on exact fields only. */
   approximate_fields: IokField[];
+  /** The subset of `approximate_fields` whose fidelity is `subset` (incomplete
+   *  evidence: another rule may have been MISSED, this match is not an
+   *  over-match). The rest are `approximate` (can over-match). */
+  subset_fields: IokField[];
 }
 
 /** complete = every rule saw all the evidence. truncated = every rule ran,
@@ -624,6 +740,9 @@ export interface IokEvaluation {
   evaluated: number;
   /** Rules not evaluated because a budget ran out. */
   skipped: number;
+  /** Rules that negate a field this capture does not hold exactly: not
+   *  evaluated (they cannot match), not a budget skip. */
+  not_applicable: number;
   /** A budget (work or clock) ended the evaluation early. */
   budget_exhausted: boolean;
   /** Evidence or a regex input was clipped to a cap. */
@@ -648,18 +767,74 @@ class BudgetExhausted extends Error {}
 function fieldValues(ev: IokEvidence, f: IokField): readonly string[] {
   const v = ev[f];
   if (typeof v === "string") return v.length > 0 ? [v] : [];
-  return v;
+  return v ?? [];
 }
 
 function eqFold(a: string, b: string): boolean {
   return a === b || a.toLowerCase() === b.toLowerCase() || a.toUpperCase() === b.toUpperCase();
 }
 
-/** Non-exact fields a rule reads, sorted. */
-export function approximateFieldsOf(rule: Pick<IokRule, "sel">): IokField[] {
+/** Selection names referenced under an odd number of `not`. */
+export function negatedRefs(c: IokCond, neg = false, out: Set<string> = new Set()): Set<string> {
+  switch (c.t) {
+    case "ref":
+      if (neg) out.add(c.n);
+      break;
+    case "not":
+      negatedRefs(c.c, !neg, out);
+      break;
+    case "and":
+    case "or":
+      for (const x of c.c) negatedRefs(x, neg, out);
+      break;
+  }
+  return out;
+}
+
+const negatedFieldsCache = new WeakMap<object, IokField[]>();
+
+/** Fields read inside a negated selection, sorted. */
+export function negatedFieldsOf(rule: Pick<IokRule, "sel" | "cond">): IokField[] {
+  const hit = negatedFieldsCache.get(rule);
+  if (hit) return hit;
+  const out = new Set<IokField>();
+  for (const n of negatedRefs(rule.cond)) {
+    for (const g of rule.sel[n] ?? []) for (const m of g) out.add(m.f);
+  }
+  const list = [...out].sort();
+  negatedFieldsCache.set(rule, list);
+  return list;
+}
+
+/** A rule that negates a field is evaluated only where that field is exact. */
+export function negationApplicable(rule: Pick<IokRule, "sel" | "cond">, ev: Pick<IokEvidence, "fidelity">): boolean {
+  return negatedFieldsOf(rule).every((f) => fidelityOf(ev, f) === "exact");
+}
+
+/** Fields a rule reads whose fidelity on this capture is `subset`. */
+export function subsetFieldsOf(rule: Pick<IokRule, "sel">, ev?: Pick<IokEvidence, "fidelity">): IokField[] {
   const out = new Set<IokField>();
   for (const groups of Object.values(rule.sel)) {
-    for (const g of groups) for (const m of g) if (IOK_FIELD_FIDELITY[m.f] !== "exact") out.add(m.f);
+    for (const g of groups) {
+      for (const m of g) {
+        if ((ev ? fidelityOf(ev, m.f) : IOK_FIELD_FIDELITY[m.f]) === "subset") out.add(m.f);
+      }
+    }
+  }
+  return [...out].sort();
+}
+
+/** Non-exact fields a rule reads. Without `ev`, the baseline (no network
+ *  evidence); a field with no data (`absent`) is left out either way. */
+export function approximateFieldsOf(rule: Pick<IokRule, "sel">, ev?: Pick<IokEvidence, "fidelity">): IokField[] {
+  const out = new Set<IokField>();
+  for (const groups of Object.values(rule.sel)) {
+    for (const g of groups) {
+      for (const m of g) {
+        const fid = ev ? fidelityOf(ev, m.f) : IOK_FIELD_FIDELITY[m.f];
+        if (fid !== "exact" && fid !== "absent") out.add(m.f);
+      }
+    }
   }
   return [...out].sort();
 }
@@ -734,6 +909,7 @@ export function evaluateIokRules(ruleset: Pick<IokRuleSet, "rules">, ev: IokEvid
 
   const matches: IokMatch[] = [];
   let evaluated = 0;
+  let notApplicable = 0;
   let truncated = false;
   let exhausted = false;
   const rules = ruleset.rules;
@@ -742,6 +918,10 @@ export function evaluateIokRules(ruleset: Pick<IokRuleSet, "rules">, ev: IokEvid
     if (now && now() > deadline) {
       exhausted = true;
       break;
+    }
+    if (!negationApplicable(rule, ev)) {
+      notApplicable++;
+      continue;
     }
     const memo = new Map<string, boolean>();
     const selection = (name: string): boolean => {
@@ -783,14 +963,15 @@ export function evaluateIokRules(ruleset: Pick<IokRuleSet, "rules">, ev: IokEvid
     evaluated++;
     if (hit) {
       if (matches.length >= IOK_MAX_MATCHES) truncated = true;
-      else matches.push({ rule_id: rule.id, title: rule.title, tags: rule.tags, approximate_fields: approximateFieldsOf(rule) });
+      else matches.push({ rule_id: rule.id, title: rule.title, tags: rule.tags, approximate_fields: approximateFieldsOf(rule, ev), subset_fields: subsetFieldsOf(rule, ev) });
     }
   }
   return {
     matches,
     status: exhausted ? "partial" : inputClipped || truncated ? "truncated" : "complete",
     evaluated,
-    skipped: rules.length - evaluated,
+    skipped: rules.length - evaluated - notApplicable,
+    not_applicable: notApplicable,
     budget_exhausted: exhausted,
     input_clipped: inputClipped,
     work,

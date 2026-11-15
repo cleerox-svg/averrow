@@ -101,14 +101,15 @@ export type PageCaptureStatus = 'queued' | 'capturing' | 'captured' | 'failed' |
 
 export type KitEvalStatus = 'complete' | 'truncated' | 'partial';
 /** Evidence fields a kit rule reads (worker `IOK_FIELDS`); only non-exact ones appear in `approximate_fields`. */
-export type KitField = 'html' | 'dom' | 'title' | 'hostname' | 'js' | 'css' | 'requests';
+export type KitField = 'html' | 'dom' | 'title' | 'hostname' | 'js' | 'css' | 'requests' | 'headers' | 'cookies';
 
 /** One phishing-kit (IOK) rule that matched a capture's stored evidence. Context only. */
 export interface KitMatch {
   rule_id: string;
   title: string;                  // third-party text: render as text only
   tags: string[];
-  approximate_fields: KitField[]; // [] = exact fields only
+  approximate_fields: KitField[]; // every non-exact field the rule reads on that capture; [] = exact fields only
+  subset_fields: KitField[];      // the part of approximate_fields that is incomplete evidence (not over-matchable)
   ruleset_commit: string;
   matched_at: string;
 }

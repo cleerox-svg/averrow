@@ -14,7 +14,7 @@ function kit(over: Partial<KitMatching> = {}): KitMatching {
 }
 function match(i: number, over: Partial<KitMatch> = {}): KitMatch {
   return {
-    rule_id: `rule-${i}`, title: `Rule title ${i}`, tags: [], approximate_fields: [],
+    rule_id: `rule-${i}`, title: `Rule title ${i}`, tags: [], approximate_fields: [], subset_fields: [],
     ruleset_commit: COMMIT, matched_at: '2026-11-15T10:00:00Z', ...over,
   };
 }
@@ -55,6 +55,26 @@ describe('KitMatchBlock', () => {
     expect(screen.getByText(/2 kit rules matched/)).toBeInTheDocument();
     expect(screen.getByText(ATTR, { exact: false })).toBeVisible();
     expect(screen.queryByText(/confirmed|attributed/i)).toBeNull();
+  });
+
+  it('approximate and subset fields get different wording: over-match vs partial evidence', () => {
+    render(<KitMatchBlock kit={kit({ matches: [
+      match(1, { approximate_fields: ['html', 'requests'], subset_fields: [] }),
+      match(2, { approximate_fields: ['cookies', 'title'], subset_fields: ['cookies', 'title'] }),
+      match(3, { approximate_fields: ['html', 'cookies'], subset_fields: ['cookies'] }),
+    ] })} />);
+    const approx = document.querySelectorAll('[data-approximate]');
+    const subset = document.querySelectorAll('[data-subset]');
+    // Row 1: over-match only. Row 2: partial evidence only (never "may over-match"). Row 3: both, each for its own fields.
+    expect(approx).toHaveLength(2);
+    expect(subset).toHaveLength(2);
+    expect(approx[0]).toHaveTextContent('html, requests');
+    expect(approx[1]).toHaveTextContent(/\(html\)/);
+    expect(approx[1]).not.toHaveTextContent('cookies');
+    expect(subset[0]).toHaveTextContent('cookies, title');
+    expect(subset[0]).toHaveTextContent(/other rules may have been missed/);
+    expect(subset[0]).not.toHaveTextContent(/over-match/);
+    expect(subset[1]).toHaveTextContent('cookies');
   });
 
   it('caps tags with +N and expands', async () => {
