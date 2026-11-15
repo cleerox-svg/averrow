@@ -2,6 +2,7 @@
 // Wave 2A: migrated read handlers to D1 Sessions API (read replicas)
 import { json } from "../lib/cors";
 import { withDnsblVerdicts } from "../lib/dnsbl-verdict";
+import { lookupInfobloxReference } from "../lib/infoblox-reference";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { enrichThreatsGeo } from "../lib/geoip";
 import { scopeCacheSegment } from "../lib/scope-cache-key";
@@ -242,7 +243,15 @@ export async function handleGetThreat(request: Request, env: Env, id: string): P
   try {
     const threat = await session.prepare("SELECT * FROM threats WHERE id = ?").bind(id).first();
     if (!threat) return attachBookmark(json({ success: false, error: "Threat not found" }, 404, origin), session);
-    return attachBookmark(json({ success: true, data: withDnsblVerdicts(threat) }, 200, origin), session);
+    // Staff-only context: Infoblox's published label when the threat's domain
+    // (or a parent) or IP is on an Infoblox list. Never an Averrow attribution.
+    const str = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
+    const infoblox_reference = await lookupInfobloxReference(session, {
+      domain: str(threat.malicious_domain),
+      url: str(threat.malicious_url),
+      ip: str(threat.ip_address),
+    });
+    return attachBookmark(json({ success: true, data: { ...withDnsblVerdicts(threat), infoblox_reference } }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
   }
