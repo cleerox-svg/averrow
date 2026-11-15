@@ -1,28 +1,25 @@
-// Shared canvas plumbing for the Network view: reduced-motion preference,
-// visibility (tab hidden / scrolled offscreen), DPR-aware sizing, and a
-// frame loop that only runs while there is something to animate.
+// Shared canvas plumbing for the Network view: visibility (tab hidden /
+// scrolled offscreen), content-box width, DPR-aware sizing, and a frame loop
+// that only runs while there is something to animate.
 
-import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-const RM_QUERY = '(prefers-reduced-motion: reduce)';
-
-function subscribeRm(onChange: () => void): () => void {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {};
-  const mql = window.matchMedia(RM_QUERY);
-  mql.addEventListener?.('change', onChange);
-  return () => mql.removeEventListener?.('change', onChange);
-}
-function rmSnapshot(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-  return window.matchMedia(RM_QUERY).matches;
-}
-/** True when the OS asks for reduced motion. */
-export function useReducedMotionPref(): boolean {
-  return useSyncExternalStore(subscribeRm, rmSnapshot, () => false);
+/** A ref that also exposes the mounted element as state, so effects re-run
+ *  when a conditionally rendered element appears. */
+export function useMountedElement<T extends Element>(): [
+  { current: T | null }, (node: T | null) => void, T | null,
+] {
+  const ref = useRef<T | null>(null);
+  const [el, setEl] = useState<T | null>(null);
+  const callback = useCallback((node: T | null) => {
+    ref.current = node;
+    setEl(node);
+  }, []);
+  return [ref, callback, el];
 }
 
 /** False while the tab is hidden or the element is scrolled out of view. */
-export function useIsVisible(ref: RefObject<Element | null>): boolean {
+export function useIsVisible(el: Element | null): boolean {
   const [onscreen, setOnscreen] = useState(true);
   const [tabVisible, setTabVisible] = useState(
     typeof document === 'undefined' ? true : !document.hidden,
@@ -33,7 +30,6 @@ export function useIsVisible(ref: RefObject<Element | null>): boolean {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
   useEffect(() => {
-    const el = ref.current;
     if (!el || typeof IntersectionObserver === 'undefined') return;
     const io = new IntersectionObserver((entries) => {
       const last = entries[entries.length - 1];
@@ -41,17 +37,26 @@ export function useIsVisible(ref: RefObject<Element | null>): boolean {
     });
     io.observe(el);
     return () => io.disconnect();
-  }, [ref]);
+  }, [el]);
   return onscreen && tabVisible;
 }
 
-/** Width of an element, tracked with ResizeObserver (0 until measured). */
-export function useElementWidth(ref: RefObject<Element | null>): number {
+function contentWidth(el: Element): number {
+  const rect = el.getBoundingClientRect().width;
+  if (typeof getComputedStyle !== 'function') return rect;
+  const cs = getComputedStyle(el);
+  const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+  const border = (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0);
+  return Math.max(0, rect - pad - border);
+}
+
+/** Content-box width of an element (padding excluded), 0 until measured. */
+export function useElementWidth(ref: { current: Element | null }): number {
   const [w, setW] = useState(0);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const read = () => setW(Math.round(el.getBoundingClientRect().width));
+    const read = () => setW(Math.round(contentWidth(el)));
     read();
     if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(read);
@@ -80,13 +85,25 @@ export function fitCanvas(
   return ctx;
 }
 
+/** Repaint callback for a device-pixel-ratio change (zoom, moving screens). */
+function watchDpr(onChange: () => void): () => void {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {};
+  const mql = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  mql.addEventListener?.('change', onChange);
+  return () => mql.removeEventListener?.('change', onChange);
+}
+
+export const IDLE_REPAINT_MS = 1000;
+
 /**
- * Run `draw(now)` every animation frame while `animate` and `visible` hold;
- * otherwise draw once whenever `deps` change (reduced motion, hidden tab,
- * offscreen: no frames are requested at all).
+ * Drive `draw` while `animate` and `visible` hold. `draw` returns false when
+ * nothing on the frame is moving: the loop then repaints once a second
+ * (clock, heartbeat) instead of every frame. When not animating (reduced
+ * motion, Pause, no timeline, hidden or offscreen) no frames are requested:
+ * it draws once whenever `deps` change or the DPR does.
  */
 export function useCanvasLoop(
-  draw: () => void,
+  draw: () => boolean | void,
   animate: boolean,
   visible: boolean,
   deps: ReadonlyArray<unknown>,
@@ -98,14 +115,19 @@ export function useCanvasLoop(
     if (!visible) return;
     if (!animate) {
       drawRef.current();
-      return;
+      return watchDpr(() => { drawRef.current(); });
     }
-    let id = 0;
+    let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const frame = () => {
-      drawRef.current();
-      id = requestAnimationFrame(frame);
+      const busy = drawRef.current();
+      if (busy === false) timer = setTimeout(frame, IDLE_REPAINT_MS);
+      else raf = requestAnimationFrame(frame);
     };
-    id = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(id);
+    raf = requestAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (timer) clearTimeout(timer);
+    };
   }, [animate, visible, ...deps]);
 }

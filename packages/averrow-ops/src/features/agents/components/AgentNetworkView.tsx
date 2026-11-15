@@ -11,9 +11,11 @@
 //
 // Retired agents sit behind a collapsed chip, manual / API-only agents in an
 // "On demand" rail; both stay clickable and open the same detail panel.
+// Motion stops under the OS reduced-motion setting or the Pause control.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Maximize2, Minimize2, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import { Maximize2, Minimize2, Pause, Play, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import { useReducedMotion } from '@averrow/shared/ui';
 import type { Agent } from '@/hooks/useAgents';
 import { useFeeds } from '@/hooks/useFeeds';
 import { useAgentTimeline, useTimelineClock } from '@/hooks/useAgentTimeline';
@@ -21,11 +23,19 @@ import { FlowCanvas, agentLabel } from '../network/FlowCanvas';
 import { RunTape } from '../network/RunTape';
 import { indexTimeline } from '../network/activity';
 import { MIN_LAYOUT_WIDTH, placeAgents } from '../network/model';
-import { useElementWidth, useReducedMotionPref } from '../network/useCanvasLoop';
+import { useElementWidth } from '../network/useCanvasLoop';
 
 const ZOOM_MIN = 0.6;
 const ZOOM_MAX = 1.6;
 const ZOOM_STEP = 0.2;
+
+// Focus styling for the canvas wrappers, scroll regions and small controls.
+const FOCUS_CSS = `
+.agn-btn:focus-visible,.agn-chip:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
+.agn-scroll:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}
+.agn-ring-within:has(:focus-visible){outline:2px solid var(--focus-ring);outline-offset:-2px}
+.agn-btn[aria-disabled="true"]{opacity:.4;cursor:default}
+`;
 
 interface AgentNetworkViewProps {
   agents:        Agent[];
@@ -34,14 +44,20 @@ interface AgentNetworkViewProps {
 }
 
 function CtrlButton({
-  onClick, disabled, children, ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  disabled, onClick, children, buttonRef, ...rest
+}: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'disabled'> & {
+  disabled?: boolean;
+  buttonRef?: React.Ref<HTMLButtonElement>;
+}) {
+  // aria-disabled (not disabled) so a button that disables itself while
+  // focused keeps focus.
   return (
     <button
+      ref={buttonRef}
       type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="w-8 h-8 rounded grid place-items-center transition-colors disabled:opacity-40"
+      aria-disabled={disabled ? true : undefined}
+      onClick={(e) => { if (!disabled) onClick?.(e); }}
+      className="agn-btn w-8 h-8 rounded grid place-items-center transition-colors"
       style={{
         background: 'var(--bg-card-deep)',
         border:     '1px solid var(--border-base)',
@@ -54,38 +70,65 @@ function CtrlButton({
   );
 }
 
-function Chip({ children, onClick, muted }: { children: React.ReactNode; onClick: () => void; muted?: boolean }) {
+function Chip({
+  children, onClick, muted, ...rest
+}: { children: React.ReactNode; onClick: () => void; muted?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="font-mono text-[10px] px-2 py-1 rounded transition-colors"
+      className="agn-chip font-mono text-[10px] px-2 py-1 rounded transition-colors"
       style={{
         background: 'var(--bg-card-deep)',
         border: '1px solid var(--border-base)',
         color: muted ? 'var(--text-tertiary)' : 'var(--text-secondary)',
       }}
+      {...rest}
     >
       {children}
     </button>
   );
 }
 
-const LEGEND: Array<{ swatch: string; label: string; dashed?: boolean }> = [
-  { swatch: 'var(--primary)', label: 'Running now' },
-  { swatch: 'var(--primary-text)', label: 'Data in transit' },
-  { swatch: 'var(--sev-critical)', label: 'Last run failed' },
-  { swatch: 'var(--border-base)', label: 'Idle link' },
-  { swatch: 'var(--primary-text)', label: 'Dashed: event hand-off (pivot_detected)', dashed: true },
+type SwatchKind = 'running' | 'transit' | 'failed' | 'partial' | 'idle' | 'event';
+const LEGEND: Array<{ kind: SwatchKind; label: string }> = [
+  { kind: 'running', label: 'Running now' },
+  { kind: 'transit', label: 'Data in transit' },
+  { kind: 'failed', label: 'Last run failed' },
+  { kind: 'partial', label: 'Partial run (tape)' },
+  { kind: 'idle', label: 'Idle link' },
+  { kind: 'event', label: 'Dashed: event hand-off (pivot_detected)' },
 ];
+
+function Swatch({ kind }: { kind: SwatchKind }) {
+  const base: React.CSSProperties = { display: 'inline-block', flex: 'none' };
+  switch (kind) {
+    case 'running': // filled disc with an outer progress ring
+      return <i aria-hidden="true" style={{ ...base, width: 12, height: 12, borderRadius: 999, background: 'var(--primary)', boxShadow: '0 0 0 2px var(--bg-card), 0 0 0 3.5px var(--primary-text)' }} />;
+    case 'transit': // small bright dot with a soft halo
+      return <i aria-hidden="true" style={{ ...base, width: 5, height: 5, borderRadius: 999, background: 'var(--primary-text)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--primary-text) 30%, transparent)', margin: '0 3px' }} />;
+    case 'failed': // hollow red ring
+      return <i aria-hidden="true" style={{ ...base, width: 12, height: 12, borderRadius: 999, border: '2px solid var(--sev-critical)' }} />;
+    case 'partial': // amber-ish status bar
+      return <i aria-hidden="true" style={{ ...base, width: 16, height: 6, borderRadius: 2, background: 'var(--sev-medium)' }} />;
+    case 'idle':
+      return <i aria-hidden="true" style={{ ...base, width: 16, height: 0, borderTop: '2px solid var(--text-muted)', opacity: 0.45 }} />;
+    case 'event':
+      return <i aria-hidden="true" style={{ ...base, width: 16, height: 0, borderTop: '2px dashed var(--primary-text)' }} />;
+  }
+}
 
 export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetworkViewProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const exitRef = useRef<HTMLButtonElement | null>(null);
   const width = useElementWidth(wrapRef);
-  const reducedMotion = useReducedMotionPref();
+  const osReduced = useReducedMotion();
+  const [paused, setPaused] = useState(false);
+  // Pause and the OS preference share one static path for both canvases.
+  const reducedMotion = osReduced || paused;
 
-  const { data: feedsData = [] } = useFeeds();
-  const feeds = useMemo(() => feedsData.filter((f) => Boolean(f.enabled)), [feedsData]);
+  const feedsQ = useFeeds();
+  const feeds = useMemo(() => (feedsQ.data ?? []).filter((f) => Boolean(f.enabled)), [feedsQ.data]);
 
   const timelineQ = useAgentTimeline();
   const timeline = timelineQ.data;
@@ -102,15 +145,23 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
   const [fullscreen, setFullscreen] = useState(false);
   const [showRetired, setShowRetired] = useState(false);
 
+  // Fullscreen behaves as a modal dialog: body scroll locked, focus moved to
+  // the exit button on open and back to the toggle on close (same button).
+  const firstRun = useRef(true);
+  useEffect(() => {
+    if (firstRun.current) { firstRun.current = false; return; }
+    exitRef.current?.focus();
+  }, [fullscreen]);
   useEffect(() => {
     if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFullscreen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
   }, [fullscreen]);
 
   const layoutWidth = Math.max(width, MIN_LAYOUT_WIDTH);
   const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 10) / 10));
+  const pct = `${Math.round(zoom * 100)}%`;
 
   const truncated = timeline && (timeline.truncated.runs || timeline.truncated.pulls || timeline.truncated.events);
 
@@ -119,31 +170,38 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
       ref={wrapRef}
       data-testid="agent-network"
       data-hover={hoverId ?? ''}
+      role={fullscreen ? 'dialog' : undefined}
+      aria-modal={fullscreen ? true : undefined}
+      aria-label={fullscreen ? 'Agent network, full screen' : undefined}
+      onKeyDown={(e) => { if (fullscreen && e.key === 'Escape') { e.stopPropagation(); setFullscreen(false); } }}
       className={fullscreen ? 'fixed inset-0 z-50 overflow-auto p-4 space-y-3' : 'space-y-3'}
       style={fullscreen ? { background: 'var(--bg-page)' } : undefined}
     >
+      <style>{FOCUS_CSS}</style>
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex flex-wrap gap-x-5 gap-y-1" aria-label="Legend">
+        <ul className="flex flex-wrap gap-x-5 gap-y-1 list-none p-0 m-0" aria-label="Legend">
           {LEGEND.map((l) => (
-            <span key={l.label} className="inline-flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-              <i
-                aria-hidden="true"
-                style={{
-                  display: 'inline-block', width: l.dashed ? 16 : 10, height: l.dashed ? 0 : 10,
-                  borderRadius: l.dashed ? 0 : 999,
-                  background: l.dashed ? 'transparent' : l.swatch,
-                  borderTop: l.dashed ? `2px dashed ${l.swatch}` : undefined,
-                }}
-              />
+            <li key={l.label} className="inline-flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+              <Swatch kind={l.kind} />
               {l.label}
-            </span>
+            </li>
           ))}
-        </div>
+        </ul>
         <div className="flex gap-1.5">
-          <CtrlButton aria-label="Zoom out" onClick={() => setZoom((z) => clampZoom(z - ZOOM_STEP))} disabled={zoom <= ZOOM_MIN}><ZoomOut size={14} /></CtrlButton>
-          <CtrlButton aria-label="Zoom in" onClick={() => setZoom((z) => clampZoom(z + ZOOM_STEP))} disabled={zoom >= ZOOM_MAX}><ZoomIn size={14} /></CtrlButton>
-          <CtrlButton aria-label="Reset zoom" onClick={() => setZoom(1)} disabled={zoom === 1}><RotateCcw size={14} /></CtrlButton>
           <CtrlButton
+            aria-label={paused || osReduced ? 'Play motion' : 'Pause motion'}
+            aria-pressed={reducedMotion}
+            title={osReduced ? 'Motion is off (system reduced-motion setting)' : undefined}
+            disabled={osReduced}
+            onClick={() => setPaused((p) => !p)}
+          >
+            {reducedMotion ? <Play size={14} /> : <Pause size={14} />}
+          </CtrlButton>
+          <CtrlButton aria-label={`Zoom out (${pct})`} onClick={() => setZoom((z) => clampZoom(z - ZOOM_STEP))} disabled={zoom <= ZOOM_MIN}><ZoomOut size={14} /></CtrlButton>
+          <CtrlButton aria-label={`Zoom in (${pct})`} onClick={() => setZoom((z) => clampZoom(z + ZOOM_STEP))} disabled={zoom >= ZOOM_MAX}><ZoomIn size={14} /></CtrlButton>
+          <CtrlButton aria-label={`Reset zoom (${pct})`} onClick={() => setZoom(1)} disabled={zoom === 1}><RotateCcw size={14} /></CtrlButton>
+          <CtrlButton
+            buttonRef={exitRef}
             aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
             onClick={() => setFullscreen((f) => !f)}
           >
@@ -152,18 +210,32 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
         </div>
       </div>
 
-      {status === 'error' && (
-        <div role="status" className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-          Live timeline unavailable. Showing the map without motion.
+      {(status === 'error' || feedsQ.isError) && (
+        <div className="flex items-center gap-3 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          {status === 'error' && (
+            <>
+              <span role="status">Live timeline unavailable. Showing the map without motion.</span>
+              <Chip onClick={() => { void timelineQ.refetch(); }}>Retry</Chip>
+            </>
+          )}
+          {feedsQ.isError && (
+            <>
+              <span>Feed list unavailable. The feed lane is empty.</span>
+              <Chip onClick={() => { void feedsQ.refetch(); }}>Retry feeds</Chip>
+            </>
+          )}
         </div>
       )}
 
       <div
-        className="rounded-lg overflow-auto"
+        className="agn-scroll rounded-lg overflow-auto"
+        role="region"
+        aria-label="Agent data-flow map (scrollable)"
+        tabIndex={0}
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)' }}
       >
         <FlowCanvas
-          agents={agents}
+          byName={byName}
           feeds={feeds}
           index={index}
           hasTimeline={!!timeline}
@@ -180,7 +252,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
       </div>
 
       {(placement.onDemand.length > 0 || placement.retired.length > 0) && (
-        <div className="flex flex-wrap items-center gap-2" data-testid="network-rails">
+        <div
+          className="flex flex-wrap items-center gap-2 px-3"
+          role="group"
+          aria-label="On-demand and retired agents"
+          data-testid="network-rails"
+        >
           {placement.onDemand.length > 0 && (
             <>
               <span className="font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: 'var(--text-muted)' }}>On demand</span>
@@ -191,7 +268,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
           )}
           {placement.retired.length > 0 && (
             <>
-              <Chip muted onClick={() => setShowRetired((v) => !v)}>
+              <Chip muted aria-expanded={showRetired} onClick={() => setShowRetired((v) => !v)}>
                 Retired ({placement.retired.length}) {showRetired ? '−' : '+'}
               </Chip>
               {showRetired && placement.retired.map((id) => (
@@ -202,13 +279,20 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
         </div>
       )}
 
-      <div
-        className="rounded-lg overflow-x-auto"
+      <section
+        className="agn-scroll rounded-lg overflow-x-auto"
+        role="region"
+        aria-labelledby="agn-tape-title"
+        tabIndex={0}
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)' }}
       >
-        <div className="font-mono text-[10px] tracking-[0.14em] uppercase px-3 pt-3" style={{ color: 'var(--text-muted)' }}>
+        <h3
+          id="agn-tape-title"
+          className="font-mono text-[10px] tracking-[0.14em] uppercase px-3 pt-3 m-0 font-medium"
+          style={{ color: 'var(--text-muted)' }}
+        >
           Run tape · last hour (UTC)
-        </div>
+        </h3>
         <RunTape
           placement={placement}
           index={index}
@@ -227,7 +311,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
             The timeline hit its row limit; the oldest runs are not shown.
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

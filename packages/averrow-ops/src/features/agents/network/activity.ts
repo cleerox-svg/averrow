@@ -34,6 +34,10 @@ export const OPEN_RUN_CAP_MS = 60_000;
 export interface TimelineIndex {
   /** Latest instant an open span may be drawn as still running. */
   capMs: number;
+  /** Median finished duration per lane (expected run length), precomputed. */
+  expected: Map<string, number>;
+  /** pivot_detected events (the only EVENT edge). */
+  events: Array<{ source: string; target: string | null; createdMs: number; status: string }>;
   /** Spans per lane id: agent id, or a feed group node id, or FEED_NRD. */
   lanes: Map<string, Span[]>;
   windowStart: number;
@@ -82,16 +86,23 @@ export function indexTimeline(
     const list = lanes.get(lane);
     if (list) list.push(span); else lanes.set(lane, [span]);
   };
-  if (!timeline) return { lanes, windowStart: 0, windowEnd: 0, capMs: 0 };
+  if (!timeline) return { lanes, windowStart: 0, windowEnd: 0, capMs: 0, expected: new Map(), events: [] };
   const laneOfFeed = new Map(feeds.map((f) => [f.feed_name, feedLaneId(f)]));
   for (const r of timeline.runs) push(r.agent_id, runSpan(r));
   for (const p of timeline.pulls) {
     // A pull for a feed the registry no longer lists reads as an ingest feed.
     push(laneOfFeed.get(p.feed_name) ?? (p.feed_name === 'nrd_hagezi' ? FEED_NRD : GROUP_INGEST), pullSpan(p));
   }
-  for (const list of lanes.values()) list.sort((a, b) => a.startMs - b.startMs);
+  const expected = new Map<string, number>();
+  for (const [lane, list] of lanes) {
+    list.sort((a, b) => a.startMs - b.startMs);
+    expected.set(lane, expectedMs(list));
+  }
+  const events = timeline.events
+    .map((e) => ({ source: e.source_agent, target: e.target_agent, createdMs: ts(e.created_at) ?? 0, status: e.status }))
+    .filter((e) => e.createdMs > 0);
   return {
-    lanes,
+    lanes, expected, events,
     windowStart: ts(timeline.window_start) ?? 0,
     windowEnd: ts(timeline.window_end) ?? 0,
     capMs: (ts(timeline.generated_at) ?? ts(timeline.window_end) ?? 0) + OPEN_RUN_CAP_MS,
@@ -122,7 +133,25 @@ function expectedMs(spans: Span[]): number {
   return Math.max(d[Math.floor(d.length / 2)]!, 1_000);
 }
 
+const frameCache = new WeakMap<TimelineIndex, { now: number; m: Map<string, NodeActivity> }>();
+
+/** Lane activity, computed once per (index, now): a frame asks for the same
+ *  lane from many nodes and edges. */
 export function laneActivity(index: TimelineIndex, lane: string, now: number): NodeActivity {
+  let entry = frameCache.get(index);
+  if (!entry || entry.now !== now) {
+    entry = { now, m: new Map() };
+    frameCache.set(index, entry);
+  }
+  let hit = entry.m.get(lane);
+  if (!hit) {
+    hit = computeLaneActivity(index, lane, now);
+    entry.m.set(lane, hit);
+  }
+  return hit;
+}
+
+function computeLaneActivity(index: TimelineIndex, lane: string, now: number): NodeActivity {
   const spans = index.lanes.get(lane);
   if (!spans || !spans.length) return IDLE;
   let running = false;
@@ -131,7 +160,7 @@ export function laneActivity(index: TimelineIndex, lane: string, now: number): N
   let records = 0;
   let lastStartMs: number | null = null;
   let lastFinished: Span | null = null;
-  const exp = expectedMs(spans);
+  const exp = index.expected.get(lane) ?? DEFAULT_EXPECTED_MS;
   for (const s of spans) {
     if (s.startMs > now) continue;
     if (lastStartMs === null || s.startMs > lastStartMs) lastStartMs = s.startMs;
@@ -159,12 +188,26 @@ export function laneActivity(index: TimelineIndex, lane: string, now: number): N
 /** Lanes whose activity makes an edge's source emit. The hub emits when
  *  anything that writes threats is active. */
 export function emitterLanes(from: string): string[] {
-  if (from === HUB_THREATS) return [GROUP_INGEST, GROUP_ENRICHMENT, 'navigator'];
+  if (from === HUB_THREATS) return [GROUP_INGEST, GROUP_ENRICHMENT, 'navigator', 'enricher'];
   if (from === INBOX_ABUSE) return ['abuse_mailbox_classifier'];
   return [from];
 }
 
 export function edgeActivity(index: TimelineIndex, edge: NetworkEdge, now: number): NodeActivity {
+  // The EVENT edge fires on an actual pivot_detected event, not on every run
+  // of its source: in transit just after it is written, or while it waits
+  // for the consumer (pending) inside the snapshot's trust window.
+  if (edge.mechanism === 'EVENT') {
+    let n = 0;
+    let last: number | null = null;
+    for (const ev of index.events) {
+      if (ev.source !== edge.from || (ev.target !== null && ev.target !== edge.to) || ev.createdMs > now) continue;
+      const inTail = now - ev.createdMs <= TRANSIT_TAIL_MS;
+      const waiting = ev.status === 'pending' && now <= index.capMs;
+      if (inTail || waiting) { n++; if (last === null || ev.createdMs > last) last = ev.createdMs; }
+    }
+    return n === 0 ? IDLE : { running: false, progress: 0, failed: false, emitting: true, records: n, lastStartMs: last };
+  }
   // threats -> sentinel is the same-tick ingest hand-off; the other hub
   // edges read the table after anything that writes it.
   const lanes = edge.from === HUB_THREATS && edge.to === 'sentinel' ? [GROUP_INGEST] : emitterLanes(edge.from);

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AGENT_METADATA } from '@/lib/agent-metadata';
 import {
   DECLARED_ENDPOINTS, EDGES, FEED_NRD, FLIGHT_CONTROL, HUB_THREATS, ON_DEMAND_IDS, SPINE_EDGES, STAGE_AGENTS,
-  canonicalHoverId, computeLayout, edgeCurve, feedGroupOf, hitTest, placeAgents, placedIds, type Stage,
+  EXTERNAL_SOURCE, computeLayout, edgePath, feedGroupOf, pointAt, hitTest, placeAgents, placedIds, type Stage,
 } from './model';
 import { AGENTS_FIXTURE, FEEDS_FIXTURE, RETIRED_IDS, makeAgent } from './fixtures';
 
@@ -32,15 +32,31 @@ describe('declared edges', () => {
     expect(events[0]!.tier).toBe('spine');
   });
 
-  it('pins the true spine hand-offs', () => {
-    const spine = new Set(SPINE_EDGES.map((e) => `${key(e)}:${e.mechanism}`));
-    for (const want of [
-      'feeds:ingest>threats:INLINE', 'threats>sentinel:INLINE', 'feeds:social>watchdog:INLINE',
-      'social_discovery>social_monitor:INLINE', 'sparrow>evidence_assembler:INLINE',
-      'feed:nrd_hagezi>lookalike_scanner:TABLE', 'threats>page_capture:TABLE',
-      'inbox:abuse>abuse_mailbox_classifier:TABLE', 'abuse_mailbox_classifier>sparrow:TABLE',
-      'auto_seeder>seed_strategist:TABLE', 'cartographer>nexus:TABLE', 'nexus>attributor:TABLE',
-    ]) expect(spine.has(want), want).toBe(true);
+  it('pins the full spine edge set', () => {
+    const spine = SPINE_EDGES.map((e) => `${key(e)}:${e.mechanism}`).sort();
+    expect(spine).toEqual([
+      'abuse_mailbox_classifier>sparrow:TABLE',
+      'analyst>observer:TABLE',
+      'auto_seeder>seed_strategist:TABLE',
+      'cartographer>nexus:TABLE',
+      'cartographer>strategist:TABLE',
+      'enricher>threats:TABLE',
+      'feed:nrd_hagezi>lookalike_scanner:TABLE',
+      'feeds:enrichment>threats:TABLE',
+      'feeds:ingest>threats:INLINE',
+      'feeds:social>watchdog:INLINE',
+      'inbox:abuse>abuse_mailbox_classifier:TABLE',
+      'lookalike_scanner>sparrow:TABLE',
+      'navigator>threats:TABLE',
+      'nexus>attributor:TABLE',
+      'nexus>observer:EVENT',
+      'social_discovery>social_monitor:INLINE',
+      'sparrow>evidence_assembler:INLINE',
+      'strategist>observer:TABLE',
+      'threats>cartographer:TABLE',
+      'threats>page_capture:TABLE',
+      'threats>sentinel:INLINE',
+    ].sort());
   });
 
   it('only connects registered agents and declared endpoints', () => {
@@ -156,7 +172,7 @@ describe('layout', () => {
 
   it('enforces a minimum width and hit-tests nodes, feed dots and the badge', () => {
     const narrow = computeLayout({ width: 320, placement, feeds, labelOf: (id) => id });
-    expect(narrow.width).toBeGreaterThanOrEqual(1000);
+    expect(narrow.width).toBeGreaterThanOrEqual(1060);
     const n = layout.nodes.observer!;
     expect(hitTest(layout, n.x + 2, n.y - 2)?.id).toBe('observer');
     const dot = layout.dots.find((d) => d.name === 'phishtank')!;
@@ -166,17 +182,52 @@ describe('layout', () => {
     expect(hitTest(layout, 5, layout.height - 3)).toBeNull();
   });
 
-  it('draws a backwards edge (navigator -> threats) that leaves leftwards', () => {
-    const c = edgeCurve(layout.nodes.navigator!, layout.nodes[HUB_THREATS]!);
-    expect(c[2]!).toBeLessThan(c[0]!);
+  it('routes a backwards edge (navigator -> threats) out the left side', () => {
+    const p = edgePath(layout, layout.nodes.navigator!, layout.nodes[HUB_THREATS]!);
+    expect(p[1]!.x).toBeLessThan(p[0]!.x);
+    expect(p[p.length - 1]!.x).toBeGreaterThan(layout.nodes[HUB_THREATS]!.x);
   });
 
-  it('maps a feed dot hover to its group lane', () => {
-    const groups = new Map(feeds.map((f) => [f.feed_name, feedGroupOf(f)]));
-    expect(canonicalHoverId('feed:phishtank', groups)).toBe('feeds:ingest');
-    expect(canonicalHoverId('feed:reddit', groups)).toBe('feeds:social');
-    expect(canonicalHoverId('feed:nrd_hagezi', groups)).toBe(FEED_NRD);
-    expect(canonicalHoverId('nexus', groups)).toBe('nexus');
-    expect(canonicalHoverId(null, groups)).toBeNull();
+  it('runs feed-to-hub edges through the gutters, never through a column', () => {
+    const p = edgePath(layout, layout.nodes['feeds:ingest']!, layout.nodes[HUB_THREATS]!);
+    const colXs = layout.columns.filter((c) => c.key !== 'feeds').map((c) => c.x);
+    const hub = layout.nodes[HUB_THREATS]!;
+    // Every vertical leg (two consecutive points sharing x) sits in a gutter.
+    for (let i = 1; i < p.length; i++) {
+      if (Math.abs(p[i]!.x - p[i - 1]!.x) < 0.01 && Math.abs(p[i]!.y - p[i - 1]!.y) > 4) {
+        for (const cx of colXs) expect(Math.abs(p[i]!.x - cx), `vertical leg at ${p[i]!.x}`).toBeGreaterThan(60);
+      }
+    }
+    // It enters the hub horizontally from the left.
+    expect(p[p.length - 1]!.x).toBeCloseTo(hub.x - hub.r, 0);
+    expect(p[p.length - 1]!.y).toBeCloseTo(hub.y, 0);
+    expect(p[p.length - 2]!.y).toBeCloseTo(hub.y, 0);
+  });
+
+  it('keeps every long horizontal run in the channel between two grid rows', () => {
+    const a = layout.nodes.lookalike_scanner!;
+    const b = layout.nodes.sparrow!;
+    const p = edgePath(layout, a, b);
+    const rowYs = Object.values(layout.nodes).filter((n) => n.kind === 'agent' && n.id !== FLIGHT_CONTROL).map((n) => n.y);
+    for (let i = 1; i < p.length; i++) {
+      const long = Math.abs(p[i]!.y - p[i - 1]!.y) < 0.01 && Math.abs(p[i]!.x - p[i - 1]!.x) > 120;
+      if (long && p[i]!.x > a.x + 40 && p[i - 1]!.x < b.x - 40) {
+        for (const ry of rowYs) expect(Math.abs(p[i]!.y - ry)).toBeGreaterThan(22);
+      }
+    }
+  });
+
+  it('heads the first column MONITORS and gives it an external-input marker', () => {
+    expect(layout.columns.map((c) => c.label)).toContain('MONITORS');
+    expect(layout.columns.map((c) => c.label)).not.toContain('SOURCES');
+    expect(layout.nodes[EXTERNAL_SOURCE]).toBeDefined();
+    expect(layout.externalBus?.stubs).toHaveLength(placement.stages.sources.length);
+  });
+
+  it('interpolates points along a path by length', () => {
+    const path = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }];
+    expect(pointAt(path, 0)).toEqual({ x: 0, y: 0 });
+    expect(pointAt(path, 0.5)).toEqual({ x: 10, y: 0 });
+    expect(pointAt(path, 1)).toEqual({ x: 10, y: 10 });
   });
 });

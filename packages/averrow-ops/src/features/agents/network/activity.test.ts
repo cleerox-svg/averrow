@@ -65,8 +65,54 @@ describe('open runs are capped at the snapshot', () => {
   });
 });
 
+describe('EVENT edge follows pivot_detected events, not nexus runs', () => {
+  const e = edge('nexus', 'observer');
+  const noEvents = indexTimeline({ ...TIMELINE_FIXTURE, events: [] }, FEEDS_FIXTURE);
+
+  it('stays quiet when nexus ran but wrote no event', () => {
+    expect(laneActivity(noEvents, 'nexus', NOW).emitting).toBe(true); // the run itself is live
+    expect(edgeActivity(noEvents, e, NOW).emitting).toBe(false);
+  });
+
+  it('fires in the transit tail of a handled event, then stops', () => {
+    const handled = indexTimeline({
+      ...TIMELINE_FIXTURE,
+      events: [{ ...TIMELINE_FIXTURE.events[0]!, status: 'done', created_at: FIXTURE_NOW }],
+    }, FEEDS_FIXTURE);
+    expect(edgeActivity(handled, e, NOW + 2_000).emitting).toBe(true);
+    expect(edgeActivity(handled, e, NOW + TRANSIT_TAIL_MS + 1_000).emitting).toBe(false);
+  });
+
+  it('keeps a pending event in flight until the snapshot goes stale', () => {
+    expect(edgeActivity(index, e, NOW + 30_000).emitting).toBe(true);
+    expect(edgeActivity(index, e, NOW + 61_000).emitting).toBe(false);
+  });
+
+  it('ignores events from other sources', () => {
+    const other = indexTimeline({
+      ...TIMELINE_FIXTURE,
+      events: [{ ...TIMELINE_FIXTURE.events[0]!, source_agent: 'analyst' }],
+    }, FEEDS_FIXTURE);
+    expect(edgeActivity(other, e, NOW).emitting).toBe(false);
+  });
+});
+
+describe('hub emitters', () => {
+  it('lights the table edges while the enricher runs, but not the ingest hand-off', () => {
+    const only = indexTimeline({
+      ...TIMELINE_FIXTURE,
+      pulls: [],
+      runs: TIMELINE_FIXTURE.runs.filter((r) => r.agent_id === 'enricher').map((r) => ({
+        ...r, status: 'running' as const, open: true, completed_at: null,
+      })),
+    }, FEEDS_FIXTURE);
+    expect(edgeActivity(only, edge('threats', 'cartographer'), NOW).emitting).toBe(true);
+    expect(edgeActivity(only, edge('threats', 'sentinel'), NOW).emitting).toBe(false);
+  });
+});
+
 describe('particle gating', () => {
-  it('rides the live EVENT edge while nexus has just finished', () => {
+  it('rides the live EVENT edge while a pivot event is in flight', () => {
     const e = edge('nexus', 'observer');
     const act = edgeActivity(index, e, NOW);
     expect(act.emitting).toBe(true);

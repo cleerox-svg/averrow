@@ -2,7 +2,7 @@
 // reduced-motion path (no frames, no particles), the frame loop pausing when
 // the tab is hidden, and the empty / error timeline states.
 
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '@/test/utils';
 import { AgentNetworkView } from './AgentNetworkView';
@@ -188,20 +188,170 @@ describe('AgentNetworkView', () => {
       expect(particleArcs()).toBe(0);
     });
 
-    it('stops the frame loop while the tab is hidden', async () => {
+    it('cancels its frames and requests no more while the tab is hidden', async () => {
+      const raf = window.requestAnimationFrame as unknown as ReturnType<typeof vi.fn>;
+      const caf = window.cancelAnimationFrame as unknown as ReturnType<typeof vi.fn>;
       renderView();
       await tapeCanvas();
       await waitFor(() => expect(frames.length).toBeGreaterThan(0));
-      const before = (window.requestAnimationFrame as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
-      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
-      act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-      frames = [];
-      const calls = () => (window.requestAnimationFrame as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
-      const afterHide = calls();
+      try {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+        act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+        expect(caf).toHaveBeenCalled();
+        const requested = raf.mock.calls.length;
+        // The queued frame was cancelled (a browser would never run it); nothing new is requested.
+        await new Promise((r) => setTimeout(r, 20));
+        expect(raf.mock.calls.length).toBe(requested);
+      } finally {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+        act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+      }
+    });
+
+    it('observes both canvases for visibility, including the tape that mounts after the data', async () => {
+      const observed: Element[] = [];
+      vi.stubGlobal('IntersectionObserver', class {
+        observe(el: Element) { observed.push(el); }
+        disconnect() {}
+        unobserve() {}
+      });
+      try {
+        renderView();
+        const tape = await tapeCanvas();
+        await waitFor(() => expect(observed).toContain(tape));
+        expect(observed).toContain(flowCanvas());
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('Pause switches both canvases to the static path and Play resumes', async () => {
+      renderView();
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      const raf = window.requestAnimationFrame as unknown as ReturnType<typeof vi.fn>;
+      fireEvent.click(screen.getByRole('button', { name: 'Pause motion' }));
+      const play = screen.getByRole('button', { name: 'Play motion' });
+      expect(play).toHaveAttribute('aria-pressed', 'true');
+      const requested = raf.mock.calls.length;
+      arcs.length = 0;
       await new Promise((r) => setTimeout(r, 20));
-      expect(calls()).toBe(afterHide);
-      expect(afterHide).toBeGreaterThanOrEqual(before);
-      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      expect(raf.mock.calls.length).toBe(requested);
+      expect(particleArcs()).toBe(0);
+      fireEvent.click(play);
+      await waitFor(() => expect(raf.mock.calls.length).toBeGreaterThan(requested));
+    });
+
+    it('disables Pause (aria-disabled, stays focusable) under the OS reduced-motion setting', async () => {
+      reduced = true;
+      installMatchMedia();
+      renderView();
+      await tapeCanvas();
+      const btn = screen.getByRole('button', { name: 'Play motion' });
+      expect(btn).toHaveAttribute('aria-disabled', 'true');
+      expect(btn).not.toBeDisabled();
+    });
+  });
+
+  describe('keyboard and assistive tech', () => {
+    it('focusing a node button highlights it on both canvases; blur clears it', async () => {
+      renderView();
+      await tapeCanvas();
+      const btn = screen.getByRole('button', { name: /^Observer: / });
+      act(() => btn.focus());
+      expect(screen.getByTestId('agent-network')).toHaveAttribute('data-hover', 'observer');
+      expect(btn).toHaveAttribute('aria-pressed', 'false');
+      act(() => btn.blur());
+      expect(screen.getByTestId('agent-network')).toHaveAttribute('data-hover', '');
+    });
+
+    it('marks the selected agent as pressed', async () => {
+      renderView(vi.fn(), 'nexus');
+      await tapeCanvas();
+      expect(screen.getByRole('button', { name: /^NEXUS: / })).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('gives the run tape a text equivalent with runs and a select button per agent lane', async () => {
+      const onSelect = vi.fn();
+      renderView(onSelect);
+      await tapeCanvas();
+      const list = screen.getByRole('list', { name: 'Runs in the last hour, by lane', hidden: true });
+      expect(list).toHaveTextContent('Cartographer');
+      expect(list).toHaveTextContent(/running, started \d\d:\d\d UTC/);
+      expect(list).toHaveTextContent(/failed, started/);
+      const btn = within(list).getByRole('button', { name: 'Sparrow' });
+      fireEvent.click(btn);
+      expect(onSelect).toHaveBeenCalledWith('sparrow');
+    });
+
+    it('makes both scroll containers focusable named regions', async () => {
+      renderView();
+      await tapeCanvas();
+      const map = screen.getByRole('region', { name: /data-flow map/i });
+      expect(map).toHaveAttribute('tabindex', '0');
+      const tape = screen.getByRole('region', { name: /Run tape/ });
+      expect(tape).toHaveAttribute('tabindex', '0');
+      expect(screen.getByRole('heading', { name: /Run tape/ })).toBeInTheDocument();
+    });
+
+    it('lists the legend as a list including the partial-run entry', async () => {
+      renderView();
+      await tapeCanvas();
+      const legend = screen.getByRole('list', { name: 'Legend' });
+      expect(within(legend).getAllByRole('listitem').length).toBeGreaterThanOrEqual(6);
+      expect(legend).toHaveTextContent('Partial run');
+    });
+
+    it('zoom buttons use aria-disabled so a focused button keeps focus', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: /Zoom out/ }));
+      fireEvent.click(screen.getByRole('button', { name: /Zoom out/ }));
+      const out = screen.getByRole('button', { name: /Zoom out \(60%\)/ });
+      act(() => out.focus());
+      fireEvent.click(out);
+      expect(out).toHaveAttribute('aria-disabled', 'true');
+      expect(out).not.toBeDisabled();
+      expect(document.activeElement).toBe(out);
+    });
+  });
+
+  describe('full screen', () => {
+    it('is a modal dialog: focus on the exit button, body scroll locked, Escape closes', async () => {
+      renderView();
+      await tapeCanvas();
+      const toggle = screen.getByRole('button', { name: 'Full screen' });
+      fireEvent.click(toggle);
+      const dialog = await screen.findByRole('dialog', { name: /full screen/i });
+      expect(dialog).toHaveAttribute('aria-modal', 'true');
+      expect(document.body.style.overflow).toBe('hidden');
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Exit full screen' })));
+      fireEvent.keyDown(dialog, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(document.body.style.overflow).toBe('');
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Full screen' }));
+    });
+  });
+
+  describe('touch', () => {
+    it('first tap previews a node, second tap selects it', async () => {
+      const onSelect = vi.fn();
+      renderView(onSelect);
+      await tapeCanvas();
+      const layout = computeLayout({
+        width: 1000, placement: placeAgents(AGENTS_FIXTURE), feeds: FEEDS_FIXTURE, labelOf: (id) => id,
+      });
+      const n = layout.nodes.observer!;
+      const canvas = flowCanvas();
+      const tap = () => {
+        fireEvent(canvas, Object.assign(new MouseEvent('pointerdown', { bubbles: true }), { pointerType: 'touch' }));
+        pointer(canvas, n.x, n.y, 'click');
+      };
+      tap();
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(screen.getByTestId('agent-network')).toHaveAttribute('data-hover', 'observer');
+      tap();
+      expect(onSelect).toHaveBeenCalledWith('observer');
     });
   });
 
@@ -214,6 +364,31 @@ describe('AgentNetworkView', () => {
       expect(screen.getByTestId('run-tape-empty')).toHaveTextContent('Run timeline unavailable');
       expect(frames).toHaveLength(0);
       expect(particleArcs()).toBe(0);
+    });
+
+    it('announces the error once, reserves tape height, and Retry refetches', async () => {
+      mockApi('error');
+      renderView();
+      await screen.findByText(/Live timeline unavailable/);
+      expect(screen.getAllByRole('status')).toHaveLength(1);
+      expect(screen.getByTestId('run-tape-empty')).toHaveStyle({ minHeight: '180px' });
+      const calls = () => get.mock.calls.filter(([p]) => String(p).startsWith('/api/agents/timeline')).length;
+      const before = calls();
+      mockApi('ok');
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(calls()).toBeGreaterThan(before));
+      expect(await screen.findByTestId('run-tape')).toBeInTheDocument();
+    });
+
+    it('says so when the feed list fails', async () => {
+      get.mockImplementation(async (path: string) => {
+        if (path.startsWith('/api/feeds/overview')) throw new Error('feeds down');
+        if (path.startsWith('/api/agents/timeline')) return { success: true, data: TIMELINE_FIXTURE };
+        return { success: true, data: [] };
+      });
+      renderView();
+      expect(await screen.findByText(/Feed list unavailable/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Retry feeds' })).toBeInTheDocument();
     });
 
     it('shows a quiet note when nothing ran in the last hour', async () => {

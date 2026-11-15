@@ -2,9 +2,10 @@
 // every agent the API returns, and the stage-based layout.
 //
 // Nothing here draws. Positions come from each node's stage (no coordinate
-// table), and edges come from EDGES below, which a test pins against the
-// dispatch code (see model.test.ts). When the platform's wiring changes,
-// change EDGES and the test together.
+// table), and edges come from EDGES below. model.test.ts pins the full spine
+// edge set (and the known-wrong edges that must not return) so a change to
+// the wiring is a deliberate edit to both. It does not read the worker's
+// dispatch code, so keep EDGES in step with CLAUDE.md section 6 by hand.
 //
 // Edge mechanisms (how the hand-off really happens):
 //   INLINE  same tick, the upstream awaits / calls the downstream
@@ -70,6 +71,7 @@ export const EDGES: readonly NetworkEdge[] = [
   { from: 'nexus', to: 'observer', mechanism: 'EVENT', tier: 'spine', via: 'pivot_detected' },
   // TABLE
   { from: GROUP_ENRICHMENT, to: HUB_THREATS, mechanism: 'TABLE', tier: 'spine', via: 'threats (UPDATE)' },
+  { from: 'enricher', to: HUB_THREATS, mechanism: 'TABLE', tier: 'spine', via: 'threats geo / enrichment' },
   { from: 'navigator', to: HUB_THREATS, mechanism: 'TABLE', tier: 'spine', via: 'threats.ip_address (DNS)' },
   { from: HUB_THREATS, to: 'cartographer', mechanism: 'TABLE', tier: 'spine', via: 'threats' },
   { from: HUB_THREATS, to: 'page_capture', mechanism: 'TABLE', tier: 'spine', via: 'page_captures queue' },
@@ -240,17 +242,11 @@ export function feedGroupOf(feed: Pick<FeedOverview, 'feed_name' | 'feed_type'>)
   return 'ingest'; // missing feed_type reads as ingest
 }
 
-/** Map any hover id to the id the canvas and tape both understand. */
-export function canonicalHoverId(id: string | null, feedGroupByName: ReadonlyMap<string, FeedGroup>): string | null {
-  if (!id || !id.startsWith('feed:')) return id;
-  if (id === FEED_NRD) return id;
-  const g = feedGroupByName.get(id.slice(5));
-  if (!g || g === 'nrd') return id;
-  return FEED_GROUP_NODE[g];
-}
-
 // ── Layout ────────────────────────────────────────────────────────────
 export type NodeKind = 'agent' | 'hub' | 'group' | 'source';
+
+/** Decorative "Internet / registries" input marker for the monitors column. */
+export const EXTERNAL_SOURCE = 'src:external';
 
 export interface LayoutNode {
   id: string;
@@ -259,6 +255,8 @@ export interface LayoutNode {
   y: number;
   r: number;
   label: string;
+  /** Column index: -1 = the feed lane, 0 = monitors, 1..5 = ingest..respond. */
+  col: number;
 }
 
 export interface FeedDot {
@@ -273,20 +271,29 @@ export interface Layout {
   height: number;
   nodes: Record<string, LayoutNode>;
   dots: FeedDot[];
+  /** Dots per feed-group node id (precomputed for the draw loop). */
+  dotsByGroup: Record<string, FeedDot[]>;
   columns: Array<{ key: string; label: string; x: number }>;
+  /** Vertical lanes between columns: gutters[k] sits left of column k
+   *  (gutters[0] is between the feed lane and the monitors column). Long
+   *  edges run their vertical legs here, never through a column's labels. */
+  gutters: number[];
   /** Flight Control badge rectangle. */
   badge: { x: number; y: number; w: number; h: number };
+  /** Hairline that feeds the monitors from the external-input marker. */
+  externalBus: { x: number; y0: number; y1: number; stubs: Array<{ x: number; y: number }> } | null;
 }
 
-export const MIN_LAYOUT_WIDTH = 1000;
+export const MIN_LAYOUT_WIDTH = 1060;
 const TOP = 96;
-const ROW_H = 58;
+export const ROW_H = 66;
 const AGENT_R = 15;
 const SAT_R = 11;
 export const HUB_R = 34;
 const DOT_PITCH = 15;
 const DOT_COLS = 7;
 const FEED_LANE_X = 20;
+const COL0_X = 250;
 
 export interface LayoutInput {
   width: number;
@@ -302,36 +309,37 @@ export function computeLayout({ width, placement, feeds, labelOf }: LayoutInput)
   const nodes: Record<string, LayoutNode> = {};
   const dots: FeedDot[] = [];
 
-  // Columns: monitors lane, then ingest..respond.
+  // Columns: monitors, then ingest..respond.
   const colKeys: Stage[] = ['sources', 'ingest', 'enrich', 'correlate', 'narrate', 'respond'];
-  const x0 = 214;
-  const x1 = W - 74;
-  const colX = (i: number) => x0 + ((x1 - x0) * i) / (colKeys.length - 1);
+  const x1 = W - 80;
+  const colX = (i: number) => COL0_X + ((x1 - COL0_X) * i) / (colKeys.length - 1);
 
   // The hub rides at the top of the ingest column.
-  const ingestIds = [HUB_THREATS, ...placement.stages.ingest];
   const colContent: Record<Stage, string[]> = {
     ...placement.stages,
     sources: [...placement.stages.sources, INBOX_ABUSE],
-    ingest: ingestIds,
+    ingest: [HUB_THREATS, ...placement.stages.ingest],
   };
   const maxRows = Math.max(...colKeys.map((k) => colContent[k].length), 1);
   const bodyH = maxRows * ROW_H;
+  // One global row grid: every node sits on slot k, so the gap between two
+  // rows is a free horizontal channel across every column.
+  const slotY = (k: number) => TOP + k * ROW_H + ROW_H / 2 - 6;
 
   colKeys.forEach((key, i) => {
     const ids = colContent[key];
     const x = colX(i);
-    // Centre each column vertically in the body so short columns do not hug the top.
-    const startY = TOP + (bodyH - ids.length * ROW_H) / 2 + ROW_H / 2 - 6;
+    const start = Math.floor((maxRows - ids.length) / 2);
     ids.forEach((id, row) => {
-      const y = startY + row * ROW_H;
+      const y = slotY(start + row);
       if (id === HUB_THREATS) {
-        nodes[id] = { id, kind: 'hub', x, y, r: HUB_R, label: 'threats' };
+        nodes[id] = { id, kind: 'hub', x, y, r: HUB_R, label: 'threats', col: i };
       } else if (id === INBOX_ABUSE) {
-        nodes[id] = { id, kind: 'source', x, y, r: 6, label: 'abuse inbox' };
+        nodes[id] = { id, kind: 'source', x, y, r: 6, label: 'abuse inbox', col: i };
       } else {
-        const sat = SATELLITES.includes(id);
-        nodes[id] = { id, kind: 'agent', x, y, r: sat ? SAT_R : AGENT_R, label: labelOf(id) };
+        nodes[id] = {
+          id, kind: 'agent', x, y, r: SATELLITES.includes(id) ? SAT_R : AGENT_R, label: labelOf(id), col: i,
+        };
       }
     });
   });
@@ -339,75 +347,172 @@ export function computeLayout({ width, placement, feeds, labelOf }: LayoutInput)
   // Feed lane: grouped dot grids + nrd_hagezi as a labelled source.
   let fy = TOP - 6;
   const order: Array<Exclude<FeedGroup, 'nrd'>> = ['ingest', 'enrichment', 'social'];
+  const dotsByGroup: Record<string, FeedDot[]> = {};
   for (const g of order) {
     const names = feeds.filter((f) => feedGroupOf(f) === g).map((f) => f.feed_name).sort();
     if (!names.length) continue;
     const rows = Math.ceil(names.length / DOT_COLS);
-    const gh = 18 + rows * DOT_PITCH;
+    const gid = FEED_GROUP_NODE[g];
+    dotsByGroup[gid] = [];
     names.forEach((name, i) => {
-      dots.push({
+      const dot: FeedDot = {
         name, group: g,
         x: FEED_LANE_X + 8 + (i % DOT_COLS) * DOT_PITCH,
         y: fy + 22 + Math.floor(i / DOT_COLS) * DOT_PITCH,
-      });
+      };
+      dots.push(dot);
+      dotsByGroup[gid]!.push(dot);
     });
-    const gid = FEED_GROUP_NODE[g];
     nodes[gid] = {
       id: gid, kind: 'group',
       x: FEED_LANE_X + 8 + (DOT_COLS - 1) * DOT_PITCH + 12,
       y: fy + 18 + (rows * DOT_PITCH) / 2 - 2,
       r: 3,
       label: `${FEED_GROUP_LABEL[g]} (${names.length})`,
+      col: -1,
     };
-    nodes[gid]!.id = gid;
-    fy += gh + 14;
+    fy += 18 + rows * DOT_PITCH + 14;
   }
   if (feeds.some((f) => f.feed_name === 'nrd_hagezi')) {
-    nodes[FEED_NRD] = { id: FEED_NRD, kind: 'source', x: FEED_LANE_X + 10, y: fy + 12, r: 5, label: 'nrd_hagezi' };
+    nodes[FEED_NRD] = { id: FEED_NRD, kind: 'source', x: FEED_LANE_X + 10, y: fy + 12, r: 5, label: 'nrd_hagezi', col: -1 };
+    fy += 30;
+  }
+  if (placement.stages.sources.length > 0) {
+    nodes[EXTERNAL_SOURCE] = {
+      id: EXTERNAL_SOURCE, kind: 'source', x: FEED_LANE_X + 10, y: fy + 12, r: 5, label: 'Internet / registries', col: -1,
+    };
     fy += 30;
   }
 
   const height = Math.max(TOP + bodyH + 24, fy + 24);
 
+  // Gutters.
+  const groupAnchorX = FEED_LANE_X + 8 + (DOT_COLS - 1) * DOT_PITCH + 12;
+  const gutters: number[] = [(groupAnchorX + (colX(0) - 62)) / 2];
+  for (let k = 1; k < colKeys.length; k++) gutters.push((colX(k - 1) + colX(k)) / 2);
+
+  // External-input hairline: a bus just right of the feed gutter with a stub
+  // to each monitor, so the monitors do not read as orphaned.
+  let externalBus: Layout['externalBus'] = null;
+  const ext = nodes[EXTERNAL_SOURCE];
+  if (ext) {
+    const stubs = placement.stages.sources.map((id) => ({ x: nodes[id]!.x - nodes[id]!.r - 3, y: nodes[id]!.y }));
+    if (stubs.length) {
+      externalBus = { x: gutters[0]! + 16, y0: ext.y, y1: Math.max(...stubs.map((s) => s.y)), stubs };
+    }
+  }
+
   // Flight Control badge spans the pipeline columns.
   const bx = colX(1) - 54;
   const bw = colX(colKeys.length - 1) + 54 - bx;
   const badge = { x: bx, y: 14, w: bw, h: 28 };
-  nodes[FLIGHT_CONTROL] = { id: FLIGHT_CONTROL, kind: 'agent', x: bx + bw / 2, y: badge.y + badge.h, r: 0, label: 'Flight Control' };
+  nodes[FLIGHT_CONTROL] = {
+    id: FLIGHT_CONTROL, kind: 'agent', x: bx + bw / 2, y: badge.y + badge.h, r: 0, label: 'Flight Control', col: 1,
+  };
 
   const columns = [
     { key: 'feeds', label: 'FEEDS', x: FEED_LANE_X + 8 },
-    ...colKeys.map((k, i) => ({ key: k, label: STAGE_LABEL[k], x: colX(i) })),
+    ...colKeys.map((k, i) => ({ key: k, label: k === 'sources' ? 'MONITORS' : STAGE_LABEL[k], x: colX(i) })),
   ];
-  return { width: W, height, nodes, dots, columns, badge };
+  return { width: W, height, nodes, dots, dotsByGroup, columns, gutters, badge, externalBus };
 }
 
 export type Pt = { x: number; y: number };
 
-/** Bezier control points from node a to node b, as [x0,y0,c1x,c1y,c2x,c2y,x1,y1]. */
-export function edgeCurve(a: Pick<LayoutNode, 'x' | 'y' | 'r'>, b: Pick<LayoutNode, 'x' | 'y' | 'r'>): number[] {
-  if (Math.abs(a.x - b.x) < 1) {
-    const k = 58;
-    return [a.x + a.r, a.y, a.x + k, a.y, b.x + k, b.y, b.x + b.r, b.y];
+/** Round the corners of an orthogonal polyline (quadratic corner arcs, sampled). */
+function roundCorners(pts: Pt[], rad: number): Pt[] {
+  if (pts.length < 3) return pts;
+  const out: Pt[] = [pts[0]!];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1]!, p1 = pts[i]!, p2 = pts[i + 1]!;
+    const l1 = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+    const l2 = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const r = Math.min(rad, l1 / 2, l2 / 2);
+    if (r < 0.5) { out.push(p1); continue; }
+    const a = { x: p1.x + ((p0.x - p1.x) / l1) * r, y: p1.y + ((p0.y - p1.y) / l1) * r };
+    const b = { x: p1.x + ((p2.x - p1.x) / l2) * r, y: p1.y + ((p2.y - p1.y) / l2) * r };
+    for (let s = 0; s <= 4; s++) {
+      const t = s / 4, q = 1 - t;
+      out.push({ x: q * q * a.x + 2 * q * t * p1.x + t * t * b.x, y: q * q * a.y + 2 * q * t * p1.y + t * t * b.y });
+    }
   }
-  if (b.x < a.x) {
-    // Backwards (navigator -> hub): leave right-down, enter from below-left.
-    const my = (a.y + b.y) / 2;
-    return [a.x - a.r, a.y, a.x - 50, my, b.x + 50, my, b.x + b.r, b.y];
-  }
-  if (b.x - a.x > 330) {
-    const k = b.x - 90;
-    return [a.x + a.r, a.y, k, a.y, k, b.y, b.x - b.r, b.y];
-  }
-  const mx = (a.x + b.x) / 2;
-  return [a.x + a.r, a.y, mx, a.y, mx, b.y, b.x - b.r, b.y];
+  out.push(pts[pts.length - 1]!);
+  return out;
 }
 
-export function bezierAt(c: readonly number[], p: number): Pt {
-  const q = 1 - p;
-  const f = (i: number) =>
-    q * q * q * c[i]! + 3 * q * q * p * c[i + 2]! + 3 * q * p * p * c[i + 4]! + p * p * p * c[i + 6]!;
-  return { x: f(0), y: f(1) };
+function sampleBezier(c: readonly number[], n = 28): Pt[] {
+  const out: Pt[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, q = 1 - t;
+    out.push({
+      x: q * q * q * c[0]! + 3 * q * q * t * c[2]! + 3 * q * t * t * c[4]! + t * t * t * c[6]!,
+      y: q * q * q * c[1]! + 3 * q * q * t * c[3]! + 3 * q * t * t * c[5]! + t * t * t * c[7]!,
+    });
+  }
+  return out;
+}
+
+/** The free channel between two grid rows sits 25px above a node centre (below the label above, clear of the progress ring) or ROW_H - 25 below it. */
+const CHANNEL_ABOVE = 25;
+const CHANNEL_BELOW = ROW_H - 25;
+
+/**
+ * Path from node a to node b as a polyline. Adjacent-column edges are smooth
+ * curves; anything longer, backwards, or leaving the feed lane runs its
+ * vertical legs in the gutters between columns and its long horizontal leg in
+ * the free channel between two grid rows, so no line crosses a label.
+ */
+export function edgePath(layout: Layout, a: LayoutNode, b: LayoutNode): Pt[] {
+  const g = layout.gutters;
+  const ax = a.x + a.r, bx = b.x - b.r;
+  if (Math.abs(a.x - b.x) < 1) {
+    const k = 64;
+    return sampleBezier([ax, a.y, a.x + k, a.y, b.x + k, b.y, b.x + b.r, b.y]);
+  }
+  if (b.col < a.col) {
+    // Backwards (navigator -> threats): out the left side, along the gutter, in from the right.
+    const gx = g[a.col]!;
+    return roundCorners([
+      { x: a.x - a.r, y: a.y }, { x: gx, y: a.y }, { x: gx, y: b.y }, { x: b.x + b.r, y: b.y },
+    ], 10);
+  }
+  if (a.col === -1) {
+    const ga = g[0]!;
+    if (b.col <= 0) {
+      return roundCorners([{ x: ax, y: a.y }, { x: ga, y: a.y }, { x: ga, y: b.y }, { x: bx, y: b.y }], 10);
+    }
+    const gb = g[b.col]!;
+    const ch = a.y <= b.y ? b.y - CHANNEL_ABOVE : b.y + CHANNEL_BELOW;
+    return roundCorners([
+      { x: ax, y: a.y }, { x: ga, y: a.y }, { x: ga, y: ch }, { x: gb, y: ch }, { x: gb, y: b.y }, { x: bx, y: b.y },
+    ], 10);
+  }
+  if (b.col === a.col + 1) {
+    const mx = (a.x + b.x) / 2;
+    return sampleBezier([ax, a.y, mx, a.y, mx, b.y, bx, b.y]);
+  }
+  const ga = g[a.col + 1]!, gb = g[b.col]!;
+  const ch = a.y <= b.y ? b.y - CHANNEL_ABOVE : b.y + CHANNEL_BELOW;
+  return roundCorners([
+    { x: ax, y: a.y }, { x: ga, y: a.y }, { x: ga, y: ch }, { x: gb, y: ch }, { x: gb, y: b.y }, { x: bx, y: b.y },
+  ], 10);
+}
+
+/** Point at fraction p (0..1) of a polyline's length. */
+export function pointAt(path: readonly Pt[], p: number): Pt {
+  const cum = [0];
+  for (let i = 1; i < path.length; i++) {
+    cum.push(cum[i - 1]! + Math.hypot(path[i]!.x - path[i - 1]!.x, path[i]!.y - path[i - 1]!.y));
+  }
+  const total = cum[cum.length - 1]!;
+  if (total === 0) return path[0]!;
+  const target = Math.min(Math.max(p, 0), 1) * total;
+  let i = 1;
+  while (i < cum.length - 1 && cum[i]! < target) i++;
+  const seg = cum[i]! - cum[i - 1]!;
+  const t = seg === 0 ? 0 : (target - cum[i - 1]!) / seg;
+  const a = path[i - 1]!, b = path[i]!;
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
 /** Node (or feed dot) under a layout-space point. */
@@ -427,14 +532,4 @@ export function hitTest(layout: Layout, x: number, y: number): { id: string; dot
   const b = layout.badge;
   if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return { id: FLIGHT_CONTROL };
   return null;
-}
-
-/** Ids connected to `id` through any declared edge, plus `id`. */
-export function neighbourhood(id: string): Set<string> {
-  const s = new Set<string>([id]);
-  for (const e of EDGES) {
-    if (e.from === id) s.add(e.to);
-    if (e.to === id) s.add(e.from);
-  }
-  return s;
 }

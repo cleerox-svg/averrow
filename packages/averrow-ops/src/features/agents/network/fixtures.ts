@@ -52,7 +52,7 @@ export function makeAgent(name: string, over: Partial<Agent> = {}): Agent {
   };
 }
 
-/** Every registered agent id, once (what /api/agents returns after PR 1). */
+/** Every registered agent id (incl. flight_control), once (what /api/agents returns after PR 1). */
 export const AGENTS_FIXTURE: Agent[] = (Object.keys(AGENT_METADATA) as AgentId[]).map((id) => makeAgent(id, {
   ...(id === 'attributor' ? { last_run_status: 'failed', last_run_error: 'D1 DB is overloaded' } : {}),
 }));

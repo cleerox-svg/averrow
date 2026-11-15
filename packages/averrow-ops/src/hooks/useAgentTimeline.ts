@@ -4,13 +4,16 @@
 // returns agent runs, feed pulls and pivot_detected events that overlap the
 // window. The Network view draws particles and the Run tape from it.
 //
-// `useTimelineClock` anchors a local "now" to the server's `generated_at`
-// and advances it with the client clock between fetches, so the tape and the
-// progress rings keep moving without extra requests. The anchor is the
-// server time at receipt, not the client wall clock, so a skewed client
-// clock cannot make a run look finished early.
+// The response is KV-cached (about 60s), so `generated_at` can be up to a
+// minute old. `useTimelineClock` anchors a local "now" to `generated_at` and
+// advances it with the client clock since the payload arrived, so the tape and
+// progress rings keep moving without extra requests and a skewed client clock
+// cannot make a run look finished early. Open runs are only known open as of
+// `generated_at`: readers cap them at generated_at + 60s (see activity.ts).
+// The key starts with 'agents' so agent mutations that invalidate ['agents']
+// refresh it too.
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -72,7 +75,7 @@ export const TIMELINE_REFETCH_MS = 60_000;
 
 export function useAgentTimeline() {
   return useQuery({
-    queryKey: ['agents-timeline', '1h'],
+    queryKey: ['agents', 'timeline', '1h'],
     queryFn: async () => {
       const res = await api.get<AgentTimeline>('/api/agents/timeline?window=1h');
       if (!res.success || !res.data) throw new Error(res.error ?? 'Timeline unavailable');
@@ -105,8 +108,6 @@ export function useTimelineClock(
   } else {
     anchor.current = null;
   }
-
-  useEffect(() => () => { anchor.current = null; }, []);
 
   return useCallback(() => {
     const a = anchor.current;

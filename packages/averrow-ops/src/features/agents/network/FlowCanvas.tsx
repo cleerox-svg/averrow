@@ -1,14 +1,18 @@
 // Flow canvas: the staged data-flow picture (Canvas 2D).
 //
-// Sources -> Ingest -> Enrich -> Correlate -> Narrate -> Respond, with the
-// Flight Control badge across the top. Positions come from the stage layout
-// (model.ts), edges from the declared EDGES list, motion from the last-hour
-// timeline (activity.ts): particles ride an edge only while its upstream run
-// or pull is live, and their count follows records processed.
+// Monitors -> Ingest -> Enrich -> Correlate -> Narrate -> Respond, with the
+// Flight Control badge across the top and the feed lane on the left.
+// Positions come from the stage layout (model.ts), edges from the declared
+// EDGES list, motion from the last-hour timeline (activity.ts): particles ride
+// an edge only while its upstream run, pull or event is live, and their count
+// follows records processed.
 //
 // Colours are design tokens read at runtime (useTokenColors), so the canvas
-// follows theme and accent. Reduced motion draws a static frame. The frame
-// loop stops when the tab is hidden or the canvas is scrolled offscreen.
+// follows theme and accent. Structure lines use --text-muted, not
+// --border-base: border tokens are translucent and vanish on dark. Reduced
+// motion (or the Pause control) draws a static frame. The frame loop stops
+// when the tab is hidden or the canvas is scrolled offscreen, and slows to
+// one repaint a second while nothing is running.
 
 import { useCallback, useMemo, useRef } from 'react';
 import { useTokenColors, type Rgba } from '@averrow/shared/theme';
@@ -16,27 +20,27 @@ import type { Agent } from '@/hooks/useAgents';
 import type { FeedOverview } from '@/hooks/useFeeds';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 import {
-  CRON_LABEL, EDGES, FEED_GROUP_LABEL, FEED_GROUP_NODE, FEED_NRD, FLIGHT_CONTROL, HUB_THREATS,
-  bezierAt, computeLayout, edgeCurve, hitTest,
-  type Layout, type LayoutNode, type NetworkEdge, type Placement,
+  CRON_LABEL, EDGES, FEED_GROUP_LABEL, FEED_GROUP_NODE, FEED_NRD, FLIGHT_CONTROL, HUB_THREATS, SATELLITES,
+  computeLayout, edgePath, hitTest, pointAt,
+  type Layout, type LayoutNode, type NetworkEdge, type Placement, type Pt,
 } from './model';
 import {
   IDLE, activeMembers, edgeActivity, edgeParticles, laneActivity,
   type NodeActivity, type TimelineIndex,
 } from './activity';
-import { fitCanvas, useCanvasLoop, useIsVisible } from './useCanvasLoop';
+import { fitCanvas, useCanvasLoop, useIsVisible, useMountedElement } from './useCanvasLoop';
 
 const TOKEN_NAMES = [
   '--bg-page', '--bg-card', '--bg-card-deep', '--border-base', '--text-primary', '--text-secondary',
   '--text-muted', '--primary', '--primary-text', '--primary-ink', '--sev-critical', '--healthy',
 ] as const;
-type TokenName = (typeof TOKEN_NAMES)[number];
+export type TokenName = (typeof TOKEN_NAMES)[number];
 
 // Plain fallbacks for environments with no stylesheet (tests). Real pages
 // always resolve the tokens.
 const FALLBACK: Record<TokenName, Rgba> = {
   '--bg-page': [10, 11, 14, 255], '--bg-card': [21, 22, 25, 255], '--bg-card-deep': [27, 28, 32, 255],
-  '--border-base': [42, 43, 49, 255], '--text-primary': [246, 247, 247, 255],
+  '--border-base': [255, 255, 255, 28], '--text-primary': [246, 247, 247, 255],
   '--text-secondary': [194, 194, 196, 255], '--text-muted': [139, 140, 141, 255],
   '--primary': [76, 92, 248, 255], '--primary-text': [150, 172, 255, 255],
   '--primary-ink': [251, 252, 255, 255], '--sev-critical': [248, 113, 113, 255],
@@ -47,6 +51,8 @@ const HUB_TO_SENTINEL = EDGES.find((e) => e.from === HUB_THREATS && e.to === 'se
 
 export type Palette = (name: TokenName, alpha?: number) => string;
 
+/** The token's own alpha is kept and multiplied (a translucent token stays
+ *  translucent), so structure lines must not be built from --border-base. */
 export function makePalette(colors: Record<string, Rgba | null>): Palette {
   return (name, alpha = 1) => {
     const c = colors[name] ?? FALLBACK[name];
@@ -54,8 +60,16 @@ export function makePalette(colors: Record<string, Rgba | null>): Palette {
   };
 }
 
+/** Alpha channel of an rgba() string made by the palette. */
+export function alphaOf(css: string): number {
+  const m = /rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/.exec(css);
+  return m ? parseFloat(m[1]!) : 1;
+}
+
 const SANS = '"Geist", ui-sans-serif, system-ui, sans-serif';
 const MONO = '"Geist Mono", ui-monospace, SFMono-Regular, monospace';
+/** Slowest-readable pulse: one cycle is about 2.8 s. */
+const PULSE = 450;
 
 export function agentLabel(id: string, agents?: ReadonlyMap<string, Agent>): string {
   const meta = AGENT_METADATA[id as AgentId];
@@ -75,6 +89,18 @@ function fit(ctx: CanvasRenderingContext2D, text: string, maxW: number): string 
   return `${t}…`;
 }
 
+/** Text with a card-coloured halo so edges behind a label never cut it. */
+function haloText(
+  ctx: CanvasRenderingContext2D, c: Palette, text: string, x: number, y: number, fill: string,
+): void {
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = c('--bg-card');
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = fill;
+  ctx.fillText(text, x, y);
+}
+
 export interface DrawParams {
   layout: Layout;
   palette: Palette;
@@ -87,12 +113,39 @@ export interface DrawParams {
   selected: string | null;
   dotHover: string | null;
   reducedMotion: boolean;
-  retiredCount?: number;
 }
 
 /** Visible edges for the current focus: spine always, detail only on focus. */
 export function visibleEdges(focus: string | null): NetworkEdge[] {
   return EDGES.filter((e) => e.tier === 'spine' || (focus !== null && (e.from === focus || e.to === focus)));
+}
+
+export interface EdgeStyle { stroke: string; width: number; dash: number[] }
+
+/** How an edge is stroked. Idle structure reads at >= ~0.28 alpha on dark. */
+export function edgeStyle(
+  e: Pick<NetworkEdge, 'mechanism' | 'tier'>,
+  s: { live: boolean; touches: boolean; dim: boolean },
+  c: Palette,
+): EdgeStyle {
+  if (e.mechanism === 'EVENT') {
+    return {
+      dash: [6, 5], width: s.live ? 2 : 1.6,
+      stroke: s.dim ? c('--primary-text', 0.3) : c('--primary-text', s.live ? 0.95 : 0.75),
+    };
+  }
+  if (e.tier === 'detail') return { dash: [3, 4], width: 1, stroke: c('--primary-text', 0.7) };
+  if (e.mechanism === 'INLINE') {
+    return {
+      dash: [], width: s.live ? 1.8 : 1.2,
+      stroke: s.dim ? c('--text-muted', 0.12) : s.live ? c('--primary', 0.85) : s.touches ? c('--primary-text', 0.7) : c('--text-muted', 0.45),
+    };
+  }
+  // TABLE: the quietest link.
+  return {
+    dash: [], width: s.live ? 1.4 : 1,
+    stroke: s.dim ? c('--text-muted', 0.12) : s.live ? c('--primary', 0.6) : s.touches ? c('--primary-text', 0.6) : c('--text-muted', 0.28),
+  };
 }
 
 function nodeState(p: DrawParams, id: string): NodeActivity & { paused: boolean; tripped: boolean } {
@@ -104,17 +157,45 @@ function nodeState(p: DrawParams, id: string): NodeActivity & { paused: boolean;
   return { ...act, failed, paused, tripped };
 }
 
-export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): void {
-  const { layout, palette: c, now, focus } = p;
-  ctx.clearRect(0, 0, layout.width, layout.height);
+const pathCache = new WeakMap<Layout, Map<string, Pt[]>>();
+function pathFor(layout: Layout, e: NetworkEdge, a: LayoutNode, t: LayoutNode): Pt[] {
+  let m = pathCache.get(layout);
+  if (!m) { m = new Map(); pathCache.set(layout, m); }
+  const key = `${e.from}>${e.to}`;
+  let path = m.get(key);
+  if (!path) {
+    path = e.from === FLIGHT_CONTROL
+      ? [{ x: t.x, y: layout.badge.y + layout.badge.h }, { x: t.x, y: t.y - t.r - 2 }]
+      : edgePath(layout, a, t);
+    m.set(key, path);
+  }
+  return path;
+}
+
+function strokePath(ctx: CanvasRenderingContext2D, path: readonly Pt[]): void {
+  ctx.beginPath();
+  ctx.moveTo(path[0]!.x, path[0]!.y);
+  for (let i = 1; i < path.length; i++) ctx.lineTo(path[i]!.x, path[i]!.y);
+  ctx.stroke();
+}
+
+/** Draws one frame. Returns true while anything on it is animating. */
+export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean {
+  const { layout, palette: c, now } = p;
+  const focus = p.focus && layout.nodes[p.focus] ? p.focus : null;
+  let busy = false;
+  // Clear the whole scaled backing area: at zoom > 1 the layout-sized rect is
+  // smaller than the canvas and would leave a smeared strip.
+  ctx.clearRect(0, 0, layout.width * p.zoom, layout.height * p.zoom);
   ctx.save();
   ctx.scale(p.zoom, p.zoom);
   ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
 
   // Flight Control badge across the top.
   const b = layout.badge;
   ctx.fillStyle = c('--bg-card-deep');
-  ctx.strokeStyle = c('--border-base');
+  ctx.strokeStyle = c('--text-muted', 0.4);
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.roundRect(b.x, b.y, b.w, b.h, b.h / 2);
@@ -122,7 +203,7 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): void {
   ctx.stroke();
   const fc = p.agents.get(FLIGHT_CONTROL);
   const fcFailed = fc?.circuit_state === 'tripped';
-  const beat = p.reducedMotion ? 1 : 0.5 + 0.5 * Math.sin(now / 450);
+  const beat = p.reducedMotion ? 1 : 0.5 + 0.5 * Math.sin(now / PULSE);
   ctx.fillStyle = fcFailed ? c('--sev-critical') : c('--healthy', 0.35 + 0.65 * beat);
   ctx.beginPath();
   ctx.arc(b.x + 16, b.y + b.h / 2, 4, 0, Math.PI * 2);
@@ -143,17 +224,35 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): void {
     ctx.fillText(col.label, col.x - (col.key === 'feeds' ? 8 : 0), 72);
   }
 
+  // External-input hairline into the monitors column.
+  const bus = layout.externalBus;
+  const ext = layout.nodes['src:external'];
+  if (bus && ext) {
+    ctx.strokeStyle = c('--text-muted', 0.2);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(ext.x + ext.r, ext.y);
+    ctx.lineTo(bus.x, ext.y);
+    ctx.lineTo(bus.x, bus.y1);
+    ctx.stroke();
+    for (const s of bus.stubs) {
+      ctx.beginPath();
+      ctx.moveTo(bus.x, s.y);
+      ctx.lineTo(s.x, s.y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
   // Feed group headings.
   ctx.textAlign = 'left';
+  ctx.font = `500 10px ${SANS}`;
   for (const n of Object.values(layout.nodes)) {
     if (n.kind !== 'group') continue;
-    const mine = layout.dots.filter((d) => FEED_GROUP_NODE[d.group] === n.id);
-    if (!mine.length) continue;
-    const top = Math.min(...mine.map((d) => d.y));
-    const lit = focus === n.id;
-    ctx.font = `500 10px ${SANS}`;
-    ctx.fillStyle = lit ? c('--text-primary') : c('--text-secondary');
-    ctx.fillText(n.label, mine[0]!.x - 6, top - 12);
+    const mine = layout.dotsByGroup[n.id];
+    if (!mine?.length) continue;
+    haloText(ctx, c, n.label, mine[0]!.x - 6, mine[0]!.y - 12, focus === n.id ? c('--text-primary') : c('--text-secondary'));
   }
 
   const edges = visibleEdges(focus);
@@ -169,7 +268,7 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): void {
   // Edges, quiet ones first so live and focused ones sit on top.
   const rank = (e: NetworkEdge) => (focus && (e.from === focus || e.to === focus) ? 3 : e.mechanism === 'TABLE' ? 0 : e.mechanism === 'INLINE' ? 1 : 2);
   const ordered = [...edges].sort((x, y) => rank(x) - rank(y));
-  const particles: Array<{ x: number; y: number; k: number }> = [];
+  const particles: Pt[] = [];
 
   for (const e of ordered) {
     const a = layout.nodes[e.from];
@@ -178,54 +277,26 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): void {
     const touches = !!focus && (e.from === focus || e.to === focus);
     const dim = !!focus && !touches;
     const act = p.hasTimeline ? edgeActivity(p.index, e, now) : IDLE;
-    const live = act.emitting;
-
-    let curve: number[];
-    if (e.from === FLIGHT_CONTROL) {
-      curve = [t.x, layout.badge.y + layout.badge.h, t.x, layout.badge.y + layout.badge.h + 12, t.x, t.y - t.r - 14, t.x, t.y - t.r - 2];
-    } else {
-      curve = edgeCurve(a, t);
-    }
-
-    ctx.beginPath();
-    ctx.moveTo(curve[0]!, curve[1]!);
-    ctx.bezierCurveTo(curve[2]!, curve[3]!, curve[4]!, curve[5]!, curve[6]!, curve[7]!);
-    if (e.mechanism === 'EVENT') {
-      ctx.setLineDash([6, 5]);
-      ctx.lineWidth = live ? 2 : 1.6;
-      ctx.strokeStyle = dim ? c('--primary', 0.25) : c('--primary-text', live ? 0.95 : 0.75);
-    } else if (e.tier === 'detail') {
-      ctx.setLineDash([3, 4]);
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = c('--primary-text', 0.7);
-    } else if (e.mechanism === 'INLINE') {
-      ctx.setLineDash([]);
-      ctx.lineWidth = live ? 1.8 : 1.2;
-      ctx.strokeStyle = dim ? c('--border-base', 0.4) : live ? c('--primary', 0.85) : touches ? c('--primary-text', 0.7) : c('--border-base');
-    } else {
-      // TABLE: the quietest link.
-      ctx.setLineDash([]);
-      ctx.lineWidth = live ? 1.4 : 0.9;
-      ctx.strokeStyle = dim ? c('--border-base', 0.25) : live ? c('--primary', 0.6) : touches ? c('--primary-text', 0.6) : c('--border-base', 0.7);
-    }
-    ctx.stroke();
+    const path = pathFor(layout, e, a, t);
+    const st = edgeStyle(e, { live: act.emitting, touches, dim }, c);
+    ctx.setLineDash(st.dash);
+    ctx.lineWidth = st.width;
+    ctx.strokeStyle = st.stroke;
+    strokePath(ctx, path);
     ctx.setLineDash([]);
 
     if (e.mechanism === 'EVENT') {
-      const m = bezierAt(curve, 0.5);
+      const m = pointAt(path, 0.5);
       ctx.font = `500 10px ${MONO}`;
       ctx.textAlign = 'left';
-      ctx.fillStyle = dim ? c('--text-muted', 0.4) : c('--primary-text');
-      ctx.fillText(e.via ?? 'event', m.x + 6, m.y - 6);
+      haloText(ctx, c, e.via ?? 'event', m.x + 6, m.y - 6, dim ? c('--text-muted', 0.4) : c('--primary-text'));
     }
 
     if (!dim) {
-      for (const k of edgeParticles(e, act, now, p.reducedMotion)) {
-        const pt = bezierAt(curve, k);
-        particles.push({ x: pt.x, y: pt.y, k });
-      }
+      for (const k of edgeParticles(e, act, now, p.reducedMotion)) particles.push(pointAt(path, k));
     }
   }
+  if (particles.length) busy = true;
 
   // Feed dots: connector to the group anchor while a feed pulls.
   const activeByGroup = new Map<string, ReturnType<typeof activeMembers>>();
@@ -250,12 +321,15 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): void {
     ctx.arc(d.x, d.y, hot ? 5 : 4, 0, Math.PI * 2);
     ctx.fillStyle = st?.failed ? c('--sev-critical') : st?.running ? c('--primary-text') : c('--text-muted', dim ? 0.3 : 0.75);
     ctx.fill();
-    if (st?.running && !p.reducedMotion) {
-      ctx.beginPath();
-      ctx.arc(d.x, d.y, 7 + Math.sin(now / 160), 0, Math.PI * 2);
-      ctx.strokeStyle = c('--primary', 0.5);
-      ctx.lineWidth = 1;
-      ctx.stroke();
+    if (st?.running) {
+      busy = true;
+      if (!p.reducedMotion) {
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 7 + Math.sin(now / PULSE), 0, Math.PI * 2);
+        ctx.strokeStyle = c('--primary', 0.5);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
     }
   }
 
@@ -276,28 +350,30 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): void {
     if (n.id === FLIGHT_CONTROL || n.kind === 'group') continue;
     const dim = !!focus && !rel.has(n.id);
     ctx.globalAlpha = dim ? 0.3 : 1;
-    if (n.kind === 'agent') drawAgentNode(ctx, p, n);
+    if (n.kind === 'agent') { if (drawAgentNode(ctx, p, n)) busy = true; }
     else drawPlainNode(ctx, p, n);
     ctx.globalAlpha = 1;
   }
 
   // Tooltip for the focused node or hovered feed dot.
-  const tip = tooltipFor(p);
+  const tip = tooltipFor(p, focus);
   if (tip) drawTooltip(ctx, p, tip);
 
   ctx.restore();
+  return busy && !p.reducedMotion;
 }
 
-function drawAgentNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNode): void {
+function drawAgentNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNode): boolean {
   const { palette: c, now } = p;
   const st = nodeState(p, n.id);
   const sel = p.selected === n.id;
   const calm = p.reducedMotion;
+  const satellite = SATELLITES.includes(n.id);
 
   if (st.running && !st.failed) {
     ctx.fillStyle = c('--primary', 0.18);
     ctx.beginPath();
-    ctx.arc(n.x, n.y, n.r + 6 + (calm ? 0 : 2 * Math.sin(now / 160)), 0, Math.PI * 2);
+    ctx.arc(n.x, n.y, n.r + 6 + (calm ? 0 : 2 * Math.sin(now / PULSE)), 0, Math.PI * 2);
     ctx.fill();
   }
   if (sel) {
@@ -308,9 +384,10 @@ function drawAgentNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNo
     ctx.stroke();
   }
   ctx.fillStyle = st.running && !st.failed ? c('--primary') : c('--bg-card-deep');
-  ctx.strokeStyle = st.failed ? c('--sev-critical') : st.running ? c('--primary-text') : c('--border-base');
+  ctx.strokeStyle = st.failed ? c('--sev-critical') : st.running ? c('--primary-text') : c('--text-muted', 0.45);
   ctx.lineWidth = st.failed ? 2.2 : 1.2;
-  ctx.setLineDash(st.paused ? [3, 3] : []);
+  // Dashed = paused, or an inline step of its parent rather than a scheduled job.
+  ctx.setLineDash(st.paused || satellite ? [3, 3] : []);
   ctx.beginPath();
   ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
   ctx.fill();
@@ -326,16 +403,16 @@ function drawAgentNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNo
   }
 
   const cron = CRON_LABEL[n.id];
-  if (cron && n.r >= 14) {
-    ctx.font = `500 ${cron.length > 3 ? 9 : 10}px ${MONO}`;
+  if (cron) {
+    ctx.font = `500 ${satellite ? 8 : cron.length > 3 ? 9 : 10}px ${MONO}`;
     ctx.textAlign = 'center';
     ctx.fillStyle = st.running && !st.failed ? c('--primary-ink') : c('--text-muted');
-    ctx.fillText(cron, n.x, n.y + 3.5);
+    ctx.fillText(cron, n.x, n.y + 3);
   }
   ctx.font = `500 11px ${SANS}`;
   ctx.textAlign = 'center';
-  ctx.fillStyle = st.running ? c('--text-primary') : c('--text-secondary');
-  ctx.fillText(fit(ctx, n.label, 118), n.x, n.y + n.r + 16);
+  haloText(ctx, c, fit(ctx, n.label, 118), n.x, n.y + n.r + 16, st.running ? c('--text-primary') : c('--text-secondary'));
+  return st.running;
 }
 
 function drawPlainNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNode): void {
@@ -343,7 +420,7 @@ function drawPlainNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNo
   if (n.kind === 'hub') {
     const emitting = p.hasTimeline && (edgeActivity(p.index, HUB_TO_SENTINEL, p.now).emitting);
     ctx.fillStyle = emitting ? c('--primary', 0.28) : c('--bg-card');
-    ctx.strokeStyle = emitting ? c('--primary-text') : c('--border-base');
+    ctx.strokeStyle = emitting ? c('--primary-text') : c('--text-muted', 0.45);
     ctx.lineWidth = 1.4;
     ctx.beginPath();
     ctx.roundRect(n.x - n.r, n.y - 15, n.r * 2, 30, 8);
@@ -355,22 +432,24 @@ function drawPlainNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNo
     ctx.fillText('threats', n.x, n.y + 4);
     return;
   }
-  // source (nrd_hagezi, abuse inbox)
+  // source (nrd_hagezi, abuse inbox, external input)
   const st = n.id === FEED_NRD && p.hasTimeline ? laneActivity(p.index, FEED_NRD, p.now) : IDLE;
-  ctx.fillStyle = st.failed ? c('--sev-critical') : st.running ? c('--primary-text') : c('--text-muted', 0.85);
+  const external = n.id === 'src:external';
+  ctx.fillStyle = st.failed ? c('--sev-critical') : st.running ? c('--primary-text') : c('--text-muted', external ? 0.45 : 0.85);
   ctx.beginPath();
   ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
   ctx.fill();
   ctx.font = `500 10px ${SANS}`;
-  ctx.textAlign = n.id === FEED_NRD ? 'left' : 'center';
-  ctx.fillStyle = c('--text-secondary');
-  if (n.id === FEED_NRD) ctx.fillText(n.label, n.x + 12, n.y + 4);
-  else ctx.fillText(n.label, n.x, n.y + n.r + 14);
+  const left = n.col === -1;
+  ctx.textAlign = left ? 'left' : 'center';
+  const fill = c('--text-secondary');
+  if (left) haloText(ctx, c, n.label, n.x + 12, n.y + 4, fill);
+  else haloText(ctx, c, n.label, n.x, n.y + n.r + 14, fill);
 }
 
 interface Tip { x: number; y: number; r: number; l1: string; l2: string; bad: boolean }
 
-function tooltipFor(p: DrawParams): Tip | null {
+function tooltipFor(p: DrawParams, focus: string | null): Tip | null {
   const { layout, now } = p;
   if (p.dotHover) {
     const d = layout.dots.find((x) => x.name === p.dotHover);
@@ -379,11 +458,14 @@ function tooltipFor(p: DrawParams): Tip | null {
     const l2 = !p.hasTimeline ? 'no timeline data' : m ? (m.running ? 'pulling now' : m.failed ? 'last pull failed' : 'pulled in the last hour') : 'no pull in the last hour';
     return { x: d.x, y: d.y, r: 6, l1: `${d.name}  ·  ${FEED_GROUP_LABEL[d.group].toLowerCase()}`, l2, bad: !!m?.failed };
   }
-  const id = p.focus;
+  const id = focus;
   if (!id) return null;
   const n = layout.nodes[id];
   if (!n || n.kind === 'group' || id === FLIGHT_CONTROL) return null;
-  if (n.kind !== 'agent') return { x: n.x, y: n.y, r: n.r, l1: n.label, l2: n.id === HUB_THREATS ? 'shared table every ingest feed writes' : 'source', bad: false };
+  if (n.kind !== 'agent') {
+    const l2 = n.id === HUB_THREATS ? 'shared table every ingest feed writes' : n.id === 'src:external' ? 'public feeds and registries the monitors read' : 'source';
+    return { x: n.x, y: n.y, r: n.r, l1: n.label, l2, bad: false };
+  }
   const st = nodeState(p, id);
   const cron = CRON_LABEL[id];
   const l1 = `${n.label}${cron ? `  ·  ${cron}` : ''}`;
@@ -429,7 +511,7 @@ function drawTooltip(ctx: CanvasRenderingContext2D, p: DrawParams, tip: Tip): vo
 
 // ─── Component ────────────────────────────────────────────────────────
 export interface FlowCanvasProps {
-  agents: Agent[];
+  byName: ReadonlyMap<string, Agent>;
   /** Enabled feeds only. */
   feeds: FeedOverview[];
   index: TimelineIndex;
@@ -442,97 +524,114 @@ export interface FlowCanvasProps {
   zoom: number;
   /** Container width in CSS px; the canvas is never narrower than the layout minimum. */
   width: number;
+  /** True under the OS preference or the Pause control: a static frame, no loop. */
   reducedMotion: boolean;
   /** Placement is computed by the parent so the rails and canvas agree. */
   placement: Placement;
 }
 
 export function FlowCanvas({
-  agents, feeds, index, hasTimeline, getNow, hoverId, onHover, selected, onSelect,
+  byName, feeds, index, hasTimeline, getNow, hoverId, onHover, selected, onSelect,
   zoom, width, reducedMotion, placement,
 }: FlowCanvasProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [canvasRef, setCanvasEl, canvasEl] = useMountedElement<HTMLCanvasElement>();
   const dotHoverRef = useRef<string | null>(null);
-  const visible = useIsVisible(canvasRef);
+  const pointerType = useRef<string>('mouse');
+  const armed = useRef<string | null>(null);
+  const visible = useIsVisible(canvasEl);
   const { colors, version } = useTokenColors(TOKEN_NAMES);
   const palette = useMemo(() => makePalette(colors), [colors]);
 
-  const byName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
   const layout = useMemo(
     () => computeLayout({ width, placement, feeds, labelOf: (id) => agentLabel(id, byName) }),
     [width, placement, feeds, byName],
   );
 
-  const draw = useCallback(() => {
+  const draw = useCallback((): boolean => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return false;
     const ctx = fitCanvas(canvas, layout.width * zoom, layout.height * zoom);
-    if (!ctx) return;
-    drawFlow(ctx, {
+    if (!ctx) return false;
+    return drawFlow(ctx, {
       layout, palette, zoom, agents: byName, index, hasTimeline, now: getNow(),
       focus: hoverId ?? selected, selected, dotHover: dotHoverRef.current, reducedMotion,
     });
   }, [layout, palette, zoom, byName, index, hasTimeline, getNow, hoverId, selected, reducedMotion]);
 
-  // No timeline means no motion: draw once per change, never a frame loop.
+  // No timeline, reduced motion or Pause: draw once per change, no frame loop.
   useCanvasLoop(draw, !reducedMotion && hasTimeline, visible, [draw, version]);
 
   const pointer = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const hit = hitTest(layout, (e.clientX - rect.left) / zoom, (e.clientY - rect.top) / zoom);
-    return hit;
+    return hitTest(layout, (e.clientX - rect.left) / zoom, (e.clientY - rect.top) / zoom);
   };
 
   const sr = useMemo(() => {
-    const rows: Array<{ id: string; label: string; state: string }> = [];
-    const stateOf = (id: string, lifecycle?: string): string => {
-      if (lifecycle === 'retired') return 'retired';
+    const now = getNow();
+    const stateOf = (id: string): string => {
       const a = byName.get(id);
-      const act = hasTimeline ? laneActivity(index, id, getNow()) : IDLE;
+      const act = hasTimeline ? laneActivity(index, id, now) : IDLE;
       if (a?.circuit_state === 'tripped') return 'circuit tripped';
       if (act.running) return 'running';
       if (act.failed) return 'last run failed';
-      if (a?.circuit_state === 'manual_pause') return 'paused';
+      if (a?.circuit_state === 'manual_pause' || a?.lifecycle === 'paused') return 'paused';
       return 'idle';
     };
-    const ids = [
-      ...Object.values(placement.stages).flat(), ...placement.onDemand, ...placement.ops,
-    ];
-    for (const id of ids) rows.push({ id, label: agentLabel(id, byName), state: stateOf(id) });
-    return rows;
+    const ids = [...Object.values(placement.stages).flat(), ...placement.onDemand, ...placement.ops];
+    return ids.map((id) => ({ id, label: agentLabel(id, byName), state: stateOf(id) }));
     // getNow is stable; the list refreshes with each timeline payload.
   }, [placement, byName, hasTimeline, index, getNow]);
 
   return (
-    <div data-testid="flow-canvas" data-hover={hoverId ?? ''}>
+    <div data-testid="flow-canvas" data-hover={hoverId ?? ''} className="agn-ring-within">
       <canvas
-        ref={canvasRef}
+        ref={setCanvasEl}
         role="img"
         aria-label="Agent data-flow map. A text list of every agent and its current state follows."
         style={{
           display: 'block', width: layout.width * zoom, height: layout.height * zoom,
           cursor: hoverId && hoverId !== FLIGHT_CONTROL ? 'pointer' : 'default', touchAction: 'pan-x pan-y',
         }}
+        onPointerDown={(e) => { pointerType.current = e.pointerType || 'mouse'; }}
         onPointerMove={(e) => {
+          if (e.pointerType === 'touch') return; // touch is tap-to-preview, handled on click
           const hit = pointer(e);
           const dot = hit?.dot ?? null;
-          if (dot !== dotHoverRef.current) { dotHoverRef.current = dot; if (reducedMotion || !hasTimeline) draw(); }
+          if (dot !== dotHoverRef.current) { dotHoverRef.current = dot; draw(); }
           const id = hit?.id ?? null;
           if (id !== hoverId) onHover(id);
         }}
-        onPointerLeave={() => {
-          if (dotHoverRef.current) { dotHoverRef.current = null; }
+        onPointerLeave={(e) => {
+          if (e.pointerType === 'touch') return;
+          dotHoverRef.current = null;
           if (hoverId !== null) onHover(null);
         }}
         onClick={(e) => {
           const hit = pointer(e);
+          if (pointerType.current === 'touch') {
+            // First tap previews (tooltip + neighbourhood), second tap selects.
+            if (!hit) { armed.current = null; onHover(null); return; }
+            if (armed.current === hit.id && byName.has(hit.id)) { armed.current = null; onSelect(hit.id); return; }
+            armed.current = hit.id;
+            dotHoverRef.current = hit.dot ?? null;
+            onHover(hit.id);
+            return;
+          }
           if (hit && byName.has(hit.id)) onSelect(hit.id);
         }}
       />
       <ul className="sr-only" aria-label="Agents and their current state">
         {sr.map((r) => (
           <li key={r.id}>
-            <button type="button" onClick={() => onSelect(r.id)}>{r.label}: {r.state}</button>
+            <button
+              type="button"
+              aria-pressed={selected === r.id}
+              onFocus={() => onHover(r.id)}
+              onBlur={() => onHover(null)}
+              onClick={() => onSelect(r.id)}
+            >
+              {r.label}: {r.state}
+            </button>
           </li>
         ))}
       </ul>
