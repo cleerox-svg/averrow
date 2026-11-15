@@ -54,7 +54,7 @@ describe('shell card tokens under the facelift', () => {
       expect(read(f), f).not.toMatch(/boxShadow:\s*'var\(--card-shadow\)'/);
     }
     expect(read('components/platform-status-flyout.css')).toContain('var(--card-shadow-elevated)');
-    expect(read('components/NotificationBell.tsx')).toContain('variant="elevated"');
+    expect(readFileSync(resolve(src, '../../shared/src/ui/shell/NotificationBell.tsx'), 'utf8')).toContain('variant="elevated"');
   });
 
   it('pins the frozen PortfolioHealthCard (.glass-card) light shadow to its pre-reset value', () => {

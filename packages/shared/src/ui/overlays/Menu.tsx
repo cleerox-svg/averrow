@@ -100,6 +100,8 @@ export interface MenuItemProps {
   /** Call `event.preventDefault()` to keep the menu/sheet open. */
   onSelect?: (event: Event) => void;
   className?: string;
+  /** Test hook, forwarded to the rendered item in both the popover and the sheet. */
+  'data-testid'?: string;
 }
 
 function ItemContent({ icon, description, trailing, tone, children }: Pick<MenuItemProps, 'icon' | 'description' | 'trailing' | 'tone' | 'children'>) {
@@ -121,7 +123,7 @@ function ItemContent({ icon, description, trailing, tone, children }: Pick<MenuI
 }
 
 export const MenuItem = React.forwardRef<HTMLElement, MenuItemProps>(function MenuItem(
-  { children, icon, description, trailing, tone = 'default', disabled, onSelect, className },
+  { children, icon, description, trailing, tone = 'default', disabled, onSelect, className, 'data-testid': testId },
   ref,
 ) {
   const mode = React.useContext(PresentationContext);
@@ -142,6 +144,7 @@ export const MenuItem = React.forwardRef<HTMLElement, MenuItemProps>(function Me
         disabled={disabled}
         onClick={handleClick}
         className={cn(cls, 'min-h-[48px]')}
+        data-testid={testId}
       >
         <ItemContent {...content} />
       </button>
@@ -154,6 +157,7 @@ export const MenuItem = React.forwardRef<HTMLElement, MenuItemProps>(function Me
       disabled={disabled}
       onSelect={onSelect}
       className={cls}
+      data-testid={testId}
     >
       <ItemContent {...content} />
     </DropdownMenuPrimitive.Item>
@@ -327,10 +331,12 @@ export interface MenuRadioItemProps {
   /** Keep the menu/sheet open after choosing (default: closes, like any item). */
   keepOpen?: boolean;
   className?: string;
+  /** Test hook, forwarded to the rendered segment in both shells. */
+  'data-testid'?: string;
 }
 
 export const MenuRadioItem = React.forwardRef<HTMLElement, MenuRadioItemProps>(function MenuRadioItem(
-  { value, children, icon, description, disabled, keepOpen = false, className },
+  { value, children, icon, description, disabled, keepOpen = false, className, 'data-testid': testId },
   ref,
 ) {
   const mode = React.useContext(PresentationContext);
@@ -364,6 +370,7 @@ export const MenuRadioItem = React.forwardRef<HTMLElement, MenuRadioItemProps>(f
         disabled={disabled}
         onClick={() => { group?.onValueChange(value); if (!keepOpen) closeSheet?.(); }}
         className={cn(cls, segmented ? 'min-h-[44px]' : 'min-h-[48px]')}
+        data-testid={testId}
       >
         {content}
       </button>
@@ -376,6 +383,7 @@ export const MenuRadioItem = React.forwardRef<HTMLElement, MenuRadioItemProps>(f
       disabled={disabled}
       onSelect={keepOpen ? (e) => e.preventDefault() : undefined}
       className={cls}
+      data-testid={testId}
     >
       {content}
     </DropdownMenuPrimitive.RadioItem>

@@ -30,7 +30,7 @@ import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { ThemeCycleButton } from './ThemeCycleButton';
 import { PasskeyEnrollmentGate } from '@/components/PasskeyEnrollmentGate';
 import { FirstSignInPasskeyPrompt } from '@/components/FirstSignInPasskeyPrompt';
-import { AppUpdateNotice, AverrowLockup, LOGO_LEGACY_CLASS, LOGO_R3_CLASS, NavIndicator, usePageSlide } from '@averrow/shared/ui';
+import { AppUpdateNotice, AverrowLockup, SearchTrigger, LOGO_LEGACY_CLASS, LOGO_R3_CLASS, NavIndicator, usePageSlide } from '@averrow/shared/ui';
 import { OPS_SHELL_URL } from '@/lib/basePath';
 import './shell-v4.css';
 
@@ -438,11 +438,14 @@ export function ShellV4() {
           <button type="button" ref={hamburgerRef} className="v4-hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu" aria-expanded={drawerOpen} aria-controls="v4-drawer">
             <Menu size={18} strokeWidth={2} />
           </button>
-          <button type="button" className="v4-cmdk" onClick={openPalette} aria-label="Open command palette">
-            <Search size={14} strokeWidth={2} />
-            <span className="v4-cmdk-label">Search threats, brands, actors…</span>
-            <kbd>⌘K</kbd>
-          </button>
+          <SearchTrigger
+            className="v4-cmdk"
+            label="Search threats, brands, actors…"
+            shortcut="⌘K"
+            aria-label="Open command palette"
+            icon={<Search size={14} strokeWidth={2} />}
+            onOpen={openPalette}
+          />
           <div className="v4-top-right">
             {/* Always mounted so assistive tech announces the content change. */}
             <span className="v4-offline" role="status" aria-live="polite">

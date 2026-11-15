@@ -712,6 +712,34 @@ import {
   not clipped). Button, StatTile and the PageHeader back control use the amber
   ring (`focus-visible:ring-2`).
 
+**Shell modules (`ui/shell/`, shared with FarmTrack).** The three top-bar modules
+are props-driven and live in the kit, so Averrow, the tenant app and FarmTrack
+(which vendors `packages/shared/src` verbatim and cannot edit it) render the same
+menu, search trigger and bell. No router, icon library or data layer: icons are
+`ReactNode` props (kit defaults exist), navigation is callbacks or `renderLink`
+(a router `<Link>`), and every trigger / root / item takes `data-testid`. Apps
+feed them data in a thin wrapper (ops: `components/UserAvatar.tsx`,
+`NotificationBell.tsx`). No new `exports` path; import from `@averrow/shared/ui`.
+
+- **`AccountMenu`**: avatar trigger + menu (popover desktop, Sheet compact). Props: `name`,
+  `initials`, `email`, `role` (`{ label, tone }`, the app supplies its own roles),
+  `hasPasskey` (`undefined` hides it), `links[]` (label, icon, tone, `onSelect`,
+  optional `count`/`countCritical`), `themeValue`/`onThemeChange` (Auto | Dark | Light),
+  `afterAppearance` slot (compose `MenuLabel` + `MenuRadioGroup`, e.g. FarmTrack's
+  "Look"), optional `switchAccount`, `signOut`, `versionLabel`, `triggerClassName`.
+- **`SearchTrigger`**: the ⌘K button (`label`, `shortcut`, `aria-label`, `onOpen`,
+  `icon`, `className`). 300px field; fills the bar at <=900px; 44px icon-only at <=480px.
+- **`NotificationBell`**: trigger + 99+ badge (red only with an unread critical) +
+  polite live region + popover / full-height Sheet + header (Mark all read, All | Unread)
+  + footer links + loading / error / empty. Data by props (`items`, `unreadCount`,
+  `hasCritical`, `loading`, `error`, callbacks). Optional: `renderBanner` slot (ops
+  triage row), `onSnooze`/`snoozeOptions`/`onDone` row actions, `onOpenChange` for
+  lazy fetching. Rows (`NotificationRow`, `DayHeading`, `NotificationRowSkeletons`) and
+  `groupByDay` are exported against the minimal `ShellNotification` shape.
+- Bell footer and settings links always get `onClick: close`; a consumer that needs its own handler composes it inside `renderLink`.
+- Always-dark chrome (FarmTrack): restyle with `triggerClassName` / `className`; every
+  colour is a token.
+
 **StatTile ("Instrument glass", 2026-10):** gradient-hairline surface (mask
 technique, as `.ds-banner[data-variant="prominent"]`), inset top highlight, no glow
 orb, no number text-shadow. Label is app sans 12px / 500 / `--text-secondary`,
