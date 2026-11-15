@@ -183,6 +183,9 @@ type SpfCertainty = 'certain' | 'walk_unknown' | 'not_checked';
 
 function spfCertainty(spf: SpfResult): SpfCertainty {
   if (spf.rootError) return 'not_checked';
+  // An RDAP lookup that could not confirm a dangling include (rubric 4):
+  // the include_target_unregistered finding may be missing only for that reason.
+  if ((spf.findings ?? []).some((f) => f.code === 'include_target_unverified')) return 'walk_unknown';
   // A carried pre-0332 row has real SPF values but no walk data.
   return spf.walkStatus === 'unknown' || spf.walkStatus === 'carried_legacy' ? 'walk_unknown' : 'certain';
 }

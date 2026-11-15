@@ -12,6 +12,7 @@
  */
 
 import { getRdapServerForDomain } from "./rdap-bootstrap";
+import { validDnsName } from "./dnsbl-doh";
 import type { Env } from "../types";
 
 export interface RDAPResult {
@@ -84,6 +85,49 @@ export async function rdapLookup(
   } catch (err) {
     console.error(`[whois] fetch error for ${domain}:`, err instanceof Error ? err.message : err);
     return null;
+  }
+}
+
+/** Whether a domain is registered, as far as RDAP can say. */
+export type DomainRegistration = "registered" | "unregistered" | "unknown";
+
+/**
+ * Registered / unregistered / unknown for ONE domain, through the same
+ * IANA-bootstrap server resolution as rdapLookup (KV-cached bootstrap, no
+ * aggregator). Unlike rdapLookup it keeps the failure mode: only an HTTP 404
+ * from the TLD's own RDAP server is "unregistered" and only a 200 domain
+ * object is "registered". A timeout, a 429 / 5xx, a TLD with no RDAP server,
+ * an unparseable body or an invalid name is "unknown" — never "unregistered".
+ * `timeoutMs` bounds bootstrap + request together. Never throws.
+ */
+export async function rdapDomainRegistration(
+  env: Env,
+  domain: string,
+  timeoutMs: number,
+): Promise<DomainRegistration> {
+  const name = validDnsName(domain);
+  if (name === null || timeoutMs < 1) return "unknown";
+  const deadline = Date.now() + timeoutMs;
+  try {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const server = await Promise.race([
+      getRdapServerForDomain(env, name),
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); }),
+    ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+    if (!server) return "unknown";
+    const remaining = deadline - Date.now();
+    if (remaining < 1) return "unknown";
+    const base = server.endsWith("/") ? server : `${server}/`;
+    const res = await fetch(`${base}domain/${encodeURIComponent(name)}`, {
+      headers: { Accept: "application/rdap+json" },
+      signal: AbortSignal.timeout(remaining),
+    });
+    if (res.status === 404) return "unregistered";
+    if (!res.ok) return "unknown";
+    const body = (await res.json()) as { objectClassName?: unknown };
+    return body && body.objectClassName === "domain" ? "registered" : "unknown";
+  } catch {
+    return "unknown";
   }
 }
 

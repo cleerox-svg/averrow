@@ -12,6 +12,7 @@
  * Outputs: agent_outputs (type: 'hygiene_report')
  */
 
+import { spfRdapChecker } from "../lib/spf-dangling";
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import { runEmailSecurityScan, saveEmailSecurityScan, previousSpfLoader } from "../email-security";
 import { discoverSocialProfiles } from "../lib/social-discovery";
@@ -114,7 +115,7 @@ export const curatorAgent: AgentModule = {
         });
         let scanResult;
         try {
-          scanResult = await Promise.race([runEmailSecurityScan(domain, { previousSpf: previousSpfLoader(db, brand.id) }), timeoutPromise]);
+          scanResult = await Promise.race([runEmailSecurityScan(domain, { previousSpf: previousSpfLoader(db, brand.id), spfRdap: spfRdapChecker(env) }), timeoutPromise]);
         } finally {
           if (timer !== undefined) clearTimeout(timer);
         }

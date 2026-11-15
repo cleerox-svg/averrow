@@ -57,8 +57,8 @@ function overLimitZone(extra: Zone = {}): Zone {
 const TEN_INCLUDES = Array.from({ length: 10 }, (_, i) => `include:i${i}.acme.com`).join(" ");
 
 describe("rubric version", () => {
-  it("is 3 (SPF tree walk changed scoring)", () => {
-    expect(EMAIL_SCORE_RUBRIC_VERSION).toBe(3);
+  it("is 4 (dangling-include confirmation changed scoring)", () => {
+    expect(EMAIL_SCORE_RUBRIC_VERSION).toBe(4);
   });
 });
 
@@ -484,7 +484,7 @@ describe.skipIf(!hasSqlite())("storage + grade-change detection (migration 0332)
     expect(stored).toEqual({
       spf_exists: 1, spf_lookup_count: 12, spf_void_lookups: 1, spf_walk_status: "complete",
       spf_findings: '[{"code":"lookup_limit_exceeded","count":12}]', spf_too_many_lookups: 1,
-      score_rubric_version: 3,
+      score_rubric_version: 4,
     });
   });
 

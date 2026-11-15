@@ -1,3 +1,4 @@
+import { spfRdapChecker } from "../lib/spf-dangling";
 import { logger } from '../lib/logger';
 import { feedModules, enrichmentModules, socialModules } from '../feeds/index';
 import { createAlert } from '../lib/alerts';
@@ -1381,7 +1382,7 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
       let scanned = 0;
       for (const brand of brandsToScan.results) {
         try {
-          const scanResult = await runEmailSecurityScan(brand.domain, { previousSpf: previousSpfLoader(env.DB, brand.id) });
+          const scanResult = await runEmailSecurityScan(brand.domain, { previousSpf: previousSpfLoader(env.DB, brand.id), spfRdap: spfRdapChecker(env) });
           await saveEmailSecurityScan(env.DB, brand.id, scanResult);
           await env.DB.prepare(
             "UPDATE brands SET email_security_score = ?, email_security_grade = ?, email_security_dmarc_policy = ?, email_security_scanned_at = datetime('now') WHERE id = ?"

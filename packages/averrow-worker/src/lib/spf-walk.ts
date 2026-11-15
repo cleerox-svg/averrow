@@ -104,6 +104,10 @@ export interface SpfWalkResult {
   multipleRecordsAt: string[];
   syntaxErrorAt: string[];
   missingRecordAt: string[];
+  /** Subset of `missingRecordAt` whose TXT answer was NXDOMAIN (the name does
+   *  not exist at all), as opposed to existing with no SPF record. Input to
+   *  the dangling-include check (lib/spf-dangling.ts). */
+  nxdomainAt: string[];
   ptrAt: string[];
   /** `+all` / bare `all` in a record reached through an include. */
   includePassAllAt: string[];
@@ -120,7 +124,7 @@ export interface SpfWalkOptions {
 
 type Fetched =
   | { kind: 'ok'; record: ParsedSpfRecord }
-  | { kind: 'void' }       // NXDOMAIN / no TXT answers
+  | { kind: 'void'; nx: boolean }  // NXDOMAIN / no TXT answers
   | { kind: 'none' }       // TXT answers, none of them SPF
   | { kind: 'multiple' }   // more than one SPF record (permerror)
   | { kind: 'unknown'; reason: SpfWalkIncompleteReason };
@@ -173,6 +177,7 @@ export async function walkSpfTree(
   const multipleRecordsAt = new NameSet();
   const syntaxErrorAt = new NameSet();
   const missingRecordAt = new NameSet();
+  const nxdomainAt = new NameSet();
   const ptrAt = new NameSet();
   const includePassAllAt = new NameSet();
   const cache = new Map<string, Fetched>();
@@ -195,7 +200,7 @@ export async function walkSpfTree(
       if (answer.status === 'error') {
         res = { kind: 'unknown', reason: 'lookup_error' };
       } else if (answer.status === 'nxdomain' || answer.records.length === 0) {
-        res = { kind: 'void' };
+        res = { kind: 'void', nx: answer.status === 'nxdomain' };
       } else {
         const spf = selectSpfRecords(answer.records);
         const parsed = spf.length === 1 ? parseSpfRecord(spf[0]) : null;
@@ -227,7 +232,11 @@ export async function walkSpfTree(
         if (f.reason === 'lookup_error') reasons.add(f.reason);
         else stop(f.reason); // query cap / time budget: nothing more can be read
         return null;
-      case 'void': voidLookups++; missingRecordAt.add(name); return null;
+      case 'void':
+        voidLookups++;
+        missingRecordAt.add(name);
+        if (f.nx) nxdomainAt.add(name);
+        return null;
       case 'none': missingRecordAt.add(name); return null;
       case 'multiple': multipleRecordsAt.add(name); return null;
       case 'ok': return visit(name, f.record, depth, [...path, name], viaInclude);
@@ -274,6 +283,7 @@ export async function walkSpfTree(
     multipleRecordsAt: multipleRecordsAt.list(),
     syntaxErrorAt: syntaxErrorAt.list(),
     missingRecordAt: missingRecordAt.list(),
+    nxdomainAt: nxdomainAt.list(),
     ptrAt: ptrAt.list(),
     includePassAllAt: includePassAllAt.list(),
   };

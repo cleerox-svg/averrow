@@ -21,6 +21,11 @@ import {
   type SpfTxtLookup,
   type SpfWalkResult,
 } from './lib/spf-walk';
+import {
+  pickDanglingCandidate,
+  SPF_RDAP_TIMEOUT_MS,
+  type SpfRdapCheck,
+} from './lib/spf-dangling';
 
 // ─── DNS over HTTPS ─────────────────────────────────────────────────────────
 
@@ -101,8 +106,13 @@ export interface DmarcResult {
  *       target DOES lower the score; an unread include adds and removes
  *       nothing; a failed root lookup carries the previous scan's SPF
  *       forward or scores SPF as not checked (2026-11)
+ *   4 — an SPF include/redirect target whose registrable domain RDAP
+ *       CONFIRMS is unregistered (`include_target_unregistered`) scores 0
+ *       for SPF, like `+all`: whoever registers it can publish `+all` and
+ *       pass SPF for the domain. An unconfirmed lookup (`unknown`) changes
+ *       nothing (2026-11)
  */
-export const EMAIL_SCORE_RUBRIC_VERSION = 3;
+export const EMAIL_SCORE_RUBRIC_VERSION = 4;
 
 /** Build a DmarcResult from a raw TXT record (pure; exported for tests). */
 export function dmarcResultFromRecord(dmarcRecord: string | null | undefined): DmarcResult {
@@ -176,13 +186,16 @@ export type SpfFindingCode =
   | 'syntax_error'
   | 'include_loop'
   | 'include_target_missing'
+  | 'include_target_unregistered'
+  | 'include_target_unverified'
   | 'walk_incomplete'
   | 'root_lookup_failed';
 
 export const SPF_FINDING_CODES: readonly SpfFindingCode[] = [
   'lookup_limit_exceeded', 'void_lookup_limit_exceeded', 'multiple_records',
   'include_multiple_records', 'pass_all', 'include_pass_all', 'neutral_all', 'ptr_mechanism',
-  'syntax_error', 'include_loop', 'include_target_missing', 'walk_incomplete', 'root_lookup_failed',
+  'syntax_error', 'include_loop', 'include_target_missing', 'include_target_unregistered',
+  'include_target_unverified', 'walk_incomplete', 'root_lookup_failed',
 ];
 
 /** Findings that describe the domain's OWN record (or the root lookup),
@@ -371,6 +384,7 @@ export async function checkSpf(
   lookup: SpfTxtLookup = spfTxtLookup,
   previous?: PreviousSpfLoader,
   budget?: SpfCheckBudget,
+  rdap?: SpfRdapCheck,
 ): Promise<SpfResult> {
   const start = Date.now();
   let root: { status: 'ok' | 'nxdomain' | 'error'; records: string[] };
@@ -391,7 +405,49 @@ export async function checkSpf(
     ? { budgetMs: Math.max(0, Math.min(SPF_WALK_BUDGET_MS, budget.totalMs - (Date.now() - start))) }
     : {};
   const walk = parsed ? await walkSpfTree(domain, parsed, lookup, walkOpts) : null;
-  return buildSpfResult(domain, root.status, root.records, walk);
+  const result = buildSpfResult(domain, root.status, root.records, walk);
+  if (rdap && walk && walk.nxdomainAt.length > 0) {
+    return confirmDanglingInclude(result, walk, lookup, rdap, budget ? budget.totalMs - (Date.now() - start) : null);
+  }
+  return result;
+}
+
+/**
+ * Dangling-include check: one candidate, one RDAP verdict (lib/spf-dangling.ts).
+ * `unregistered` adds `include_target_unregistered` (scored, rubric 4);
+ * `unknown` adds `include_target_unverified` (informational — makes grade-change
+ * alerting treat SPF as uncertain, never touches the score); `registered`
+ * adds nothing. `remainingMs` (capped scans) skips the check when too little
+ * of the shared budget is left. Never throws.
+ */
+async function confirmDanglingInclude(
+  result: SpfResult,
+  walk: SpfWalkResult,
+  lookup: SpfTxtLookup,
+  rdap: SpfRdapCheck,
+  remainingMs: number | null,
+): Promise<SpfResult> {
+  if (remainingMs !== null && remainingMs < SPF_RDAP_TIMEOUT_MS) return result;
+  try {
+    const candidate = await pickDanglingCandidate(walk.nxdomainAt, lookup);
+    if (!candidate) return result;
+    const verdict = await rdap(candidate.registrable, SPF_RDAP_TIMEOUT_MS);
+    const names = validNames([candidate.registrable]);
+    if (verdict === 'unregistered') {
+      return { ...result, findings: [...(result.findings ?? []), { code: 'include_target_unregistered', names }] };
+    }
+    if (verdict === 'unknown') {
+      return { ...result, findings: [...(result.findings ?? []), { code: 'include_target_unverified', names }] };
+    }
+  } catch {
+    // never fail the scan over the extra check
+  }
+  return result;
+}
+
+/** A CONFIRMED unregistered include/redirect target (rubric 4: SPF scores 0). */
+export function hasUnregisteredInclude(spf: SpfResult): boolean {
+  return (spf.findings ?? []).some((f) => f.code === 'include_target_unregistered');
 }
 
 /**
@@ -685,7 +741,10 @@ export function calculateEmailSecurityScore(scan: EmailSecurityScanInput): { sco
   //   - Void lookups, ptr, syntax errors, include targets with no or
   //     multiple SPF records, and `+all` inside an include are
   //     recommendations only.
-  if (scan.spf.exists && scan.spf.policy !== '+all') {
+  //   Rubric 4: an include/redirect target RDAP confirms is UNREGISTERED
+  //   scores 0 for SPF, like `+all` — anyone can register it and pass SPF.
+  //   An unconfirmed (`unknown`) lookup changes nothing.
+  if (scan.spf.exists && scan.spf.policy !== '+all' && !hasUnregisteredInclude(scan.spf)) {
     score += 10; // Has SPF record
     if (!isSpfPermerror(scan.spf)) {
       if (scan.spf.policy === '-all') score += 15;      // Hard fail
@@ -831,6 +890,11 @@ export function spfFindingRecommendations(spf: SpfResult): string[] {
       case 'include_target_missing':
         recs.push(`WARNING: SPF include/redirect target has no SPF record or does not exist${list(f.names)} — receivers return permerror. Remove it: a lapsed target domain can be re-registered by an attacker who would then pass your SPF.`);
         break;
+      case 'include_target_unregistered':
+        recs.push(`CRITICAL: An SPF include points at ${f.names && f.names.length > 0 ? f.names[0] : 'a domain'}, which is not registered. Anyone who registers it can send mail as this domain. Remove the include.`);
+        break;
+      case 'include_target_unverified':
+        break; // informational only: could not confirm; shown in the staff findings list
       case 'walk_incomplete':
         recs.push(`The SPF include tree could not be fully checked (a DNS lookup failed or a scan limit was reached); ${f.count ?? 0} DNS lookups were counted in the part that was read.`);
         break;
@@ -930,6 +994,10 @@ export interface EmailSecurityScanOptions {
   /** Shared SPF root + walk budget (CAPPED_SCAN_SPF_BUDGET for the
    *  wall-clock-capped scans); default 5 s root + 4 s walk. */
   spfBudget?: SpfCheckBudget;
+  /** RDAP verdict function (spfRdapChecker(env)) for brand scans run with a
+   *  Worker env. Absent = no RDAP at all (public free scan, public
+   *  email-security check): dangling includes are then not confirmed. */
+  spfRdap?: SpfRdapCheck;
 }
 
 export async function runEmailSecurityScan(
@@ -940,7 +1008,7 @@ export async function runEmailSecurityScan(
 
   const [dmarc, spf, dkim, mx] = await Promise.all([
     checkDmarc(domain),
-    checkSpf(domain, undefined, opts.previousSpf, opts.spfBudget),
+    checkSpf(domain, undefined, opts.previousSpf, opts.spfBudget, opts.spfRdap),
     checkDkim(domain),
     checkMx(domain),
   ]);

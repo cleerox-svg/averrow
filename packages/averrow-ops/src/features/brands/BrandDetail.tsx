@@ -50,6 +50,7 @@ import {
   SocialRiskCard,
 } from './components/HeroCards';
 import { DmarcSensorCard, DMARC_SENSOR_ANCHOR_ID } from './components/DmarcSensorCard';
+import { SpfFindingsCard } from './components/SpfFindingsCard';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#C83C3C', high: '#E8923C', medium: '#DCAA32', low: '#78A0C8', info: '#5A80A8',
@@ -666,6 +667,7 @@ function SurfaceTab({
         <div className="space-y-3">
           <EmailPostureCard emailSec={emailSec} grade={brand.email_security_grade} brand={brand} onViewDetails={() => onJumpV2('email')} />
           <EmailSecurityHistoryStrip history={emailSecHistory} />
+          <SpfFindingsCard emailSec={emailSec} />
         </div>
 
         <Card>

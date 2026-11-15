@@ -10,6 +10,7 @@
  * GET  /api/email-security/stats             → Aggregate grade distribution stats
  */
 
+import { spfRdapChecker } from "../lib/spf-dangling";
 import { json } from '../lib/cors';
 import { normalizePublicHostname } from '../lib/public-hostname';
 import { runEmailSecurityScan, saveEmailSecurityScan, previousSpfLoader } from '../email-security';
@@ -138,7 +139,7 @@ export async function handleScanBrandEmailSecurity(
       return json({ success: false, error: 'Brand has no domain or name' }, 400, origin);
     }
 
-    const result = await runEmailSecurityScan(domain, { previousSpf: previousSpfLoader(env.DB, brand.id) });
+    const result = await runEmailSecurityScan(domain, { previousSpf: previousSpfLoader(env.DB, brand.id), spfRdap: spfRdapChecker(env) });
     await saveEmailSecurityScan(env.DB, brand.id, result);
 
     // Fetch previous BIMI/DMARC state for change detection
@@ -216,7 +217,7 @@ export async function handleScanAllEmailSecurity(
 
     for (const brand of brandsToScan.results) {
       try {
-        const result = await runEmailSecurityScan(brand.domain, { previousSpf: previousSpfLoader(env.DB, brand.id) });
+        const result = await runEmailSecurityScan(brand.domain, { previousSpf: previousSpfLoader(env.DB, brand.id), spfRdap: spfRdapChecker(env) });
         await saveEmailSecurityScan(env.DB, brand.id, result);
 
         // Fetch previous state for change detection
