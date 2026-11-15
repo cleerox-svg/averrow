@@ -8,6 +8,9 @@ All notable changes to the Averrow platform are documented here.
 
 Feed licence and honesty audit (2026-11-14). No version bump yet.
 
+### Apps: "new version available" banner
+- Both SPAs show "A new version of Averrow is available. Reload" at the top of the shell when a deploy lands under an open tab (`AppUpdateNotice`, `@averrow/shared/ui` `ui/update/`; mirrors FarmTrack). Detection fetches the app's own shell (`/v2/`, `/tenant/`) with `?__update_check=<ts>` and flags a newer build when it names an `/assets/*.js|css` file the page lacks; no version file. `__BUILD_SHA__` / `__BUILT_AT__` are no longer `define`d into the JS (they changed the entry hash every commit): `buildMeta()` (`packages/shared/scripts/build-meta.ts`) writes them as index.html metas and `lib/version.ts` reads them; `BUILD_SHA` env overrides the git sha. Ops `public/sw.js` passes `__update_check` requests to the network, accepts `{ type: 'SKIP_WAITING' }`, and its cache `VERSION` is bumped. No auto-reload (unsaved input).
+
 ### Feeds
 - **Disabled (migration 0326):** `spamhaus_dbl` (free DBL tiers are non-commercial; Spamhaus also answers public resolvers with `127.255.255.254`), `dshield` (SANS ISC API is CC BY-NC-SA 4.0) and `surbl` (`manual:blind_resolver`: Cloudflare's public resolver answers every name SERVFAIL, and SURBL's commercial terms were never verified). `manual:` `paused_reason`; re-enable conditions are in the migration.
 - **DNSBL honesty and robustness (`lib/dnsbl-doh.ts`):** SURBL and DBL never read a refused or failed lookup as "clean" (row stays unchecked). Errors fall in three classes: run-level refusal (fails the pull), transient per-row (HTTP failure, timeout, SERVFAIL on one name) and per-row (other RCODEs). Query names are validated (invalid ones are stamped not-applicable), transient names get 6h KV retry markers and move behind fresh work, and each run self-tests on the list's test point. KV cache prefixes bumped to `surbl:v2:` / `dbl:v2:`.

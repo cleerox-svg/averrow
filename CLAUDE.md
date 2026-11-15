@@ -378,6 +378,7 @@ Two install affordances + one biometric auto-prompt:
 | `<InstallAppBanner />` | Overview (`features/home/OverviewV4.tsx`), directly below the hero | Visible to non-installed users; dismissible per-device |
 | Install card | Settings → Devices & App (`packages/shared/src/account/DevicesSettings.tsx`, ops `/settings/devices`; no longer on Profile; the old `InstallAppCard` was deleted) | Always visible; not dismissible. Tenant has no Devices & App (no service worker) |
 | `<FirstSignInPasskeyPrompt />` | Mounted at `components/layout/ShellV4.tsx` root | Auto-fires when `passkey_count === 0` + WebAuthn supported |
+| `<AppUpdateNotice shellUrl=… />` (`@averrow/shared/ui`) | Top of the content column in ops `ShellV4.tsx` (`/v2/`) and tenant `layout/Shell.tsx` (`/tenant/`) | "A new version of Averrow is available. Reload" banner. Probes the app's own shell (`?__update_check`) for a `/assets/*.js|css` file the page doesn't have (the commit sha is an index.html `<meta>`, not in the bundle, so backend-only deploys stay quiet) on focus / online / every 30 min while visible; a failed lazy chunk (`vite:preloadError`) also raises it; never auto-reloads. Tenant works without a service worker |
 
 The banner and the passkey prompt self-gate internally. Don't add per-route logic to control them.
 
@@ -1853,8 +1854,11 @@ Single **platform version** `MAJOR.MINOR.PATCH`, source of truth
 - **MAJOR** — re-architectures / paradigm shifts (curated, e.g. v4).
   **MINOR** — new user-facing features (`feat`).
   **PATCH** — fixes / improvements (`fix`/`perf`/`refactor`).
-- Injected at build (Vite `define` → `__APP_VERSION__` + `__BUILD_SHA__`; see
-  each app's `vite.config.ts` + `src/lib/version.ts`) and shown to **every
+- Injected at build: the version is a Vite `define` (`__APP_VERSION__`); the
+  commit SHA and build time are index.html `<meta>` tags (`buildMeta()`,
+  `packages/shared/scripts/build-meta.ts`), never `define`d into the JS, so the
+  bundle hash changes only with app code (see each app's `vite.config.ts` +
+  `src/lib/version.ts`) and shown to **every
   logged-in user** in both apps' sidebars as `vX.Y.Z · <sha>`. The SHA
   auto-updates every deploy.
 - **Three changelog registers, three audiences:**

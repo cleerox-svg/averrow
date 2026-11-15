@@ -110,6 +110,8 @@
   padding-left: max(22px, env(safe-area-inset-left));
   padding-right: max(22px, env(safe-area-inset-right));
 }
+/* The update banner (shared AppUpdateNotice) already honoured the top inset. */
+html[data-update-banner] .v4-top { padding-top: 12px; }
 /* The bell keeps margin-left:auto, so bell + avatar hug the right edge */
 .v4-top > * { flex-shrink: 0; }
 .v4-top .v4-cmdk { flex-shrink: 1; }

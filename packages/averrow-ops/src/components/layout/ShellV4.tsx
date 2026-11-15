@@ -30,7 +30,7 @@ import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { ThemeCycleButton } from './ThemeCycleButton';
 import { PasskeyEnrollmentGate } from '@/components/PasskeyEnrollmentGate';
 import { FirstSignInPasskeyPrompt } from '@/components/FirstSignInPasskeyPrompt';
-import { AverrowLockup, LOGO_LEGACY_CLASS, LOGO_R3_CLASS, NavIndicator, usePageSlide } from '@averrow/shared/ui';
+import { AppUpdateNotice, AverrowLockup, LOGO_LEGACY_CLASS, LOGO_R3_CLASS, NavIndicator, usePageSlide } from '@averrow/shared/ui';
 import './shell-v4.css';
 
 interface NavItem { label: string; to: string; icon: LucideIcon; end?: boolean; count?: number; }
@@ -350,6 +350,7 @@ export function ShellV4() {
     return (
       <div className="shell-v4 shell-v4--wall">
         <section className="v4-main">
+          <AppUpdateNotice shellUrl="/v2/" />
           <div className="v4-outlet">
             <div className="v4-page v4-page--fill">{enrollmentLocked ? null : <Outlet />}</div>
           </div>
@@ -431,6 +432,7 @@ export function ShellV4() {
       <div className="v4-backdrop" onClick={closeDrawer} aria-hidden />
 
       <section className="v4-main">
+        <AppUpdateNotice shellUrl="/v2/" />
         <header className="v4-top">
           <button type="button" ref={hamburgerRef} className="v4-hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu" aria-expanded={drawerOpen} aria-controls="v4-drawer">
             <Menu size={18} strokeWidth={2} />

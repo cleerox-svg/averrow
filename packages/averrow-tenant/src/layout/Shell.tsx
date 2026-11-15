@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { AppUpdateNotice } from '@averrow/shared/ui';
 import { useTheme } from '@/lib/useTheme';
 import { useAuth } from '@/lib/auth';
 
@@ -90,6 +91,7 @@ export function Shell() {
         />
       )}
       <div ref={contentRef} className="flex-1 flex flex-col min-w-0">
+        <AppUpdateNotice shellUrl="/tenant/" />
         <TopBar navOpen={navOpen} onOpenNav={() => setNavOpen(true)} hamburgerRef={hamburgerRef} />
         <main className="flex-1 min-w-0 overflow-y-auto px-4 py-5 md:px-6 md:py-6">
           <Outlet />

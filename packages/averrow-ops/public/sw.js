@@ -4,7 +4,9 @@
  * Old SPA at / and /legacy is unaffected — its pages are not in scope.
  *
  * Three caching strategies:
- *   1. Navigation requests (/v2/...)   → stale-while-revalidate against the shell cache
+ *   0. Requests carrying ?__update_check → not intercepted (the shared "new version"
+ *      probe must see the live index.html)
+ *   1. Navigation requests (/v2/...)   → network-first; the shell cache is the offline fallback only
  *   2. /api/... GETs                   → network-only, never cached (offline 503)
  *      H6 (SECURITY_AUDIT_2026-06-10): /api/* responses carry authenticated
  *      data and must not persist in Cache Storage — they were previously
@@ -30,7 +32,7 @@
  * Bump VERSION on any change here so old caches are evicted on activate.
  */
 
-const VERSION = '2026-11-08.1';
+const VERSION = '2026-11-15.1';
 const SHELL_CACHE   = `averrow-shell-${VERSION}`;
 const RUNTIME_CACHE = `averrow-runtime-${VERSION}`;
 
@@ -98,7 +100,12 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // SPA navigations: stale-while-revalidate against the shell.
+  // The page's "is there a newer build?" probe (shared appUpdate.ts) must
+  // reach the server: answered from the runtime cache it would only ever see
+  // the build it already has.
+  if (url.searchParams.has('__update_check')) return;
+
+  // SPA navigations: network-first against the shell (cache = offline fallback).
   if (req.mode === 'navigate') {
     event.respondWith(navigationHandler(req));
     return;
@@ -121,7 +128,9 @@ self.addEventListener('fetch', (event) => {
 });
 
 self.addEventListener('message', (event) => {
-  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data === 'SKIP_WAITING' || (event.data && event.data.type === 'SKIP_WAITING')) {
+    self.skipWaiting();
+  }
 
   // Posted by the app on logout (api.ts clearTokens) so cached API data
   // can't outlive the session. Defensive: nothing writes API caches anymore
