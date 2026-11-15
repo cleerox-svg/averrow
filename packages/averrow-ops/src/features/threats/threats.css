@@ -114,3 +114,6 @@
 @media (prefers-reduced-motion: reduce) {
   :root[data-accent] .threats-v4 .thr-row, :root[data-accent] .threats-v4 .thr-seg button, :root[data-accent] .threats-v4 .thr-toggle-chevron { transition: none; }
 }
+
+/* Size container for in-row blocks (Infoblox reference): 100cqw = the table's visible width. */
+:root[data-accent] .threats-v4 .tt-scroll { container-type: inline-size; }
