@@ -288,17 +288,45 @@ interface OpenWf {
   run: TimelineRun;
   startedMs: number;
   hasStarted: boolean;
+  /** False for a run opened by a `started` row with no dispatch to pair with. */
+  hasDispatch: boolean;
 }
+
+/**
+ * How long after a dispatch-less `started` row a `workflow_dispatched` row
+ * may still be adopted as that run's dispatch. dispatchWorkflow logs the
+ * dispatch only after `workflow.create()` returns and a KV put lands, while
+ * the workflow's own count-before + log-start steps can already have
+ * written `started` — so `started` can precede its dispatch by seconds
+ * (more under D1 overload, when the dispatch INSERT itself is slow). NEXUS
+ * is dispatched every 4 h (manual triggers are rare), so two dispatches
+ * within 60 s of one start is not a realistic ambiguity.
+ */
+export const DISPATCH_ADOPT_TOLERANCE_MS = 60_000;
+
+/** Same-second tie order: a run's lifecycle rows sort in the order they happen. */
+const LIFECYCLE_RANK: Record<string, number> = {
+  workflow_dispatched: 0,
+  started: 1,
+  batch_complete: 2,
+  workflow_failed: 2,
+  workflow_dispatch_failed: 2,
+};
+const rankOf = (eventType: string): number => LIFECYCLE_RANK[eventType] ?? 3;
 
 /**
  * Fold NEXUS lifecycle rows (any order; sorted here) into runs.
  *
  * Only `workflow_dispatched` carries an instance id, so the rest pair by
- * time order:
+ * time order (rows at the same second ordered dispatched < started <
+ * completion, since created_at has 1 s resolution):
  *   workflow_dispatched      opens a run (id `wf:<instance_id>`, else `wf:<row id>`)
  *   started                  sets started_at of the NEWEST open run not yet started
  *                            (a workflow starts seconds after its dispatch); opens
- *                            one if none — its dispatch was outside the lookback
+ *                            one if none — its dispatch is outside the lookback,
+ *                            or its dispatch row lands after it, in which case
+ *                            that dispatch (≤ DISPATCH_ADOPT_TOLERANCE_MS later)
+ *                            is adopted into the run instead of opening another
  *   batch_complete           closes the oldest STARTED open run (else the oldest
  *                            open run) → success, records = clusters written
  *                            (best effort, `CLUSTER_COUNT_KEYS`)
@@ -315,7 +343,12 @@ export function foldWorkflowEvents(rows: ActivityRow[], nowMs: number, agentId =
   const sorted = rows
     .map((r) => ({ r, ms: tsMs(r.created_at) }))
     .filter((x): x is { r: ActivityRow; ms: number } => x.ms !== null)
-    .sort((a, b) => a.ms - b.ms || (a.r.id < b.r.id ? -1 : a.r.id > b.r.id ? 1 : 0));
+    // created_at has 1-second resolution, so a dispatch and its `started`
+    // routinely tie: break ties by lifecycle rank, then id (determinism).
+    .sort((a, b) =>
+      a.ms - b.ms ||
+      rankOf(a.r.event_type) - rankOf(b.r.event_type) ||
+      (a.r.id < b.r.id ? -1 : a.r.id > b.r.id ? 1 : 0));
 
   const out: TimelineRun[] = [];
   const open: OpenWf[] = [];
@@ -361,7 +394,20 @@ export function foldWorkflowEvents(rows: ActivityRow[], nowMs: number, agentId =
     switch (r.event_type) {
       case "workflow_dispatched": {
         const inst = typeof meta["instance_id"] === "string" && meta["instance_id"] ? meta["instance_id"] : r.id;
-        open.push({ run: newRun(`wf:${inst}`, ms), startedMs: ms, hasStarted: false });
+        // A `started` that landed before its own dispatch row opened a
+        // dispatch-less run: adopt this dispatch into it (newest first)
+        // instead of opening a second run that would never start.
+        let orphan: OpenWf | undefined;
+        for (let i = open.length - 1; i >= 0 && !orphan; i--) {
+          const o = open[i]!;
+          if (!o.hasDispatch && o.hasStarted && ms - o.startedMs >= 0 && ms - o.startedMs <= DISPATCH_ADOPT_TOLERANCE_MS) orphan = o;
+        }
+        if (orphan) {
+          orphan.hasDispatch = true;
+          orphan.run.id = `wf:${inst}`;
+        } else {
+          open.push({ run: newRun(`wf:${inst}`, ms), startedMs: ms, hasStarted: false, hasDispatch: true });
+        }
         break;
       }
       case "started": {
@@ -373,7 +419,7 @@ export function foldWorkflowEvents(rows: ActivityRow[], nowMs: number, agentId =
           wf.startedMs = ms;
           wf.run.started_at = new Date(ms).toISOString();
         } else {
-          open.push({ run: newRun(`wf:${r.id}`, ms), startedMs: ms, hasStarted: true });
+          open.push({ run: newRun(`wf:${r.id}`, ms), startedMs: ms, hasStarted: true, hasDispatch: false });
         }
         break;
       }
@@ -382,7 +428,7 @@ export function foldWorkflowEvents(rows: ActivityRow[], nowMs: number, agentId =
         expireBefore(ms);
         const idx = open.findIndex((o) => o.hasStarted);
         const picked = open.splice(idx >= 0 ? idx : 0, 1)[0];
-        const wf = picked ?? { run: newRun(`wf:${r.id}`, ms), startedMs: ms, hasStarted: true };
+        const wf = picked ?? { run: newRun(`wf:${r.id}`, ms), startedMs: ms, hasStarted: true, hasDispatch: false };
         if (r.event_type === "batch_complete") {
           close(wf, ms, "success", clustersWritten(meta), null);
         } else {
@@ -392,7 +438,7 @@ export function foldWorkflowEvents(rows: ActivityRow[], nowMs: number, agentId =
         break;
       }
       case "workflow_dispatch_failed": {
-        const wf: OpenWf = { run: newRun(`wf:${r.id}`, ms), startedMs: ms, hasStarted: true };
+        const wf: OpenWf = { run: newRun(`wf:${r.id}`, ms), startedMs: ms, hasStarted: true, hasDispatch: true };
         const e = typeof meta["error"] === "string" ? meta["error"] : r.message;
         close(wf, ms, "failed", 0, clipError(e) ?? "workflow dispatch failed");
         break;
@@ -564,12 +610,14 @@ export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1T
 
     // 4. NEXUS workflow lifecycle. agent_activity_log also holds per-message
     //    abuse-mailbox rows etc., so it is read ONLY through
-    //    idx_activity_agent (agent_id, created_at DESC), pinned.
+    //    idx_activity_agent (agent_id, created_at DESC), pinned. Newest
+    //    first so a capped read drops the OLDEST rows, never in-window
+    //    ones; foldWorkflowEvents re-sorts.
     readAll<ActivityRow>(db.prepare(
       `SELECT id, event_type, message, metadata_json, created_at
          FROM agent_activity_log INDEXED BY idx_activity_agent
         WHERE agent_id = ? AND created_at >= ?
-        ORDER BY created_at ASC
+        ORDER BY created_at DESC
         LIMIT ?`,
     ).bind(WORKFLOW_AGENT_ID, toSqliteTs(nowMs - WORKFLOW_LOOKBACK_MS), ACTIVITY_SQL_LIMIT), tally),
 

@@ -245,6 +245,52 @@ describe("foldWorkflowEvents", () => {
     expect(byId.get("wf:never-started")).toMatchObject({ status: "running", open: true });
   });
 
+  // created_at has 1 s resolution; ids are random UUIDs, so a tie must not
+  // depend on id order. Ids chosen to sort the "wrong" way round.
+  const tieRow = (id: string, event_type: string, ms: number, meta: Record<string, unknown> | null = null): ActivityRow => ({
+    id, event_type, message: null, metadata_json: meta ? JSON.stringify(meta) : null, created_at: sqlite(ms),
+  });
+
+  it("same-second dispatched + started fold into ONE run whichever id sorts first", () => {
+    for (const [dispatchId, startId] of [["zzz", "aaa"], ["aaa", "zzz"]]) {
+      const runs = foldWorkflowEvents([
+        tieRow(startId!, "started", minsAgo(30)),
+        tieRow(dispatchId!, "workflow_dispatched", minsAgo(30), { instance_id: "tie" }),
+        tieRow("mmm", "batch_complete", minsAgo(10), { clustersWritten: 1 }),
+      ], NOW);
+      expect(runs, `${dispatchId}/${startId}`).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ id: "wf:tie", status: "success", open: false, started_at: iso(minsAgo(30)) });
+    }
+  });
+
+  it("same-second started + batch_complete close the run, not leave it open", () => {
+    const runs = foldWorkflowEvents([
+      tieRow("b", "batch_complete", minsAgo(5), { clustersWritten: 2 }),
+      tieRow("a", "workflow_dispatched", minsAgo(6), { instance_id: "q" }),
+      tieRow("z", "started", minsAgo(5)),
+    ], NOW);
+    expect(runs).toEqual([expect.objectContaining({ id: "wf:q", status: "success", duration_ms: 0, records_processed: 2 })]);
+  });
+
+  it("a started that lands seconds BEFORE its dispatch adopts that dispatch (one run, instance id)", () => {
+    const t = minsAgo(30);
+    const runs = foldWorkflowEvents([
+      tieRow("s", "started", t),
+      tieRow("d", "workflow_dispatched", t + 3_000, { instance_id: "late" }),
+    ], NOW);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: "wf:late", status: "running", open: true, started_at: iso(t) });
+  });
+
+  it("a dispatch beyond the adopt tolerance after an orphan start opens its own run", () => {
+    const t = minsAgo(30);
+    const runs = foldWorkflowEvents([
+      tieRow("s", "started", t),
+      tieRow("d", "workflow_dispatched", t + 61_000, { instance_id: "next" }),
+    ], NOW);
+    expect(runs.map((r) => r.id).sort()).toEqual(["wf:next", "wf:s"]);
+  });
+
   it("falls back to wf:<activity id> when dispatched metadata has no instance id", () => {
     const rows = [act("workflow_dispatched", minsAgo(5), { workflow: "nexus-run" })];
     expect(foldWorkflowEvents(rows, NOW)[0]!.id).toBe(`wf:${rows[0]!.id}`);
@@ -342,6 +388,10 @@ describe.skipIf(!hasSqlite())("agent timeline SQL is index-backed", () => {
       expect(p, sql).not.toMatch(new RegExp(`SCAN ${table}\\b`));
       expect(p, sql).not.toMatch(/USE TEMP B-TREE/);
     }
+  });
+
+  it("the activity read is newest-first so a capped read drops the oldest rows", () => {
+    expect(norm(ACTIVITY_SQL)).toContain("ORDER BY created_at DESC LIMIT ?");
   });
 
   it("the started_at range is exact for both stored formats (== datetime() filter)", () => {

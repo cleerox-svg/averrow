@@ -279,6 +279,34 @@ describe("handleListAgents — Network view fields (2026-11-15)", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("the navigator row reports its real circuit-breaker state from agent_configs", async () => {
+    const { env } = makeEnv({
+      agentConfigs: [{
+        agent_id: "navigator", enabled: 0, paused_reason: "auto:consecutive_failures",
+        consecutive_failures: 4, consecutive_failure_threshold: 3,
+        paused_at: "2026-11-15 10:00:00", paused_after_n_failures: 3,
+      }],
+    });
+    const body = await bodyOf(await handleListAgents(req(), env));
+    const nav = body.data.filter((a) => a.agent_id === "navigator");
+    expect(nav).toHaveLength(1);
+    expect(nav[0]).toMatchObject({
+      circuit_enabled: 0,
+      circuit_state: "tripped",
+      paused_reason: "auto:consecutive_failures",
+      consecutive_failures: 4,
+      consecutive_failure_threshold: 3,
+      paused_at: "2026-11-15 10:00:00",
+      paused_after_n_failures: 3,
+    });
+  });
+
+  it("a navigator with no agent_configs row reads closed", async () => {
+    const { env } = makeEnv({ agentConfigs: [] });
+    const body = await bodyOf(await handleListAgents(req(), env));
+    expect(body.data.find((a) => a.agent_id === "navigator")).toMatchObject({ circuit_enabled: 1, circuit_state: "closed", paused_reason: null });
+  });
+
   it("every row carries lifecycle from AgentModule.status", async () => {
     const { agentModules } = await import("../src/agents");
     const { env } = makeEnv();

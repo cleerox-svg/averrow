@@ -462,9 +462,11 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
 
   // Synthesize Navigator — aggregate rows from both the current and legacy
   // agent_ids. Latest-run picks whichever ID has the most recent started_at.
-  // Navigator is not in agent_configs (no circuit breaker), so fields default
-  // to an always-enabled 'closed' state. deriveStatus uses whichever ID had
-  // the latest run.
+  // Circuit-breaker fields come from agent_configs['navigator'], exactly as
+  // for module rows (the breaker keys on the current agent_id, never the
+  // legacy 'fast_tick').
+  const navConfig = configMap.get(NAVIGATOR_DEF.name);
+  const navTripped = navConfig?.enabled === 0 && navConfig.paused_reason === 'auto:consecutive_failures';
   const navLatest = (() => {
     const candidates = NAVIGATOR_IDS.map(id => latestRunMap.get(id)).filter((r): r is NonNullable<typeof r> => !!r);
     if (candidates.length === 0) return undefined;
@@ -552,14 +554,16 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     last_output_at: navLastOutput,
     avg_duration_ms: navAvgDur,
     dispatch_source: 'agent_runs' as const,
-    // Navigator has no circuit breaker — FC observes, does not manage.
-    circuit_enabled: 1,
-    circuit_state: 'closed',
-    paused_reason: null,
-    consecutive_failures: 0,
-    consecutive_failure_threshold: null,
-    paused_at: null,
-    paused_after_n_failures: null,
+    // Navigator runs through executeAgent and is NOT in
+    // PROTECTED_FROM_CIRCUIT_BREAKER, so its breaker can trip or be paused
+    // like any module's: read its agent_configs row the same way.
+    circuit_enabled: navConfig?.enabled ?? 1,
+    circuit_state: navTripped ? 'tripped' : (navConfig?.enabled === 0 ? 'manual_pause' : 'closed'),
+    paused_reason: navConfig?.paused_reason ?? null,
+    consecutive_failures: navConfig?.consecutive_failures ?? 0,
+    consecutive_failure_threshold: navConfig?.consecutive_failure_threshold ?? null,
+    paused_at: navConfig?.paused_at ?? null,
+    paused_after_n_failures: navConfig?.paused_after_n_failures ?? null,
   });
 
   // Attribute real rows_read from each of the 9 .all() queries via
