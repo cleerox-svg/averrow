@@ -1,8 +1,9 @@
 // Reload onto the newest deploy. Always follows an explicit click.
 //
 // Ops has a service worker, tenant has none. With a registration, a waiting
-// worker is told to take over (SKIP_WAITING) first, so the reload is not
-// controlled by an old worker. No cache deletion is needed: the ops worker
+// worker is told to take over (SKIP_WAITING), best effort: sw.js already calls
+// skipWaiting() on install, so a worker is rarely left waiting. No cache
+// deletion is needed: the ops worker
 // serves navigations network-first (shell cache is an offline fallback only)
 // and Vite asset names are content-hashed, so the reload fetches the new
 // index.html and the new bundles.

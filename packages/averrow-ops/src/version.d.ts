@@ -1,4 +1,3 @@
-// Build-time constants injected by Vite `define` (see vite.config.ts).
+// Build-time constant injected by Vite `define` (see vite.config.ts). The
+// commit sha / build time are NOT defined here: they live in index.html metas.
 declare const __APP_VERSION__: string;
-declare const __BUILD_SHA__: string;
-declare const __BUILT_AT__: string;
