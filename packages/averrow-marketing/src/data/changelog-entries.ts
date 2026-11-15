@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.11.0",
+    publishedAt: "2026-11-15",
+    kind: "Feature",
+    title: "A live view of the automated analysis pipeline",
+    description:
+      "Operators now get a rebuilt live view of how the platform's automated analysis works, from incoming feeds through enrichment, correlation and reporting to response. Each stage is shown as a flowing map driven by real activity, so you can see what is running right now and what failed. A timeline of the last hour of activity sits beneath it, and hovering an item highlights it on the map. The map now reflects how the pipeline is actually connected, with retired and on-demand components grouped separately. It can be paused, respects reduced-motion settings, and works with a keyboard and screen readers.",
+  },
+  {
     version: "v4.10.0",
     publishedAt: "2026-11-09",
     kind: "Improvement",
