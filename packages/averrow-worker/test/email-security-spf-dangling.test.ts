@@ -13,17 +13,23 @@ import {
   calculateEmailSecurityScore,
   checkSpf,
   generateRecommendations,
+  hasNewlyRegisteredInclude,
   hasUnregisteredInclude,
+  utcDayNumber,
   parseStoredSpfFindings,
   scanInputFromStoredRow,
+  type EmailSecurityResult,
   type EmailSecurityScanInput,
   type SpfResult,
   type StoredEmailScanRow,
 } from "../src/email-security";
 import { confidentRegistrable, spfRdapChecker, SPF_RDAP_TIMEOUT_MS, type SpfRdapCheck } from "../src/lib/spf-dangling";
+import { hasSqlite, openMigratedDb, d1FromSqlite, sqliteTimestampHoursAgo } from "./sqlite-d1-harness";
 import { rdapDomainRegistration } from "../src/lib/whois";
 import { resetRdapBootstrapMemoryForTests } from "../src/lib/rdap-bootstrap";
-import { isRubricOnlyGradeChange, isSpfUncertaintyOnlyGradeChange } from "../src/lib/email-grade-change";
+import {
+  findEmailGradeChanges, isRubricOnlyGradeChange, isSpfUncertaintyOnlyGradeChange, resolveScanGradeChange,
+} from "../src/lib/email-grade-change";
 import type { SpfTxtLookup } from "../src/lib/spf-walk";
 import type { Env } from "../src/types";
 
@@ -410,12 +416,24 @@ const UNVER = { code: "include_target_unverified", names: ["gone-vendor.com"] };
 const rowGrade = (r: StoredEmailScanRow) => calculateEmailSecurityScore(scanInputFromStoredRow(r)).grade;
 
 describe("isSpfUncertaintyOnlyGradeChange — dangling include", () => {
-  it("unregistered → unverified (lookup failed) is suppressed, and the reverse", () => {
+  it("unregistered → unverified (lookup failed) is suppressed", () => {
     const prev = withFindings([UNREG]);
     const curr = withFindings([UNVER]);
     expect(rowGrade(prev)).not.toBe(rowGrade(curr));
     expect(isSpfUncertaintyOnlyGradeChange(prev, curr)).toBe(true);
-    expect(isSpfUncertaintyOnlyGradeChange(curr, prev)).toBe(true);
+  });
+  it("unverified → unregistered is the first confirmation and alerts", () => {
+    const prev = withFindings([UNVER]);
+    const curr = withFindings([UNREG]);
+    expect(rowGrade(prev)).not.toBe(rowGrade(curr));
+    expect(isSpfUncertaintyOnlyGradeChange(prev, curr)).toBe(false);
+  });
+  it("unverified → unregistered is suppressed when an earlier certain verdict was already unregistered", () => {
+    const prev = withFindings([UNVER]);
+    const curr = withFindings([UNREG]);
+    expect(isSpfUncertaintyOnlyGradeChange(prev, curr, { escalationAlreadyAlerted: true })).toBe(true);
+    // …but a non-SPF change in the same scan still alerts
+    expect(isSpfUncertaintyOnlyGradeChange(prev, withFindings([UNREG], { dmarc_policy: "none" }), { escalationAlreadyAlerted: true })).toBe(false);
   });
   it("a new real downgrade in the same tree (lookup limit newly exceeded) still alerts", () => {
     const prev = withFindings([]);
@@ -470,10 +488,232 @@ describe("checkSpf without an RDAP checker carries the previous dangling verdict
     await checkSpf("acme.com", dns({ "acme.com": ok("v=spf1 -all") }), previous);
     expect(previous).not.toHaveBeenCalled();
   });
-  it("with an RDAP checker the live verdict wins (no carry)", async () => {
+  it("with an RDAP checker the live verdict wins (no carry); registered since the last scan → newly registered", async () => {
     const previous = vi.fn(async () => prevSpf(UNREG));
     const spf = await checkSpf("acme.com", dns({ "acme.com": ok(root) }), previous, undefined, async () => "registered");
-    expect(previous).not.toHaveBeenCalled();
+    expect(previous).toHaveBeenCalledTimes(1); // read once, for the takeover check
     expect(hasUnregisteredInclude(spf)).toBe(false);
+    expect(codes(spf)).toContain("include_target_newly_registered");
+  });
+});
+
+// ─── Restricted single-label TLDs are never confident ─────────────────────
+
+describe("confidentRegistrable — restricted TLDs", () => {
+  it("never confident under gov / edu / mil / int / arpa / sponsored TLDs", () => {
+    for (const tld of ["gov", "edu", "mil", "int", "arpa", "bank", "insurance", "pharmacy", "aero", "museum", "coop", "post"]) {
+      expect(confidentRegistrable(`x.${tld}`)).toBeNull();
+      expect(confidentRegistrable(`_spf.x.${tld}`)).toBeNull();
+    }
+    expect(confidentRegistrable("x.com")).toBe("x.com");
+  });
+  it("an NXDOMAIN include under .gov makes no RDAP call", async () => {
+    const rdap = vi.fn<SpfRdapCheck>(async () => "unregistered");
+    const spf = await checkSpf("acme.com", dns({ "acme.com": ok("v=spf1 include:x.gov -all") }), undefined, undefined, rdap);
+    expect(rdap).not.toHaveBeenCalled();
+    expect(hasUnregisteredInclude(spf)).toBe(false);
+  });
+});
+
+// ─── spfRdapChecker stays inside its time cap ─────────────────────────────
+
+describe("spfRdapChecker time cap", () => {
+  it("a slow KV read is abandoned: live lookup with what is left", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    stubFetch(async () => rdap404());
+    const puts: string[] = [];
+    const e = {
+      CACHE: {
+        get: () => new Promise<string | null>(() => undefined), // never answers
+        put: async (k: string) => { puts.push(k); },
+      },
+    } as unknown as Env;
+    const p = spfRdapChecker(e)("gone-vendor.com", 1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    // the 1 s budget was eaten by the KV read → too little left → unknown, not cached
+    expect(await p).toBe("unknown");
+    expect(puts).toEqual([]);
+  });
+  it("does not cache an unknown caused by a shortened budget", async () => {
+    stubFetch(async () => new Response("", { status: 429 }));
+    const store = new Map<string, string>();
+    const e = { CACHE: { get: async () => null, put: async (k: string, v: string) => { store.set(k, v); } } } as unknown as Env;
+    expect(await spfRdapChecker(e)("gone-vendor.com", 1_000)).toBe("unknown");
+    expect(store.has("spf:rdap:v2:gone-vendor.com")).toBe(false);
+    // a definite verdict under a short budget is still cached
+    stubFetch(async () => rdap404());
+    expect(await spfRdapChecker(e)("gone-vendor.com", 1_000)).toBe("unregistered");
+    expect(store.get("spf:rdap:v2:gone-vendor.com")).toBe("unregistered");
+  });
+});
+
+// ─── Newly registered include target (takeover guard) ─────────────────────
+
+describe("include_target_newly_registered", () => {
+  const root = "v=spf1 include:gone-vendor.com -all";
+  const NOW = Date.UTC(2026, 10, 15, 12);
+  const today = utcDayNumber(NOW);
+  const prevSpf = (...extra: object[]): SpfResult => scanInputFromStoredRow(withFindings(extra)).spf;
+  const newly = (first: number) => ({ code: "include_target_newly_registered", names: ["gone-vendor.com"], count: first });
+  const rdapNone = vi.fn<SpfRdapCheck>(async () => "unregistered");
+  const unregisteredScore = async () =>
+    score(await checkSpf("acme.com", dns({ "acme.com": ok(root) }), undefined, undefined, async () => "unregistered"));
+  const cleanScore = async () =>
+    score(await checkSpf("acme.com", dns({ "acme.com": ok(root), "gone-vendor.com": ok("v=spf1 -all") })));
+
+  it("takeover with -all: SPF stays 0, CRITICAL recommendation, first-seen day stored", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const spf = await checkSpf("acme.com",
+      dns({ "acme.com": ok(root), "gone-vendor.com": ok("v=spf1 ip4:203.0.113.9 -all") }), async () => prevSpf(UNREG), undefined, rdapNone);
+    expect(spf.findings).toContainEqual(newly(today));
+    expect(hasNewlyRegisteredInclude(spf)).toBe(true);
+    expect(score(spf)).toBe(await unregisteredScore());
+    expect(score(spf)).toBe((await cleanScore()) - 30);
+    const recs = generateRecommendations(scanWith(spf));
+    expect(recs).toContain("CRITICAL: gone-vendor.com was unregistered on an earlier scan and is now registered. Confirm who registered it, or remove the include.");
+  });
+  it("takeover with +all: SPF 0 (newly registered and include_pass_all)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const spf = await checkSpf("acme.com",
+      dns({ "acme.com": ok(root), "gone-vendor.com": ok("v=spf1 +all") }), async () => prevSpf(UNREG), undefined, rdapNone);
+    expect(codes(spf)).toEqual(expect.arrayContaining(["include_target_newly_registered", "include_pass_all"]));
+    expect(score(spf)).toBe(await unregisteredScore());
+  });
+  it("subdomain include: the registrable domain registered (subdomain still NXDOMAIN) is newly registered", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const sub = "v=spf1 include:_spf.gone-vendor.com -all";
+    const spf = await checkSpf("acme.com",
+      dns({ "acme.com": ok(sub), "gone-vendor.com": ok("anything") }), async () => prevSpf(UNREG), undefined, rdapNone);
+    expect(rdapNone).not.toHaveBeenCalled();
+    expect(hasNewlyRegisteredInclude(spf)).toBe(true);
+  });
+  it("a legitimate re-registration behaves the same for 30 days", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const spf = await checkSpf("acme.com",
+      dns({ "acme.com": ok(root), "gone-vendor.com": ok("v=spf1 include:_spf.google.com ~all") }), async () => prevSpf(UNREG));
+    expect(hasNewlyRegisteredInclude(spf)).toBe(true);
+    expect(score(spf)).toBe(await unregisteredScore());
+  });
+  it("carries forward with the original first-seen day, and lapses after 30 days", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const zone = dns({ "acme.com": ok(root), "gone-vendor.com": ok("v=spf1 -all") });
+    const carried = await checkSpf("acme.com", zone, async () => prevSpf(newly(today - 30)), undefined, rdapNone);
+    expect(carried.findings).toContainEqual(newly(today - 30));
+    const lapsed = await checkSpf("acme.com", zone, async () => prevSpf(newly(today - 31)), undefined, rdapNone);
+    expect(hasNewlyRegisteredInclude(lapsed)).toBe(false);
+    expect(score(lapsed)).toBe(await cleanScore());
+  });
+  it("dropped once the name leaves the record (the previous scan is not even read without includes)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const previous = vi.fn(async () => prevSpf(newly(today - 2)));
+    const gone = await checkSpf("acme.com", dns({ "acme.com": ok("v=spf1 ip4:192.0.2.1 -all") }), previous, undefined, rdapNone);
+    expect(previous).not.toHaveBeenCalled();
+    expect(hasNewlyRegisteredInclude(gone)).toBe(false);
+    const other = await checkSpf("acme.com",
+      dns({ "acme.com": ok("v=spf1 include:other-vendor.com -all"), "other-vendor.com": ok("v=spf1 -all") }), previous, undefined, rdapNone);
+    expect(previous).toHaveBeenCalledTimes(1);
+    expect(hasNewlyRegisteredInclude(other)).toBe(false);
+  });
+  it("NXDOMAIN again → the normal dangling path takes over", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const spf = await checkSpf("acme.com", dns({ "acme.com": ok(root) }), async () => prevSpf(newly(today - 3)), undefined, async () => "unregistered");
+    expect(codes(spf)).toContain("include_target_unregistered");
+    expect(hasNewlyRegisteredInclude(spf)).toBe(false);
+  });
+  it("a failed probe keeps an existing finding but never creates one", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const zone = dns({ "acme.com": ok("v=spf1 include:_spf.gone-vendor.com -all"), "gone-vendor.com": { status: "error", records: [] } });
+    expect(hasNewlyRegisteredInclude(await checkSpf("acme.com", zone, async () => prevSpf(newly(today - 1))))).toBe(true);
+    expect(hasNewlyRegisteredInclude(await checkSpf("acme.com", zone, async () => prevSpf(UNREG)))).toBe(false);
+  });
+  it("count never reaches recommendation text", async () => {
+    const recs = generateRecommendations(scanWith(prevSpf(newly(20_000)))).join("\n");
+    expect(recs).not.toMatch(/20000|20,000/);
+  });
+});
+
+describe("grade change: a newly-registered finding appearing or lapsing is not an alert", () => {
+  const NEWLY = { code: "include_target_newly_registered", names: ["gone-vendor.com"], count: 20_000 };
+  it("lapse (newly → nothing, same record) is suppressed", () => {
+    const prev = withFindings([NEWLY]);
+    const curr = withFindings([]);
+    expect(rowGrade(prev)).not.toBe(rowGrade(curr));
+    expect(isSpfUncertaintyOnlyGradeChange(prev, curr)).toBe(true);
+  });
+  it("removing the include from the domain's own record still alerts", () => {
+    const prev = withFindings([NEWLY]);
+    const curr = baseRow({ spf_raw: "v=spf1 ip4:192.0.2.1 -all", spf_findings: "[]" });
+    expect(rowGrade(prev)).not.toBe(rowGrade(curr));
+    expect(isSpfUncertaintyOnlyGradeChange(prev, curr)).toBe(false);
+  });
+  it("newly → unverified (NXDOMAIN again, RDAP failed) is suppressed", () => {
+    expect(isSpfUncertaintyOnlyGradeChange(withFindings([NEWLY]), withFindings([UNVER]))).toBe(true);
+  });
+});
+
+describe.skipIf(!hasSqlite())("both detectors: takeover and lapse send no tenant notification", () => {
+  const COLS = [
+    "dmarc_exists", "dmarc_policy", "dmarc_pct", "dmarc_rua", "dmarc_sp", "dmarc_np", "dmarc_t",
+    "spf_exists", "spf_policy", "spf_too_many_lookups", "spf_raw", "spf_lookup_count", "spf_void_lookups",
+    "spf_walk_status", "spf_findings", "dkim_exists", "dkim_selectors_found", "mx_exists", "mx_providers",
+  ] as const;
+  // No DKIM: SPF fine → B ("good"); SPF 0 → D ("bad") — the bands Cartographer notifies on.
+  const r = (extra: object[]) => withFindings(extra, { dkim_exists: 0, dkim_selectors_found: "[]" });
+  const NEWLY = { code: "include_target_newly_registered", names: ["gone-vendor.com"], count: 20_000 };
+  const T = [24 * 20, 24 * 10, 1].map((h) => sqliteTimestampHoursAgo(h));
+
+  function setup(rows: StoredEmailScanRow[]) {
+    const raw = openMigratedDb();
+    const db = d1FromSqlite(raw);
+    rows.forEach((row, i) => raw.prepare(
+      `INSERT INTO email_security_scans (brand_id, domain, email_security_score, email_security_grade, score_rubric_version, scanned_at, ${COLS.join(", ")})
+       VALUES (?, ?, ?, ?, ?, ?, ${COLS.map(() => "?").join(", ")})`,
+    ).run("b1", "acme.example", 0, rowGrade(row), EMAIL_SCORE_RUBRIC_VERSION, T[i]!, ...COLS.map((c) => row[c] ?? null)));
+    raw.prepare("INSERT INTO brands (id, name, canonical_domain, email_security_grade, email_security_scanned_at) VALUES (?, ?, ?, ?, ?)")
+      .run("b1", "Acme", "acme.example", rowGrade(rows[rows.length - 1]!), T[rows.length - 1]!);
+    return db;
+  }
+  function resultOf(row: StoredEmailScanRow): EmailSecurityResult {
+    const input = scanInputFromStoredRow(row);
+    return {
+      domain: "acme.example", score: 0, grade: rowGrade(row), score_rubric_version: EMAIL_SCORE_RUBRIC_VERSION,
+      dmarc: { exists: true, policy: "reject", pct: 100, rua: "mailto:a@b.example", ruf: null, sp: null, np: null, t: null, psd: null, testing: false, reporting_enabled: true, record: null },
+      spf: { exists: true, policy: row.spf_policy, too_many_lookups: false, record: row.spf_raw ?? null, lookup_count: row.spf_lookup_count ?? null, void_lookups: row.spf_void_lookups ?? null, walk_status: "complete", findings: input.spf.findings },
+      dkim: { exists: false, selectors_found: [] },
+      mx: { exists: true, providers: [] },
+      bimi: { record: null, svg_url: null, vmc_url: null, vmc_valid: false, vmc_expiry: null, grade: "B" },
+      recommendations: [], scanned_at: "", scan_duration_ms: 1,
+    } as unknown as EmailSecurityResult;
+  }
+
+  it("fixtures cross the good/bad bands", () => {
+    expect(rowGrade(r([]))).toBe("B");
+    expect(rowGrade(r([NEWLY]))).toBe("D");
+  });
+  it("unregistered → newly registered (takeover) is not a change", async () => {
+    const db = setup([r([UNREG]), r([NEWLY])]);
+    expect(await findEmailGradeChanges(db)).toEqual([]);
+    const c = await resolveScanGradeChange(db, "b1", { ...r([UNREG]), scanned_at: T[0]! }, "D", resultOf(r([NEWLY])));
+    expect(c.isChange).toBe(false);
+  });
+  it("newly registered → lapsed (30 days) is not an 'improved' change in either detector", async () => {
+    const db = setup([r([NEWLY]), r([])]);
+    expect(await findEmailGradeChanges(db)).toEqual([]);
+    const c = await resolveScanGradeChange(db, "b1", { ...r([NEWLY]), scanned_at: T[0]! }, "D", resultOf(r([])));
+    expect(c.isChange).toBe(false);
+  });
+  it("unregistered → unverified → unregistered alerts once (not on the re-confirmation)", async () => {
+    const db = setup([r([UNREG]), r([UNVER]), r([UNREG])]);
+    expect(await findEmailGradeChanges(db)).toEqual([]);
+    const c = await resolveScanGradeChange(db, "b1", { ...r([UNVER]), scanned_at: T[1]! }, "B", resultOf(r([UNREG])));
+    expect(c.isChange).toBe(false);
+  });
+  it("clean → unverified → unregistered alerts the confirmation (B → D)", async () => {
+    const db = setup([r([]), r([UNVER]), r([UNREG])]);
+    expect(await findEmailGradeChanges(db)).toEqual([
+      { brand_id: "b1", name: "Acme", current_grade: "D", previous_grade: "B" },
+    ]);
+    const c = await resolveScanGradeChange(db, "b1", { ...r([UNVER]), scanned_at: T[1]! }, "B", resultOf(r([UNREG])));
+    expect(c).toEqual({ isChange: true, previousGrade: "B", currentGrade: "D" });
   });
 });

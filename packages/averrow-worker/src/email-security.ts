@@ -24,6 +24,7 @@ import {
 import {
   confidentRegistrable,
   pickDanglingCandidate,
+  SPF_RDAP_DNS_PROBE_MS,
   SPF_RDAP_MIN_REMAINING_MS,
   SPF_RDAP_TIMEOUT_MS,
   type SpfRdapCheck,
@@ -115,7 +116,14 @@ export interface DmarcResult {
  *       nothing. An included record ending in `+all` (`include_pass_all`)
  *       also scores 0 for SPF, the same as a root `+all` (was a
  *       recommendation only under rubric 3), so a registered-and-hijacked
- *       include never scores better than the unregistered one (2026-11)
+ *       include never scores better than the unregistered one (2026-11).
+ *       An include/redirect target that an EARLIER scan found unregistered
+ *       and that is now registered (`include_target_newly_registered`) also
+ *       scores 0 for SPF for up to 30 days while it stays in the tree: the
+ *       new owner can send as the brand until someone confirms who
+ *       registered it, so a takeover never reads as an improvement. The
+ *       grade change when the finding appears or lapses is suppressed
+ *       (lib/email-grade-change.ts) (2026-11).
  */
 export const EMAIL_SCORE_RUBRIC_VERSION = 4;
 
@@ -193,6 +201,7 @@ export type SpfFindingCode =
   | 'include_target_missing'
   | 'include_target_unregistered'
   | 'include_target_unverified'
+  | 'include_target_newly_registered'
   | 'walk_incomplete'
   | 'root_lookup_failed';
 
@@ -200,7 +209,7 @@ export const SPF_FINDING_CODES: readonly SpfFindingCode[] = [
   'lookup_limit_exceeded', 'void_lookup_limit_exceeded', 'multiple_records',
   'include_multiple_records', 'pass_all', 'include_pass_all', 'neutral_all', 'ptr_mechanism',
   'syntax_error', 'include_loop', 'include_target_missing', 'include_target_unregistered',
-  'include_target_unverified', 'walk_incomplete', 'root_lookup_failed',
+  'include_target_unverified', 'include_target_newly_registered', 'walk_incomplete', 'root_lookup_failed',
 ];
 
 /** Findings that describe the domain's OWN record (or the root lookup),
@@ -215,7 +224,9 @@ function isSpfFindingCode(v: unknown): v is SpfFindingCode {
 
 /** Structured finding — no free text from DNS: `names` are validated DNS
  *  names, `count` a number (`atLeast` = lower bound). Stored as JSON in
- *  `spf_findings`. */
+ *  `spf_findings`. For `include_target_newly_registered`, `count` is the
+ *  UTC day number (days since 1970-01-01) the registration was first seen;
+ *  it is never shown to anyone. */
 export interface SpfFinding {
   code: SpfFindingCode;
   names?: string[];
@@ -374,9 +385,29 @@ export function buildSpfResult(
   };
 }
 
-/** Loads the brand's previous stored SPF result. Called ONLY when the root
- *  lookup failed, so it costs nothing on a normal scan. */
+/** Loads the brand's previous stored SPF result. Read at most once per
+ *  scan (checkSpf memoises it), and only when the root lookup failed or the
+ *  domain's own record has at least one include / redirect. */
 export type PreviousSpfLoader = () => Promise<SpfResult | null>;
+
+/** Memoised loader: one read per scan, a failed read is null. */
+function loadOnce(load: PreviousSpfLoader): PreviousSpfLoader {
+  let p: Promise<SpfResult | null> | null = null;
+  return () => {
+    if (!p) p = load().catch(() => null);
+    return p;
+  };
+}
+
+/** Days a newly-registered include target keeps SPF at 0. */
+export const SPF_NEWLY_REGISTERED_HOLD_DAYS = 30;
+/** Max DoH probes per scan confirming a previously unregistered name now exists. */
+const SPF_NEWLY_REGISTERED_MAX_PROBES = 2;
+
+/** UTC day number (days since 1970-01-01). */
+export function utcDayNumber(ms: number): number {
+  return Math.floor(ms / 86_400_000);
+}
 
 /**
  * Fetch the domain's SPF record (≤ 5 s) and walk its include tree
@@ -398,9 +429,9 @@ export async function checkSpf(
   } catch {
     root = { status: 'error', records: [] };
   }
+  const prevOnce = previous ? loadOnce(previous) : undefined;
   if (root.status === 'error') {
-    let prev: SpfResult | null = null;
-    try { prev = previous ? await previous() : null; } catch { prev = null; }
+    const prev = prevOnce ? await prevOnce() : null;
     return prev && !prev.rootError ? carrySpfForward(prev) : spfNotChecked();
   }
   const spfRecords = root.status === 'ok' ? selectSpfRecords(root.records) : [];
@@ -410,16 +441,111 @@ export async function checkSpf(
     ? { budgetMs: Math.max(0, Math.min(SPF_WALK_BUDGET_MS, budget.totalMs - (Date.now() - start))) }
     : {};
   const walk = parsed ? await walkSpfTree(domain, parsed, lookup, walkOpts) : null;
-  const result = buildSpfResult(domain, root.status, root.records, walk);
+  let result = buildSpfResult(domain, root.status, root.records, walk);
+  const remaining = (): number | null => (budget ? budget.totalMs - (Date.now() - start) : null);
+  let rdapRegistered: string | null = null;
   if (walk && walk.nxdomainAt.length > 0) {
-    const remainingMs = budget ? budget.totalMs - (Date.now() - start) : null;
-    if (rdap) return confirmDanglingInclude(result, walk, lookup, rdap, remainingMs);
-    // No RDAP on this path (the lead report): keep the previous scan's
-    // dangling-include verdict while its target is still NXDOMAIN, so a
-    // stored scan made without RDAP does not flip the grade.
-    if (previous) return carryDanglingVerdictForward(result, walk, lookup, previous, remainingMs);
+    if (rdap) {
+      const confirmed = await confirmDanglingInclude(result, walk, lookup, rdap, remaining());
+      result = confirmed.result;
+      rdapRegistered = confirmed.registered;
+    } else if (prevOnce) {
+      // No RDAP on this path (the lead report): keep the previous scan's
+      // dangling-include verdict while its target is still NXDOMAIN, so a
+      // stored scan made without RDAP does not flip the grade.
+      result = await carryDanglingVerdictForward(result, walk, lookup, prevOnce, remaining());
+    }
+  }
+  // Takeover check: only when the record has an include / redirect (the
+  // previous scan is read lazily, once).
+  if (prevOnce && walk && parsed && (parsed.includeTargets.length > 0 || parsed.redirect !== null)) {
+    const left = remaining();
+    result = await flagNewlyRegisteredIncludes(
+      result, walk, lookup, prevOnce, rdapRegistered, left === null ? undefined : Date.now() + left);
   }
   return result;
+}
+
+/**
+ * Newly-registered include target (takeover guard, rubric 4). When the
+ * previous scan had `include_target_unregistered` or
+ * `include_target_newly_registered` for a registrable domain that is still
+ * an include / redirect target in this tree and now EXISTS (a target under
+ * it answered DNS, RDAP said `registered` this scan, or one DoH probe of the
+ * name answers with records), `include_target_newly_registered` is added
+ * with `count` = the UTC day it was first seen (carried from the previous
+ * finding, else today). It lapses SPF_NEWLY_REGISTERED_HOLD_DAYS after
+ * that day, and is dropped when the name leaves the tree. When this scan's
+ * dangling check flagged the name again (unregistered / unverified) that
+ * verdict takes over. A probe that fails, or a walk that did not read the
+ * whole tree, keeps an existing newly-registered finding (never creates
+ * one). ≤ SPF_NEWLY_REGISTERED_MAX_PROBES DoH probes. Never throws.
+ */
+async function flagNewlyRegisteredIncludes(
+  result: SpfResult,
+  walk: SpfWalkResult,
+  lookup: SpfTxtLookup,
+  previous: PreviousSpfLoader,
+  rdapRegistered: string | null,
+  deadline: number | undefined,
+): Promise<SpfResult> {
+  try {
+    const prev = await previous();
+    const today = utcDayNumber(Date.now());
+    const prior = new Map<string, { first: number; wasNewly: boolean }>();
+    for (const f of prev?.findings ?? []) {
+      const wasNewly = f.code === 'include_target_newly_registered';
+      if (!wasNewly && f.code !== 'include_target_unregistered') continue;
+      const first = wasNewly && typeof f.count === 'number' ? f.count : today;
+      for (const n of f.names ?? []) {
+        const seen = prior.get(n);
+        if (!seen || first < seen.first) prior.set(n, { first, wasNewly: wasNewly || !!seen?.wasNewly });
+      }
+    }
+    if (prior.size === 0) return result;
+    const flaggedNow = new Set<string>();
+    for (const f of result.findings ?? []) {
+      if (DANGLING_VERDICT_CODES.has(f.code)) for (const n of f.names ?? []) flaggedNow.add(n);
+    }
+    const under = (names: readonly string[], reg: string) => names.some((t) => confidentRegistrable(t) === reg);
+    let probes = 0;
+    const added: SpfFinding[] = [];
+    for (const [name, { first, wasNewly }] of prior) {
+      if (today - first > SPF_NEWLY_REGISTERED_HOLD_DAYS) continue; // lapsed
+      if (flaggedNow.has(name)) continue; // dangling again: that path decides
+      if (!under(walk.targets, name)) {
+        // Left the tree — unless the walk did not read all of it.
+        if (wasNewly && walk.status === 'unknown') added.push(newlyFinding(name, first));
+        continue;
+      }
+      let exists = under(walk.resolvedTargets, name) || rdapRegistered === name;
+      let uncertain = false;
+      if (!exists) {
+        const ms = deadline === undefined ? SPF_RDAP_DNS_PROBE_MS : Math.min(SPF_RDAP_DNS_PROBE_MS, deadline - Date.now());
+        if (ms >= 1 && probes < SPF_NEWLY_REGISTERED_MAX_PROBES) {
+          probes++;
+          try {
+            const a = await lookup(name, ms);
+            if (a.status === 'ok') exists = true;
+            else if (a.status === 'error') uncertain = true;
+          } catch {
+            uncertain = true;
+          }
+        } else {
+          uncertain = true;
+        }
+      }
+      if (exists || (uncertain && wasNewly)) added.push(newlyFinding(name, first));
+    }
+    if (added.length === 0) return result;
+    return { ...result, findings: [...(result.findings ?? []), ...added] };
+  } catch {
+    return result;
+  }
+}
+
+function newlyFinding(name: string, firstDay: number): SpfFinding {
+  return { code: 'include_target_newly_registered', names: validNames([name]), count: firstDay };
 }
 
 const DANGLING_VERDICT_CODES: ReadonlySet<SpfFindingCode> = new Set<SpfFindingCode>([
@@ -446,21 +572,28 @@ async function confirmDanglingInclude(
   lookup: SpfTxtLookup,
   rdap: SpfRdapCheck,
   remainingMs: number | null,
-): Promise<SpfResult> {
+): Promise<{ result: SpfResult; registered: string | null }> {
   const deadline = remainingMs === null ? undefined : Date.now() + remainingMs;
   try {
     const candidate = await pickDanglingCandidate(walk.nxdomainAt, lookup, { deadline });
-    if (!candidate) return result;
+    if (!candidate) return { result, registered: null };
     const names = validNames([candidate.registrable]);
     const left = deadline === undefined ? SPF_RDAP_TIMEOUT_MS : deadline - Date.now();
-    if (left < SPF_RDAP_MIN_REMAINING_MS) return withFinding(result, { code: 'include_target_unverified', names });
+    if (left < SPF_RDAP_MIN_REMAINING_MS) {
+      return { result: withFinding(result, { code: 'include_target_unverified', names }), registered: null };
+    }
     const verdict = await rdap(candidate.registrable, Math.min(left, SPF_RDAP_TIMEOUT_MS));
-    if (verdict === 'unregistered') return withFinding(result, { code: 'include_target_unregistered', names });
-    if (verdict === 'unknown') return withFinding(result, { code: 'include_target_unverified', names });
+    if (verdict === 'unregistered') {
+      return { result: withFinding(result, { code: 'include_target_unregistered', names }), registered: null };
+    }
+    if (verdict === 'unknown') {
+      return { result: withFinding(result, { code: 'include_target_unverified', names }), registered: null };
+    }
+    return { result, registered: candidate.registrable };
   } catch {
     // never fail the scan over the extra check
   }
-  return result;
+  return { result, registered: null };
 }
 
 /**
@@ -501,6 +634,13 @@ export function hasUnregisteredInclude(spf: SpfResult): boolean {
   return (spf.findings ?? []).some((f) => f.code === 'include_target_unregistered');
 }
 
+/** An include target an earlier scan found unregistered is now registered
+ *  (rubric 4: SPF scores 0 for up to 30 days — the new owner can send as
+ *  the brand until someone confirms who registered it). */
+export function hasNewlyRegisteredInclude(spf: SpfResult): boolean {
+  return (spf.findings ?? []).some((f) => f.code === 'include_target_newly_registered');
+}
+
 /** An included record ends in `+all` (rubric 4: SPF scores 0, like a root
  *  `+all` — anyone reaching that include passes SPF for the domain). */
 export function hasIncludePassAll(spf: SpfResult): boolean {
@@ -508,10 +648,12 @@ export function hasIncludePassAll(spf: SpfResult): boolean {
 }
 
 /** SPF authorises every sender (rubric 4): root `+all` (incl. a bare `all`
- *  or a redirect target's `+all`), an included `+all`, or a confirmed
- *  unregistered include target. Scores 0 for SPF. */
+ *  or a redirect target's `+all`), an included `+all`, a confirmed
+ *  unregistered include target, or a previously unregistered include target
+ *  that is now registered (≤ 30 days). Scores 0 for SPF. */
 export function spfAuthorisesAnySender(spf: SpfResult): boolean {
-  return spf.policy === '+all' || hasIncludePassAll(spf) || hasUnregisteredInclude(spf);
+  return spf.policy === '+all' || hasIncludePassAll(spf) || hasUnregisteredInclude(spf)
+    || hasNewlyRegisteredInclude(spf);
 }
 
 /**
@@ -810,7 +952,9 @@ export function calculateEmailSecurityScore(scan: EmailSecurityScanInput): { sco
   //   ending in `+all` (`include_pass_all`) also scores 0, the same as a root
   //   `+all`: it passes every sender, and it is what a hijacked dangling
   //   include looks like once registered — so a takeover never reads as an
-  //   improvement over the unregistered state.
+  //   improvement over the unregistered state. For the same reason a target
+  //   an earlier scan found unregistered and that is now registered
+  //   (`include_target_newly_registered`) scores 0 for up to 30 days.
   if (scan.spf.exists && !spfAuthorisesAnySender(scan.spf)) {
     score += 10; // Has SPF record
     if (!isSpfPermerror(scan.spf)) {
@@ -959,6 +1103,9 @@ export function spfFindingRecommendations(spf: SpfResult): string[] {
         break;
       case 'include_target_unregistered':
         recs.push(`CRITICAL: An SPF include points at ${f.names && f.names.length > 0 ? f.names[0] : 'a domain'}, which is not registered. Anyone who registers it can send mail as this domain. Remove the include.`);
+        break;
+      case 'include_target_newly_registered':
+        recs.push(`CRITICAL: ${f.names && f.names.length > 0 ? f.names[0] : 'An SPF include target'} was unregistered on an earlier scan and is now registered. Confirm who registered it, or remove the include.`);
         break;
       case 'include_target_unverified':
         break; // informational only: could not confirm; shown in the staff findings list

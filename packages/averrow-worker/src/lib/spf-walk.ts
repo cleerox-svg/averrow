@@ -58,6 +58,8 @@ export const SPF_WALK_MAX_DEPTH = 6;
 export const SPF_WALK_MAX_VISITS = 60;
 /** Names reported per finding list. */
 const MAX_NAMES_REPORTED = 5;
+/** Cap on `targets` / `resolvedTargets` (visits are capped at 60 anyway). */
+export const SPF_WALK_MAX_TARGETS_REPORTED = 64;
 
 /** Reserved / internal TLDs that are never queried (RFC 2606, 6761, 6762,
  *  8375, 9476 and common private-network suffixes). */
@@ -111,6 +113,13 @@ export interface SpfWalkResult {
   ptrAt: string[];
   /** `+all` / bare `all` in a record reached through an include. */
   includePassAllAt: string[];
+  /** Every include / redirect target name the walk followed (validated,
+   *  ≤ SPF_WALK_MAX_TARGETS_REPORTED). Input to the newly-registered check
+   *  (email-security.ts): is a name still in the tree? */
+  targets: string[];
+  /** Subset of `targets` whose TXT answer showed the name EXISTS (records,
+   *  or NOERROR with no TXT) — never NXDOMAIN, never a failed lookup. */
+  resolvedTargets: string[];
 }
 
 export interface SpfWalkOptions {
@@ -131,7 +140,8 @@ type Fetched =
 
 class NameSet {
   private readonly s = new Set<string>();
-  add(n: string): void { if (this.s.size < MAX_NAMES_REPORTED) this.s.add(n); }
+  constructor(private readonly cap: number = MAX_NAMES_REPORTED) {}
+  add(n: string): void { if (this.s.size < this.cap) this.s.add(n); }
   list(): string[] { return [...this.s]; }
 }
 
@@ -180,6 +190,8 @@ export async function walkSpfTree(
   const nxdomainAt = new NameSet();
   const ptrAt = new NameSet();
   const includePassAllAt = new NameSet();
+  const targets = new NameSet(SPF_WALK_MAX_TARGETS_REPORTED);
+  const resolvedTargets = new NameSet(SPF_WALK_MAX_TARGETS_REPORTED);
   const cache = new Map<string, Fetched>();
 
   function stop(reason: SpfWalkIncompleteReason): void {
@@ -226,7 +238,11 @@ export async function walkSpfTree(
     if (name === null) { reasons.add('invalid_name'); return null; }
     if (path.includes(name)) { loopAt.add(name); return null; }
     if (depth > maxDepth) { reasons.add('depth_cap'); return null; }
+    targets.add(name);
     const f = await fetchSpf(name);
+    if (f.kind === 'ok' || f.kind === 'none' || f.kind === 'multiple' || (f.kind === 'void' && !f.nx)) {
+      resolvedTargets.add(name);
+    }
     switch (f.kind) {
       case 'unknown':
         if (f.reason === 'lookup_error') reasons.add(f.reason);
@@ -286,5 +302,7 @@ export async function walkSpfTree(
     nxdomainAt: nxdomainAt.list(),
     ptrAt: ptrAt.list(),
     includePassAllAt: includePassAllAt.list(),
+    targets: targets.list(),
+    resolvedTargets: resolvedTargets.list(),
   };
 }

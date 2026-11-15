@@ -67,6 +67,22 @@ describe('SpfFindingsCard', () => {
     expect(container.querySelectorAll('[data-critical="true"]')).toHaveLength(1);
   });
 
+  it('newly registered include is critical, listed first, and never shows its day number', () => {
+    const { container } = render(<SpfFindingsCard emailSec={row({
+      spf_findings: JSON.stringify([
+        { code: 'include_target_missing', names: ['other.example.com'] },
+        { code: 'include_target_newly_registered', names: ['oldvendor.com'], count: 20407 },
+      ]),
+    })} />);
+    const items = container.querySelectorAll('li');
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveAttribute('data-critical', 'true');
+    expect(items[0]).toHaveTextContent('oldvendor.com was unregistered on an earlier scan and is now registered. Confirm who registered it, or remove the include.');
+    expect(container.textContent).not.toContain('20407');
+    expect(parseSpfFindings(JSON.stringify([{ code: 'include_target_newly_registered', names: ['oldvendor.com'], count: 20407 }])))
+      .toEqual([{ code: 'include_target_newly_registered', names: ['oldvendor.com'], count: 20407 }]);
+  });
+
   it('plain sentences for the other findings; names render as text', () => {
     const lines = findingLines([
       { code: 'multiple_records', count: 2 },

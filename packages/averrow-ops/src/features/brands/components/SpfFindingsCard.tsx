@@ -4,8 +4,11 @@
 // GET /api/email-security/:brandId (spf_lookup_count, spf_walk_status,
 // spf_findings — a JSON string). Findings are structured (code + validated DNS
 // names + numbers), never record text; names are rendered as plain text.
-// Only the confirmed-unregistered include is shown with severity styling:
-// everything else is a neutral sentence. Contract: worker email-security.ts
+// Only the confirmed-unregistered include and the newly-registered include
+// (unregistered on an earlier scan, registered now — possible takeover) are
+// shown with severity styling: everything else is a neutral sentence. The
+// newly-registered finding's `count` is an internal first-seen day number and
+// is never rendered. Contract: worker email-security.ts
 // (SpfFindingCode) and docs/EMAIL_SECURITY_ENGINE.md.
 
 import { Badge, Card } from '@/design-system/components';
@@ -24,7 +27,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set([
   'lookup_limit_exceeded', 'void_lookup_limit_exceeded', 'multiple_records', 'include_multiple_records',
   'pass_all', 'include_pass_all', 'neutral_all', 'ptr_mechanism', 'syntax_error', 'include_loop',
   'include_target_missing', 'include_target_unregistered', 'include_target_unverified',
-  'walk_incomplete', 'root_lookup_failed',
+  'include_target_newly_registered', 'walk_incomplete', 'root_lookup_failed',
 ]);
 
 const NAME_RE = /^[a-z0-9_]([a-z0-9_.-]{0,251}[a-z0-9_])?$/i;
@@ -109,6 +112,11 @@ export function describeFinding(f: SpfFinding): FindingLine {
           ? 'An include target is not registered. Anyone who registers it can send mail as this domain.'
           : `Include ${many ? 'targets' : 'target'} ${list} ${many ? 'are' : 'is'} not registered. Anyone who registers ${many ? 'one' : 'it'} can send mail as this domain.`,
       };
+    case 'include_target_newly_registered':
+      return {
+        key: f.code, critical: true,
+        text: `${names.length ? list : 'An include target'} was unregistered on an earlier scan and is now registered. Confirm who registered it, or remove the include.`,
+      };
     case 'include_target_unverified':
       return { key: f.code, critical: false, text: `Could not confirm whether ${names.length ? list : 'an include target'} is registered. Check it manually.` };
     case 'walk_incomplete':
@@ -120,7 +128,7 @@ export function describeFinding(f: SpfFinding): FindingLine {
   }
 }
 
-/** Critical item first, the rest in stored order. */
+/** Critical items first, the rest in stored order. */
 export function findingLines(findings: SpfFinding[]): FindingLine[] {
   const lines = findings.map(describeFinding);
   return [...lines.filter((l) => l.critical), ...lines.filter((l) => !l.critical)];

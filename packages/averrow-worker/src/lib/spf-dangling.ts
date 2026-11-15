@@ -43,6 +43,9 @@ export const SPF_RDAP_MAX_DNS_PROBES = 3;
 /** KV cache lifetimes per registrable domain. */
 export const SPF_RDAP_CACHE_TTL_SECONDS = 24 * 3600;
 export const SPF_RDAP_UNKNOWN_TTL_SECONDS = 600;
+/** An `unknown` from a lookup that had less than SPF_RDAP_TIMEOUT_MS minus
+ *  this (capped scan, slow KV read) is not cached. */
+export const SPF_RDAP_SHORTENED_TOLERANCE_MS = 250;
 
 /**
  * Multi-label suffixes under which ANYONE can register a name (open
@@ -79,6 +82,24 @@ export const OPEN_MULTI_LABEL_SUFFIXES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Single-label TLDs where registration needs eligibility (government,
+ * education, military, treaty bodies, infrastructure, verified banks /
+ * insurers / pharmacies, and sponsored community TLDs whose registry
+ * verifies the registrant). A name under one of these is never "just
+ * registrable" by an attacker, so it is never a confident RDAP candidate.
+ * Deliberately NOT listed (eligibility relaxed or not strictly verified, so
+ * not something to be sure about): travel, jobs, cat, pro, tel, asia.
+ * Brand TLDs (.google, .bmw, …) are also restricted but cannot be
+ * enumerated; an RDAP 404 under one would still read as unregistered — a
+ * known limit (docs/EMAIL_SECURITY_ENGINE.md).
+ */
+export const RESTRICTED_TLDS: ReadonlySet<string> = new Set([
+  "gov", "edu", "mil", "int", "arpa",
+  "bank", "insurance", "pharmacy",
+  "aero", "museum", "coop", "post",
+]);
+
+/**
  * Registrable domain of an include target when we are SURE of it, else null
  * (then nothing is queried). Sure = two labels that are not themselves a
  * listed multi-label suffix, or three labels under an OPEN multi-label
@@ -94,6 +115,7 @@ export function confidentRegistrable(host: string): string | null {
   if (!reg) return null;
   const labels = reg.split('.');
   if (labels.some((l) => l.includes('_'))) return null;
+  if (RESTRICTED_TLDS.has(labels[labels.length - 1]!)) return null;
   for (let i = 1; i < labels.length; i++) {
     if (TENANT_HOST_SUFFIXES.has(labels.slice(i).join('.'))) return null;
   }
@@ -147,27 +169,53 @@ export async function pickDanglingCandidate(
   return null;
 }
 
+const TIMED_OUT: unique symbol = Symbol("timed out");
+
+/** `p`, or TIMED_OUT once `ms` has passed (never rejects; a rejection of
+ *  `p` is TIMED_OUT too — the caller then proceeds without the cache). */
+async function within<T>(p: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  if (ms <= 0) { p.catch(() => undefined); return TIMED_OUT; }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TIMED_OUT>((res) => { timer = setTimeout(() => res(TIMED_OUT), ms); });
+  try {
+    return await Promise.race([p.catch((): typeof TIMED_OUT => TIMED_OUT), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /**
  * RDAP verdict function for brand scans: KV-cached per registrable domain
  * (`registered` / `unregistered` 24 h, `unknown` 10 min so a failing
  * registry is not hammered), over the shared rdapDomainRegistration.
+ * Everything — the KV read, the lookup and the KV write — stays inside
+ * min(timeoutMs, SPF_RDAP_TIMEOUT_MS): a slow KV read is abandoned (live
+ * lookup with what is left, or `unknown` when too little is left), a slow
+ * write is abandoned. An `unknown` is cached only when the lookup had the
+ * full SPF_RDAP_TIMEOUT_MS: one caused by a shortened budget (capped scan,
+ * slow KV) says nothing about the registry.
  */
 export function spfRdapChecker(env: Env): SpfRdapCheck {
   return async (registrable, timeoutMs) => {
+    const deadline = Date.now() + Math.min(timeoutMs, SPF_RDAP_TIMEOUT_MS);
     // v2: verdicts under the stricter rdapDomainRegistration (bootstrap-only,
     // https, no redirects, RDAP-shaped 404); v1 entries are ignored.
     const key = `spf:rdap:v2:${registrable}`;
+    let hit: string | null | typeof TIMED_OUT = TIMED_OUT;
     try {
-      const hit = await env.CACHE.get(key);
-      if (hit === 'registered' || hit === 'unregistered' || hit === 'unknown') return hit;
+      hit = await within(env.CACHE.get(key), deadline - Date.now());
     } catch {
-      // KV miss / error: fall through to a live lookup
+      // KV error: fall through to a live lookup
     }
-    const verdict = await rdapDomainRegistration(env, registrable, Math.min(timeoutMs, SPF_RDAP_TIMEOUT_MS));
+    if (hit === 'registered' || hit === 'unregistered' || hit === 'unknown') return hit;
+    const lookupMs = deadline - Date.now();
+    if (lookupMs < SPF_RDAP_MIN_REMAINING_MS) return 'unknown'; // not cached: budget, not registry
+    const verdict = await rdapDomainRegistration(env, registrable, lookupMs);
+    if (verdict === 'unknown' && lookupMs < SPF_RDAP_TIMEOUT_MS - SPF_RDAP_SHORTENED_TOLERANCE_MS) return verdict;
     try {
-      await env.CACHE.put(key, verdict, {
+      await within(env.CACHE.put(key, verdict, {
         expirationTtl: verdict === 'unknown' ? SPF_RDAP_UNKNOWN_TTL_SECONDS : SPF_RDAP_CACHE_TTL_SECONDS,
-      });
+      }), deadline - Date.now());
     } catch {
       // cache write failure is non-fatal
     }
