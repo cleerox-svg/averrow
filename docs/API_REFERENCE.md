@@ -949,7 +949,7 @@ Response `data` (handler `handlers/botTraffic.ts`):
 |--------|------|------|-------------|
 | GET | `/api/threat-actors` | Staff | List threat actors (KV cached, read replicas, parallel count+list) |
 | GET | `/api/threat-actors/stats` | Staff | Threat actor statistics (KV cached, read replicas, parallel 6-query aggregation) |
-| GET | `/api/threat-actors/:id` | Staff | Get threat actor detail with infrastructure + targets |
+| GET | `/api/threat-actors/:id` | Staff | Get threat actor detail with infrastructure + targets. Also `reference`: the MISP Galaxy reference entry (`id`, `name`, `aliases[]`, `country_code`, `state_sponsor`, `description`, `source`, `source_version`, `updated_at`, `matched_on`, `credit`) when the actor's name or an alias resolves to exactly one live `actor_reference` row (migration 0334; an alias shared by several reference actors, or name/aliases that disagree, give `null`). Display only: never changes the actor's name or attribution |
 | GET | `/api/threat-actors/by-brand/:brandId` | Staff | Threat actors targeting a specific brand |
 | GET | `/api/threat-actors/:id/threats` | Staff | Threats linked to actor via `threat_attributions` (Phase B — OTX/NEXUS/news) **OR** known ASN infrastructure |
 

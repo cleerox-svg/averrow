@@ -59,7 +59,28 @@ export interface NewsMention {
   is_geopolitical: number;
 }
 
-interface ThreatActorDetail extends ThreatActor {
+/** Public reference entry (MISP Galaxy) from `GET /api/threat-actors/:id`
+ *  (worker `lib/actor-reference.ts` ActorReferenceView). Third-party context
+ *  only; it never renames or attributes the actor. */
+export interface ActorReference {
+  id: string;
+  name: string;
+  aliases: string[];
+  country_code: string | null;
+  state_sponsor: string | null;
+  description: string | null;
+  source: string;
+  source_version: string | null;
+  updated_at: string;
+  /** The actor name or alias (as stored on the actor) that resolved to this entry. */
+  matched_on: string;
+  /** Source credit line, shown wherever the entry is displayed. */
+  credit: string;
+}
+
+export interface ThreatActorDetail extends ThreatActor {
+  /** Matched reference entry, or null when no single entry matched. */
+  reference: ActorReference | null;
   infrastructure: Array<{
     id: string;
     asn: string | null;

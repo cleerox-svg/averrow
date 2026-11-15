@@ -104,6 +104,10 @@ import { cf_radar_bots } from "./cf_radar_bots";
 // ASN-level "criminal-operated / hijacked network" metadata; writes no
 // threats and always reports itemsNew = 0 (never triggers Sentinel).
 import { spamhaus_asn_drop } from "./spamhausAsnDrop";
+// MISP Galaxy threat-actor cluster → actor_reference reference tables
+// (migration 0334). Names/aliases only, never attribution; writes no
+// threats and always reports itemsNew = 0 (never triggers Sentinel).
+import { actor_reference } from "./actorReference";
 
 // ─── Free phishing feeds (2026-11-15, migrations 0330 / 0331) ───
 // phishunt.io (CC0, hourly, brand-labelled URLs) and the CERT Polska
@@ -171,6 +175,9 @@ export const feedModules: Record<string, FeedModule> = {
 
   // Reference data — Spamhaus ASN-DROP (no threats).
   spamhaus_asn_drop,
+
+  // Reference data — MISP Galaxy threat actors (no threats).
+  actor_reference,
 
   // Free phishing feeds — phishunt.io + CERT Polska Warning List.
   phishunt,
