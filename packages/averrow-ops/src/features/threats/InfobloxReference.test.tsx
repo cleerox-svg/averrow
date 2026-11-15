@@ -34,11 +34,11 @@ describe('InfobloxReferenceBlock', () => {
     render(<InfobloxReferenceBlock reference={ref()} />);
     expect(screen.getByRole('region', { name: 'Infoblox reference' })).toBeInTheDocument();
     expect(screen.getByText('VexTrio')).toBeInTheDocument();
-    expect(screen.getByText(/· actor/)).toBeInTheDocument();
-    expect(screen.getByText(/· campaign/)).toBeInTheDocument();
+    expect(screen.getByText(/· Infoblox actor label/)).toBeInTheDocument();
+    expect(screen.getByText(/· Infoblox campaign label/)).toBeInTheDocument();
     expect(screen.getByText('evil.example')).toBeInTheDocument();
-    expect(screen.getByText(/exact match/)).toBeInTheDocument();
-    expect(screen.getByText(/parent domain/)).toBeInTheDocument();
+    expect(screen.getByText(/· exact match/)).toBeInTheDocument();
+    expect(screen.getByText(/listed on a parent domain only, weaker match/)).toBeInTheDocument();
     expect(screen.getByText(NOTE)).toBeInTheDocument();
     expect(document.querySelector('[data-credit]')?.textContent).toContain(CREDIT);
     const pub = screen.getByRole('link', { name: /Infoblox publication/ });
@@ -50,6 +50,16 @@ describe('InfobloxReferenceBlock', () => {
     expect(lic).toHaveAttribute('rel', 'noopener noreferrer');
     // only one publication link: the match without a URL has none
     expect(screen.getAllByRole('link')).toHaveLength(2);
+  });
+
+  it('lists exact matches before parent-domain ones and mutes the weak row', () => {
+    const r = ref();
+    r.matches.reverse(); // parent first in the API order
+    render(<InfobloxReferenceBlock reference={r} />);
+    const rows = document.querySelectorAll('li[data-match]');
+    expect(Array.from(rows).map((x) => x.getAttribute('data-match'))).toEqual(['exact', 'parent_domain']);
+    expect(rows[1].querySelector('.font-medium')?.textContent).toBe('Some campaign');
+    expect(rows[0].querySelector('.font-semibold')?.textContent).toBe('VexTrio');
   });
 
   it('drops a non-http publication url', () => {

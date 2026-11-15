@@ -45,17 +45,17 @@ function safeHref(u: string | null): string | null {
 
 function MatchRow({ m }: { m: InfobloxMatch }) {
   const href = safeHref(m.publication_url);
-  const how = m.match === 'exact' ? 'exact match' : 'parent domain';
+  const exact = m.match === 'exact';
   return (
-    <li className="py-2" style={{ borderTop: '1px solid var(--border-base)' }}>
+    <li className="py-2" style={{ borderTop: '1px solid var(--border-base)' }} data-match={m.match}>
       {/* Third-party strings: React text nodes only, never HTML. */}
-      <p className="m-0 text-[13px]" style={{ color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>
-        <span className="font-semibold">{m.infoblox_label}</span>
-        <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}> · {m.label_kind}</span>
+      <p className="m-0 text-[13px]" style={{ color: exact ? 'var(--text-primary)' : 'var(--text-secondary)', overflowWrap: 'anywhere' }}>
+        <span className={exact ? 'font-semibold' : 'font-medium'}>{m.infoblox_label}</span>
+        <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}> · Infoblox {m.label_kind} label</span>
       </p>
       <p className="m-0 mt-0.5 text-[12px]" style={{ ...MUTED, overflowWrap: 'anywhere' }}>
-        <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{m.indicator}</span>
-        {' '}({how})
+        <span className="font-mono" style={{ color: exact ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{m.indicator}</span>
+        {exact ? ' · exact match' : ' · listed on a parent domain only, weaker match'}
         {m.detected_date && <> · detected {formatDate(m.detected_date)}</>}
       </p>
       {href && (
@@ -79,20 +79,22 @@ function MatchRow({ m }: { m: InfobloxMatch }) {
 export function InfobloxReferenceBlock({ reference }: { reference: InfobloxReferenceData | null | undefined }) {
   if (!reference || reference.matches.length === 0) return null;
   const licence = safeHref(reference.licence_url);
+  // Exact matches first; Array.prototype.sort is stable so API order holds within each group.
+  const matches = [...reference.matches].sort((a, b) => Number(b.match === 'exact') - Number(a.match === 'exact'));
   return (
     <section
       aria-label="Infoblox reference"
       data-infoblox-reference
       className="mt-3"
-      // The table detail row spans the full (horizontally scrolling) table; keep this block
-      // pinned to the visible width on phones so its text wraps instead of being clipped.
-      style={{ position: 'sticky', left: 0, width: 'min(100%, calc(100vw - 6.5rem))' }}
+      // The detail row spans the full (horizontally scrolling) table; size to the table's scroller
+      // (.tt-scroll is a size container, see threats.css) so text wraps instead of being clipped.
+      style={{ position: 'sticky', left: 0, width: 'min(100%, 100cqw)' }}
     >
       <Card padding="md">
         <h3 className={`${LABEL_CLS} m-0 mb-1`} style={MUTED}>Infoblox reference</h3>
         <p data-label-note className="m-0 text-[12px]" style={MUTED}>{reference.label_note}</p>
         <ul className="m-0 mt-2 list-none p-0">
-          {reference.matches.map((m, i) => <MatchRow key={`${i}-${m.source_file}-${m.indicator}`} m={m} />)}
+          {matches.map((m, i) => <MatchRow key={`${i}-${m.source_file}-${m.indicator}`} m={m} />)}
         </ul>
         <p data-credit className="m-0 mt-2 text-[12px]" style={{ color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
           {reference.credit}
@@ -116,6 +118,7 @@ export function ThreatInfobloxReference({ threatId, open }: { threatId: string; 
     queryKey: ['threat-detail', threatId],
     enabled: open,
     staleTime: 5 * 60_000,
+    retry: 1,
     queryFn: async () => {
       const res = await api.get<ThreatDetail>(`/api/threats/${encodeURIComponent(threatId)}`);
       if (!res.success || !res.data) throw new Error(res.error ?? 'Failed');

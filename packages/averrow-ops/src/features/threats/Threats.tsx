@@ -235,7 +235,6 @@ export function Threats() {
           const hasActions = !!brandId || !!actorId || transitions.length > 0;
           return (
             <>
-            <ThreatInfobloxReference threatId={r.id} open />
             {hasActions && <div className="thr-actions">
               {brandId && <button type="button" className="tt-link" onClick={() => navigate(`/brands/${brandId}`)}>↗ Brand</button>}
               {actorId && <button type="button" className="tt-link" onClick={() => navigate(tabUrl('actors', { focus: actorId }))}>↗ Threat actor</button>}
@@ -256,6 +255,7 @@ export function Threats() {
                 </span>
               )}
             </div>}
+            <ThreatInfobloxReference threatId={r.id} open />
             </>
           );
         }}
