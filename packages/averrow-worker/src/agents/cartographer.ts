@@ -22,8 +22,11 @@
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
-import { runEmailSecurityScan, saveEmailSecurityScan } from "../email-security";
-import { isRubricOnlyGradeChange } from "../lib/email-grade-change";
+import {
+  runEmailSecurityScan, saveEmailSecurityScan, previousSpfLoader,
+  STORED_EMAIL_SCAN_COLUMNS, type StoredEmailScanRow,
+} from "../email-security";
+import { isRubricOnlyGradeChange, isSpfUncertaintyOnlyChange } from "../lib/email-grade-change";
 import { createNotification } from "../lib/notifications";
 import { emitIntelNotification, renderIntelRecommendedAction } from "../lib/intel-templates";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
@@ -1068,26 +1071,40 @@ export const cartographerAgent: AgentModule = {
       // separately so the ORDER BY over the brand catalog above doesn't
       // evaluate a per-row subquery for every candidate brand.
       const rubricByBrand = new Map<string, number | null>();
+      // That same latest scan's stored columns (migration 0332): a grade
+      // change fully explained by SPF-check uncertainty is not notified
+      // (isSpfUncertaintyOnlyGradeChange, lib/email-grade-change.ts).
+      const prevScanByBrand = new Map<string, StoredEmailScanRow>();
       if (brandsToScan.results.length > 0) {
         const ids = brandsToScan.results.map((b) => b.id);
         const rv = await env.DB.prepare(`
-          SELECT e.brand_id, e.score_rubric_version
+          SELECT e.brand_id, e.score_rubric_version, ${STORED_EMAIL_SCAN_COLUMNS}
           FROM email_security_scans e
           WHERE e.brand_id IN (${ids.map(() => '?').join(',')})
             AND e.scanned_at = (SELECT MAX(e2.scanned_at) FROM email_security_scans e2 WHERE e2.brand_id = e.brand_id)
-        `).bind(...ids).all<{ brand_id: string | number; score_rubric_version: number | null }>();
-        for (const r of rv.results) rubricByBrand.set(String(r.brand_id), r.score_rubric_version);
+        `).bind(...ids).all<StoredEmailScanRow & { brand_id: string | number; score_rubric_version: number | null }>();
+        for (const r of rv.results) {
+          rubricByBrand.set(String(r.brand_id), r.score_rubric_version);
+          prevScanByBrand.set(String(r.brand_id), r);
+        }
       }
 
       for (const [i, brand] of brandsToScan.results.entries()) {
         // Each scan is several sequential DoH lookups (5s timeout each);
-        // stop starting new ones once the run budget is spent.
+        // stop starting new ones once the run budget is spent. The SPF
+        // branch (run in parallel with the DKIM probes) is at worst a 5 s
+        // root lookup + a 4 s / 25-query include-tree walk, so 50 brands
+        // add at most ~1,300 subrequests (limit 50,000); time stays bounded
+        // by this per-brand budget check. A failed SPF root lookup carries
+        // the last checked scan forward (one extra read, only then).
         if (budgetSpent()) {
           budgetSkipped.push(`phase3 email security (${brandsToScan.results.length - i}/${brandsToScan.results.length} brands)`);
           break;
         }
         try {
-          const result = await runEmailSecurityScan(brand.domain);
+          const result = await runEmailSecurityScan(brand.domain, {
+            previousSpf: previousSpfLoader(env.DB, brand.id),
+          });
           await saveEmailSecurityScan(env.DB, brand.id, result);
           await env.DB.prepare(`
             UPDATE brands
@@ -1105,7 +1122,8 @@ export const cartographerAgent: AgentModule = {
           // A grade computed under an older scoring rubric is not a
           // baseline — the stored grade was updated above, silently.
           if (brand.existing_grade && brand.existing_grade !== result.grade
-              && !isRubricOnlyGradeChange(rubricByBrand.get(String(brand.id)))) {
+              && !isRubricOnlyGradeChange(rubricByBrand.get(String(brand.id)))
+              && !isSpfUncertaintyOnlyChange(prevScanByBrand.get(String(brand.id)), result)) {
             const prev = gradeBand(brand.existing_grade);
             const next = gradeBand(result.grade);
             const crossed =

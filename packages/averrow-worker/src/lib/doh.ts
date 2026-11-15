@@ -6,8 +6,14 @@
 // Conservatively cached in KV for 1 hour so re-checks across FC
 // ticks don't hammer the resolver (FC fires every minute).
 
-import type { Env } from '../types';
 import { parseDmarcRecord } from './dmarc-record';
+
+/** Only the KV binding is used; a caller with no Worker env (the email
+ *  posture scanner) passes `{}` and gets uncached lookups. `Env` satisfies
+ *  this structurally. */
+export interface DohCacheEnv {
+  CACHE?: KVNamespace;
+}
 
 interface DohAnswer {
   name: string;
@@ -38,7 +44,7 @@ const TIMEOUT_MS   = 5_000;
  *                   to keep DoH cost low across high-frequency callers.
  */
 export async function dohTxtLookup(
-  env: Env,
+  env: DohCacheEnv,
   name: string,
   ttlSeconds = 3_600,
 ): Promise<string[]> {
@@ -54,12 +60,14 @@ export type DohTxtStatus = 'ok' | 'nxdomain' | 'error';
  * dohTxtLookup with the failure mode kept: callers that must not read a
  * resolver failure as "no record" (DMARC RUA enrollment) branch on
  * `status`. Same KV cache as dohTxtLookup (positive answers only), so a
- * cache hit reports `ok`.
+ * cache hit reports `ok`. `opts.timeoutMs` overrides the 5 s fetch timeout
+ * (the SPF tree walk passes what is left of its own wall-clock budget).
  */
 export async function dohTxtLookupDetailed(
-  env: Env,
+  env: DohCacheEnv,
   name: string,
   ttlSeconds = 3_600,
+  opts: { timeoutMs?: number } = {},
 ): Promise<{ status: DohTxtStatus; records: string[] }> {
   const cacheKey = `doh:txt:${name.toLowerCase()}`;
   if (env.CACHE) {
@@ -78,7 +86,7 @@ export async function dohTxtLookupDetailed(
   try {
     const res = await fetch(url, {
       headers: { Accept: 'application/dns-json' },
-      signal:  AbortSignal.timeout(TIMEOUT_MS),
+      signal:  AbortSignal.timeout(Math.max(1, Math.min(opts.timeoutMs ?? TIMEOUT_MS, TIMEOUT_MS))),
     });
     if (!res.ok) {
       console.warn(`[doh] ${name} TXT HTTP ${res.status}`);

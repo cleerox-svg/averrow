@@ -9,13 +9,13 @@ import { runSyncAgent } from "../lib/agentRunner";
 import { brandReportAgent } from "../agents/brand-report";
 import type { BrandReportOutput } from "../agents/brand-report";
 import type { Env } from "../types";
-import type { EmailSecurityScanInput } from "../email-security";
+import { scanInputFromStoredRow, type StoredEmailScanRow } from "../email-security";
 
 interface EmailSecuritySection {
   score: number;
   grade: string;
   dmarc: { exists: boolean; policy: string | null; reporting_enabled: boolean };
-  spf: { exists: boolean; policy: string | null; too_many_lookups: boolean };
+  spf: { exists: boolean; checked: boolean; policy: string | null; too_many_lookups: boolean };
   dkim: { exists: boolean; selectors_found: string[] };
   mx: { exists: boolean; providers: string[] };
   recommendations: string[];
@@ -66,39 +66,11 @@ interface ReportData {
   recommendations: string[];
 }
 
-/** Stored latest-scan columns the report's recommendations are built from. */
-export interface StoredEmailScanRow {
-  dmarc_exists: number; dmarc_policy: string | null; dmarc_pct: number | null; dmarc_rua: string | null;
-  dmarc_sp: string | null; dmarc_np: string | null; dmarc_t: string | null;
-  spf_exists: number; spf_policy: string | null; spf_too_many_lookups: number;
-  dkim_exists: number; dkim_selectors_found: string | null;
-  mx_exists: number; mx_providers: string | null;
-}
-
-/**
- * Recommendation input rebuilt from a stored email_security_scans row,
- * including the RFC 9989 inputs (pct, sp, np, t) so the report explains
- * every penalty its stored grade includes (testing mode, np gap).
- */
-export function emailRecommendationInput(row: StoredEmailScanRow): EmailSecurityScanInput {
-  const arr = (s: string | null): string[] => {
-    if (!s) return [];
-    try {
-      const v: unknown = JSON.parse(s);
-      return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-    } catch { return []; }
-  };
-  return {
-    dmarc: {
-      exists: !!row.dmarc_exists, policy: row.dmarc_policy,
-      pct: row.dmarc_pct, rua: row.dmarc_rua, ruf: null, raw: null,
-      sp: row.dmarc_sp, np: row.dmarc_np, t: row.dmarc_t,
-    },
-    spf: { exists: !!row.spf_exists, policy: row.spf_policy, includes: 0, tooManyLookups: !!row.spf_too_many_lookups, raw: null },
-    dkim: { exists: !!row.dkim_exists, selectorsFound: arr(row.dkim_selectors_found), raw: null },
-    mx: { exists: !!row.mx_exists, providers: arr(row.mx_providers) },
-  };
-}
+/** Stored latest-scan row + its rebuild into a scoring / recommendation
+ *  input — shared with grade-change detection, so they live in
+ *  email-security.ts and are re-exported here for existing imports. */
+export type { StoredEmailScanRow };
+export const emailRecommendationInput = scanInputFromStoredRow;
 
 export async function handleBrandReport(request: Request, env: Env, brandId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
@@ -193,7 +165,8 @@ export async function handleBrandReport(request: Request, env: Env, brandId: str
       // Latest email security scan for this brand
       env.DB.prepare(`
         SELECT dmarc_exists, dmarc_policy, dmarc_pct, dmarc_rua, dmarc_sp, dmarc_np, dmarc_t,
-               spf_exists, spf_policy, spf_too_many_lookups,
+               spf_exists, spf_policy, spf_too_many_lookups, spf_raw,
+               spf_lookup_count, spf_void_lookups, spf_walk_status, spf_findings,
                dkim_exists, dkim_selectors_found, mx_exists, mx_providers,
                email_security_score, email_security_grade, scanned_at
         FROM email_security_scans WHERE brand_id = ?
@@ -201,7 +174,9 @@ export async function handleBrandReport(request: Request, env: Env, brandId: str
       `).bind(brandId).first<{
         dmarc_exists: number; dmarc_policy: string | null; dmarc_pct: number | null; dmarc_rua: string | null;
         dmarc_sp: string | null; dmarc_np: string | null; dmarc_t: string | null;
-        spf_exists: number; spf_policy: string | null; spf_too_many_lookups: number;
+        spf_exists: number | null; spf_policy: string | null; spf_too_many_lookups: number; spf_raw: string | null;
+        spf_lookup_count: number | null; spf_void_lookups: number | null;
+        spf_walk_status: string | null; spf_findings: string | null;
         dkim_exists: number; dkim_selectors_found: string | null;
         mx_exists: number; mx_providers: string | null;
         email_security_score: number; email_security_grade: string;
@@ -326,6 +301,8 @@ export async function handleBrandReport(request: Request, env: Env, brandId: str
         },
         spf: {
           exists: !!emailSecRow.spf_exists,
+          // false = the root lookup failed and SPF was not checked (spf_exists NULL)
+          checked: emailSecRow.spf_exists !== null,
           policy: emailSecRow.spf_policy,
           too_many_lookups: !!emailSecRow.spf_too_many_lookups,
         },

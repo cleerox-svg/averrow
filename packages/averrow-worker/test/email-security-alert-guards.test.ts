@@ -28,9 +28,13 @@ const scanResult = {
   score: 40,
   grade: "A",
   dmarc: { exists: true, policy: "none" },
+  spf: { exists: true, policy: "-all", too_many_lookups: false, record: "v=spf1 -all", walk_status: "complete", findings: [] },
   bimi: { record: null, svg_url: null, vmc_url: "https://vmc.example/c.pem", vmc_valid: true, vmc_expiry: vmcExpiry, grade: "C" },
 };
-vi.mock("../src/email-security", () => ({
+vi.mock("../src/email-security", async (importOriginal) => ({
+  // Pure helpers (stored-row columns, previousSpfLoader, …) stay real; only
+  // the DNS scan and the save are stubbed.
+  ...(await importOriginal<typeof import("../src/email-security")>()),
   runEmailSecurityScan: async () => scanResult,
   saveEmailSecurityScan: async () => {},
 }));
