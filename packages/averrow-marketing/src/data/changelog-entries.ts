@@ -64,15 +64,15 @@ export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     kind: "Feature",
     title: "A rebuilt global threat map console",
     description:
-      "The global threat map is now a full console organized around lenses: Threats, Operations, Movement, Hosting, Baseline, Campaigns, and Actors. Baseline compares where attacks concentrate against the typical internet attack baseline, alongside raw volume and bot share. Open any node or link for a detail drawer, search across the map, replay activity on a timeline, and watch live pings with smoother animation, including breathing nodes, impact rings, flowing links, and infrastructure migration trails. The camera frames your selection automatically, and phones get a compact peek sheet. Views are now shareable by link, legends explain what you are seeing, and the map is more accessible, with a light theme, tap and keyboard support, and animation that respects reduced-motion settings. New data includes links between operations across countries, detected infrastructure migrations, hosting provider trends with known bulletproof hosts, weaponization speed, and takedown outcome summaries. Also fixed threat counts drifting upward over time, corrected severity ranking, placed attack arcs on real brand headquarters, fixed coverage percentages, and improved input validation and data freshness.",
+      "The global threat map is now a full console organized around lenses: Threats, Operations, Movement, Hosting, Campaigns, and Actors. Open any node or link for a detail drawer, search across the map, replay activity on a timeline, and watch live pings with smoother animation, including breathing nodes, impact rings, flowing links, and infrastructure migration trails. The camera frames your selection automatically, and phones get a compact peek sheet. Views are now shareable by link, legends explain what you are seeing, and the map is more accessible, with a light theme, tap and keyboard support, and animation that respects reduced-motion settings. New data includes links between operations across countries, detected infrastructure migrations, hosting provider trends with known bulletproof hosts, weaponization speed, and takedown outcome summaries. Also fixed threat counts drifting upward over time, corrected severity ranking, placed attack arcs on real brand headquarters, fixed coverage percentages, and improved input validation and data freshness.",
   },
   {
     version: "v4.5.0",
     publishedAt: "2026-10-12",
-    kind: "Feature",
-    title: "Global bot-traffic intelligence",
+    kind: "Improvement",
+    title: "Map and Trends layout fixes",
     description:
-      "New platform intelligence on automated internet traffic, drawn from an industry-wide internet traffic dataset and refreshed daily. See the worldwide share of bot versus human traffic over 7, 30, or 90 days, the countries and networks where bot infrastructure is hosted, and the mix of well-known automated services. A new view also shows where application-layer attacks originate and which countries they target, along with a per-country bot density map where color shows bot share, size shows share of traffic, and a ring marks countries above the global average. Also fixed the map zoom control overlapping other controls, and improved layouts on phones for the bot density table and the Trends summary metrics.",
+      "Fixed the map zoom control overlapping other controls, and improved layouts on phones for map tables and the Trends summary metrics.",
   },
   {
     version: "v4.4.0",
