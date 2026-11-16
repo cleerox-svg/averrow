@@ -582,7 +582,6 @@ export const nexusAgent: AgentModule = {
   ],
   writes: [
     { kind: "d1_table", name: "agent_events" },
-    { kind: "d1_table", name: "agent_runs" },
     { kind: "d1_table", name: "infrastructure_clusters" },
   ],
   outputs: [{ type: "correlation" }, { type: "diagnostic" }],
@@ -592,20 +591,15 @@ export const nexusAgent: AgentModule = {
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env } = ctx;
-    const startedAt = new Date().toISOString();
 
     const result = await runNexus(env.DB, env);
 
-    // Log run to agent_runs (handled by agentRunner, but also log to agent_events)
-    try {
-      await env.DB.prepare(`
-        INSERT INTO agent_runs (id, agent_id, started_at, completed_at, status, records_processed)
-        VALUES (?, 'nexus', ?, datetime('now'), 'success', ?)
-      `).bind(crypto.randomUUID(), startedAt, result.clustersWritten).run();
-    } catch {
-      // agentRunner already tracks this — ignore duplicate
-    }
-
+    // agent_runs is written by executeAgent alone (start row + finalize with
+    // completed_at / records_processed = itemsProcessed). This module used
+    // to INSERT a second, already-'success' row of its own (ISO started_at,
+    // records_processed = clustersWritten), so every manual run showed up
+    // twice in agent_runs-based counts. The completion event
+    // (`nexus_complete`) is still emitted by runNexus.
     return {
       itemsProcessed: result.clustersWritten + result.providersUpdated,
       itemsCreated: result.clustersWritten,
