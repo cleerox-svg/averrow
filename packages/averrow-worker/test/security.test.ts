@@ -75,6 +75,35 @@ describe("applySecurityHeaders", () => {
     expect(fileCsp).toBe(buildContentSecurityPolicy("/scan/"));
   });
 
+  it("never allows a public JS CDN as a script or style source", () => {
+    // A shared CDN in script-src lets injected markup load any package's
+    // code from it; nothing on the platform loads from these hosts.
+    for (const path of [undefined, "/", "/scan/", "/ops/", "/tenant/", "/status"]) {
+      const csp = buildContentSecurityPolicy(path);
+      for (const host of ["cdn.jsdelivr.net", "cdnjs.cloudflare.com", "unpkg.com"]) {
+        expect(directive(csp, "script-src")).not.toContain(host);
+        expect(directive(csp, "style-src")).not.toContain(host);
+      }
+    }
+  });
+
+  it("pins script-src to an exact allowlist", () => {
+    // Positive allowlist: any new script source must be added here on
+    // purpose, not slipped into the policy.
+    expect(directive(buildContentSecurityPolicy("/ops/"), "script-src")).toBe(
+      "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
+    );
+    expect(directive(buildContentSecurityPolicy("/scan/"), "script-src")).toBe(
+      "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://challenges.cloudflare.com",
+    );
+  });
+
+  it("allows no scheme-wide connect source and no plugins", () => {
+    const csp = buildContentSecurityPolicy("/ops/");
+    expect(directive(csp, "connect-src").split(" ")).not.toContain("wss:");
+    expect(directive(csp, "object-src")).toBe("object-src 'none'");
+  });
+
   it("adds Referrer-Policy", () => {
     const res = applySecurityHeaders(makeResponse());
     expect(res.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
