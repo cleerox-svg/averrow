@@ -136,7 +136,18 @@ const STATUS_RANK: Record<string, number> = { failed: 3, partial: 2, running: 1,
  */
 export function barsForLane(index: TimelineIndex, lane: string, quantum: number): readonly Bar[] {
   const spans = index.lanes.get(lane) ?? [];
-  if (quantum <= 0) return spans;
+  if (quantum <= 0) {
+    // No merging, but failures still draw (and hit-test) on top of an overlapping later run.
+    if (!spans.some((s) => s.status === 'failed')) return spans;
+    let perIndex0 = barCache.get(index);
+    if (!perIndex0) { perIndex0 = new Map(); barCache.set(index, perIndex0); }
+    const key0 = `${lane}|0`;
+    const hit0 = perIndex0.get(key0);
+    if (hit0) return hit0;
+    const ordered: Bar[] = [...spans.filter((s) => s.status !== 'failed'), ...spans.filter((s) => s.status === 'failed')];
+    perIndex0.set(key0, ordered);
+    return ordered;
+  }
   let perIndex = barCache.get(index);
   if (!perIndex) { perIndex = new Map(); barCache.set(index, perIndex); }
   const key = `${lane}|${quantum}`;

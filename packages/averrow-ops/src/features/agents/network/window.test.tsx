@@ -99,6 +99,18 @@ describe('24h tape geometry and bars', () => {
     expect(barsForLane(idx, 'navigator', 0)).toBe(idx.lanes.get('navigator'));
   });
 
+  it('draws failed runs last on the hour view too, without merging', () => {
+    const idx = indexTimeline(TIMELINE_FIXTURE, FEEDS_FIXTURE);
+    const lane = [...idx.lanes.entries()].find(([, spans]) => spans.some((sp) => sp.status === 'failed') && spans.some((sp) => sp.status !== 'failed'));
+    expect(lane).toBeDefined();
+    const [id, spans] = lane!;
+    const bars = barsForLane(idx, id, 0);
+    expect(bars).toHaveLength(spans.length);
+    const firstFailed = bars.findIndex((b) => b.status === 'failed');
+    expect(bars.slice(firstFailed).every((b) => b.status === 'failed')).toBe(true);
+    expect(barsForLane(idx, id, 0)).toBe(bars); // cached
+  });
+
   const big = makeBigTimeline();
   const idx = indexTimeline(big, FEEDS_FIXTURE);
   const quantum = mergeQuantumMs(DAY_MS, 800);

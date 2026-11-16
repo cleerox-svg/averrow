@@ -48,7 +48,7 @@ export const FOCUS_CSS = `
 .agn-ring-within:has(:focus-visible){outline:2px solid var(--focus-ring);outline-offset:-2px}
 .agn-btn[aria-disabled="true"]{opacity:.4;cursor:default}
 /* Touch: every control keeps a 44px hit area on phones and coarse pointers, while the visual stays compact. */
-@media (max-width:639px),(pointer:coarse){.agn-btn,.agn-chip{min-width:44px;min-height:44px}}
+@media (max-width:639px),(pointer:coarse){.agn-btn,.agn-chip{min-width:44px;min-height:44px}.agn-slider{min-height:44px}}
 `;
 
 interface AgentNetworkViewProps {
@@ -251,7 +251,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   }, [replay]);
 
   const enterReplay = (at?: number, focus: 'transport' | 'slider' = 'transport') => {
-    if (!timeline) return;
+    if (!timeline || timelineQ.isPlaceholderData) return; // the other window's data is still loading
     const anchor = liveGetNow();
     const end = Date.parse(timeline.window_end);
     if (anchor - end > windowMs) return; // all of the data is older than the tape

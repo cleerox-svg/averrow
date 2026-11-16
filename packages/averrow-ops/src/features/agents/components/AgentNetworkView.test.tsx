@@ -731,7 +731,7 @@ describe('AgentNetworkView', () => {
 
   describe('touch targets', () => {
     it('keeps a 44px hit area on phones and coarse pointers for every control class', () => {
-      expect(FOCUS_CSS).toMatch(/@media \(max-width:639px\),\(pointer:coarse\)\{\.agn-btn,\.agn-chip\{min-width:44px;min-height:44px\}\}/);
+      expect(FOCUS_CSS).toMatch(/@media \(max-width:639px\),\(pointer:coarse\)\{\.agn-btn,\.agn-chip\{min-width:44px;min-height:44px\}\.agn-slider\{min-height:44px\}\}/);
     });
 
     it('puts every visible button (controls, rails, chips, window toggle, replay) in a sized class', async () => {
