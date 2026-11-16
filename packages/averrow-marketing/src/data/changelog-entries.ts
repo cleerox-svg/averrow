@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.12.0",
+    publishedAt: "2026-11-16",
+    kind: "Feature",
+    title: "Replay the last hour of pipeline activity",
+    description:
+      "The live view of the automated analysis pipeline now shows how fresh its data is, and can replay the last hour. Drag along the timeline, or press Replay, to see what was running and what failed at any moment, at normal speed, 10 times or 60 times faster. Step through it a minute at a time with the keyboard, then return to live with one click.",
+  },
+  {
     version: "v4.11.0",
     publishedAt: "2026-11-15",
     kind: "Feature",

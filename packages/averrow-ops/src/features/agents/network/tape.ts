@@ -80,6 +80,8 @@ export interface TapeGeometry {
   endMs: number;
   /** Time -> x. */
   x: (ms: number) => number;
+  /** x -> time (inverse of `x`). */
+  t: (x: number) => number;
 }
 
 export function tapeGeometry(width: number, laneCount: number, now: number): TapeGeometry {
@@ -93,6 +95,7 @@ export function tapeGeometry(width: number, laneCount: number, now: number): Tap
     width: w, height: TAPE_TOP + Math.max(laneCount, 1) * TAPE_LANE_H + 12,
     gx, x1, top: TAPE_TOP, lh: TAPE_LANE_H, startMs, endMs,
     x: (ms) => gx + (ms - startMs) * px,
+    t: (x) => startMs + (x - gx) / px,
   };
 }
 

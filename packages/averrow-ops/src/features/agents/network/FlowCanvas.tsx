@@ -28,6 +28,7 @@ import {
   IDLE, activeMembers, edgeActivity, edgeParticles, laneActivity,
   type NodeActivity, type TimelineIndex,
 } from './activity';
+import { fmtHM, fmtHMS } from './replay';
 import { fitCanvas, useCanvasLoop, useIsVisible, useMountedElement } from './useCanvasLoop';
 
 const TOKEN_NAMES = [
@@ -76,12 +77,6 @@ export function agentLabel(id: string, agents?: ReadonlyMap<string, Agent>): str
   return meta?.displayName ?? agents?.get(id)?.display_name ?? id;
 }
 
-function fmtClock(ms: number): string {
-  const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
-}
-
 function fit(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
   if (ctx.measureText(text).width <= maxW) return text;
   let t = text;
@@ -109,6 +104,11 @@ export interface DrawParams {
   index: TimelineIndex;
   hasTimeline: boolean;
   now: number;
+  /** Clock for pulses and particle travel; defaults to `now`. Replay passes
+   *  the wall clock so animation speed does not follow replay speed. */
+  phase?: number;
+  /** Rendering a past instant (tooltips say "at HH:MM UTC"). */
+  replay?: boolean;
   focus: string | null;
   selected: string | null;
   dotHover: string | null;
@@ -182,6 +182,7 @@ function strokePath(ctx: CanvasRenderingContext2D, path: readonly Pt[]): void {
 /** Draws one frame. Returns true while anything on it is animating. */
 export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean {
   const { layout, palette: c, now } = p;
+  const phase = p.phase ?? now;
   const focus = p.focus && layout.nodes[p.focus] ? p.focus : null;
   let busy = false;
   // Clear the whole scaled backing area: at zoom > 1 the layout-sized rect is
@@ -203,7 +204,7 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
   ctx.stroke();
   const fc = p.agents.get(FLIGHT_CONTROL);
   const fcFailed = fc?.circuit_state === 'tripped';
-  const beat = p.reducedMotion ? 1 : 0.5 + 0.5 * Math.sin(now / PULSE);
+  const beat = p.reducedMotion ? 1 : 0.5 + 0.5 * Math.sin(phase / PULSE);
   ctx.fillStyle = fcFailed ? c('--sev-critical') : c('--healthy', 0.35 + 0.65 * beat);
   ctx.beginPath();
   ctx.arc(b.x + 16, b.y + b.h / 2, 4, 0, Math.PI * 2);
@@ -295,7 +296,7 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
     }
 
     if (!dim) {
-      for (const k of edgeParticles(e, act, now, p.reducedMotion)) particles.push(pointAt(path, k));
+      for (const k of edgeParticles(e, act, now, p.reducedMotion, phase)) particles.push(pointAt(path, k));
     }
   }
   if (particles.length) busy = true;
@@ -327,7 +328,7 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
       busy = true;
       if (!p.reducedMotion) {
         ctx.beginPath();
-        ctx.arc(d.x, d.y, 7 + Math.sin(now / PULSE), 0, Math.PI * 2);
+        ctx.arc(d.x, d.y, 7 + Math.sin(phase / PULSE), 0, Math.PI * 2);
         ctx.strokeStyle = c('--primary', 0.5);
         ctx.lineWidth = 1;
         ctx.stroke();
@@ -375,7 +376,7 @@ function drawAgentNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNo
   if (st.running && !st.failed) {
     ctx.fillStyle = c('--primary', 0.18);
     ctx.beginPath();
-    ctx.arc(n.x, n.y, n.r + 6 + (calm ? 0 : 2 * Math.sin(now / PULSE)), 0, Math.PI * 2);
+    ctx.arc(n.x, n.y, n.r + 6 + (calm ? 0 : 2 * Math.sin((p.phase ?? now) / PULSE)), 0, Math.PI * 2);
     ctx.fill();
   }
   if (sel) {
@@ -458,7 +459,7 @@ function tooltipFor(p: DrawParams, focus: string | null): Tip | null {
     if (!d) return null;
     const m = activeMembers(p.index, FEED_GROUP_NODE[d.group], now).get(d.name);
     const l2 = !p.hasTimeline ? 'no timeline data' : m ? (m.running ? 'pulling now' : m.failed ? 'last pull failed' : 'pulled in the last hour') : 'no pull in the last hour';
-    return { x: d.x, y: d.y, r: 6, l1: `${d.name}  ·  ${FEED_GROUP_LABEL[d.group].toLowerCase()}`, l2, bad: !!m?.failed };
+    return { x: d.x, y: d.y, r: 6, l1: `${d.name}  ·  ${FEED_GROUP_LABEL[d.group].toLowerCase()}${p.replay ? `  ·  at ${fmtHM(now)} UTC` : ''}`, l2, bad: !!m?.failed };
   }
   const id = focus;
   if (!id) return null;
@@ -470,16 +471,16 @@ function tooltipFor(p: DrawParams, focus: string | null): Tip | null {
   }
   const st = nodeState(p, id);
   const cron = CRON_LABEL[id];
-  const l1 = `${n.label}${cron ? `  ·  ${cron}` : ''}`;
+  const l1 = `${n.label}${cron ? `  ·  ${cron}` : ''}${p.replay ? `  ·  at ${fmtHM(now)} UTC` : ''}`;
   let l2: string;
   if (!p.hasTimeline) {
     l2 = st.failed ? 'last run failed' : 'timeline unavailable';
   } else if (st.stale) {
-    l2 = `status unknown since ${fmtClock(st.lastStartMs ?? now)} UTC`;
+    l2 = `status unknown since ${fmtHMS(st.lastStartMs ?? now)} UTC`;
   } else if (st.running) {
-    l2 = `running since ${fmtClock(st.lastStartMs ?? now)} UTC`;
+    l2 = `running since ${fmtHMS(st.lastStartMs ?? now)} UTC`;
   } else if (st.lastStartMs !== null) {
-    l2 = `last run ${fmtClock(st.lastStartMs)} UTC${st.failed ? ' · failed' : ' · ok'}`;
+    l2 = `last run ${fmtHMS(st.lastStartMs)} UTC${st.failed ? ' · failed' : ' · ok'}`;
   } else {
     l2 = 'no run in the last hour';
   }
@@ -530,13 +531,19 @@ export interface FlowCanvasProps {
   width: number;
   /** True under the OS preference or the Pause control: a static frame, no loop. */
   reducedMotion: boolean;
+  /** Drawing a past instant from a replay. */
+  replay?: boolean;
+  /** The replay clock is advancing: keep the frame loop at full rate. */
+  playing?: boolean;
+  /** Changes with the shown playhead: redraws static frames and refreshes the text list. */
+  viewVersion?: number;
   /** Placement is computed by the parent so the rails and canvas agree. */
   placement: Placement;
 }
 
 export function FlowCanvas({
   byName, feeds, index, hasTimeline, getNow, hoverId, onHover, selected, onSelect,
-  zoom, width, reducedMotion, placement,
+  zoom, width, reducedMotion, placement, replay = false, playing = false, viewVersion = 0,
 }: FlowCanvasProps) {
   const [canvasRef, setCanvasEl, canvasEl] = useMountedElement<HTMLCanvasElement>();
   const dotHoverRef = useRef<string | null>(null);
@@ -551,16 +558,19 @@ export function FlowCanvas({
     [width, placement, feeds, byName],
   );
 
+  // While the replay clock runs the frame loop reads the playhead itself.
+  const drawKey = playing ? 0 : viewVersion;
   const draw = useCallback((): boolean => {
     const canvas = canvasRef.current;
     if (!canvas) return false;
     const ctx = fitCanvas(canvas, layout.width * zoom, layout.height * zoom);
     if (!ctx) return false;
-    return drawFlow(ctx, {
-      layout, palette, zoom, agents: byName, index, hasTimeline, now: getNow(),
+    const busy = drawFlow(ctx, {
+      layout, palette, zoom, agents: byName, index, hasTimeline, now: getNow(), phase: Date.now(), replay,
       focus: hoverId ?? selected, selected, dotHover: dotHoverRef.current, reducedMotion,
     });
-  }, [layout, palette, zoom, byName, index, hasTimeline, getNow, hoverId, selected, reducedMotion]);
+    return busy || (playing && !reducedMotion);
+  }, [layout, palette, zoom, byName, index, hasTimeline, getNow, hoverId, selected, reducedMotion, replay, playing, drawKey]);
 
   // No timeline, reduced motion or Pause: draw once per change, no frame loop.
   useCanvasLoop(draw, !reducedMotion && hasTimeline, visible, [draw, version]);
@@ -585,7 +595,7 @@ export function FlowCanvas({
     const ids = [...Object.values(placement.stages).flat(), ...placement.onDemand, ...placement.ops];
     return ids.map((id) => ({ id, label: agentLabel(id, byName), state: stateOf(id) }));
     // getNow is stable; the list refreshes with each timeline payload.
-  }, [placement, byName, hasTimeline, index, getNow]);
+  }, [placement, byName, hasTimeline, index, getNow, viewVersion]);
 
   return (
     <div data-testid="flow-canvas" data-hover={hoverId ?? ''} className="agn-ring-within">

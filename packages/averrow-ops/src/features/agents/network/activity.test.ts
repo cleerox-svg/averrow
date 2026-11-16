@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_PARTICLES, TRANSIT_TAIL_MS, activeMembers, edgeActivity, edgeParticles, indexTimeline, laneActivity,
+  MAX_PARTICLES, OPEN_RUN_SUSPECT_MS, TRANSIT_TAIL_MS, activeMembers, edgeActivity, edgeParticles, indexTimeline, laneActivity,
   particleCount,
 } from './activity';
 import { EDGES, FEED_NRD } from './model';
@@ -10,6 +10,7 @@ import { placeAgents } from './model';
 import { AGENTS_FIXTURE } from './fixtures';
 
 const NOW = Date.parse(FIXTURE_NOW);
+const MIN = 60_000;
 const index = indexTimeline(TIMELINE_FIXTURE, FEEDS_FIXTURE);
 const edge = (from: string, to: string) => EDGES.find((e) => e.from === from && e.to === to)!;
 
@@ -208,5 +209,41 @@ describe('run tape lanes', () => {
     expect(hit?.span).toBe(span);
     expect(tapeHitTest(g, lanes, index, NOW, 20, y)?.span).toBeNull();
     expect(tapeHitTest(g, lanes, index, NOW, x, 2)).toBeNull();
+  });
+});
+
+describe('suspect open runs (older than the reaper ceiling)', () => {
+  const orphan = (minutesBefore: number) => ({
+    ...TIMELINE_FIXTURE.runs.find((r) => r.agent_id === 'enricher')!,
+    id: 'orphan', started_at: new Date(NOW - minutesBefore * MIN).toISOString(),
+    completed_at: null, open: true, status: 'running' as const,
+  });
+  const build = (minutesBefore: number) => indexTimeline({
+    ...TIMELINE_FIXTURE, runs: [orphan(minutesBefore)],
+  }, FEEDS_FIXTURE);
+
+  it('is marked suspect past 90 minutes, and not before', () => {
+    expect(OPEN_RUN_SUSPECT_MS).toBe(90 * MIN);
+    expect(build(100).lanes.get('enricher')![0]!.suspect).toBe(true);
+    expect(build(89).lanes.get('enricher')![0]!.suspect).toBeFalsy();
+  });
+
+  it('is never running or emitting, live or in replay, at any time', () => {
+    const live = build(100);
+    const replayIdx = { ...live, capMs: Infinity };
+    for (const idx of [live, replayIdx]) {
+      for (const t of [NOW - 60 * MIN, NOW - 30 * MIN, NOW]) {
+        const a = laneActivity(idx, 'enricher', t);
+        expect(a.running).toBe(false);
+        expect(a.emitting).toBe(false);
+        expect(a.stale).toBe(true);
+      }
+    }
+  });
+
+  it('a younger open run keeps today behaviour: running in replay, capped live', () => {
+    const young = build(30);
+    expect(laneActivity({ ...young, capMs: Infinity }, 'enricher', NOW + 5 * MIN).running).toBe(true);
+    expect(laneActivity(young, 'enricher', NOW + 5 * MIN).running).toBe(false);
   });
 });

@@ -25,11 +25,17 @@ export interface Span {
   clipped: boolean;
   /** Real lane member (agent id or feed name). */
   member: string;
+  /** Open and older than OPEN_RUN_SUSPECT_MS at the snapshot (set by indexTimeline). */
+  suspect?: boolean;
 }
 
 /** An open run is only known to be open as of generated_at; the response is
  *  cached up to ~60s and refetched every 60s, so never extend one past generated_at + this (90s keeps the cap from flickering between refetches). */
 export const OPEN_RUN_CAP_MS = 90_000;
+/** An open run this much older than generated_at is suspect: the worker's
+ *  reaper ceiling is 90 minutes, so it is almost certainly an orphan. It is
+ *  drawn as "status unknown" in live and replay, never as running. */
+export const OPEN_RUN_SUSPECT_MS = 90 * 60_000;
 /** A pending pivot event stays "in flight" this long after it was written. */
 export const EVENT_WAIT_MS = 10 * 60_000;
 
@@ -96,7 +102,9 @@ export function indexTimeline(
     push(laneOfFeed.get(p.feed_name) ?? (p.feed_name === 'nrd_hagezi' ? FEED_NRD : GROUP_INGEST), pullSpan(p));
   }
   const expected = new Map<string, number>();
+  const genMs = ts(timeline.generated_at) ?? ts(timeline.window_end) ?? 0;
   for (const [lane, list] of lanes) {
+    for (const s of list) if (s.endMs === null && genMs > 0 && s.startMs < genMs - OPEN_RUN_SUSPECT_MS) s.suspect = true;
     list.sort((a, b) => a.startMs - b.startMs);
     expected.set(lane, expectedMs(list));
   }
@@ -172,11 +180,17 @@ function computeLaneActivity(index: TimelineIndex, lane: string, now: number): N
     if (!latest || s.startMs >= latest.startMs) latest = s;
     if (s.endMs === null) {
       // Past the cap the run may have finished after the snapshot: unknown, not running.
-      if (now > index.capMs) continue;
+      if (s.suspect || now > index.capMs) continue;
       running = true;
       emitting = true;
       records += s.records;
       progress = Math.max(progress, Math.min((now - s.startMs) / exp, 0.95));
+    } else if (s.endMs > now) {
+      // Ends after `now`: it spans it (only possible when replaying the past).
+      running = true;
+      emitting = true;
+      records += s.records;
+      progress = Math.max(progress, Math.min((now - s.startMs) / Math.max(s.endMs - s.startMs, 1), 0.95));
     } else {
       if (!lastFinished || s.endMs > (lastFinished.endMs as number)) lastFinished = s;
       if (now - s.endMs <= TRANSIT_TAIL_MS && now >= s.startMs) {
@@ -188,7 +202,7 @@ function computeLaneActivity(index: TimelineIndex, lane: string, now: number): N
   return {
     running, progress, emitting, records, lastStartMs,
     failed: !!lastFinished && lastFinished.status === 'failed',
-    stale: !!latest && latest.endMs === null && now > index.capMs,
+    stale: !!latest && latest.endMs === null && (!!latest.suspect || now > index.capMs),
   };
 }
 
@@ -237,7 +251,9 @@ export function activeMembers(
     if (s.startMs > now) continue;
     const cur = out.get(s.member) ?? { running: false, failed: false, emitting: false, records: 0, lastEnd: -1 };
     if (s.endMs === null) {
-      if (now > index.capMs) continue;
+      if (s.suspect || now > index.capMs) continue;
+      cur.running = true; cur.emitting = true; cur.records += s.records;
+    } else if (s.endMs > now) {
       cur.running = true; cur.emitting = true; cur.records += s.records;
     } else {
       if (s.endMs >= cur.lastEnd) { cur.lastEnd = s.endMs; cur.failed = s.status === 'failed'; }
@@ -262,10 +278,13 @@ export function edgeParticles(
   activity: NodeActivity,
   now: number,
   reducedMotion: boolean,
+  /** Clock that drives particle travel. Defaults to `now`; replay passes the
+   *  wall clock so dots fly at normal speed whatever the replay speed. */
+  phaseMs: number = now,
 ): number[] {
   if (reducedMotion || edge.tier !== 'spine' || !activity.emitting) return [];
   const n = particleCount(activity.records);
-  const base = (now % PARTICLE_PERIOD_MS) / PARTICLE_PERIOD_MS;
+  const base = (phaseMs % PARTICLE_PERIOD_MS) / PARTICLE_PERIOD_MS;
   const out: number[] = [];
   for (let i = 0; i < n; i++) out.push((base + i / n) % 1);
   return out;
