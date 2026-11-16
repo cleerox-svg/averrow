@@ -249,6 +249,19 @@ function useOffline(): boolean {
   return offline;
 }
 
+// R3 lockup + "THREAT INTELLIGENCE" tagline (owner decision 2026-11-16,
+// reversing the sidebar-without-tagline call in BRAND_BRIEF §9). Used in the
+// rail and, below 900px, in the top bar. R3 only: with FACELIFT reverted the
+// rail keeps its legacy mark + name, and the top bar shows nothing.
+function BrandLockup({ height, decorative = false }: { height: number; decorative?: boolean }) {
+  return (
+    <span className={`${LOGO_R3_CLASS} v4-lockup`}>
+      <AverrowLockup height={height} decorative={decorative} />
+      <span className="v4-lockup-tag" aria-hidden={decorative || undefined}>Threat intelligence</span>
+    </span>
+  );
+}
+
 export function ShellV4() {
   const { user, isSuperAdmin } = useAuth();
   const location = useLocation();
@@ -389,7 +402,7 @@ export function ShellV4() {
             <div className="name">AVERROW</div>
             <div className="sub">THREAT INTERCEPTOR</div>
           </div>
-          <AverrowLockup height={28} className={LOGO_R3_CLASS} />
+          <BrandLockup height={28} />
           <button type="button" ref={closeBtnRef} className="v4-drawer-close" onClick={closeDrawer} aria-label="Close menu">
             <X size={18} strokeWidth={2} />
           </button>
@@ -438,6 +451,10 @@ export function ShellV4() {
           <button type="button" ref={hamburgerRef} className="v4-hamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu" aria-expanded={drawerOpen} aria-controls="v4-drawer">
             <Menu size={18} strokeWidth={2} />
           </button>
+          {/* Phone / tablet only (the rail carries the brand on desktop). */}
+          <NavLink to="/" end className="v4-top-brand" aria-label="Averrow home" data-testid="top-brand">
+            <BrandLockup height={22} decorative />
+          </NavLink>
           <SearchTrigger
             className="v4-cmdk"
             label="Search threats, brands, actors…"
