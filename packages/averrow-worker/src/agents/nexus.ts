@@ -594,11 +594,10 @@ export const nexusAgent: AgentModule = {
 
     const result = await runNexus(env.DB, env);
 
-    // agent_runs is written by executeAgent alone (start row + finalize with
-    // completed_at / records_processed = itemsProcessed). This module used
-    // to INSERT a second, already-'success' row of its own (ISO started_at,
-    // records_processed = clustersWritten), so every manual run showed up
-    // twice in agent_runs-based counts. The completion event
+    // The run row is written by executeAgent alone (start row + finalize
+    // with completed_at / records_processed = itemsProcessed). This module
+    // used to write a second, already-'success' run row of its own, so every
+    // manual run showed up twice in run counts. The completion event
     // (`nexus_complete`) is still emitted by runNexus.
     return {
       itemsProcessed: result.clustersWritten + result.providersUpdated,
