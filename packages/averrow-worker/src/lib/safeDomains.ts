@@ -156,13 +156,24 @@ export const SHARED_HOSTING_DOMAINS: ReadonlySet<string> = new Set([
   ...Object.keys(IDP_TENANT_HOSTS),
 ]);
 
+/**
+ * The most specific entry of `suffixes` that `host` equals or sits under
+ * (`a.b.example.com` checks `a.b.example.com`, `b.example.com`,
+ * `example.com`), or null. A bare single label (`com`) is never checked.
+ * `suffixes` is anything with `has` — a Set of domains or a Map keyed by them.
+ */
+export function findHostSuffix(host: string, suffixes: { has(key: string): boolean }): string | null {
+  const labels = normalizeHost(host).split(".");
+  for (let i = 0; i < labels.length - 1; i++) {
+    const key = labels.slice(i).join(".");
+    if (suffixes.has(key)) return key;
+  }
+  return null;
+}
+
 /** Is `domain` a shared-hosting domain or under one? */
 export function isUnderSharedHosting(domain: string): boolean {
-  const labels = normalizeHost(domain).split(".");
-  for (let i = 0; i < labels.length - 1; i++) {
-    if (SHARED_HOSTING_DOMAINS.has(labels.slice(i).join("."))) return true;
-  }
-  return false;
+  return findHostSuffix(domain, SHARED_HOSTING_DOMAINS) !== null;
 }
 
 /** Lowercase, trim, strip a scheme / path / port and a trailing dot. */
