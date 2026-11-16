@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.13.0",
+    publishedAt: "2026-11-16",
+    kind: "Feature",
+    title: "A 24-hour view and colour for the analysis pipeline",
+    description:
+      "The live view of the automated analysis pipeline can now show the last 24 hours as well as the last hour, and replay the whole day at up to an hour per second. Each component now has its own colour on the map and the timeline, so you can follow where work is happening at a glance. Failed and partial runs are marked with patterns as well as colour, so they stand out whatever the component's colour. Controls are also larger and easier to use on phones.",
+  },
+  {
     version: "v4.12.0",
     publishedAt: "2026-11-16",
     kind: "Feature",
