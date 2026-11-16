@@ -10,6 +10,8 @@ export interface ReplayControlsProps {
   active: boolean;
   /** Live: a payload exists to replay. */
   canStart: boolean;
+  /** Why Start is unavailable, when it is. */
+  startHint?: string;
   playing: boolean;
   speed: ReplaySpeed;
   atEnd: boolean;
@@ -28,7 +30,7 @@ export interface ReplayControlsProps {
 const btn: React.CSSProperties = { color: 'var(--text-secondary)' };
 
 export function ReplayControls({
-  active, canStart, playing, speed, atEnd, playDisabled,
+  active, canStart, startHint, playing, speed, atEnd, playDisabled,
   onStart, onPlayPause, onSpeed, onBack, onStep, startRef, playRef,
 }: ReplayControlsProps) {
   const playLabel = playing ? 'Pause' : atEnd ? 'Restart' : 'Play';
@@ -54,7 +56,7 @@ export function ReplayControls({
           className="agn-btn h-7 px-2.5 rounded font-mono text-[11px] inline-flex items-center gap-1.5"
           style={btn}
           aria-disabled={!canStart ? true : undefined}
-          title="Replay the last hour. You can also click or drag the run tape's time scale."
+          title={startHint ?? "Replay the last hour. You can also click or drag the run tape's time scale."}
           onClick={() => { if (canStart) onStart(); }}
         >
           <History size={14} aria-hidden="true" />

@@ -116,6 +116,21 @@ describe('LiveChip announcements', () => {
     return Promise.resolve().then(() => { mo.disconnect(); expect(mutations).toHaveLength(0); });
   });
 
+  it('ages from the skew-corrected clock, clamped at zero, not the raw client clock', () => {
+    const gen = Date.parse(FIXTURE_NOW);
+    // the client clock is two hours off; the view clock is anchored at receipt
+    render(<LiveChip replay={null} hasPayload fetchFailed={false} osReduced={false} paused={false}
+      receivedAt={Date.now()} generatedAt={FIXTURE_NOW} getNow={() => gen + 5_000} />);
+    expect(screen.getByTestId('live-chip')).toHaveTextContent('Live · data 5s old');
+  });
+
+  it('never shows a negative age when the view clock is behind generated_at', () => {
+    const gen = Date.parse(FIXTURE_NOW);
+    render(<LiveChip replay={null} hasPayload fetchFailed={false} osReduced={false} paused={false}
+      receivedAt={Date.now()} generatedAt={FIXTURE_NOW} getNow={() => gen - 10_000} />);
+    expect(screen.getByTestId('live-chip')).toHaveTextContent('Live · data 0s old');
+  });
+
   it('announces when the state changes and shows the New data badge', () => {
     const gen = new Date().toISOString();
     const { rerender } = render(<LiveChip replay={null} hasPayload fetchFailed={false} osReduced={false} paused={false}

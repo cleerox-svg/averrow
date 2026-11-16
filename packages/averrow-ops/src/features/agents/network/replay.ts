@@ -97,7 +97,7 @@ export function chipModel(i: ChipInput): ChipModel {
     return {
       state: 'replay',
       label: `Replay · ${fmtHM(r.playhead)} UTC${asOf ? ` · data as of ${asOf}` : ''}`,
-      title,
+      title: `${title} · Breaker and event states show their current value.`,
       announce: r.newData ? 'Replay mode, new data available' : 'Replay mode',
       badge: r.newData ? 'New data' : null,
     };

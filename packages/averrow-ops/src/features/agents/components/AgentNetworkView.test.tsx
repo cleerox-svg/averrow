@@ -22,12 +22,14 @@ const get = api.get as unknown as ReturnType<typeof vi.fn>;
 const arcs: number[][] = [];
 const texts: string[] = [];
 const dashes: number[][] = [];
+const rects: number[][] = [];
 function stubContext(): CanvasRenderingContext2D {
   const base: Record<string, unknown> = {
     measureText: (t: string) => ({ width: t.length * 6 }),
     arc: (...a: number[]) => { arcs.push(a); },
     fillText: (s: string) => { texts.push(s); },
     setLineDash: (a: number[]) => { dashes.push(a); },
+    fillRect: (...a: number[]) => { rects.push(a); },
   };
   return new Proxy(base, {
     get: (t, k) => (k in t ? t[k as string] : () => undefined),
@@ -71,6 +73,7 @@ beforeEach(() => {
   arcs.length = 0;
   texts.length = 0;
   dashes.length = 0;
+  rects.length = 0;
   frames = [];
   reduced = false;
   installMatchMedia();
@@ -556,6 +559,55 @@ describe('AgentNetworkView', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: /Replay last hour/ }));
       expect(within(dialog).getByTestId('replay-controls')).toBeInTheDocument();
       expect(within(dialog).getByTestId('live-chip')).toHaveAttribute('data-state', 'replay');
+    });
+  });
+
+  describe('replay polish', () => {
+    const NOW_MS = Date.parse(TIMELINE_FIXTURE.generated_at);
+    const axisX = (ms: number) => tapeGeometry(640, 20, NOW_MS).x(ms);
+    const slider = () => screen.getByRole('slider', { name: 'Replay position' });
+    const runFrames = () => act(() => { frames.splice(0).forEach((f) => f()); });
+
+    it('syncs the shown playhead when play stops (Pause), so the slider matches the canvas', async () => {
+      let perf = 1000;
+      vi.spyOn(performance, 'now').mockImplementation(() => perf);
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: /Replay last hour/ })); // playing at 10x
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      fireEvent.click(screen.getByRole('button', { name: '60 times speed' }));
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      perf = 1200; // 200 ms at 60x = +12 s, under the 250 ms label throttle
+      runFrames();
+      runFrames();
+      expect(screen.getByTestId('live-chip')).toHaveTextContent('Replay · 05:12 UTC');
+      fireEvent.click(screen.getByRole('button', { name: 'Pause replay' }));
+      expect(slider().getAttribute('aria-valuetext')).toMatch(/^05:12:4\d UTC$/);
+    });
+
+    it('keeps Replay disabled, with the reason, when the data is more than an hour old', async () => {
+      renderView();
+      await tapeCanvas();
+      const real = Date.now();
+      vi.spyOn(Date, 'now').mockImplementation(() => real + 2 * 60 * 60_000);
+      fireEvent.click(screen.getByRole('button', { name: /Zoom in/ })); // re-render
+      const start = screen.getByRole('button', { name: /Replay last hour/ });
+      expect(start).toHaveAttribute('aria-disabled', 'true');
+      expect(start.getAttribute('title')).toMatch(/more than an hour old/);
+      fireEvent.click(start);
+      expect(screen.getByTestId('live-chip')).not.toHaveAttribute('data-state', 'replay');
+    });
+
+    it('at the end of the data an open run is drawn with its running cap, like the map', async () => {
+      renderView();
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      fireEvent.keyDown(slider(), { key: 'End' });
+      rects.length = 0;
+      runFrames();
+      runFrames();
+      // end caps are 3 x 16 px; open pulls and runs (c2_intel_feeds, cartographer) keep theirs
+      expect(rects.filter((r) => r[2] === 3 && r[3] === 16).length).toBeGreaterThanOrEqual(2);
     });
   });
 

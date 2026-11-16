@@ -118,6 +118,8 @@ export function RunTape({
     const c = palette;
     let busy = false;
     ctx.clearRect(0, 0, g.width, g.height);
+    // Ghost outlines need a little more contrast on the light theme.
+    const ghostStrokeAlpha = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light' ? 0.7 : 0.55;
 
     // Playhead pill geometry first, so tick labels can step aside.
     const xn = g.x(now);
@@ -169,13 +171,21 @@ export function RunTape({
       if (name !== lane.label) name = `${name.trimEnd()}…`;
       ctx.fillText(`${name}${tag}`, g.gx - 10, y + g.lh / 2 + 4);
 
+      let lastGhost: { x0: number; x1: number } | null = null;
       const ghostBar = (x0: number, x1: number, radii: number | number[]) => {
+        // Many tiny ghosts in one lane (grouped feed pulls) would hatch it: skip
+        // one that mostly overlaps the previous ghost, and leave a 1px gap.
+        if (lastGhost) {
+          const overlap = Math.min(x1, lastGhost.x1) - Math.max(x0, lastGhost.x0);
+          if (overlap > 0.8 * Math.max(x1 - x0, 1)) return;
+        }
+        lastGhost = { x0, x1 };
         ctx.beginPath();
-        ctx.roundRect(x0, y + 4, Math.max(x1 - x0, 3), g.lh - 8, radii);
+        ctx.roundRect(x0 + 0.5, y + 4, Math.max(x1 - x0 - 1, 3), g.lh - 8, radii);
         ctx.fillStyle = c('--text-muted', 0.1);
         ctx.fill();
         ctx.setLineDash([3, 2]);
-        ctx.strokeStyle = c('--text-muted', 0.55);
+        ctx.strokeStyle = c('--text-muted', ghostStrokeAlpha);
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.setLineDash([]);
@@ -193,7 +203,7 @@ export function RunTape({
 
         if (replay && s.startMs > now) {
           ghostBar(xa, xb, radii); // has not started yet at the playhead
-        } else if (replay && !stale && end > now) {
+        } else if (replay && !stale && (open ? end >= now : end > now)) {
           // Spans the playhead: in progress up to it, ghost after it.
           const xp = Math.min(Math.max(g.x(now), xa + 3), xb);
           ctx.beginPath();

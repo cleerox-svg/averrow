@@ -28,12 +28,15 @@ function Shape({ state }: { state: ChipState }) {
   }
 }
 
-export type LiveChipProps = Omit<ChipInput, 'now'>;
+export type LiveChipProps = Omit<ChipInput, 'now'> & {
+  /** Skew-corrected clock (anchored at receipt). Defaults to the client clock. */
+  getNow?: () => number;
+};
 
-export function LiveChip(props: LiveChipProps) {
-  const [now, setNow] = useState(() => Date.now());
+export function LiveChip({ getNow, ...props }: LiveChipProps) {
+  const [now, setNow] = useState(() => (getNow ? getNow() : Date.now()));
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    const id = setInterval(() => setNow(getNow ? getNow() : Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
   const m = chipModel({ ...props, now });

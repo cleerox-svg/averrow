@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Maximize2, Minimize2, RotateCcw, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { Maximize2, Minimize2, RotateCcw, Wind, ZoomIn, ZoomOut } from 'lucide-react';
 import { useReducedMotion } from '@averrow/shared/ui';
 import type { Agent } from '@/hooks/useAgents';
 import { useFeeds } from '@/hooks/useFeeds';
@@ -127,6 +127,7 @@ function Swatch({ kind }: { kind: SwatchKind }) {
   }
 }
 
+const BREAKER_NOTE = 'Breaker and event states show their current value.';
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgent }: AgentNetworkViewProps) {
@@ -165,12 +166,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const [replay, setReplay] = useState<{ snapshot: AgentTimeline; speed: ReplaySpeed; playing: boolean; anchorMs: number } | null>(null);
   const playheadRef = useRef(0);
   const [playheadShown, setPlayheadShown] = useState(0);
-  const range = useMemo(() => (replay
-    ? {
-      start: Math.max(Date.parse(replay.snapshot.window_start), replay.anchorMs - TAPE_WINDOW_MS),
-      end: Date.parse(replay.snapshot.window_end),
-    }
-    : null), [replay]);
+  const range = useMemo(() => {
+    if (!replay) return null;
+    const end = Date.parse(replay.snapshot.window_end);
+    // A page left open for over an hour can put the axis start after the data end.
+    return { start: Math.min(Math.max(Date.parse(replay.snapshot.window_start), replay.anchorMs - TAPE_WINDOW_MS), end), end };
+  }, [replay]);
   const setPlayhead = useCallback((ms: number) => {
     playheadRef.current = ms;
     setPlayheadShown(ms);
@@ -185,6 +186,8 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const replayGetNow = useCallback(() => playheadRef.current, []);
   const viewNow = replay ? replayGetNow : liveGetNow;
 
+  // Over an hour without a successful load: nothing left to replay.
+  const dataTooOld = !!timeline && !replay && liveGetNow() - Date.parse(timeline.window_end) > TAPE_WINDOW_MS;
   const atEnd = !!range && playheadShown >= range.end;
   const playing = !!replay?.playing && !reducedMotion && !atEnd;
   const tapeReplay = useMemo(
@@ -207,8 +210,9 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const enterReplay = (at?: number, focus: 'transport' | 'slider' = 'transport') => {
     if (!timeline) return;
     const anchor = liveGetNow();
-    const start = Math.max(Date.parse(timeline.window_start), anchor - TAPE_WINDOW_MS);
     const end = Date.parse(timeline.window_end);
+    if (anchor - end > TAPE_WINDOW_MS) return; // all of the data is older than the tape
+    const start = Math.min(Math.max(Date.parse(timeline.window_start), anchor - TAPE_WINDOW_MS), end);
     pendingFocus.current = focus;
     setReplay({ snapshot: timeline, speed: DEFAULT_REPLAY_SPEED, playing: at === undefined && !reducedMotion, anchorMs: anchor });
     setPlayhead(clampPlayhead(at ?? start, start, end));
@@ -269,7 +273,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      // However play stopped (Pause, animation off, unmount), sync the shown
+      // playhead so the chip, slider and atEnd match what the canvas drew.
+      setPlayheadShown(playheadRef.current);
+    };
   }, [replay?.playing, replay?.speed, reducedMotion, range, setPlayhead]);
 
   // Fullscreen behaves as a modal dialog: body scroll locked, focus moved to
@@ -349,10 +358,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
             paused={paused}
             receivedAt={timelineQ.dataUpdatedAt}
             generatedAt={timeline?.generated_at}
+            getNow={liveGetNow}
           />
           <ReplayControls
             active={!!replay}
-            canStart={!!timeline}
+            canStart={!!timeline && !dataTooOld}
+            startHint={dataTooOld ? 'The data is more than an hour old. Waiting for newer data.' : undefined}
             playing={playing}
             speed={replay?.speed ?? DEFAULT_REPLAY_SPEED}
             atEnd={atEnd}
@@ -369,11 +380,11 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           <div className="flex items-center gap-1.5" role="group" aria-label="View">
             <CtrlButton
               aria-label={reducedMotion ? 'Turn animation on' : 'Turn animation off'}
-              title={osReduced ? 'Animation is off (system reduced-motion setting)' : undefined}
+              title={osReduced ? 'Animation is off (system reduced-motion setting)' : 'Animation'}
               disabled={osReduced}
               onClick={() => setPaused((p) => !p)}
             >
-              {reducedMotion ? <ZapOff size={14} /> : <Zap size={14} />}
+              <Wind size={14} style={{ opacity: reducedMotion ? 0.45 : 1 }} />
             </CtrlButton>
             <CtrlButton aria-label={`Zoom out (${pct})`} onClick={() => setZoom((z) => clampZoom(z - ZOOM_STEP))} disabled={zoom <= ZOOM_MIN}><ZoomOut size={14} /></CtrlButton>
             <CtrlButton aria-label={`Zoom in (${pct})`} onClick={() => setZoom((z) => clampZoom(z + ZOOM_STEP))} disabled={zoom >= ZOOM_MAX}><ZoomIn size={14} /></CtrlButton>
@@ -465,7 +476,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
         className="agn-scroll rounded-lg overflow-x-auto"
         role="region"
         aria-labelledby="agn-tape-title"
-        aria-describedby="agn-tape-hint"
+        aria-describedby={replay ? 'agn-tape-hint agn-tape-note' : 'agn-tape-hint'}
         tabIndex={0}
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)' }}
       >
@@ -478,9 +489,10 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
         </h3>
         <p id="agn-tape-hint" className="font-mono text-[10px] px-3 m-0 mt-1" style={{ color: 'var(--text-tertiary)' }}>
           {replay
-            ? 'Drag the time scale, or press ← → to move 1 minute (Shift: 10 seconds). Space plays or pauses. Breaker and event states show their current value.'
+            ? 'Drag the time scale, or press ← → to move 1 minute (Shift: 10 seconds). Space plays or pauses.'
             : 'Click or drag the time scale above the bars to replay the last hour.'}
         </p>
+        <span id="agn-tape-note" className="sr-only">{BREAKER_NOTE}</span>
         <RunTape
           placement={placement}
           index={index}
