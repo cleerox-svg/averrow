@@ -3,6 +3,7 @@
 // the tab is hidden, and the empty / error timeline states.
 
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '@/test/utils';
 import { AgentNetworkView } from './AgentNetworkView';
@@ -72,7 +73,7 @@ beforeEach(() => {
   installMatchMedia();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => stubContext());
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
-    frames.push(() => cb(0));
+    frames.push(() => cb(performance.now()));
     return frames.length;
   });
   vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
@@ -384,6 +385,202 @@ describe('AgentNetworkView', () => {
     });
   });
 
+  describe('live chip', () => {
+    it('shows Live with the data-as-of tooltip', async () => {
+      renderView();
+      await tapeCanvas();
+      const chip = screen.getByTestId('live-chip');
+      expect(chip).toHaveAttribute('data-state', 'live');
+      expect(chip).toHaveTextContent(/Live · updated \d+s ago/);
+      expect(chip).toHaveAttribute('title', 'Data as of 06:12:30 UTC');
+    });
+
+    it('says Paused for the control', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: 'Pause motion' }));
+      expect(screen.getByTestId('live-chip')).toHaveAttribute('data-state', 'paused');
+      expect(screen.getByTestId('live-chip-status')).toHaveTextContent('Motion paused');
+    });
+
+    it('says Motion off under the OS reduced-motion setting', async () => {
+      reduced = true;
+      installMatchMedia();
+      renderView();
+      await tapeCanvas();
+      expect(screen.getByTestId('live-chip')).toHaveAttribute('data-state', 'motion-off');
+      expect(screen.getByTestId('live-chip')).toHaveTextContent(/Motion off/);
+    });
+
+    it('says Offline, with the detail message, when there is no payload', async () => {
+      mockApi('error');
+      renderView();
+      await screen.findByText(/Live timeline unavailable/);
+      expect(screen.getByTestId('live-chip')).toHaveAttribute('data-state', 'offline');
+      expect(screen.getByTestId('live-chip')).toHaveTextContent('Offline');
+    });
+  });
+
+  describe('replay', () => {
+    const NOW_MS = Date.parse(TIMELINE_FIXTURE.generated_at);
+    const axisX = (ms: number) => tapeGeometry(640, 20, NOW_MS).x(ms);
+    const chip = () => screen.getByTestId('live-chip');
+    const view = () => screen.getByTestId('agent-network');
+    const scrubTo = async (ms: number) => {
+      const tape = await tapeCanvas();
+      pointer(tape, axisX(ms), 10, 'pointerdown');
+      pointer(tape, axisX(ms), 10, 'pointerup');
+    };
+
+    it('enters from the Replay button at the start of the window, with transport controls', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: /^Replay$/ }));
+      expect(chip()).toHaveAttribute('data-state', 'replay');
+      expect(chip()).toHaveTextContent('Replay · 05:12 UTC');
+      const controls = screen.getByTestId('replay-controls');
+      for (const s of ['1×', '10×', '60×']) expect(within(controls).getByRole('button', { name: s })).toBeInTheDocument();
+      expect(within(controls).getByRole('button', { name: 'Back to live' })).toBeInTheDocument();
+      expect(within(controls).getByRole('button', { name: 'Pause replay' })).toBeInTheDocument();
+      expect(within(controls).getByRole('button', { name: '10×' })).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('scrubbing the tape axis enters replay at that time, paused', async () => {
+      renderView();
+      await scrubTo(NOW_MS - 30 * 60_000);
+      expect(chip()).toHaveTextContent('Replay · 05:42 UTC');
+      expect(screen.getByRole('button', { name: 'Play replay' })).toBeInTheDocument();
+    });
+
+    it('steps with the arrow keys (Shift = 10 s) and clamps at the end of the data', async () => {
+      renderView();
+      await scrubTo(NOW_MS - 30 * 60_000); // 05:42:30
+      fireEvent.keyDown(view(), { key: 'ArrowRight' });
+      expect(chip()).toHaveTextContent('Replay · 05:43 UTC');
+      fireEvent.keyDown(view(), { key: 'ArrowLeft', shiftKey: true }); // 05:43:20
+      fireEvent.keyDown(view(), { key: 'ArrowLeft' }); // 05:42:20
+      expect(chip()).toHaveTextContent('Replay · 05:42 UTC');
+      for (let i = 0; i < 40; i++) fireEvent.keyDown(view(), { key: 'ArrowRight' });
+      expect(chip()).toHaveTextContent('end of data');
+      expect(chip()).toHaveTextContent('Replay · 06:12 UTC');
+      expect(screen.getByTestId('replay-controls')).toHaveTextContent('End of data');
+    });
+
+    it('Space toggles replay play and pause', async () => {
+      renderView();
+      await scrubTo(NOW_MS - 30 * 60_000);
+      fireEvent.keyDown(view(), { key: ' ' });
+      expect(screen.getByRole('button', { name: 'Pause replay' })).toBeInTheDocument();
+      fireEvent.keyDown(view(), { key: ' ' });
+      expect(screen.getByRole('button', { name: 'Play replay' })).toBeInTheDocument();
+    });
+
+    it('speed only scales how far the clock moves per frame', async () => {
+      let perf = 1000;
+      vi.spyOn(performance, 'now').mockImplementation(() => perf);
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: /^Replay$/ })); // playing at 10x from 05:12:30
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      perf = 1200; // 200 ms of wall time
+      const runFrames = () => act(() => { frames.splice(0).forEach((f) => f()); });
+      runFrames(); // the clock tick, then
+      runFrames(); // the redraw that reads it
+      expect(texts).toContain('05:12:32'); // +2 s = 200 ms x 10
+      fireEvent.click(screen.getByRole('button', { name: '60×' }));
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      perf = 1400; // another 200 ms at 60x = +12 s
+      texts.length = 0;
+      runFrames();
+      runFrames();
+      expect(texts.some((s) => /^05:12:[45]\d$/.test(s))).toBe(true);
+    });
+
+    it('a background refetch does not move the playhead; Back to live picks it up', async () => {
+      renderView();
+      await scrubTo(NOW_MS - 30 * 60_000);
+      expect(chip()).toHaveTextContent('Replay · 05:42 UTC');
+      const later = new Date(NOW_MS + 5 * 60_000).toISOString();
+      get.mockImplementation(async (path: string) => {
+        if (path.startsWith('/api/feeds/overview')) return { success: true, data: FEEDS_FIXTURE };
+        if (path.startsWith('/api/agents/timeline')) return { success: true, data: { ...TIMELINE_FIXTURE, generated_at: later, window_end: later } };
+        return { success: true, data: [] };
+      });
+      act(() => { window.dispatchEvent(new Event('visibilitychange')); });
+      await waitFor(() => expect(chip()).toHaveTextContent('new data available'));
+      expect(chip()).toHaveTextContent('Replay · 05:42 UTC');
+      expect(screen.getByTestId('live-chip-status')).toHaveTextContent('new data available');
+      fireEvent.click(screen.getByRole('button', { name: 'Back to live' }));
+      expect(chip()).toHaveAttribute('data-state', 'live');
+      expect(chip()).toHaveAttribute('title', 'Data as of 06:17:30 UTC');
+    });
+
+    it('Play is disabled under reduced motion, but scrubbing and stepping still work', async () => {
+      reduced = true;
+      installMatchMedia();
+      renderView();
+      await scrubTo(NOW_MS - 30 * 60_000);
+      const play = screen.getByRole('button', { name: 'Play replay' });
+      expect(play).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(play);
+      expect(screen.getByRole('button', { name: 'Play replay' })).toBeInTheDocument();
+      fireEvent.keyDown(view(), { key: 'ArrowRight' });
+      expect(chip()).toHaveTextContent('Replay · 05:43 UTC');
+      expect(frames).toHaveLength(0);
+    });
+
+    it('draws the map at the playhead: tooltips say "at HH:MM UTC"', async () => {
+      renderView();
+      await scrubTo(NOW_MS - 30 * 60_000);
+      const layout = computeLayout({
+        width: 1000, placement: placeAgents(AGENTS_FIXTURE), feeds: FEEDS_FIXTURE, labelOf: (id) => id,
+      });
+      const n = layout.nodes.observer!;
+      texts.length = 0;
+      pointer(flowCanvas(), n.x, n.y);
+      await waitFor(() => {
+        act(() => { frames.splice(0).forEach((f) => f()); });
+        expect(texts.some((s) => /·\s+at 05:42 UTC$/.test(s))).toBe(true);
+      });
+    });
+
+    it('fullscreen keeps every replay control', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+      const dialog = await screen.findByRole('dialog', { name: /full screen/i });
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Replay$/ }));
+      expect(within(dialog).getByTestId('replay-controls')).toBeInTheDocument();
+      expect(within(dialog).getByTestId('live-chip')).toHaveAttribute('data-state', 'replay');
+    });
+  });
+
+  describe('full screen dialog focus', () => {
+    it('keeps focus in the dialog when a non-focusable area is clicked, so Escape still closes', async () => {
+      const user = userEvent.setup();
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+      const dialog = await screen.findByRole('dialog', { name: /full screen/i });
+      expect(dialog).toHaveAttribute('tabindex', '-1');
+      await user.click(within(dialog).getByRole('list', { name: 'Legend' }));
+      expect(document.activeElement).toBe(dialog);
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    });
+
+    it('Shift+Tab from the dialog itself wraps to the last control', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+      const dialog = await screen.findByRole('dialog', { name: /full screen/i });
+      act(() => dialog.focus());
+      fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+      const items = Array.from(dialog.querySelectorAll<HTMLElement>('button, [tabindex]:not([tabindex="-1"])'));
+      expect(document.activeElement).toBe(items[items.length - 1]);
+    });
+  });
+
   describe('touch', () => {
     it('first tap previews a node, second tap selects it', async () => {
       const onSelect = vi.fn();
@@ -434,7 +631,8 @@ describe('AgentNetworkView', () => {
       mockApi('error');
       renderView();
       await screen.findByText(/Live timeline unavailable/);
-      expect(screen.getAllByRole('status')).toHaveLength(1);
+      // One announcement of the failure detail (the chip's own status is just "Offline").
+      expect(screen.getAllByRole('status').filter((n) => /Live timeline unavailable/.test(n.textContent ?? ''))).toHaveLength(1);
       expect(screen.getByTestId('run-tape-empty')).toHaveStyle({ minHeight: '180px' });
       const calls = () => get.mock.calls.filter(([p]) => String(p).startsWith('/api/agents/timeline')).length;
       const before = calls();

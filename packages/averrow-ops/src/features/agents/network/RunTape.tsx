@@ -16,6 +16,7 @@ import {
   TAPE_TOP, buildTapeLanes, tapeGeometry, tapeHitTest, type TapeLane,
 } from './tape';
 import type { Placement } from './model';
+import { fmtHMS } from './replay';
 
 const TOKENS = [
   '--bg-page', '--bg-card-deep', '--border-base', '--text-primary', '--text-secondary', '--text-muted',
@@ -56,13 +57,20 @@ export interface RunTapeProps {
   width: number;
   /** True under the OS preference or the Pause control. */
   reducedMotion: boolean;
+  /** Replay: the tape is anchored to the payload window, `getNow` is the
+   *  playhead, and the NOW marker becomes a playhead. */
+  replay?: { anchorMs: number; playing: boolean } | null;
+  /** Click or drag on the time axis scrubs (and enters replay when live). */
+  onScrub?: (ms: number) => void;
 }
 
 export function RunTape({
   placement, index, status, getNow, hoverId, onHover, selected, onSelect, labelOf, width, reducedMotion,
+  replay = null, onScrub,
 }: RunTapeProps) {
   const [, setCanvasEl, canvasEl] = useMountedElement<HTMLCanvasElement>();
   const spanHover = useRef<{ lane: string; span: Span } | null>(null);
+  const scrubbing = useRef(false);
   const visible = useIsVisible(canvasEl);
   const { colors, version } = useTokenColors(TOKENS);
   const palette = useMemo(() => makePalette(colors), [colors]);
@@ -73,14 +81,20 @@ export function RunTape({
   };
 
   const { lanes, quiet } = useMemo(() => buildTapeLanes(placement, index, labelOf), [placement, index, labelOf]);
-  const geom = useMemo(() => tapeGeometry(width, lanes.length, getNow()), [width, lanes.length, getNow]);
+  const geom = useMemo(
+    () => tapeGeometry(width, lanes.length, replay ? replay.anchorMs : getNow()),
+    [width, lanes.length, getNow, replay],
+  );
   const hasData = status === 'ready' && lanes.length > 0;
 
   const draw = useCallback((): boolean => {
     const canvas = canvasEl;
     if (!canvas || !hasData) return false;
+    // `now` is the view time (live clock or playhead); `anchor` fixes the axis.
     const now = getNow();
-    const g = tapeGeometry(width, lanes.length, now);
+    const anchor = replay ? replay.anchorMs : now;
+    const phase = Date.now();
+    const g = tapeGeometry(width, lanes.length, anchor);
     const ctx = fitCanvas(canvas, g.width, g.height);
     if (!ctx) return false;
     const c = palette;
@@ -127,12 +141,12 @@ export function RunTape({
       for (const s of index.lanes.get(lane.id) ?? []) {
         const open = s.endMs === null;
         const stale = open && now > index.capMs;
-        const end = s.endMs ?? Math.min(now, index.capMs);
+        const end = s.endMs ?? Math.min(anchor, index.capMs);
         if (end < g.startMs || s.startMs > g.endMs) continue;
         const xa = g.x(Math.max(s.startMs, g.startMs));
         const xb = g.x(Math.min(end, g.endMs));
         const w = Math.max(xb - xa, 3);
-        const running = open && !stale;
+        const running = s.startMs <= now && (open ? !stale : (s.endMs as number) > now);
         ctx.beginPath();
         ctx.roundRect(xa, y + 4, w, g.lh - 8, s.clipped ? [0, 3, 3, 0] : 3);
         if (stale) {
@@ -158,7 +172,7 @@ export function RunTape({
           ctx.fillRect(Math.max(xb - 3, xa), y + 2, 3, g.lh - 4);
           if (!reducedMotion) {
             busy = true;
-            ctx.fillStyle = c('--primary-text', 0.25 + 0.25 * Math.sin(now / PULSE));
+            ctx.fillStyle = c('--primary-text', 0.25 + 0.25 * Math.sin(phase / PULSE));
             ctx.beginPath();
             ctx.arc(xb, y + g.lh / 2, 7, 0, Math.PI * 2);
             ctx.fill();
@@ -174,22 +188,53 @@ export function RunTape({
       }
     });
 
-    // NOW marker.
+    // NOW marker, or the replay playhead.
     const xn = g.x(now);
-    ctx.strokeStyle = c('--text-primary');
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(xn, 22);
-    ctx.lineTo(xn, g.height - 6);
-    ctx.stroke();
-    ctx.fillStyle = c('--text-primary');
-    ctx.beginPath();
-    ctx.roundRect(xn - 18, 4, 36, 15, 4);
-    ctx.fill();
-    ctx.font = `600 9px ${MONO}`;
-    ctx.textAlign = 'center';
-    ctx.fillStyle = c('--bg-page');
-    ctx.fillText('NOW', xn, 15);
+    if (replay) {
+      ctx.strokeStyle = c('--primary-text');
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(xn, 22);
+      ctx.lineTo(xn, g.height - 6);
+      ctx.stroke();
+      ctx.fillStyle = c('--primary-text');
+      ctx.beginPath();
+      ctx.moveTo(xn - 6, 6);
+      ctx.lineTo(xn + 6, 6);
+      ctx.lineTo(xn, 20);
+      ctx.closePath();
+      ctx.fill();
+      // Label on a page-coloured pill so it never collides with the axis ticks.
+      const rightSide = xn > g.x1 - 70;
+      ctx.font = `600 10px ${MONO}`;
+      const lw = ctx.measureText(fmtHMS(now)).width + 10;
+      const lx = rightSide ? xn - 10 - lw : xn + 10;
+      ctx.fillStyle = c('--bg-page');
+      ctx.beginPath();
+      ctx.roundRect(lx, 4, lw, 15, 4);
+      ctx.fill();
+      ctx.strokeStyle = c('--primary-text');
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = c('--text-primary');
+      ctx.fillText(fmtHMS(now), lx + 5, 15);
+    } else {
+      ctx.strokeStyle = c('--text-primary');
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(xn, 22);
+      ctx.lineTo(xn, g.height - 6);
+      ctx.stroke();
+      ctx.fillStyle = c('--text-primary');
+      ctx.beginPath();
+      ctx.roundRect(xn - 18, 4, 36, 15, 4);
+      ctx.fill();
+      ctx.font = `600 9px ${MONO}`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = c('--bg-page');
+      ctx.fillText('NOW', xn, 15);
+    }
 
     // Tooltip for the hovered bar.
     const h = spanHover.current;
@@ -222,8 +267,8 @@ export function RunTape({
       ctx.fillStyle = s.status === 'failed' ? c('--sev-critical') : c('--text-muted');
       ctx.fillText(l2, x + 12, y + 34);
     }
-    return busy;
-  }, [canvasEl, hasData, getNow, width, lanes, palette, hoverId, selected, index, reducedMotion, colors]);
+    return busy || (!!replay?.playing && !reducedMotion);
+  }, [canvasEl, hasData, getNow, width, lanes, palette, hoverId, selected, index, reducedMotion, colors, replay]);
 
   // The pulse and NOW line move: a frame loop while any open run is within
   // its trust window (draw reports it), a slow repaint otherwise.
@@ -256,8 +301,8 @@ export function RunTape({
 
   const locate = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const now = getNow();
-    return tapeHitTest(tapeGeometry(width, lanes.length, now), lanes, index, now, e.clientX - rect.left, e.clientY - rect.top);
+    const anchor = replay ? replay.anchorMs : getNow();
+    return tapeHitTest(tapeGeometry(width, lanes.length, anchor), lanes, index, anchor, e.clientX - rect.left, e.clientY - rect.top);
   };
 
   return (
@@ -267,7 +312,26 @@ export function RunTape({
         role="img"
         aria-label={`Run tape: ${lanes.length} lanes, runs over the last hour. A text list follows.`}
         style={{ display: 'block', width: geom.width, height: geom.height, touchAction: 'pan-x pan-y' }}
+        onPointerDown={(e) => {
+          if (!onScrub) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const y = e.clientY - rect.top;
+          if (y < TAPE_TOP) {
+            scrubbing.current = true;
+            e.currentTarget.setPointerCapture?.(e.pointerId);
+            onScrub(tapeGeometry(width, lanes.length, replay ? replay.anchorMs : getNow()).t(e.clientX - rect.left));
+          }
+        }}
+        onPointerUp={(e) => {
+          scrubbing.current = false;
+          e.currentTarget.releasePointerCapture?.(e.pointerId);
+        }}
         onPointerMove={(e) => {
+          if (scrubbing.current && onScrub) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            onScrub(tapeGeometry(width, lanes.length, replay ? replay.anchorMs : getNow()).t(e.clientX - rect.left));
+            return;
+          }
           const hit = locate(e);
           const lane: TapeLane | undefined = hit ? lanes[hit.lane] : undefined;
           const next = hit?.span && lane ? { lane: lane.id, span: hit.span } : null;

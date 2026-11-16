@@ -13,18 +13,23 @@
 // "On demand" rail; both stay clickable and open the same detail panel.
 // Motion stops under the OS reduced-motion setting or the Pause control.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Maximize2, Minimize2, Pause, Play, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import { History, Maximize2, Minimize2, Pause, Play, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import { useReducedMotion } from '@averrow/shared/ui';
 import type { Agent } from '@/hooks/useAgents';
 import { useFeeds } from '@/hooks/useFeeds';
-import { useAgentTimeline, useTimelineClock } from '@/hooks/useAgentTimeline';
+import { useAgentTimeline, useTimelineClock, type AgentTimeline } from '@/hooks/useAgentTimeline';
 import { FlowCanvas, agentLabel } from '../network/FlowCanvas';
 import { RunTape } from '../network/RunTape';
 import { indexTimeline } from '../network/activity';
 import { MIN_LAYOUT_WIDTH, placeAgents } from '../network/model';
 import { useElementWidth, useMountedElement } from '../network/useCanvasLoop';
+import { LiveChip } from '../network/LiveChip';
+import { ReplayControls } from '../network/ReplayControls';
+import {
+  DEFAULT_REPLAY_SPEED, advancePlayhead, clampPlayhead, stepPlayhead, type ReplaySpeed,
+} from '../network/replay';
 
 const ZOOM_MIN = 0.6;
 const ZOOM_MAX = 1.6;
@@ -138,7 +143,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const timelineQ = useAgentTimeline();
   const timeline = timelineQ.data;
   const getNow = useTimelineClock(timeline?.generated_at, timelineQ.dataUpdatedAt);
-  const index = useMemo(() => indexTimeline(timeline, feeds), [timeline, feeds]);
+  const liveIndex = useMemo(() => indexTimeline(timeline, feeds), [timeline, feeds]);
   const status: 'loading' | 'error' | 'ready' = timeline ? 'ready' : timelineQ.isError ? 'error' : 'loading';
 
   const placement = useMemo(() => placeAgents(agents), [agents]);
@@ -149,6 +154,70 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const [zoom, setZoom] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
   const [showRetired, setShowRetired] = useState(false);
+
+  // ── Replay of the last hour, from the payload loaded when it was entered.
+  // Refetches keep landing behind it but never move the playhead; Back to
+  // live picks the newest payload up.
+  const [replay, setReplay] = useState<{ snapshot: AgentTimeline; speed: ReplaySpeed; playing: boolean } | null>(null);
+  const playheadRef = useRef(0);
+  const [playheadShown, setPlayheadShown] = useState(0);
+  const range = useMemo(() => (replay
+    ? { start: Date.parse(replay.snapshot.window_start), end: Date.parse(replay.snapshot.window_end) }
+    : null), [replay]);
+  const setPlayhead = useCallback((ms: number) => {
+    playheadRef.current = ms;
+    setPlayheadShown(ms);
+  }, []);
+  const replayIndex = useMemo(() => (replay
+    // The live trust cap is about freshness; a replay shows the past as recorded.
+    ? { ...indexTimeline(replay.snapshot, feeds), capMs: Infinity }
+    : null), [replay, feeds]);
+  const index = replayIndex ?? liveIndex;
+  const liveGetNow = getNow;
+  // Identity changes with the shown playhead so static canvases redraw.
+  const replayGetNow = useCallback(() => playheadRef.current, [playheadShown, replay]);
+  const viewNow = replay ? replayGetNow : liveGetNow;
+
+  const atEnd = !!range && playheadShown >= range.end;
+  const playing = !!replay?.playing && !reducedMotion && !atEnd;
+
+  const enterReplay = (at?: number) => {
+    if (!timeline) return;
+    const start = Date.parse(timeline.window_start);
+    const end = Date.parse(timeline.window_end);
+    const t = clampPlayhead(at ?? start, start, end);
+    setReplay({ snapshot: timeline, speed: DEFAULT_REPLAY_SPEED, playing: at === undefined && !reducedMotion });
+    setPlayhead(t);
+  };
+  const scrub = (ms: number) => {
+    if (!replay) { enterReplay(ms); return; }
+    setPlayhead(clampPlayhead(ms, range!.start, range!.end));
+  };
+  const togglePlay = () => {
+    if (!replay || !range || reducedMotion) return;
+    if (playing) { setReplay({ ...replay, playing: false }); return; }
+    if (atEnd) setPlayhead(range.start);
+    setReplay({ ...replay, playing: true });
+  };
+
+  // The replay clock: wall time scaled by the speed. Particles keep their
+  // own wall-clock phase, so speed never changes how fast dots fly.
+  useEffect(() => {
+    if (!replay?.playing || reducedMotion || !range) return;
+    let raf = 0;
+    let last = performance.now();
+    let shownAt = last;
+    const tick = (nowPerf: number) => {
+      const step = advancePlayhead(playheadRef.current, nowPerf - last, replay.speed, range.start, range.end);
+      last = nowPerf;
+      playheadRef.current = step.playhead;
+      if (step.atEnd) { setPlayhead(step.playhead); setReplay((r) => (r ? { ...r, playing: false } : r)); return; }
+      if (nowPerf - shownAt >= 250) { shownAt = nowPerf; setPlayheadShown(step.playhead); }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [replay?.playing, replay?.speed, reducedMotion, range, setPlayhead]);
 
   // Fullscreen behaves as a modal dialog: body scroll locked, focus moved to
   // the exit button on open and back to the toggle on close (same button).
@@ -171,6 +240,19 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
     onSelectAgent(name);
   };
 
+  // Replay keys: Space plays or pauses, arrows step 1 min (Shift: 10 s). A
+  // focused button keeps its native Space/Enter behaviour.
+  const replayKeys = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (!replay || !range) return;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      setPlayhead(stepPlayhead(playheadRef.current, e.key === 'ArrowLeft' ? -1 : 1, e.shiftKey, range.start, range.end));
+    } else if (e.key === ' ' && !(e.target instanceof HTMLButtonElement)) {
+      e.preventDefault();
+      togglePlay();
+    }
+  };
+
   // Tab cycles inside the dialog while it is open.
   const trapTab = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!fullscreen || e.key !== 'Tab' || !wrapEl) return;
@@ -180,7 +262,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
     const first = items[0]!;
     const last = items[items.length - 1]!;
     const active = document.activeElement;
-    if (e.shiftKey && (active === first || !wrapEl.contains(active))) { e.preventDefault(); last.focus(); }
+    if (e.shiftKey && (active === first || active === wrapEl || !wrapEl.contains(active))) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && (active === last || !wrapEl.contains(active))) { e.preventDefault(); first.focus(); }
   };
 
@@ -198,11 +280,15 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
       role={fullscreen ? 'dialog' : undefined}
       aria-modal={fullscreen ? true : undefined}
       aria-label={fullscreen ? 'Agent network, full screen' : undefined}
+      // The dialog itself is focusable, so a click on a non-focusable part of
+      // the overlay keeps focus (and Escape / the trap) inside it.
+      tabIndex={fullscreen ? -1 : undefined}
       onKeyDown={(e) => {
         if (fullscreen && e.key === 'Escape') { e.stopPropagation(); setFullscreen(false); return; }
         trapTab(e);
+        replayKeys(e);
       }}
-      className={fullscreen ? 'fixed inset-0 z-50 overflow-auto p-4 space-y-3' : 'space-y-3'}
+      className={fullscreen ? 'fixed inset-0 z-50 overflow-auto p-4 space-y-3 outline-none' : 'space-y-3'}
       style={fullscreen ? { background: 'var(--bg-page)' } : undefined}
     >
       <style>{FOCUS_CSS}</style>
@@ -215,7 +301,39 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
             </li>
           ))}
         </ul>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <LiveChip
+            replay={replay ? { playhead: playheadShown, atEnd, newData: !!timeline && timeline.generated_at !== replay.snapshot.generated_at } : null}
+            hasPayload={!!timeline}
+            fetchFailed={timelineQ.isError}
+            osReduced={osReduced}
+            paused={paused}
+            receivedAt={timelineQ.dataUpdatedAt}
+            generatedAt={timeline?.generated_at}
+          />
+          {replay ? (
+            <ReplayControls
+              playing={playing}
+              speed={replay.speed}
+              atEnd={atEnd}
+              playDisabled={reducedMotion}
+              onPlayPause={togglePlay}
+              onSpeed={(speed) => setReplay({ ...replay, speed })}
+              onBack={() => setReplay(null)}
+            />
+          ) : (
+            <button
+              type="button"
+              className="agn-btn h-8 px-2.5 rounded font-mono text-[11px] inline-flex items-center gap-1.5"
+              style={{ background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-secondary)' }}
+              aria-disabled={!timeline ? true : undefined}
+              title="Replay the last hour. You can also click or drag the run tape's time axis."
+              onClick={() => { if (timeline) enterReplay(); }}
+            >
+              <History size={14} aria-hidden="true" />
+              Replay
+            </button>
+          )}
           <CtrlButton
             aria-label={paused || osReduced ? 'Play motion' : 'Pause motion'}
             aria-pressed={reducedMotion}
@@ -266,8 +384,8 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           byName={byName}
           feeds={feeds}
           index={index}
-          hasTimeline={!!timeline}
-          getNow={getNow}
+          hasTimeline={!!timeline || !!replay}
+          getNow={viewNow}
           hoverId={hoverId}
           onHover={setHoverId}
           selected={selectedAgent}
@@ -275,6 +393,8 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           zoom={zoom}
           width={layoutWidth}
           reducedMotion={reducedMotion}
+          replay={!!replay}
+          playing={playing}
           placement={placement}
         />
       </div>
@@ -320,12 +440,15 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           style={{ color: 'var(--text-muted)' }}
         >
           Run tape · last hour (UTC)
+          <span className="normal-case tracking-normal ml-3" style={{ color: 'var(--text-tertiary)' }}>
+            {replay ? 'Drag the time axis, or use ← → to step (Shift: 10 s)' : 'Click or drag the time axis to replay'}
+          </span>
         </h3>
         <RunTape
           placement={placement}
           index={index}
-          status={status}
-          getNow={getNow}
+          status={replay ? 'ready' : status}
+          getNow={viewNow}
           hoverId={hoverId}
           onHover={setHoverId}
           selected={selectedAgent}
@@ -333,6 +456,8 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           labelOf={labelOf}
           width={Math.max(width - 2, 0)}
           reducedMotion={reducedMotion}
+          replay={replay && range ? { anchorMs: range.end, playing } : null}
+          onScrub={timeline ? scrub : undefined}
         />
         {truncated && (
           <div className="font-mono text-[10px] px-3 pb-2" style={{ color: 'var(--text-tertiary)' }}>

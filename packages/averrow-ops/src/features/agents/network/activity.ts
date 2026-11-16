@@ -177,6 +177,12 @@ function computeLaneActivity(index: TimelineIndex, lane: string, now: number): N
       emitting = true;
       records += s.records;
       progress = Math.max(progress, Math.min((now - s.startMs) / exp, 0.95));
+    } else if (s.endMs > now) {
+      // Ends after `now`: it spans it (only possible when replaying the past).
+      running = true;
+      emitting = true;
+      records += s.records;
+      progress = Math.max(progress, Math.min((now - s.startMs) / Math.max(s.endMs - s.startMs, 1), 0.95));
     } else {
       if (!lastFinished || s.endMs > (lastFinished.endMs as number)) lastFinished = s;
       if (now - s.endMs <= TRANSIT_TAIL_MS && now >= s.startMs) {
@@ -239,6 +245,8 @@ export function activeMembers(
     if (s.endMs === null) {
       if (now > index.capMs) continue;
       cur.running = true; cur.emitting = true; cur.records += s.records;
+    } else if (s.endMs > now) {
+      cur.running = true; cur.emitting = true; cur.records += s.records;
     } else {
       if (s.endMs >= cur.lastEnd) { cur.lastEnd = s.endMs; cur.failed = s.status === 'failed'; }
       if (now - s.endMs <= TRANSIT_TAIL_MS) { cur.emitting = true; cur.records += s.records; }
@@ -262,10 +270,13 @@ export function edgeParticles(
   activity: NodeActivity,
   now: number,
   reducedMotion: boolean,
+  /** Clock that drives particle travel. Defaults to `now`; replay passes the
+   *  wall clock so dots fly at normal speed whatever the replay speed. */
+  phaseMs: number = now,
 ): number[] {
   if (reducedMotion || edge.tier !== 'spine' || !activity.emitting) return [];
   const n = particleCount(activity.records);
-  const base = (now % PARTICLE_PERIOD_MS) / PARTICLE_PERIOD_MS;
+  const base = (phaseMs % PARTICLE_PERIOD_MS) / PARTICLE_PERIOD_MS;
   const out: number[] = [];
   for (let i = 0; i < n; i++) out.push((base + i / n) % 1);
   return out;
