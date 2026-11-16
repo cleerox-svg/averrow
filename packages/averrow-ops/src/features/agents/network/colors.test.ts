@@ -101,7 +101,7 @@ describe('failed nodes', () => {
     const { ctx, calls } = recorder();
     drawFailedBadge(ctx, palette, { x: 100, y: 100, r: 15 });
     const lines = calls.filter(([k]) => k === 'lineTo');
-    expect(calls.some(([k, a]) => k === 'arc' && Math.abs((a[0] as number) - 112) < 1 && a[2] === 6)).toBe(true);
+    expect(calls.some(([k, a]) => k === 'arc' && Math.abs((a[0] as number) - 112) < 1 && a[2] === 8)).toBe(true);
     expect(lines).toHaveLength(2); // the two strokes of the x
   });
 
@@ -119,13 +119,28 @@ describe('failed nodes', () => {
     });
     const attributor = layout.nodes.attributor!; // fixture: its last run failed
     const badgeAt = (calls: Array<[string, unknown[]]>, n: { x: number; y: number; r: number }) => calls.some(
-      ([k, a]) => k === 'arc' && a[2] === 6 && Math.abs((a[0] as number) - (n.x + n.r * 0.8)) < 0.5,
+      ([k, a]) => k === 'arc' && a[2] === 8 && Math.abs((a[0] as number) - (n.x + n.r * 0.8)) < 0.5,
     );
     for (const agents of [redAgents, blueAgents]) {
       const { ctx, calls } = recorder();
       drawFlow(ctx, make(agents));
       expect(badgeAt(calls, attributor)).toBe(true);
       expect(badgeAt(calls, layout.nodes.sentinel!)).toBe(false); // healthy
+    }
+  });
+});
+
+describe('idle colours keep ring contrast', () => {
+  const parse = (css: string): RGB => {
+    const m = /rgba\((\d+),(\d+),(\d+),/.exec(css)!;
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+  };
+  it.each([['light', LIGHT_BG, LIGHT_TEXT], ['dark', DARK_BG, DARK_TEXT]] as const)('every registry colour, dimmed to idle, stays at 3:1 on the %s card', (_name, bg, text) => {
+    const agents = new Map(Object.values(AGENT_METADATA).map((m) => [m.id as string, { color: m.color }]));
+    const identity = buildIdentity({ bg, anchor: text, primary: [76, 92, 248], feeds: {}, agents });
+    for (const meta of Object.values(AGENT_METADATA)) {
+      expect(contrastRatio(parse(identity.idle(meta.id)), bg), meta.id).toBeGreaterThanOrEqual(MIN_IDENTITY_CONTRAST);
+      expect(contrastRatio(parse(identity.idle(meta.id, 0.55)), bg), meta.id).toBeGreaterThanOrEqual(MIN_IDENTITY_CONTRAST);
     }
   });
 });

@@ -128,6 +128,11 @@ function sourceNodeId(from: string): string {
   return from === INBOX_ABUSE ? 'abuse_mailbox_classifier' : from;
 }
 
+/** Opaque idle ring/dot colour with the contrast floor (muted token without identities). */
+function idleOf(p: DrawParams, id: string, alpha: number): string {
+  return p.identity ? p.identity.idle(id, alpha) : p.palette('--text-muted', alpha);
+}
+
 /** rgba() of a node's identity colour, or the primary accent without identities. */
 function tintOf(p: DrawParams, id: string, alpha: number): string {
   return p.identity ? p.identity.css(id, alpha) : p.palette('--primary', alpha);
@@ -344,7 +349,7 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
     }
     ctx.beginPath();
     ctx.arc(d.x, d.y, hot ? 5 : 4, 0, Math.PI * 2);
-    ctx.fillStyle = st?.failed ? c('--sev-critical') : st?.running ? tintOf(p, gid, 1) : tintOf(p, gid, dim ? 0.18 : 0.5);
+    ctx.fillStyle = st?.failed ? c('--sev-critical') : st?.running ? tintOf(p, gid, 1) : dim ? tintOf(p, gid, 0.18) : idleOf(p, gid, 0.55);
     ctx.fill();
     if (st?.running) {
       busy = true;
@@ -416,12 +421,16 @@ function drawAgentNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNo
   ctx.beginPath();
   ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
   ctx.fill();
-  if (!live) {
+  if (st.failed) {
+    // Failure is hue-independent: a red tint, a heavy red ring and a x badge.
+    ctx.fillStyle = c('--sev-critical', 0.15);
+    ctx.fill();
+  } else if (!live) {
     ctx.fillStyle = tintOf(p, id, 0.1);
     ctx.fill();
   }
-  ctx.strokeStyle = st.failed ? c('--sev-critical') : live ? tintOf(p, id, 1) : tintOf(p, id, 0.7);
-  ctx.lineWidth = st.failed ? 2.4 : live ? 1.6 : 1.4;
+  ctx.strokeStyle = st.failed ? c('--sev-critical') : live ? tintOf(p, id, 1) : idleOf(p, id, 0.7);
+  ctx.lineWidth = st.failed ? 3 : live ? 1.6 : 1.4;
   // Dashed = paused, or an inline step of its parent rather than a scheduled job.
   ctx.setLineDash(st.paused || satellite ? [3, 3] : []);
   ctx.stroke();
@@ -464,15 +473,15 @@ export function drawFailedBadge(ctx: CanvasRenderingContext2D, c: Palette, n: Pi
   const by = n.y - n.r * 0.8;
   ctx.fillStyle = c('--sev-critical');
   ctx.beginPath();
-  ctx.arc(bx, by, 6, 0, Math.PI * 2);
+  ctx.arc(bx, by, 8, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,1)';
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(bx - 2.6, by - 2.6);
-  ctx.lineTo(bx + 2.6, by + 2.6);
-  ctx.moveTo(bx + 2.6, by - 2.6);
-  ctx.lineTo(bx - 2.6, by + 2.6);
+  ctx.moveTo(bx - 3.4, by - 3.4);
+  ctx.lineTo(bx + 3.4, by + 3.4);
+  ctx.moveTo(bx + 3.4, by - 3.4);
+  ctx.lineTo(bx - 3.4, by + 3.4);
   ctx.stroke();
 }
 

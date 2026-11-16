@@ -98,6 +98,12 @@ export interface Identity {
   rgb(id: string): RGB;
   /** The same as an rgba() string. */
   css(id: string, alpha?: number): string;
+  /**
+   * An opaque, dimmed version for idle rings and dots: the colour is faded
+   * toward the card, then adjusted again for 3:1, so a pale or grey identity
+   * colour never falls below ring contrast (and never reads as disabled).
+   */
+  idle(id: string, alpha?: number): string;
 }
 
 /** Resolve (and cache) the identity colour of any node id. */
@@ -117,5 +123,15 @@ export function buildIdentity(input: IdentityInput): Identity {
     cache.set(id, out);
     return out;
   };
-  return { rgb: resolve, css: (id, alpha = 1) => rgbCss(resolve(id), alpha) };
+  const idleCache = new Map<string, string>();
+  const idle = (id: string, alpha = 0.7): string => {
+    const key = `${id}|${alpha}`;
+    const hit = idleCache.get(key);
+    if (hit) return hit;
+    const faded = mixRgb(input.bg, resolve(id), alpha);
+    const out = rgbCss(ensureContrast(faded, input.bg, input.anchor));
+    idleCache.set(key, out);
+    return out;
+  };
+  return { rgb: resolve, css: (id, alpha = 1) => rgbCss(resolve(id), alpha), idle };
 }

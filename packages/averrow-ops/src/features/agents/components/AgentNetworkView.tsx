@@ -106,11 +106,11 @@ function Chip({
 
 type SwatchKind = 'colour' | 'running' | 'transit' | 'failed' | 'partial' | 'idle' | 'event';
 const LEGEND: Array<{ kind: SwatchKind; label: string }> = [
-  { kind: 'colour', label: 'Colour = agent' },
+  { kind: 'colour', label: 'Each agent has its own colour' },
   { kind: 'running', label: 'Running now' },
-  { kind: 'transit', label: 'Data in transit' },
+  { kind: 'transit', label: 'Data in transit (source colour)' },
   { kind: 'failed', label: 'Failed: red ring with ×' },
-  { kind: 'partial', label: 'Partial run (tape)' },
+  { kind: 'partial', label: 'Partial run (hatched, tape)' },
   { kind: 'idle', label: 'Idle link' },
   { kind: 'event', label: 'Dashed: event hand-off (pivot_detected)' },
 ];
@@ -120,8 +120,14 @@ function Swatch({ kind }: { kind: SwatchKind }) {
   switch (kind) {
     case 'running': // filled disc with an outer progress ring
       return <i aria-hidden="true" style={{ ...base, width: 12, height: 12, borderRadius: 999, background: 'var(--primary)', boxShadow: '0 0 0 2px var(--bg-card), 0 0 0 3.5px var(--primary-text)' }} />;
-    case 'transit': // small bright dot with a soft halo
-      return <i aria-hidden="true" style={{ ...base, width: 5, height: 5, borderRadius: 999, background: 'var(--primary-text)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--primary-text) 30%, transparent)', margin: '0 3px' }} />;
+    case 'transit': // dots in the sources' own colours
+      return (
+        <span aria-hidden="true" style={{ ...base, display: 'inline-flex', gap: 3, alignItems: 'center' }}>
+          {['#38BDF8', '#A78BFA', '#FB923C'].map((col) => (
+            <i key={col} style={{ width: 5, height: 5, borderRadius: 999, background: col, boxShadow: `0 0 0 2px ${col}40`, display: 'inline-block' }} />
+          ))}
+        </span>
+      );
     case 'colour': // identity colours: a small spread, not a rainbow
       return <i aria-hidden="true" style={{ ...base, width: 12, height: 12, borderRadius: 999, background: 'conic-gradient(#38BDF8, #A78BFA, #FB923C, #4ADE80, #38BDF8)' }} />;
     case 'failed': // red ring with a x: shape plus colour
@@ -137,8 +143,8 @@ function Swatch({ kind }: { kind: SwatchKind }) {
           ×
         </i>
       );
-    case 'partial': // amber-ish status bar
-      return <i aria-hidden="true" style={{ ...base, width: 16, height: 6, borderRadius: 2, background: 'var(--sev-medium)' }} />;
+    case 'partial': // hatched warning bar: a pattern, not just a hue
+      return <i aria-hidden="true" style={{ ...base, width: 16, height: 8, borderRadius: 2, border: '1px solid var(--sev-medium)', background: 'repeating-linear-gradient(135deg, var(--sev-medium) 0 2px, transparent 2px 4px)' }} />;
     case 'idle':
       return <i aria-hidden="true" style={{ ...base, width: 16, height: 0, borderTop: '2px solid var(--text-muted)', opacity: 0.45 }} />;
     case 'event':
@@ -168,8 +174,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const timeline = timelineQ.data;
   // The axis follows the data on screen (it keeps showing the previous window
   // until the new payload lands), not the toggle.
-  const dataWindow: TimelineWindow = timeline?.window ?? timelineWindow;
-  const windowMs = TIMELINE_WINDOW_MS[dataWindow];
+  const payloadWindow: TimelineWindow = timeline?.window ?? timelineWindow;
   const getNow = useTimelineClock(timeline?.generated_at, timelineQ.dataUpdatedAt);
   const liveIndex = useMemo(() => indexTimeline(timeline, feeds), [timeline, feeds]);
   const status: 'loading' | 'error' | 'ready' = timeline ? 'ready' : timelineQ.isError ? 'error' : 'loading';
@@ -183,12 +188,17 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const [zoom, setZoom] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
   const [showRetired, setShowRetired] = useState(false);
+  const [keyOpen, setKeyOpen] = useState(false);
 
   // ── Replay of the last hour, from the payload loaded when it was entered.
   // Refetches keep landing behind it but never move the playhead; Back to
   // live picks the newest payload up. The tape axis is frozen at entry
   // (`anchorMs`) so the playhead stays under the pointer when a scrub begins.
   const [replay, setReplay] = useState<{ snapshot: AgentTimeline; speed: ReplaySpeed; playing: boolean; anchorMs: number } | null>(null);
+  // The axis and controls follow a running replay's own payload first, then the
+  // payload on screen, then the toggle.
+  const dataWindow: TimelineWindow = replay?.snapshot.window ?? payloadWindow;
+  const windowMs = TIMELINE_WINDOW_MS[dataWindow];
   const chooseWindow = (w: TimelineWindow) => {
     if (w === timelineWindow) return;
     storeWindow(w);
@@ -207,10 +217,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
     playheadRef.current = ms;
     setPlayheadShown(ms);
   }, []);
-  const replayIndex = useMemo(() => (replay
+  const replaySnapshot = replay?.snapshot;
+  // Keyed on the snapshot, so play / pause / speed do not rebuild the index (or the bar cache).
+  const replayIndex = useMemo(() => (replaySnapshot
     // The live trust cap is about freshness; a replay shows the past as recorded.
-    ? { ...indexTimeline(replay.snapshot, feeds), capMs: Infinity }
-    : null), [replay, feeds]);
+    ? { ...indexTimeline(replaySnapshot, feeds), capMs: Infinity }
+    : null), [replaySnapshot, feeds]);
   const index = replayIndex ?? liveIndex;
   const liveGetNow = getNow;
   // Stable identity: the frame loops read the ref; `viewVersion` redraws static frames.
@@ -378,7 +390,21 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
     >
       <style>{FOCUS_CSS}</style>
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <ul className="flex flex-wrap gap-x-5 gap-y-1 list-none p-0 m-0" aria-label="Legend">
+        <button
+          type="button"
+          className="agn-btn sm:hidden h-7 px-2.5 rounded font-mono text-[11px]"
+          style={{ background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-secondary)' }}
+          aria-expanded={keyOpen}
+          aria-controls="agn-legend"
+          onClick={() => setKeyOpen((v) => !v)}
+        >
+          Key
+        </button>
+        <ul
+          id="agn-legend"
+          className={`${keyOpen ? 'flex' : 'hidden'} sm:flex flex-wrap gap-x-5 gap-y-1 list-none p-0 m-0`}
+          aria-label="Legend"
+        >
           {LEGEND.map((l) => (
             <li key={l.label} className="inline-flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
               <Swatch kind={l.kind} />
@@ -399,11 +425,15 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           />
           <ReplayControls
             active={!!replay}
-            canStart={!!timeline && !dataTooOld}
-            startHint={dataTooOld ? 'The data is more than an hour old. Waiting for newer data.' : undefined}
+            canStart={!!timeline && !dataTooOld && !timelineQ.isPlaceholderData}
+            startHint={timelineQ.isPlaceholderData
+              ? `Loading the ${timelineWindow === '24h' ? '24 hour' : 'hour'} data…`
+              : dataTooOld
+                ? `The data is more than ${dataWindow === '24h' ? '24 hours' : 'an hour'} old. Waiting for newer data.`
+                : undefined}
             playing={playing}
             speed={replay?.speed ?? DEFAULT_REPLAY_SPEEDS[dataWindow]}
-            window={dataWindow}
+            timelineWindow={dataWindow}
             atEnd={atEnd}
             playDisabled={reducedMotion}
             onStart={() => enterReplay()}
@@ -519,35 +549,36 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
         tabIndex={0}
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)' }}
       >
-        <h3
-          id="agn-tape-title"
-          className="font-mono text-[10px] tracking-[0.14em] uppercase px-3 pt-3 m-0 font-medium"
-          style={{ color: 'var(--text-muted)' }}
-        >
-          Run tape · {dataWindow === '24h' ? 'last 24 hours' : 'last hour'} (UTC)
-        </h3>
-        <div className="flex items-center gap-2 px-3 pt-2" role="group" aria-label="Timeline window">
-          {(['1h', '24h'] as const).map((w) => {
-            const on = timelineWindow === w;
-            return (
-              <button
-                key={w}
-                type="button"
-                className="agn-btn h-7 px-2.5 rounded font-mono text-[11px]"
-                style={{
-                  color: on ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  background: on ? 'var(--primary-tint)' : 'var(--bg-card-deep)',
-                  border: `1px solid ${on ? 'var(--primary-border)' : 'var(--border-base)'}`,
-                  fontWeight: on ? 600 : 400,
-                }}
-                aria-pressed={on}
-                aria-label={w === '1h' ? 'Last hour' : 'Last 24 hours'}
-                onClick={() => chooseWindow(w)}
-              >
-                {w}
-              </button>
-            );
-          })}
+        <div className="flex items-start justify-between gap-3 flex-wrap px-3 pt-3">
+          <h3
+            id="agn-tape-title"
+            className="font-mono text-[10px] tracking-[0.14em] uppercase m-0 font-medium"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            Run tape · {dataWindow === '24h' ? 'last 24 hours' : 'last hour'} (UTC)
+          </h3>
+          <div className="flex items-center gap-2" role="group" aria-label="Run tape window">
+            {([['1h', '1 hour'], ['24h', '24 hours']] as const).map(([w, label]) => {
+              const on = timelineWindow === w;
+              return (
+                <button
+                  key={w}
+                  type="button"
+                  className="agn-btn h-7 px-2.5 rounded font-mono text-[11px]"
+                  style={{
+                    color: on ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    background: on ? 'var(--primary-tint)' : 'var(--bg-card-deep)',
+                    border: `1px solid ${on ? 'var(--primary-border)' : 'var(--border-base)'}`,
+                    fontWeight: on ? 600 : 400,
+                  }}
+                  aria-pressed={on}
+                  onClick={() => chooseWindow(w)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
         </div>
         <p id="agn-tape-hint" className="font-mono text-[10px] px-3 m-0 mt-1" style={{ color: 'var(--text-tertiary)' }}>
           {replay

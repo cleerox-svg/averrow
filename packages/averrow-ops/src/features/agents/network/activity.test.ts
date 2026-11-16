@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_PARTICLES, OPEN_RUN_SUSPECT_MS, TRANSIT_TAIL_MS, activeMembers, edgeActivity, edgeParticles, indexTimeline, laneActivity,
+  MAX_PARTICLES, OPEN_RUN_CAP_24H_MS, OPEN_RUN_CAP_MS, OPEN_RUN_SUSPECT_MS, TRANSIT_TAIL_MS, activeMembers, edgeActivity, edgeParticles, indexTimeline, laneActivity,
   particleCount,
 } from './activity';
 import { EDGES, FEED_NRD } from './model';
@@ -57,14 +57,14 @@ describe('node activity', () => {
 });
 
 describe('open runs are capped at the snapshot', () => {
-  it('stops showing an open run as running 90s after generated_at', () => {
+  it('stops showing an open run as running past the trust cap', () => {
     expect(laneActivity(index, 'cartographer', NOW + 30_000).running).toBe(true);
-    const late = laneActivity(index, 'cartographer', NOW + 91_000);
+    const late = laneActivity(index, 'cartographer', NOW + OPEN_RUN_CAP_MS + 1_000);
     expect(late.running).toBe(false);
     expect(late.emitting).toBe(false);
     expect(late.stale).toBe(true);
     expect(laneActivity(index, 'cartographer', NOW + 30_000).stale).toBe(false);
-    expect(activeMembers(index, 'feeds:ingest', NOW + 91_000).get('c2_intel_feeds')?.running ?? false).toBe(false);
+    expect(activeMembers(index, 'feeds:ingest', NOW + OPEN_RUN_CAP_MS + 1_000).get('c2_intel_feeds')?.running ?? false).toBe(false);
   });
 });
 
@@ -88,7 +88,7 @@ describe('EVENT edge follows pivot_detected events, not nexus runs', () => {
 
   it('keeps a pending event in flight until the snapshot goes stale', () => {
     expect(edgeActivity(index, e, NOW + 30_000).emitting).toBe(true);
-    expect(edgeActivity(index, e, NOW + 91_000).emitting).toBe(false);
+    expect(edgeActivity(index, e, NOW + OPEN_RUN_CAP_MS + 1_000).emitting).toBe(false);
   });
 
   it('stops animating a pending event 10 minutes after it was written', () => {
@@ -245,5 +245,48 @@ describe('suspect open runs (older than the reaper ceiling)', () => {
     const young = build(30);
     expect(laneActivity({ ...young, capMs: Infinity }, 'enricher', NOW + 5 * MIN).running).toBe(true);
     expect(laneActivity(young, 'enricher', NOW + 5 * MIN).running).toBe(false);
+  });
+});
+
+describe('trust cap follows TTL plus refetch', () => {
+  it('is about two minutes on the hour and about ten and a half on 24h', () => {
+    expect(OPEN_RUN_CAP_MS).toBe(120_000);
+    expect(OPEN_RUN_CAP_24H_MS).toBe(630_000);
+    expect(indexTimeline(TIMELINE_FIXTURE, FEEDS_FIXTURE).capMs).toBe(NOW + OPEN_RUN_CAP_MS);
+    const day = indexTimeline({ ...TIMELINE_FIXTURE, window: '24h' }, FEEDS_FIXTURE);
+    expect(day.capMs).toBe(NOW + OPEN_RUN_CAP_24H_MS);
+    // a 24h open run stays running across a 5 minute refetch gap, then goes unknown
+    expect(laneActivity(day, 'cartographer', NOW + 5 * MIN).running).toBe(true);
+    expect(laneActivity(day, 'cartographer', NOW + 11 * MIN).running).toBe(false);
+  });
+});
+
+describe('feed members over a long window', () => {
+  const t0 = NOW - 5 * 3_600_000;
+  const pull = (id: number, off: number, status: 'success' | 'failed', dur = 6_000) => ({
+    id, feed_name: 'urlhaus', started_at: new Date(t0 + off).toISOString(),
+    completed_at: new Date(t0 + off + dur).toISOString(), status, open: false, clipped_start: false,
+    records_ingested: 4, records_rejected: 0, duration_ms: dur, error: null,
+  });
+  const idx = indexTimeline({
+    ...TIMELINE_FIXTURE, window: '24h', runs: [], events: [],
+    pulls: Array.from({ length: 200 }, (_, i) => pull(i, i * 60_000, i === 199 ? 'failed' : 'success')),
+  }, FEEDS_FIXTURE);
+
+  it('keeps a feed failed hours after its last (failed) pull, and not running', () => {
+    const m = activeMembers(idx, 'feeds:ingest', NOW).get('urlhaus')!;
+    expect(m.failed).toBe(true);
+    expect(m.running).toBe(false);
+    expect(m.emitting).toBe(false);
+  });
+
+  it('finds a pull spanning the playhead and one just finished, scanning back only as far as needed', () => {
+    const mid = t0 + 100 * 60_000 + 3_000; // inside pull #100
+    expect(activeMembers(idx, 'feeds:ingest', mid).get('urlhaus')?.running).toBe(true);
+    const after = t0 + 100 * 60_000 + 8_000; // 2 s after it ended: still in the transit tail
+    const m = activeMembers(idx, 'feeds:ingest', after).get('urlhaus')!;
+    expect(m.running).toBe(false);
+    expect(m.emitting).toBe(true);
+    expect(m.failed).toBe(false);
   });
 });

@@ -13,8 +13,13 @@ import {
 import { computeLayout, placeAgents } from '../network/model';
 import { buildTapeLanes, tapeGeometry } from '../network/tape';
 import { indexTimeline } from '../network/activity';
+import * as activityMod from '../network/activity';
 
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }));
+vi.mock('../network/activity', async (importOriginal) => {
+  const m = await importOriginal<typeof import('../network/activity')>();
+  return { ...m, indexTimeline: vi.fn(m.indexTimeline) };
+});
 import { api } from '@/lib/api';
 const get = api.get as unknown as ReturnType<typeof vi.fn>;
 
@@ -24,13 +29,16 @@ const texts: string[] = [];
 const dashes: number[][] = [];
 const rects: number[][] = [];
 const roundRects: number[][] = [];
+const clips: number[] = [];
+const textAt: Array<[string, number, number]> = [];
 const fills: string[] = [];
 const strokes: string[] = [];
 function stubContext(): CanvasRenderingContext2D {
   const base: Record<string, unknown> = {
     measureText: (t: string) => ({ width: t.length * 6 }),
     arc: (...a: number[]) => { arcs.push(a); },
-    fillText: (s: string) => { texts.push(s); },
+    fillText: (s: string, x: number, y: number) => { texts.push(s); textAt.push([s, x, y]); },
+    clip: () => { clips.push(1); },
     setLineDash: (a: number[]) => { dashes.push(a); },
     fillRect: (...a: number[]) => { rects.push(a); },
     roundRect: (...a: number[]) => { roundRects.push(a); },
@@ -74,6 +82,15 @@ function mockApi(timeline: 'ok' | 'error' | 'empty' = 'ok') {
   });
 }
 
+function mockApiBig() {
+  const big = makeBigTimeline();
+  get.mockImplementation(async (path: string) => {
+    if (path.startsWith('/api/feeds/overview')) return { success: true, data: FEEDS_FIXTURE };
+    if (path.startsWith('/api/agents/timeline')) return { success: true, data: big };
+    return { success: true, data: [] };
+  });
+}
+
 function pointer(el: Element, x: number, y: number, type = 'pointermove') {
   fireEvent(el, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
 }
@@ -84,6 +101,8 @@ beforeEach(() => {
   dashes.length = 0;
   rects.length = 0;
   roundRects.length = 0;
+  clips.length = 0;
+  textAt.length = 0;
   fills.length = 0;
   strokes.length = 0;
   frames = [];
@@ -597,11 +616,11 @@ describe('AgentNetworkView', () => {
       renderView();
       await tapeCanvas();
       expect(timelineCalls()).toEqual(['/api/agents/timeline?window=1h']);
-      const group = screen.getByRole('group', { name: 'Timeline window' });
-      expect(within(group).getByRole('button', { name: 'Last hour' })).toHaveAttribute('aria-pressed', 'true');
-      fireEvent.click(within(group).getByRole('button', { name: 'Last 24 hours' }));
+      const group = screen.getByRole('group', { name: 'Run tape window' });
+      expect(within(group).getByRole('button', { name: '1 hour' })).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.click(within(group).getByRole('button', { name: '24 hours' }));
       await waitFor(() => expect(timelineCalls()).toContain('/api/agents/timeline?window=24h'));
-      expect(within(group).getByRole('button', { name: 'Last 24 hours' })).toHaveAttribute('aria-pressed', 'true');
+      expect(within(group).getByRole('button', { name: '24 hours' })).toHaveAttribute('aria-pressed', 'true');
       expect(window.localStorage.getItem('averrow.agents.timelineWindow')).toBe('24h');
       await waitFor(() => expect(screen.getByRole('heading', { name: /last 24 hours/i })).toBeInTheDocument());
     });
@@ -619,7 +638,7 @@ describe('AgentNetworkView', () => {
       renderView();
       await tapeCanvas();
       expect(timelineCalls()[0]).toBe('/api/agents/timeline?window=1h');
-      fireEvent.click(screen.getByRole('button', { name: 'Last 24 hours' }));
+      fireEvent.click(screen.getByRole('button', { name: '24 hours' }));
       await waitFor(() => expect(timelineCalls()).toContain('/api/agents/timeline?window=24h'));
     });
 
@@ -675,7 +694,8 @@ describe('AgentNetworkView', () => {
       texts.length = 0;
       runFrames();
       runFrames();
-      expect(texts).toContain('06:00');
+      // 06:00 sits under the NOW pill, so its label steps aside
+      expect(texts).not.toContain('06:00');
       expect(texts).toContain('04:00');
       expect(texts).toContain('02:00');
       expect(texts).not.toContain('06:10'); // the hour view's 10-minute ticks
@@ -686,7 +706,7 @@ describe('AgentNetworkView', () => {
       await tapeCanvas();
       fireEvent.keyDown(slider(), { key: 'End' });
       expect(screen.getByTestId('live-chip')).toHaveAttribute('data-state', 'replay');
-      fireEvent.click(screen.getByRole('button', { name: 'Last 24 hours' }));
+      fireEvent.click(screen.getByRole('button', { name: '24 hours' }));
       expect(screen.getByTestId('live-chip')).not.toHaveAttribute('data-state', 'replay');
     });
 
@@ -704,7 +724,7 @@ describe('AgentNetworkView', () => {
       const spans = big.runs.length + big.pulls.length;
       expect(spans).toBe(10_000);
       // far fewer primitives than spans, in a single frame
-      expect(drawn).toBeLessThan(spans * 0.8);
+      expect(drawn).toBeLessThan(spans * 0.9);
       expect(drawn).toBeGreaterThan(0);
     });
   });
@@ -738,7 +758,7 @@ describe('AgentNetworkView', () => {
       renderView();
       await tapeCanvas();
       const legend = screen.getByRole('list', { name: 'Legend' });
-      expect(legend).toHaveTextContent('Colour = agent');
+      expect(legend).toHaveTextContent('Each agent has its own colour');
       expect(legend).toHaveTextContent('Failed: red ring with ×');
       await waitFor(() => expect(frames.length).toBeGreaterThan(0));
       act(() => { frames.splice(0).forEach((f) => f()); });
@@ -746,6 +766,115 @@ describe('AgentNetworkView', () => {
       // sentinel's identity colour (#38BDF8) tints its idle ring; a red failed bar uses the red token
       expect(fills.some((f) => f.startsWith('rgba(56,189,248'))).toBe(true);
       expect(strokes.some((s) => s.startsWith('rgba(248,113,113'))).toBe(true);
+    });
+  });
+
+  describe('status signals that do not depend on lane hue', () => {
+    const runFrames = () => act(() => { frames.splice(0).forEach((f) => f()); });
+    const recolour = (hex: string) => AGENTS_FIXTURE.map((a) => ({ ...a, color: hex }));
+
+    it.each(['#E5A832', '#C83C3C', '#38BDF8'])('hatches a partial run whatever the lane colour (%s)', async (hex) => {
+      renderWithProviders(<AgentNetworkView agents={recolour(hex)} selectedAgent={null} onSelect={vi.fn()} />);
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      clips.length = 0;
+      runFrames();
+      runFrames();
+      expect(clips.length).toBeGreaterThan(0); // the hatch is clipped to the bar
+      expect(strokes.some((s) => s.startsWith('rgba(251,191,36'))).toBe(true); // --sev-medium hatch lines
+    });
+
+    it('draws a failed bar even when it is tiny on 24h (at least 3px wide, outlined in red)', async () => {
+      mockApiBig();
+      window.localStorage.setItem('averrow.agents.timelineWindow', '24h');
+      renderView();
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      roundRects.length = 0;
+      strokes.length = 0;
+      runFrames();
+      expect(roundRects.some((r) => r[2] === 3)).toBe(true); // failed bars never fall below 3px
+      expect(strokes.some((s) => s.startsWith('rgba(248,113,113'))).toBe(true);
+      window.localStorage.clear();
+    });
+
+    it('keeps tick labels clear of the NOW pill and inside the canvas', async () => {
+      renderView();
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      textAt.length = 0;
+      runFrames();
+      const now = textAt.find(([s]) => s === 'NOW')!;
+      expect(now).toBeDefined();
+      const ticks = textAt.filter(([s, , y]) => /^\d\d:\d\d$/.test(s) && y === 16);
+      expect(ticks.length).toBeGreaterThan(2);
+      for (const [s, x] of ticks) {
+        expect(Math.abs(x - now[1]), s).toBeGreaterThanOrEqual(34); // clear of the 36px pill
+        expect(x + 17, s).toBeLessThanOrEqual(640); // does not overflow the (minimum 640px) canvas
+      }
+      expect(ticks.map(([s]) => s)).not.toContain('06:10'); // 19px from NOW: collided before
+    });
+  });
+
+  describe('window toggle names and the replay hand-off', () => {
+    it('the toggle buttons are named by their visible text, in a labelled group', async () => {
+      renderView();
+      await tapeCanvas();
+      const group = screen.getByRole('group', { name: 'Run tape window' });
+      for (const label of ['1 hour', '24 hours']) {
+        const b = within(group).getByRole('button', { name: label });
+        expect(b).not.toHaveAttribute('aria-label');
+        expect(b).toHaveTextContent(label);
+      }
+    });
+
+    it('disables Replay while the other window loads, then follows the new payload', async () => {
+      const NOW_MS = Date.parse(TIMELINE_FIXTURE.generated_at);
+      let release: (v: unknown) => void = () => {};
+      const gate = new Promise((r) => { release = r; });
+      get.mockImplementation(async (path: string) => {
+        if (path.startsWith('/api/feeds/overview')) return { success: true, data: FEEDS_FIXTURE };
+        if (path.includes('window=24h')) {
+          await gate;
+          return { success: true, data: { ...TIMELINE_FIXTURE, window: '24h', window_start: new Date(NOW_MS - 86_400_000).toISOString() } };
+        }
+        return { success: true, data: TIMELINE_FIXTURE };
+      });
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: '24 hours' }));
+      // still showing the hour payload as placeholder: Replay must not start on it
+      const start = await screen.findByRole('button', { name: /Replay last/ });
+      await waitFor(() => expect(start).toHaveAttribute('aria-disabled', 'true'));
+      expect(start.getAttribute('title')).toMatch(/Loading the 24 hour data/);
+      fireEvent.click(start);
+      expect(screen.getByTestId('live-chip')).not.toHaveAttribute('data-state', 'replay');
+      act(() => release(null));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Replay last 24 hours/ })).not.toHaveAttribute('aria-disabled'));
+    });
+
+    it('does not rebuild the replay index on play, pause or speed changes', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: /Replay last hour/ }));
+      const calls = () => (activityMod.indexTimeline as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+      const before = calls();
+      fireEvent.click(screen.getByRole('button', { name: '60 times speed' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Pause replay' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Play replay' }));
+      expect(calls()).toBe(before);
+    });
+
+    it('puts the legend behind a Key disclosure that toggles', async () => {
+      renderView();
+      await tapeCanvas();
+      const key = screen.getByRole('button', { name: 'Key' });
+      expect(key).toHaveAttribute('aria-expanded', 'false');
+      const legend = screen.getByRole('list', { name: 'Legend' });
+      expect(legend.className).toMatch(/\bhidden\b/);
+      fireEvent.click(key);
+      expect(key).toHaveAttribute('aria-expanded', 'true');
+      expect(legend.className).toMatch(/\bflex\b/);
     });
   });
 

@@ -8,7 +8,7 @@ import { REPLAY_SPEEDS, canHandleReplayKey, speedAria, speedLabel, type ReplaySp
 
 export interface ReplayControlsProps {
   /** The timeline window: sets the available speeds and their labels. */
-  window?: TimelineWindow;
+  timelineWindow?: TimelineWindow;
   /** In replay mode. */
   active: boolean;
   /** Live: a payload exists to replay. */
@@ -33,13 +33,13 @@ export interface ReplayControlsProps {
 const btn: React.CSSProperties = { color: 'var(--text-secondary)' };
 
 export function ReplayControls({
-  window = '1h', active, canStart, startHint, playing, speed, atEnd, playDisabled,
+  timelineWindow = '1h', active, canStart, startHint, playing, speed, atEnd, playDisabled,
   onStart, onPlayPause, onSpeed, onBack, onStep, startRef, playRef,
 }: ReplayControlsProps) {
   const playLabel = playing ? 'Pause' : atEnd ? 'Restart' : 'Play';
   return (
     <div
-      className="flex flex-wrap items-center gap-1 p-1 rounded"
+      className="flex flex-wrap items-center gap-1 p-1 rounded w-full sm:w-auto"
       role="group"
       aria-label="Replay"
       data-testid="replay-controls"
@@ -56,14 +56,14 @@ export function ReplayControls({
         <button
           ref={startRef}
           type="button"
-          className="agn-btn h-7 px-2.5 rounded font-mono text-[11px] inline-flex items-center gap-1.5"
+          className="agn-btn h-7 px-2.5 rounded font-mono text-[11px] inline-flex items-center justify-center gap-1.5 w-full sm:w-auto"
           style={btn}
           aria-disabled={!canStart ? true : undefined}
-          title={startHint ?? `Replay the last ${window === '24h' ? '24 hours' : 'hour'}. You can also click or drag the run tape's time scale.`}
+          title={startHint ?? `Replay the last ${timelineWindow === '24h' ? '24 hours' : 'hour'}. You can also click or drag the run tape's time scale.`}
           onClick={() => { if (canStart) onStart(); }}
         >
           <History size={14} aria-hidden="true" />
-          Replay last {window === '24h' ? '24 hours' : 'hour'}
+          Replay last {timelineWindow === '24h' ? '24 hours' : 'hour'}
         </button>
       ) : (
         <>
@@ -80,7 +80,7 @@ export function ReplayControls({
             {playLabel}
           </button>
           <div className="flex gap-1" role="group" aria-label="Replay speed">
-            {REPLAY_SPEEDS[window].map((s) => {
+            {REPLAY_SPEEDS[timelineWindow].map((s) => {
               const on = speed === s;
               return (
                 <button
@@ -93,11 +93,11 @@ export function ReplayControls({
                     border: `1px solid ${on ? 'var(--primary-border)' : 'transparent'}`,
                     fontWeight: on ? 600 : 400,
                   }}
-                  aria-label={speedAria(window, s)}
+                  aria-label={speedAria(timelineWindow, s)}
                   aria-pressed={on}
                   onClick={() => onSpeed(s)}
                 >
-                  {speedLabel(window, s)}
+                  {speedLabel(timelineWindow, s)}
                 </button>
               );
             })}

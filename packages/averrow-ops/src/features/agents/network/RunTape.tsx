@@ -131,12 +131,15 @@ export function RunTape({
 
     // Playhead pill geometry first, so tick labels can step aside.
     const xn = g.x(now);
-    let pill: { lx: number; lw: number } | null = null;
+    // In live mode the NOW pill is the box a tick label must clear.
+    let pill: { lx: number; lw: number };
     if (replay) {
       ctx.font = `600 10px ${MONO}`;
       const lw = ctx.measureText(fmtHMS(now)).width + 10;
       const rightSide = xn > g.x1 - 70;
       pill = { lx: rightSide ? xn - 10 - lw : xn + 10, lw };
+    } else {
+      pill = { lx: xn - 18, lw: 36 };
     }
 
     // Time grid.
@@ -151,7 +154,8 @@ export function RunTape({
       ctx.moveTo(x, TAPE_TOP - 8);
       ctx.lineTo(x, g.height - 8);
       ctx.stroke();
-      const hidden = pill && x + 16 > pill.lx - 6 && x - 16 < pill.lx + pill.lw + 6;
+      // Skip a label that would run into the playhead / NOW pill or off the canvas.
+      const hidden = (x + 16 > pill.lx - 6 && x - 16 < pill.lx + pill.lw + 6) || x + 17 > g.width;
       if (!hidden) {
         ctx.fillStyle = c('--text-muted');
         ctx.fillText(fmtHM(t), x, 16);
@@ -201,7 +205,8 @@ export function RunTape({
 
       // Lane colour: the agent's identity (feed groups: their own), muted lanes dimmer.
       const laneCss = (a: number) => (identity ? identity.css(lane.id, a) : c('--primary', a));
-      const barAlpha = lane.muted ? 0.55 : 0.8;
+      // Retired / on-demand lanes sit back; on 24h they drop to about 60% of that.
+      const barAlpha = lane.muted ? (windowMs > TAPE_WINDOW_MS ? 0.33 : 0.55) : 0.8;
       if (identity) {
         ctx.fillStyle = laneCss(1);
         ctx.beginPath();
@@ -216,7 +221,7 @@ export function RunTape({
         if (end < g.startMs || s.startMs > g.endMs) continue;
         const xa = g.x(Math.max(s.startMs, g.startMs));
         const xb = g.x(Math.min(end, g.endMs));
-        const w = Math.max(xb - xa, windowMs > TAPE_WINDOW_MS ? 1.5 : 3);
+        const w = Math.max(xb - xa, s.status === 'failed' ? 3 : windowMs > TAPE_WINDOW_MS ? 1.5 : 3);
         const radii = s.clipped ? [0, 3, 3, 0] : 3;
 
         if (replay && s.startMs > now) {
@@ -255,12 +260,12 @@ export function RunTape({
             ctx.setLineDash([]);
           } else {
             if (s.status === 'failed') {
-              // Failure is a hollow, striped red bar: never confusable with a
-              // red-family lane colour, which draws as a solid fill.
+              // Failure: a 2px red outline and a diagonal stripe, never a solid
+              // fill, so a red-family lane colour (solid = ok) cannot hide it.
               ctx.fillStyle = c('--sev-critical', 0.16);
               ctx.fill();
               ctx.strokeStyle = c('--sev-critical');
-              ctx.lineWidth = 1.6;
+              ctx.lineWidth = 2;
               ctx.stroke();
               if (w >= 6) {
                 ctx.beginPath();
@@ -268,9 +273,35 @@ export function RunTape({
                 ctx.lineTo(xa + w - 2, y + 5);
                 ctx.stroke();
               }
-            } else {
-              ctx.fillStyle = s.status === 'partial' ? partial(0.85) : laneCss(barAlpha);
+            } else if (s.status === 'partial') {
+              // Partial: a hatched amber bar, so an amber-family lane cannot hide it.
+              ctx.fillStyle = partial(0.22);
               ctx.fill();
+              ctx.save();
+              ctx.clip();
+              ctx.strokeStyle = partial(0.95);
+              ctx.lineWidth = 1.4;
+              ctx.beginPath();
+              for (let hx = xa - g.lh; hx < xa + w; hx += 4) {
+                ctx.moveTo(hx, y + g.lh - 4);
+                ctx.lineTo(hx + g.lh - 8, y + 4);
+              }
+              ctx.stroke();
+              ctx.restore();
+              ctx.strokeStyle = partial(1);
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.roundRect(xa, y + 4, w, g.lh - 8, radii);
+              ctx.stroke();
+            } else {
+              ctx.fillStyle = laneCss(barAlpha);
+              ctx.fill();
+              if (w >= 4) {
+                // A thin neutral inner edge: solid with an edge always means ok.
+                ctx.strokeStyle = c('--text-primary', 0.2);
+                ctx.lineWidth = 1;
+                ctx.stroke();
+              }
             }
           }
           if (running) {
@@ -427,7 +458,7 @@ export function RunTape({
         className="font-mono text-[11px] px-3 py-4"
         style={{ color: 'var(--text-tertiary)', minHeight: 180 }}
       >
-        {status === 'loading' && <span role="status">Loading the last hour of runs…</span>}
+        {status === 'loading' && <span role="status">Loading the {windowWord} of runs…</span>}
         {status === 'error' && 'Run timeline unavailable. The map above still shows structure.'}
         {status === 'ready' && <span role="status">No agent runs or feed pulls in the {windowWord}.</span>}
       </div>

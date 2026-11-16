@@ -143,6 +143,8 @@ export function barsForLane(index: TimelineIndex, lane: string, quantum: number)
   const hit = perIndex.get(key);
   if (hit) return hit;
   const out: Bar[] = [];
+  // Failures are never merged away: they keep their own bar and come last, so they draw (and hit-test) on top.
+  const failed: Bar[] = [];
   let group: { first: Span; last: Span; end: number; worst: Span; n: number } | null = null;
   const flush = () => {
     if (!group) return;
@@ -156,6 +158,7 @@ export function barsForLane(index: TimelineIndex, lane: string, quantum: number)
     group = null;
   };
   for (const s of spans) {
+    if (s.status === 'failed') { failed.push(s); continue; }
     const tiny = s.endMs !== null && s.endMs - s.startMs < quantum;
     if (!tiny) { flush(); out.push(s); continue; }
     const end = s.endMs as number;
@@ -170,6 +173,7 @@ export function barsForLane(index: TimelineIndex, lane: string, quantum: number)
     }
   }
   flush();
+  out.push(...failed);
   perIndex.set(key, out);
   return out;
 }

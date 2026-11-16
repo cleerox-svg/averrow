@@ -116,7 +116,7 @@ describe('24h tape geometry and bars', () => {
     expect(barsForLane(idx, 'feeds:ingest', quantum * 2)).not.toBe(barsForLane(idx, 'feeds:ingest', quantum));
   });
 
-  it('keeps the worst status in a merged bar and hit-tests to its representative span', () => {
+  it('never merges a failed run away: it keeps its own bar, last, and wins the hit test', () => {
     const t0 = NOW - 3600_000;
     const mk = (id: number, off: number, status: 'success' | 'failed') => ({
       id, agent_id: 'sentinel', source: 'agent_runs' as const, started_at: new Date(t0 + off).toISOString(),
@@ -127,9 +127,12 @@ describe('24h tape geometry and bars', () => {
       runs: [mk(1, 0, 'success'), mk(2, 10_000, 'failed'), mk(3, 20_000, 'success')] };
     const index = indexTimeline(tl, FEEDS_FIXTURE);
     const bars = barsForLane(index, 'sentinel', quantum);
-    expect(bars).toHaveLength(1);
-    expect(bars[0]!.status).toBe('failed');
-    expect(bars[0]!.count).toBe(3);
+    // the two healthy runs merge; the failure keeps its own bar, drawn last (on top)
+    expect(bars).toHaveLength(2);
+    expect(bars[0]!.count).toBe(2);
+    expect(bars[0]!.status).toBe('success');
+    expect(bars[1]!.status).toBe('failed');
+    expect(bars[1]!.id).toBe(2);
     const g = tapeGeometry(1000, 1, NOW, DAY_MS);
     const hit = tapeHitTest(g, [{ id: 'sentinel', label: 'Sentinel', agent: true, muted: false }], index, NOW,
       g.x(t0 + 10_000), g.top + 5, quantum);

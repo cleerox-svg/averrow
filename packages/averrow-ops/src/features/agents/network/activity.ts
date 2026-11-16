@@ -29,11 +29,15 @@ export interface Span {
   suspect?: boolean;
 }
 
-/** An open run is only known to be open as of generated_at; the response is
- *  cached up to ~60s and refetched every 60s, so never extend one past generated_at + this (90s keeps the cap from flickering between refetches). */
-export const OPEN_RUN_CAP_MS = 90_000;
-/** The 24h payload refetches every 300s (cached up to ~5 min), so its cap is longer. */
-export const OPEN_RUN_CAP_24H_MS = 7 * 60_000;
+/**
+ * An open run is only known to be open as of generated_at. The response can be
+ * as old as its server cache TTL plus one refetch interval, so never extend an
+ * open run past generated_at + this. 1h: 60 s TTL + 60 s refetch, rounded to 2
+ * minutes. 24h: 300 s + 300 s, plus 30 s of slack. Shorter caps flicker
+ * runs to "status unknown" mid-cycle.
+ */
+export const OPEN_RUN_CAP_MS = 120_000;
+export const OPEN_RUN_CAP_24H_MS = 630_000;
 /** An open run this much older than generated_at is suspect: the worker's
  *  reaper ceiling is 90 minutes, so it is almost certainly an orphan. It is
  *  drawn as "status unknown" in live and replay, never as running. */
@@ -50,6 +54,8 @@ export interface TimelineIndex {
   maxDur: Map<string, number>;
   /** Open spans per lane (few), so per-frame scans skip them in the long list. */
   opens: Map<string, Span[]>;
+  /** Feed-group lanes split by feed, each sorted, with its longest finished span. */
+  members: Map<string, Map<string, { spans: Span[]; maxDur: number }>>;
   /** pivot_detected events (the only EVENT edge). */
   events: Array<{ source: string; target: string | null; createdMs: number; status: string }>;
   /** Spans per lane id: agent id, or a feed group node id, or FEED_NRD. */
@@ -100,7 +106,7 @@ export function indexTimeline(
     const list = lanes.get(lane);
     if (list) list.push(span); else lanes.set(lane, [span]);
   };
-  if (!timeline) return { lanes, windowStart: 0, windowEnd: 0, capMs: 0, expected: new Map(), maxDur: new Map(), opens: new Map(), events: [] };
+  if (!timeline) return { lanes, windowStart: 0, windowEnd: 0, capMs: 0, expected: new Map(), maxDur: new Map(), opens: new Map(), members: new Map(), events: [] };
   const laneOfFeed = new Map(feeds.map((f) => [f.feed_name, feedLaneId(f)]));
   for (const r of timeline.runs) push(r.agent_id, runSpan(r));
   for (const p of timeline.pulls) {
@@ -110,6 +116,7 @@ export function indexTimeline(
   const expected = new Map<string, number>();
   const maxDur = new Map<string, number>();
   const opens = new Map<string, Span[]>();
+  const members = new Map<string, Map<string, { spans: Span[]; maxDur: number }>>();
   const genMs = ts(timeline.generated_at) ?? ts(timeline.window_end) ?? 0;
   for (const [lane, list] of lanes) {
     for (const s of list) if (s.endMs === null && genMs > 0 && s.startMs < genMs - OPEN_RUN_SUSPECT_MS) s.suspect = true;
@@ -121,13 +128,23 @@ export function indexTimeline(
       if (s.endMs === null) op.push(s); else md = Math.max(md, s.endMs - s.startMs);
     }
     maxDur.set(lane, md);
+    if (lane.startsWith('feeds:') || lane === FEED_NRD) {
+      const byMember = new Map<string, { spans: Span[]; maxDur: number }>();
+      for (const s of list) {
+        let m = byMember.get(s.member);
+        if (!m) { m = { spans: [], maxDur: 0 }; byMember.set(s.member, m); }
+        m.spans.push(s);
+        if (s.endMs !== null) m.maxDur = Math.max(m.maxDur, s.endMs - s.startMs);
+      }
+      members.set(lane, byMember);
+    }
     if (op.length) opens.set(lane, op);
   }
   const events = timeline.events
     .map((e) => ({ source: e.source_agent, target: e.target_agent, createdMs: ts(e.created_at) ?? 0, status: e.status }))
     .filter((e) => e.createdMs > 0);
   return {
-    lanes, expected, maxDur, opens, events,
+    lanes, expected, maxDur, opens, members, events,
     windowStart: ts(timeline.window_start) ?? 0,
     windowEnd: ts(timeline.window_end) ?? 0,
     capMs: (ts(timeline.generated_at) ?? ts(timeline.window_end) ?? 0)
@@ -284,20 +301,42 @@ export function activeMembers(
   lane: string,
   now: number,
 ): Map<string, { running: boolean; failed: boolean; emitting: boolean; records: number }> {
-  const out = new Map<string, { running: boolean; failed: boolean; emitting: boolean; records: number; lastEnd: number }>();
-  for (const s of index.lanes.get(lane) ?? []) {
-    if (s.startMs > now) continue;
-    const cur = out.get(s.member) ?? { running: false, failed: false, emitting: false, records: 0, lastEnd: -1 };
-    if (s.endMs === null) {
-      if (s.suspect || now > index.capMs) continue;
-      cur.running = true; cur.emitting = true; cur.records += s.records;
-    } else if (s.endMs > now) {
-      cur.running = true; cur.emitting = true; cur.records += s.records;
-    } else {
-      if (s.endMs >= cur.lastEnd) { cur.lastEnd = s.endMs; cur.failed = s.status === 'failed'; }
-      if (now - s.endMs <= TRANSIT_TAIL_MS) { cur.emitting = true; cur.records += s.records; }
-    }
+  const out = new Map<string, { running: boolean; failed: boolean; emitting: boolean; records: number }>();
+  const byMember = index.members.get(lane);
+  if (!byMember) return out;
+  // Same scan-back as computeLaneActivity, per feed: binary-search the
+  // playhead, then walk back only as far as a finished span could still
+  // matter. Open pulls are rare and found in the lane's open list.
+  for (const s of index.opens.get(lane) ?? []) {
+    if (s.startMs > now || s.suspect || now > index.capMs) continue;
+    const cur = out.get(s.member) ?? { running: false, failed: false, emitting: false, records: 0 };
+    cur.running = true; cur.emitting = true; cur.records += s.records;
     out.set(s.member, cur);
+  }
+  for (const [member, { spans, maxDur }] of byMember) {
+    const hi = upperBound(spans, now);
+    let lastFin: Span | null = null;
+    let cur = out.get(member);
+    for (let i = hi - 1; i >= 0; i--) {
+      const s = spans[i]!;
+      if (s.endMs === null) continue;
+      if (s.startMs + maxDur < now - TRANSIT_TAIL_MS && lastFin && s.startMs + maxDur < (lastFin.endMs as number)) break;
+      if (s.endMs > now) {
+        cur ??= { running: false, failed: false, emitting: false, records: 0 };
+        cur.running = true; cur.emitting = true; cur.records += s.records;
+      } else {
+        if (!lastFin || s.endMs >= (lastFin.endMs as number)) lastFin = s;
+        if (now - s.endMs <= TRANSIT_TAIL_MS) {
+          cur ??= { running: false, failed: false, emitting: false, records: 0 };
+          cur.emitting = true; cur.records += s.records;
+        }
+      }
+    }
+    if (lastFin || cur) {
+      cur ??= { running: false, failed: false, emitting: false, records: 0 };
+      cur.failed = !!lastFin && lastFin.status === 'failed';
+      out.set(member, cur);
+    }
   }
   return out;
 }

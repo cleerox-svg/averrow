@@ -94,16 +94,16 @@ export function storeWindow(w: TimelineWindow): void {
   try { window.localStorage.setItem(WINDOW_STORAGE_KEY, w); } catch { /* blocked storage: per-session only */ }
 }
 
-export function useAgentTimeline(window: TimelineWindow = '1h') {
+export function useAgentTimeline(timelineWindow: TimelineWindow = '1h') {
   return useQuery({
-    queryKey: ['agents', 'timeline', window],
+    queryKey: ['agents', 'timeline', timelineWindow],
     queryFn: async () => {
-      const res = await api.get<AgentTimeline>(`/api/agents/timeline?window=${window}`);
+      const res = await api.get<AgentTimeline>(`/api/agents/timeline?window=${timelineWindow}`);
       if (!res.success || !res.data) throw new Error(res.error ?? 'Timeline unavailable');
       return res.data;
     },
     placeholderData: keepPreviousData,
-    refetchInterval: window === '24h' ? TIMELINE_REFETCH_24H_MS : TIMELINE_REFETCH_MS,
+    refetchInterval: timelineWindow === '24h' ? TIMELINE_REFETCH_24H_MS : TIMELINE_REFETCH_MS,
     // A failed refetch keeps the last good data on screen; the view shows a
     // quiet "timeline unavailable" note only when there is nothing to draw.
   });

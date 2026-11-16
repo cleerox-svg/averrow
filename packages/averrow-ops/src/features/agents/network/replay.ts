@@ -20,14 +20,14 @@ export const SLIDER_STEPS: Record<TimelineWindow, { coarse: number; fine: number
 };
 
 /** Visible speed label: "10×" on the hour view, "10 min/s" on 24h. */
-export function speedLabel(window: TimelineWindow, speed: ReplaySpeed): string {
-  if (window === '1h') return `${speed}×`;
+export function speedLabel(timelineWindow: TimelineWindow, speed: ReplaySpeed): string {
+  if (timelineWindow === '1h') return `${speed}×`;
   return speed >= 3600 ? `${speed / 3600} h/s` : `${speed / 60} min/s`;
 }
 
 /** Spoken speed label. */
-export function speedAria(window: TimelineWindow, speed: ReplaySpeed): string {
-  if (window === '1h') return `${speed} times speed`;
+export function speedAria(timelineWindow: TimelineWindow, speed: ReplaySpeed): string {
+  if (timelineWindow === '1h') return `${speed} times speed`;
   return speed >= 3600
     ? `${speed / 3600} ${speed === 3600 ? 'hour' : 'hours'} per second`
     : `${speed / 60} ${speed === 60 ? 'minute' : 'minutes'} per second`;
@@ -51,17 +51,17 @@ export function advancePlayhead(
 /** One keyboard step: 1 min, or 10 s with Shift. */
 export function stepPlayhead(
   playhead: number, direction: -1 | 1, fine: boolean, start: number, end: number,
-  window: TimelineWindow = '1h',
+  timelineWindow: TimelineWindow = '1h',
 ): number {
-  const st = SLIDER_STEPS[window];
+  const st = SLIDER_STEPS[timelineWindow];
   return clampPlayhead(playhead + direction * (fine ? st.fine : st.coarse), start, end);
 }
 
 /** PageUp / PageDown: a coarse jump on the 24h view (one hour); no-op on 1h. */
 export function pagePlayhead(
-  playhead: number, direction: -1 | 1, start: number, end: number, window: TimelineWindow,
+  playhead: number, direction: -1 | 1, start: number, end: number, timelineWindow: TimelineWindow,
 ): number {
-  const page = SLIDER_STEPS[window].page;
+  const page = SLIDER_STEPS[timelineWindow].page;
   return page === null ? playhead : clampPlayhead(playhead + direction * page, start, end);
 }
 
