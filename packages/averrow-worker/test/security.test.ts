@@ -87,6 +87,23 @@ describe("applySecurityHeaders", () => {
     }
   });
 
+  it("pins script-src to an exact allowlist", () => {
+    // Positive allowlist: any new script source must be added here on
+    // purpose, not slipped into the policy.
+    expect(directive(buildContentSecurityPolicy("/ops/"), "script-src")).toBe(
+      "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
+    );
+    expect(directive(buildContentSecurityPolicy("/scan/"), "script-src")).toBe(
+      "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://challenges.cloudflare.com",
+    );
+  });
+
+  it("allows no scheme-wide connect source and no plugins", () => {
+    const csp = buildContentSecurityPolicy("/ops/");
+    expect(directive(csp, "connect-src").split(" ")).not.toContain("wss:");
+    expect(directive(csp, "object-src")).toBe("object-src 'none'");
+  });
+
   it("adds Referrer-Policy", () => {
     const res = applySecurityHeaders(makeResponse());
     expect(res.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
