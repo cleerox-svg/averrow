@@ -6,15 +6,20 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '@/test/utils';
-import { AgentNetworkView } from './AgentNetworkView';
+import { AgentNetworkView, FOCUS_CSS } from './AgentNetworkView';
 import {
-  AGENTS_FIXTURE, FEEDS_FIXTURE, TIMELINE_FIXTURE,
+  AGENTS_FIXTURE, FEEDS_FIXTURE, TIMELINE_FIXTURE, makeBigTimeline,
 } from '../network/fixtures';
 import { computeLayout, placeAgents } from '../network/model';
 import { buildTapeLanes, tapeGeometry } from '../network/tape';
 import { indexTimeline } from '../network/activity';
+import * as activityMod from '../network/activity';
 
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }));
+vi.mock('../network/activity', async (importOriginal) => {
+  const m = await importOriginal<typeof import('../network/activity')>();
+  return { ...m, indexTimeline: vi.fn(m.indexTimeline) };
+});
 import { api } from '@/lib/api';
 const get = api.get as unknown as ReturnType<typeof vi.fn>;
 
@@ -23,17 +28,29 @@ const arcs: number[][] = [];
 const texts: string[] = [];
 const dashes: number[][] = [];
 const rects: number[][] = [];
+const roundRects: number[][] = [];
+const clips: number[] = [];
+const textAt: Array<[string, number, number]> = [];
+const fills: string[] = [];
+const strokes: string[] = [];
 function stubContext(): CanvasRenderingContext2D {
   const base: Record<string, unknown> = {
     measureText: (t: string) => ({ width: t.length * 6 }),
     arc: (...a: number[]) => { arcs.push(a); },
-    fillText: (s: string) => { texts.push(s); },
+    fillText: (s: string, x: number, y: number) => { texts.push(s); textAt.push([s, x, y]); },
+    clip: () => { clips.push(1); },
     setLineDash: (a: number[]) => { dashes.push(a); },
     fillRect: (...a: number[]) => { rects.push(a); },
+    roundRect: (...a: number[]) => { roundRects.push(a); },
   };
   return new Proxy(base, {
     get: (t, k) => (k in t ? t[k as string] : () => undefined),
-    set: (t, k, v) => { t[k as string] = v; return true; },
+    set: (t, k, v) => {
+      if (k === 'fillStyle') fills.push(String(v));
+      if (k === 'strokeStyle') strokes.push(String(v));
+      t[k as string] = v;
+      return true;
+    },
   }) as unknown as CanvasRenderingContext2D;
 }
 /** Particle cores are the only arcs drawn with radius 2.2. */
@@ -65,6 +82,15 @@ function mockApi(timeline: 'ok' | 'error' | 'empty' = 'ok') {
   });
 }
 
+function mockApiBig() {
+  const big = makeBigTimeline();
+  get.mockImplementation(async (path: string) => {
+    if (path.startsWith('/api/feeds/overview')) return { success: true, data: FEEDS_FIXTURE };
+    if (path.startsWith('/api/agents/timeline')) return { success: true, data: big };
+    return { success: true, data: [] };
+  });
+}
+
 function pointer(el: Element, x: number, y: number, type = 'pointermove') {
   fireEvent(el, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
 }
@@ -74,6 +100,11 @@ beforeEach(() => {
   texts.length = 0;
   dashes.length = 0;
   rects.length = 0;
+  roundRects.length = 0;
+  clips.length = 0;
+  textAt.length = 0;
+  fills.length = 0;
+  strokes.length = 0;
   frames = [];
   reduced = false;
   installMatchMedia();
@@ -559,6 +590,291 @@ describe('AgentNetworkView', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: /Replay last hour/ }));
       expect(within(dialog).getByTestId('replay-controls')).toBeInTheDocument();
       expect(within(dialog).getByTestId('live-chip')).toHaveAttribute('data-state', 'replay');
+    });
+  });
+
+  describe('timeline window (1h | 24h)', () => {
+    const DAY = 24 * 60 * 60_000;
+    const NOW_MS = Date.parse(TIMELINE_FIXTURE.generated_at);
+    const payload24 = { ...TIMELINE_FIXTURE, window: '24h' as const, window_start: new Date(NOW_MS - DAY).toISOString() };
+    const timelineCalls = () => get.mock.calls.map(([p]) => String(p)).filter((p) => p.startsWith('/api/agents/timeline'));
+    const mockWindows = (big?: unknown) => {
+      get.mockImplementation(async (path: string) => {
+        if (path.startsWith('/api/feeds/overview')) return { success: true, data: FEEDS_FIXTURE };
+        if (path.includes('window=24h')) return { success: true, data: big ?? payload24 };
+        if (path.startsWith('/api/agents/timeline')) return { success: true, data: TIMELINE_FIXTURE };
+        return { success: true, data: [] };
+      });
+    };
+    const slider = () => screen.getByRole('slider', { name: 'Replay position' });
+    const runFrames = () => act(() => { frames.splice(0).forEach((f) => f()); });
+
+    beforeEach(() => { window.localStorage.clear(); mockWindows(); });
+    afterEach(() => { window.localStorage.clear(); });
+
+    it('defaults to 1h, then asks for 24h and remembers the choice', async () => {
+      renderView();
+      await tapeCanvas();
+      expect(timelineCalls()).toEqual(['/api/agents/timeline?window=1h']);
+      const group = screen.getByRole('group', { name: 'Run tape window' });
+      expect(within(group).getByRole('button', { name: '1 hour' })).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.click(within(group).getByRole('button', { name: '24 hours' }));
+      await waitFor(() => expect(timelineCalls()).toContain('/api/agents/timeline?window=24h'));
+      expect(within(group).getByRole('button', { name: '24 hours' })).toHaveAttribute('aria-pressed', 'true');
+      expect(window.localStorage.getItem('averrow.agents.timelineWindow')).toBe('24h');
+      await waitFor(() => expect(screen.getByRole('heading', { name: /last 24 hours/i })).toBeInTheDocument());
+    });
+
+    it('a new viewer session starts on the remembered window', async () => {
+      window.localStorage.setItem('averrow.agents.timelineWindow', '24h');
+      renderView();
+      await tapeCanvas();
+      expect(timelineCalls()[0]).toBe('/api/agents/timeline?window=24h');
+    });
+
+    it('survives blocked storage and falls back to 1h', async () => {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+      renderView();
+      await tapeCanvas();
+      expect(timelineCalls()[0]).toBe('/api/agents/timeline?window=1h');
+      fireEvent.click(screen.getByRole('button', { name: '24 hours' }));
+      await waitFor(() => expect(timelineCalls()).toContain('/api/agents/timeline?window=24h'));
+    });
+
+    it('24h replay offers 1 min/s, 10 min/s and 1 h/s, defaulting to 10 min/s', async () => {
+      window.localStorage.setItem('averrow.agents.timelineWindow', '24h');
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: /Replay last 24 hours/ }));
+      const speeds = screen.getByRole('group', { name: 'Replay speed' });
+      expect(within(speeds).getByRole('button', { name: '1 minute per second' })).toHaveTextContent('1 min/s');
+      expect(within(speeds).getByRole('button', { name: '10 minutes per second' })).toHaveAttribute('aria-pressed', 'true');
+      expect(within(speeds).getByRole('button', { name: '1 hour per second' })).toHaveTextContent('1 h/s');
+    });
+
+    it('1h replay keeps its 1x / 10x / 60x speeds', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: /Replay last hour/ }));
+      const speeds = screen.getByRole('group', { name: 'Replay speed' });
+      expect(within(speeds).getAllByRole('button').map((b) => b.textContent)).toEqual(['1×', '10×', '60×']);
+    });
+
+    it('24h slider steps 10 min, Shift 1 min, PageUp/PageDown 1 h; 1h ignores paging', async () => {
+      window.localStorage.setItem('averrow.agents.timelineWindow', '24h');
+      renderView();
+      await tapeCanvas();
+      fireEvent.keyDown(slider(), { key: 'End' }); // 06:12:30
+      fireEvent.keyDown(slider(), { key: 'ArrowLeft' });
+      expect(slider()).toHaveAttribute('aria-valuetext', '06:02:30 UTC');
+      fireEvent.keyDown(slider(), { key: 'ArrowRight', shiftKey: true });
+      expect(slider()).toHaveAttribute('aria-valuetext', '06:03:30 UTC');
+      fireEvent.keyDown(slider(), { key: 'PageDown' });
+      expect(slider()).toHaveAttribute('aria-valuetext', '05:03:30 UTC');
+      fireEvent.keyDown(slider(), { key: 'PageUp' });
+      expect(slider()).toHaveAttribute('aria-valuetext', '06:03:30 UTC');
+      expect(screen.getByTestId('live-chip')).toHaveTextContent('Replay · 06:03 UTC');
+    });
+
+    it('the hour view ignores PageUp and PageDown', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.keyDown(slider(), { key: 'End' });
+      const before = slider().getAttribute('aria-valuetext');
+      fireEvent.keyDown(slider(), { key: 'PageDown' });
+      expect(slider()).toHaveAttribute('aria-valuetext', before!);
+    });
+
+    it('24h labels the axis every two hours', async () => {
+      window.localStorage.setItem('averrow.agents.timelineWindow', '24h');
+      renderView();
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      texts.length = 0;
+      runFrames();
+      runFrames();
+      // 06:00 sits under the NOW pill, so its label steps aside
+      expect(texts).not.toContain('06:00');
+      expect(texts).toContain('04:00');
+      expect(texts).toContain('02:00');
+      expect(texts).not.toContain('06:10'); // the hour view's 10-minute ticks
+    });
+
+    it('switching window leaves replay', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.keyDown(slider(), { key: 'End' });
+      expect(screen.getByTestId('live-chip')).toHaveAttribute('data-state', 'replay');
+      fireEvent.click(screen.getByRole('button', { name: '24 hours' }));
+      expect(screen.getByTestId('live-chip')).not.toHaveAttribute('data-state', 'replay');
+    });
+
+    it('keeps a worst-case 24h tape cheap: bars are merged and drawn once per frame', async () => {
+      const big = makeBigTimeline();
+      mockWindows(big);
+      window.localStorage.setItem('averrow.agents.timelineWindow', '24h');
+      renderView();
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      roundRects.length = 0;
+      rects.length = 0;
+      runFrames();
+      const drawn = roundRects.length + rects.length;
+      const spans = big.runs.length + big.pulls.length;
+      expect(spans).toBe(10_000);
+      // far fewer primitives than spans, in a single frame
+      expect(drawn).toBeLessThan(spans * 0.9);
+      expect(drawn).toBeGreaterThan(0);
+    });
+  });
+
+  describe('touch targets', () => {
+    it('keeps a 44px hit area on phones and coarse pointers for every control class', () => {
+      expect(FOCUS_CSS).toMatch(/@media \(max-width:639px\),\(pointer:coarse\)\{\.agn-btn,\.agn-chip\{min-width:44px;min-height:44px\}\.agn-slider\{min-height:44px\}\}/);
+    });
+
+    it('puts every visible button (controls, rails, chips, window toggle, replay) in a sized class', async () => {
+      // a coarse-pointer device
+      window.matchMedia = ((q: string) => ({
+        matches: q.includes('coarse'), media: q, onchange: null, addEventListener: () => {}, removeEventListener: () => {},
+        addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia;
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: /Replay last hour/ }));
+      fireEvent.click(screen.getByRole('button', { name: /Retired \(10\)/ }));
+      const root = screen.getByTestId('agent-network');
+      const visible = Array.from(root.querySelectorAll('button')).filter((b) => !b.closest('.sr-only'));
+      expect(visible.length).toBeGreaterThan(20);
+      for (const b of visible) {
+        expect(b.className, b.textContent ?? b.getAttribute('aria-label') ?? '').toMatch(/agn-(btn|chip)/);
+      }
+    });
+  });
+
+  describe('colour', () => {
+    it('draws agent nodes and tape lanes in agent colours, and the legend explains it', async () => {
+      renderView();
+      await tapeCanvas();
+      const legend = screen.getByRole('list', { name: 'Legend' });
+      expect(legend).toHaveTextContent('Each agent has its own colour');
+      expect(legend).toHaveTextContent('Failed: red ring with ×');
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      act(() => { frames.splice(0).forEach((f) => f()); });
+      act(() => { frames.splice(0).forEach((f) => f()); });
+      // sentinel's identity colour (#38BDF8) tints its idle ring; a red failed bar uses the red token
+      expect(fills.some((f) => f.startsWith('rgba(56,189,248'))).toBe(true);
+      expect(strokes.some((s) => s.startsWith('rgba(248,113,113'))).toBe(true);
+    });
+  });
+
+  describe('status signals that do not depend on lane hue', () => {
+    const runFrames = () => act(() => { frames.splice(0).forEach((f) => f()); });
+    const recolour = (hex: string) => AGENTS_FIXTURE.map((a) => ({ ...a, color: hex }));
+
+    it.each(['#E5A832', '#C83C3C', '#38BDF8'])('hatches a partial run whatever the lane colour (%s)', async (hex) => {
+      renderWithProviders(<AgentNetworkView agents={recolour(hex)} selectedAgent={null} onSelect={vi.fn()} />);
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      clips.length = 0;
+      runFrames();
+      runFrames();
+      expect(clips.length).toBeGreaterThan(0); // the hatch is clipped to the bar
+      expect(strokes.some((s) => s.startsWith('rgba(251,191,36'))).toBe(true); // --sev-medium hatch lines
+    });
+
+    it('draws a failed bar even when it is tiny on 24h (at least 3px wide, outlined in red)', async () => {
+      mockApiBig();
+      window.localStorage.setItem('averrow.agents.timelineWindow', '24h');
+      renderView();
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      roundRects.length = 0;
+      strokes.length = 0;
+      runFrames();
+      expect(roundRects.some((r) => r[2] === 3)).toBe(true); // failed bars never fall below 3px
+      expect(strokes.some((s) => s.startsWith('rgba(248,113,113'))).toBe(true);
+      window.localStorage.clear();
+    });
+
+    it('keeps tick labels clear of the NOW pill and inside the canvas', async () => {
+      renderView();
+      await tapeCanvas();
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+      textAt.length = 0;
+      runFrames();
+      const now = textAt.find(([s]) => s === 'NOW')!;
+      expect(now).toBeDefined();
+      const ticks = textAt.filter(([s, , y]) => /^\d\d:\d\d$/.test(s) && y === 16);
+      expect(ticks.length).toBeGreaterThan(2);
+      for (const [s, x] of ticks) {
+        expect(Math.abs(x - now[1]), s).toBeGreaterThanOrEqual(34); // clear of the 36px pill
+        expect(x + 17, s).toBeLessThanOrEqual(640); // does not overflow the (minimum 640px) canvas
+      }
+      expect(ticks.map(([s]) => s)).not.toContain('06:10'); // 19px from NOW: collided before
+    });
+  });
+
+  describe('window toggle names and the replay hand-off', () => {
+    it('the toggle buttons are named by their visible text, in a labelled group', async () => {
+      renderView();
+      await tapeCanvas();
+      const group = screen.getByRole('group', { name: 'Run tape window' });
+      for (const label of ['1 hour', '24 hours']) {
+        const b = within(group).getByRole('button', { name: label });
+        expect(b).not.toHaveAttribute('aria-label');
+        expect(b).toHaveTextContent(label);
+      }
+    });
+
+    it('disables Replay while the other window loads, then follows the new payload', async () => {
+      const NOW_MS = Date.parse(TIMELINE_FIXTURE.generated_at);
+      let release: (v: unknown) => void = () => {};
+      const gate = new Promise((r) => { release = r; });
+      get.mockImplementation(async (path: string) => {
+        if (path.startsWith('/api/feeds/overview')) return { success: true, data: FEEDS_FIXTURE };
+        if (path.includes('window=24h')) {
+          await gate;
+          return { success: true, data: { ...TIMELINE_FIXTURE, window: '24h', window_start: new Date(NOW_MS - 86_400_000).toISOString() } };
+        }
+        return { success: true, data: TIMELINE_FIXTURE };
+      });
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: '24 hours' }));
+      // still showing the hour payload as placeholder: Replay must not start on it
+      const start = await screen.findByRole('button', { name: /Replay last/ });
+      await waitFor(() => expect(start).toHaveAttribute('aria-disabled', 'true'));
+      expect(start.getAttribute('title')).toMatch(/Loading the 24 hour data/);
+      fireEvent.click(start);
+      expect(screen.getByTestId('live-chip')).not.toHaveAttribute('data-state', 'replay');
+      act(() => release(null));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Replay last 24 hours/ })).not.toHaveAttribute('aria-disabled'));
+    });
+
+    it('does not rebuild the replay index on play, pause or speed changes', async () => {
+      renderView();
+      await tapeCanvas();
+      fireEvent.click(screen.getByRole('button', { name: /Replay last hour/ }));
+      const calls = () => (activityMod.indexTimeline as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+      const before = calls();
+      fireEvent.click(screen.getByRole('button', { name: '60 times speed' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Pause replay' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Play replay' }));
+      expect(calls()).toBe(before);
+    });
+
+    it('puts the legend behind a Key disclosure that toggles', async () => {
+      renderView();
+      await tapeCanvas();
+      const key = screen.getByRole('button', { name: 'Key' });
+      expect(key).toHaveAttribute('aria-expanded', 'false');
+      const legend = screen.getByRole('list', { name: 'Legend' });
+      expect(legend.className).toMatch(/\bhidden\b/);
+      fireEvent.click(key);
+      expect(key).toHaveAttribute('aria-expanded', 'true');
+      expect(legend.className).toMatch(/\bflex\b/);
     });
   });
 

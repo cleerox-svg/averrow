@@ -30,6 +30,10 @@ import {
   sinceRangeBinds,
   timelineStatus,
   windowRuns,
+  TIMELINE_WINDOWS,
+  parseTimelineWindow,
+  keepErrorFor,
+  toSqliteTs,
   type ActivityRow,
   type TimelineRun,
 } from "../src/handlers/agentTimeline";
@@ -484,13 +488,27 @@ function envFor(db: D1Database, kv = fakeKv()): { env: Env; kv: ReturnType<typeo
 }
 
 describe.skipIf(!hasSqlite())("handleAgentTimeline", () => {
-  it("400s on any window other than 1h", async () => {
+  it("400s on any window other than 1h or 24h", async () => {
     const { env } = envFor(d1FromSqlite(openMigratedDb()));
-    for (const w of ["24h", "1H", "", "60m"]) {
-      const res = await handleAgentTimeline(new Request(`https://x/api/agents/timeline?window=${w}`), env);
+    for (const w of ["1H", "24H", "", "60m", "7d", "48h", "1h,24h"]) {
+      const res = await handleAgentTimeline(new Request(`https://x/api/agents/timeline?window=${encodeURIComponent(w)}`), env);
       expect(res.status, w).toBe(400);
-      expect(await res.json()).toEqual({ success: false, error: "window must be 1h" });
+      expect(await res.json()).toEqual({ success: false, error: "window must be 1h or 24h" });
     }
+  });
+
+  it("serves window=24h under its own cache key, separate from 1h", async () => {
+    const { env, kv } = envFor(d1FromSqlite(seededDb()));
+    const res = await handleAgentTimeline(new Request("https://x/api/agents/timeline?window=24h"), env);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { data: { window: string } };
+    expect(body.data.window).toBe("24h");
+    expect(kv.store.has("cv:agents_timeline:v1:24h")).toBe(true);
+    expect(kv.store.has("cv:agents_timeline:v1:1h")).toBe(false);
+    await handleAgentTimeline(new Request("https://x/api/agents/timeline?window=1h"), env);
+    expect(kv.store.has("cv:agents_timeline:v1:1h")).toBe(true);
+    expect(JSON.parse(kv.store.get("cv:agents_timeline:v1:1h")!).v.data.window).toBe("1h");
+    expect(JSON.parse(kv.store.get("cv:agents_timeline:v1:24h")!).v.data.window).toBe("24h");
   });
 
   it("serves window=1h (and the default) through cachedValue key agents_timeline:v1:1h", async () => {
@@ -515,5 +533,147 @@ describe.skipIf(!hasSqlite())("handleAgentTimeline", () => {
     expect(timelineAt).toBeLessThan(nameAt);
     const block = routes.slice(timelineAt, routes.indexOf("});", timelineAt));
     expect(block).toContain("requireStaff(request, env)");
+  });
+});
+
+// ─── 24h window ─────────────────────────────────────────────────────
+
+describe("24h window config", () => {
+  it("matches the Round 4 contract", () => {
+    const c = TIMELINE_WINDOWS["24h"];
+    expect(c).toMatchObject({
+      windowMs: 24 * 3_600_000, runLookbackMs: 30 * 60_000, pullLookbackMs: 15 * 60_000,
+      openRunLookbackMs: 30 * 3_600_000, workflowLookbackMs: 4 * 3_600_000,
+      maxRunsPerAgent: 400, maxRunsTotal: 6000, maxPulls: 4000, maxEvents: 300,
+      cacheKey: "agents_timeline:v1:24h", ttlSeconds: 300, freshSeconds: 120, errorsOnlyOnFailure: true,
+    });
+    expect(c.runSqlLimit).toBeGreaterThan(c.maxRunsTotal);
+    expect(c.pullSqlLimit).toBeGreaterThan(c.maxPulls);
+    // 1h unchanged.
+    expect(TIMELINE_WINDOWS["1h"]).toMatchObject({
+      windowMs: 3_600_000, openRunLookbackMs: 6 * 3_600_000, workflowLookbackMs: 4 * 3_600_000,
+      maxRunsPerAgent: 60, maxRunsTotal: 400, maxPulls: 300, maxEvents: 50,
+      cacheKey: "agents_timeline:v1:1h", ttlSeconds: 60, freshSeconds: 30, errorsOnlyOnFailure: false,
+    });
+  });
+
+  it("parseTimelineWindow defaults to 1h and rejects anything else", () => {
+    expect(parseTimelineWindow(null)).toBe("1h");
+    expect(parseTimelineWindow("1h")).toBe("1h");
+    expect(parseTimelineWindow("24h")).toBe("24h");
+    expect(parseTimelineWindow("")).toBeNull();
+    expect(parseTimelineWindow("7d")).toBeNull();
+  });
+
+  it("keepErrorFor keeps errors only on failed / partial", () => {
+    expect(keepErrorFor("failed", "x")).toBe("x");
+    expect(keepErrorFor("partial", "x")).toBe("x");
+    expect(keepErrorFor("success", "x")).toBeNull();
+    expect(keepErrorFor("running", "x")).toBeNull();
+  });
+});
+
+describe.skipIf(!hasSqlite())("24h SQL plans (24h binds)", () => {
+  it("each read SEARCHes its index with 24h binds — no SCAN, no temp B-tree", () => {
+    const db = openMigratedDb();
+    const c = TIMELINE_WINDOWS["24h"];
+    const wstart = NOW - c.windowMs;
+    const cases: Array<[string, unknown[], RegExp, string]> = [
+      [RUNS_WINDOW_SQL, [...sinceRangeBinds(wstart - c.runLookbackMs), c.runSqlLimit],
+        /MULTI-INDEX OR.*idx_agent_runs_started.*idx_agent_runs_started/, "agent_runs"],
+      [OPEN_RUNS_SQL, [toSqliteTs(NOW - c.openRunLookbackMs)], /SEARCH agent_runs USING INDEX idx_agent_runs_open \(started_at>\?\)/, "agent_runs"],
+      [PULLS_SQL, [...sinceRangeBinds(wstart - c.pullLookbackMs), c.pullSqlLimit],
+        /MULTI-INDEX OR.*idx_feed_pulls_started.*idx_feed_pulls_started/, "feed_pull_history"],
+      [ACTIVITY_SQL, ["nexus", toSqliteTs(wstart - c.workflowLookbackMs), c.activitySqlLimit],
+        /SEARCH agent_activity_log USING INDEX idx_activity_agent \(agent_id=\? AND created_at>\?\)/, "agent_activity_log"],
+      [EVENTS_SQL, [toSqliteTs(wstart), c.maxEvents + 1],
+        /SEARCH agent_events USING INDEX idx_agent_events_type_created \(event_type=\? AND created_at>\?\)/, "agent_events"],
+    ];
+    for (const [sql, binds, want, table] of cases) {
+      const p = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...(binds as Array<string | number>)) as Array<{ detail: string }>)
+        .map((r) => r.detail).join(" | ");
+      expect(p, sql).toMatch(want);
+      expect(p, sql).not.toMatch(new RegExp(`SCAN ${table}\\b`));
+      expect(p, sql).not.toMatch(/USE TEMP B-TREE/);
+    }
+  });
+});
+
+describe.skipIf(!hasSqlite())("computeAgentTimeline 24h at daily volume", () => {
+  function dailyDb(opts: { navigatorRuns: number; pulls: number; extraAgents?: number; runsPerExtra?: number }): SqliteDb {
+    const raw = openMigratedDb();
+    const run = raw.prepare(
+      "INSERT INTO agent_runs (id, agent_id, started_at, completed_at, duration_ms, status, records_processed, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    const span = 24 * 60; // minutes in the window
+    for (let i = 0; i < opts.navigatorRuns; i++) {
+      const start = NOW - Math.floor(((i + 0.5) * span) / opts.navigatorRuns) * 60_000;
+      // Every 10th run failed with an error; successes also carry error text
+      // so the 24h trim is observable.
+      run.run(`nav${i}`, i % 2 ? "navigator" : "fast_tick", sqlite(start), sqlite(start + 20_000), 20_000,
+        i % 10 === 0 ? "failed" : "success", 3, i % 10 === 0 ? "boom" : "noise");
+    }
+    for (let a = 0; a < (opts.extraAgents ?? 0); a++) {
+      for (let i = 0; i < (opts.runsPerExtra ?? 0); i++) {
+        const start = NOW - (i * 4 + a * 0.1) * 60_000;
+        run.run(`x${a}-${i}`, `agent${a}`, sqlite(start), sqlite(start + 1000), 1000, "partial", 0, "degraded");
+      }
+    }
+    // A run older than the window (+ lookback) must not appear.
+    run.run("too-old", "sentinel", sqlite(NOW - 25 * 3_600_000), sqlite(NOW - 25 * 3_600_000 + 1000), 1000, "success", 0, null);
+    const pull = raw.prepare(
+      "INSERT INTO feed_pull_history (id, feed_name, started_at, completed_at, status, records_ingested, error_message) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
+    for (let i = 0; i < opts.pulls; i++) {
+      const start = NOW - Math.floor((i * span * 60_000) / opts.pulls);
+      pull.run(`p${i}`, `feed${i % 50}`, iso(start), sqlite(start + 5000), i % 7 ? "success" : "failed", 1, i % 7 ? "warn" : "pull failed");
+    }
+    return raw;
+  }
+
+  it("300 navigator runs + 1500 pulls fit the 24h bounds untruncated, errors only on failed/partial", async () => {
+    const data = await computeAgentTimeline(d1FromSqlite(dailyDb({ navigatorRuns: 300, pulls: 1500 })), NOW, undefined, "24h");
+    expect(data.window).toBe("24h");
+    expect(data.window_start).toBe(iso(NOW - 24 * 3_600_000));
+    expect(data.truncated).toEqual({ runs: false, pulls: false, events: false });
+    const nav = data.runs.filter((r) => r.agent_id === "navigator");
+    expect(nav).toHaveLength(300); // fast_tick folded in
+    expect(data.runs.some((r) => r.id === "too-old")).toBe(false);
+    expect(data.pulls).toHaveLength(1500);
+    for (const r of data.runs) expect(r.error).toBe(r.status === "failed" ? "boom" : null);
+    for (const p of data.pulls) expect(p.error).toBe(p.status === "failed" ? "pull failed" : null);
+    const starts = data.runs.map((r) => r.started_at);
+    expect([...starts].sort()).toEqual(starts);
+  });
+
+  it("caps navigator at 400/agent (newest kept) and pulls at 4000, setting truncated", async () => {
+    const data = await computeAgentTimeline(d1FromSqlite(dailyDb({ navigatorRuns: 500, pulls: 4500 })), NOW, undefined, "24h");
+    const nav = data.runs.filter((r) => r.agent_id === "navigator");
+    expect(nav).toHaveLength(400);
+    // Newest kept: the most recent navigator run (nav0) is present.
+    expect(nav.some((r) => r.id === "nav0")).toBe(true);
+    expect(nav.some((r) => r.id === "nav499")).toBe(false);
+    expect(data.pulls).toHaveLength(4000);
+    expect(data.pulls.some((p) => p.id === "p0")).toBe(true);
+    expect(data.truncated.runs).toBe(true);
+    expect(data.truncated.pulls).toBe(true);
+    // Partial rows keep their error at 24h.
+    expect(data.runs.filter((r) => r.status === "partial").every((r) => r.error === "degraded")).toBe(true);
+  });
+
+  it("caps the 24h total at 6000 runs", async () => {
+    const data = await computeAgentTimeline(
+      d1FromSqlite(dailyDb({ navigatorRuns: 0, pulls: 0, extraAgents: 20, runsPerExtra: 320 })), NOW, undefined, "24h");
+    expect(data.runs).toHaveLength(6000);
+    expect(data.truncated.runs).toBe(true);
+  });
+
+  it("the same data at 1h keeps the 1h bounds and all error text", async () => {
+    const data = await computeAgentTimeline(d1FromSqlite(dailyDb({ navigatorRuns: 300, pulls: 1500 })), NOW);
+    expect(data.window).toBe("1h");
+    expect(data.runs.length).toBeLessThanOrEqual(60);
+    expect(data.pulls.length).toBeLessThanOrEqual(300);
+    expect(data.truncated.pulls).toBe(false); // ~63 pulls in the last hour
+    expect(data.pulls.some((p) => p.error === "warn")).toBe(true);
   });
 });

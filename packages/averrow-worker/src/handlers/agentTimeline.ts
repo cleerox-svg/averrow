@@ -1,16 +1,18 @@
 /**
- * GET /api/agents/timeline?window=1h — individual agent runs, feed pulls and
- * pivot_detected events that overlap the last hour, for the ops Agents
- * Network view (flow canvas + run tape). requireStaff (routes/agents.ts).
+ * GET /api/agents/timeline?window=1h|24h — individual agent runs, feed pulls
+ * and pivot_detected events that overlap the last hour (default) or the last
+ * 24 hours, for the ops Agents Network view (flow canvas + run tape).
+ * requireStaff (routes/agents.ts). Per-window knobs: TIMELINE_WINDOWS.
  *
  * Sources (every read is index-backed and bounded; reads go through a read
  * replica session, nothing here writes D1):
  *
  *   1. agent_runs started since window_start − 30 min      idx_agent_runs_started (0319)
- *   2. agent_runs still open, started in the last 6 h       idx_agent_runs_open (0320, pinned)
+ *   2. agent_runs still open, started in the last
+ *      6 h (1h) / 30 h (24h)                                 idx_agent_runs_open (0320, pinned)
  *   3. feed_pull_history started since window_start − 15 min idx_feed_pulls_started (0319)
  *   4. NEXUS workflow lifecycle rows from agent_activity_log
- *      (agent_id='nexus', last 5 h)                          idx_activity_agent (0047, pinned)
+ *      (agent_id='nexus', since window_start − 4 h)          idx_activity_agent (0047, pinned)
  *   5. agent_events pivot_detected since window_start        idx_agent_events_type_created (0298)
  *
  * A row is kept when `[started_at, completed_at ?? now]` overlaps the window
@@ -27,8 +29,10 @@
  * the planner walks the whole started_at index instead (pinned by
  * test/agent-timeline.test.ts); ordering and bounds are applied in JS.
  *
- * Cached via cachedValue `agents_timeline:v1:1h`, 60 s TTL, 30 s live
- * freshness (stale-while-revalidate). No Navigator warm.
+ * Cached via cachedValue: `agents_timeline:v1:1h` (60 s TTL, 30 s live
+ * freshness) and `agents_timeline:v1:24h` (300 s TTL, 120 s live freshness),
+ * both stale-while-revalidate. No Navigator warm. At 24h `error` is kept
+ * only on failed / partial rows to keep the payload small.
  */
 
 import { json } from "../lib/cors";
@@ -78,8 +82,10 @@ export interface TimelineEvent {
   status: string;
 }
 
+export type TimelineWindow = "1h" | "24h";
+
 export interface AgentTimelineData {
-  window: "1h";
+  window: TimelineWindow;
   generated_at: string;
   window_start: string;
   window_end: string;
@@ -96,32 +102,92 @@ export interface AgentTimelineBody {
 
 // ─── Knobs ──────────────────────────────────────────────────────────
 
-export const AGENT_TIMELINE_CACHE_KEY = "agents_timeline:v1:1h";
-export const AGENT_TIMELINE_TTL_S = 60;
-export const AGENT_TIMELINE_FRESH_S = 30;
-
 const MIN = 60_000;
 const HOUR = 60 * MIN;
-export const TIMELINE_WINDOW_MS = HOUR;
-/** Runs that started this long before window_start can still overlap it. */
-export const RUN_LOOKBACK_MS = 30 * MIN;
-export const PULL_LOOKBACK_MS = 15 * MIN;
-/** Open (never finalized) agent_runs older than this are the reaper's job. */
-export const OPEN_RUN_LOOKBACK_MS = 6 * HOUR;
-/** NEXUS workflow events are folded over this much history. */
-export const WORKFLOW_LOOKBACK_MS = 5 * HOUR;
+
+/** Per-window knobs. Every lookback is relative to window_start except the
+ *  open-runs read (relative to now). The SQL limits are safety nets only —
+ *  hitting one sets the matching `truncated` flag. */
+export interface TimelineWindowConfig {
+  windowMs: number;
+  /** Runs that started this long before window_start can still overlap it. */
+  runLookbackMs: number;
+  pullLookbackMs: number;
+  /** Open (never finalized) agent_runs read back this far from NOW;
+   *  older ones are the reaper's job. */
+  openRunLookbackMs: number;
+  /** NEXUS workflow events are folded from window_start − this. */
+  workflowLookbackMs: number;
+  maxRunsPerAgent: number;
+  maxRunsTotal: number;
+  maxPulls: number;
+  maxEvents: number;
+  runSqlLimit: number;
+  pullSqlLimit: number;
+  activitySqlLimit: number;
+  cacheKey: string;
+  ttlSeconds: number;
+  freshSeconds: number;
+  /** Keep `error` only on failed / partial rows (payload size at 24h). */
+  errorsOnlyOnFailure: boolean;
+}
+
+export const TIMELINE_WINDOWS: Record<TimelineWindow, TimelineWindowConfig> = {
+  "1h": {
+    windowMs: HOUR,
+    runLookbackMs: 30 * MIN,
+    pullLookbackMs: 15 * MIN,
+    openRunLookbackMs: 6 * HOUR,
+    workflowLookbackMs: 4 * HOUR,
+    maxRunsPerAgent: 60,
+    maxRunsTotal: 400,
+    maxPulls: 300,
+    maxEvents: 50,
+    runSqlLimit: 3000,
+    pullSqlLimit: 2000,
+    activitySqlLimit: 500,
+    cacheKey: "agents_timeline:v1:1h",
+    ttlSeconds: 60,
+    freshSeconds: 30,
+    errorsOnlyOnFailure: false,
+  },
+  // Navigator alone is ~288 runs/day and page_capture ~144, so the per-agent
+  // cap is 400; SQL limits are ~2× the response bounds.
+  "24h": {
+    windowMs: 24 * HOUR,
+    runLookbackMs: 30 * MIN,
+    pullLookbackMs: 15 * MIN,
+    openRunLookbackMs: 24 * HOUR + 6 * HOUR,
+    workflowLookbackMs: 4 * HOUR,
+    maxRunsPerAgent: 400,
+    maxRunsTotal: 6000,
+    maxPulls: 4000,
+    maxEvents: 300,
+    runSqlLimit: 12_000,
+    pullSqlLimit: 8000,
+    activitySqlLimit: 2000,
+    cacheKey: "agents_timeline:v1:24h",
+    ttlSeconds: 300,
+    freshSeconds: 120,
+    errorsOnlyOnFailure: true,
+  },
+};
+
+export function parseTimelineWindow(raw: string | null): TimelineWindow | null {
+  if (raw === null) return "1h";
+  return raw === "1h" || raw === "24h" ? raw : null;
+}
+
+// 1h aliases (kept for existing callers / tests).
+export const AGENT_TIMELINE_CACHE_KEY = TIMELINE_WINDOWS["1h"].cacheKey;
+export const AGENT_TIMELINE_TTL_S = TIMELINE_WINDOWS["1h"].ttlSeconds;
+export const AGENT_TIMELINE_FRESH_S = TIMELINE_WINDOWS["1h"].freshSeconds;
+export const MAX_RUNS_PER_AGENT = TIMELINE_WINDOWS["1h"].maxRunsPerAgent;
+export const MAX_RUNS_TOTAL = TIMELINE_WINDOWS["1h"].maxRunsTotal;
+
 /** An unclosed workflow run older than this is reported failed. */
 export const WORKFLOW_STALE_MS = 3 * HOUR;
-
-export const MAX_RUNS_PER_AGENT = 60;
-export const MAX_RUNS_TOTAL = 400;
-export const MAX_PULLS = 300;
-export const MAX_EVENTS = 50;
 export const MAX_ERROR_CHARS = 200;
-/** Safety nets on the SQL reads; hitting one sets the truncated flag. */
-export const RUN_SQL_LIMIT = 3000;
-export const PULL_SQL_LIMIT = 2000;
-export const ACTIVITY_SQL_LIMIT = 500;
 
 const WORKFLOW_AGENT_ID = "nexus";
 
@@ -200,6 +266,11 @@ export function overlapsWindow(
 export function clipError(msg: string | null | undefined): string | null {
   if (typeof msg !== "string" || !msg) return null;
   return msg.length > MAX_ERROR_CHARS ? `${msg.slice(0, MAX_ERROR_CHARS - 1)}…` : msg;
+}
+
+/** 24h payload trim: `error` survives only on failed / partial rows. */
+export function keepErrorFor(status: TimelineStatus, error: string | null): string | null {
+  return status === "failed" || status === "partial" ? error : null;
 }
 
 /** Legacy Navigator rows were written as agent_id='fast_tick'. */
@@ -573,9 +644,15 @@ async function readAll<T>(stmt: D1PreparedStatement, tally: D1Tally): Promise<T[
  * Build the timeline. Exported for tests; `nowMs` is injectable so window
  * edges are deterministic.
  */
-export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1Tally = newTally()): Promise<AgentTimelineData> {
+export async function computeAgentTimeline(
+  db: ReadDb,
+  nowMs: number,
+  tally: D1Tally = newTally(),
+  window: TimelineWindow = "1h",
+): Promise<AgentTimelineData> {
+  const cfg = TIMELINE_WINDOWS[window];
   const windowEndMs = nowMs;
-  const windowStartMs = nowMs - TIMELINE_WINDOW_MS;
+  const windowStartMs = nowMs - cfg.windowMs;
 
   const [windowRunRows, openRunRows, pullRows, activityRows, eventRows] = await Promise.all([
     // 1. Runs started near/in the window. MULTI-INDEX OR on
@@ -585,7 +662,7 @@ export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1T
          FROM agent_runs
         WHERE (started_at >= ? AND started_at < ?) OR started_at >= ?
         LIMIT ?`,
-    ).bind(...sinceRangeBinds(windowStartMs - RUN_LOOKBACK_MS), RUN_SQL_LIMIT), tally),
+    ).bind(...sinceRangeBinds(windowStartMs - cfg.runLookbackMs), cfg.runSqlLimit), tally),
 
     // 2. Still-open runs that started before (1)'s bound. The WHERE repeats
     //    idx_agent_runs_open's partial-index predicate (migration 0320)
@@ -597,7 +674,7 @@ export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1T
          FROM agent_runs INDEXED BY idx_agent_runs_open
         WHERE completed_at IS NULL AND status IN ('partial', 'running')
           AND started_at >= ?`,
-    ).bind(toSqliteTs(nowMs - OPEN_RUN_LOOKBACK_MS)), tally),
+    ).bind(toSqliteTs(nowMs - cfg.openRunLookbackMs)), tally),
 
     // 3. Feed pulls started near/in the window (idx_feed_pulls_started).
     readAll<PullRow>(db.prepare(
@@ -606,7 +683,7 @@ export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1T
          FROM feed_pull_history
         WHERE (started_at >= ? AND started_at < ?) OR started_at >= ?
         LIMIT ?`,
-    ).bind(...sinceRangeBinds(windowStartMs - PULL_LOOKBACK_MS), PULL_SQL_LIMIT), tally),
+    ).bind(...sinceRangeBinds(windowStartMs - cfg.pullLookbackMs), cfg.pullSqlLimit), tally),
 
     // 4. NEXUS workflow lifecycle. agent_activity_log also holds per-message
     //    abuse-mailbox rows etc., so it is read ONLY through
@@ -619,7 +696,7 @@ export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1T
         WHERE agent_id = ? AND created_at >= ?
         ORDER BY created_at DESC
         LIMIT ?`,
-    ).bind(WORKFLOW_AGENT_ID, toSqliteTs(nowMs - WORKFLOW_LOOKBACK_MS), ACTIVITY_SQL_LIMIT), tally),
+    ).bind(WORKFLOW_AGENT_ID, toSqliteTs(windowStartMs - cfg.workflowLookbackMs), cfg.activitySqlLimit), tally),
 
     // 5. The one event edge (nexus → observer), idx_agent_events_type_created.
     readAll<EventRow>(db.prepare(
@@ -628,16 +705,16 @@ export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1T
         WHERE event_type = 'pivot_detected' AND created_at >= ?
         ORDER BY created_at DESC
         LIMIT ?`,
-    ).bind(toSqliteTs(windowStartMs), MAX_EVENTS + 1), tally),
+    ).bind(toSqliteTs(windowStartMs), cfg.maxEvents + 1), tally),
   ]);
 
   const runs = [
     ...shapeRuns([...windowRunRows, ...openRunRows], windowStartMs, windowEndMs),
     ...windowRuns(foldWorkflowEvents(activityRows, nowMs), windowStartMs, windowEndMs),
   ];
-  const boundedRuns = boundRuns(runs);
+  const boundedRuns = boundRuns(runs, cfg.maxRunsPerAgent, cfg.maxRunsTotal);
 
-  const pulls = boundNewest(shapePulls(pullRows, windowStartMs, windowEndMs), MAX_PULLS, (p) => p.started_at);
+  const pulls = boundNewest(shapePulls(pullRows, windowStartMs, windowEndMs), cfg.maxPulls, (p) => p.started_at);
 
   const events: TimelineEvent[] = [];
   for (const e of eventRows) {
@@ -652,11 +729,16 @@ export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1T
       status: e.status ?? "pending",
     });
   }
-  const boundedEvents = boundNewest(events, MAX_EVENTS, (e) => e.created_at);
+  const boundedEvents = boundNewest(events, cfg.maxEvents, (e) => e.created_at);
+
+  if (cfg.errorsOnlyOnFailure) {
+    for (const r of boundedRuns.runs) r.error = keepErrorFor(r.status, r.error);
+    for (const p of pulls.items) p.error = keepErrorFor(p.status, p.error);
+  }
 
   const generatedAt = new Date(nowMs).toISOString();
   return {
-    window: "1h",
+    window,
     generated_at: generatedAt,
     window_start: new Date(windowStartMs).toISOString(),
     window_end: generatedAt,
@@ -664,9 +746,9 @@ export async function computeAgentTimeline(db: ReadDb, nowMs: number, tally: D1T
     pulls: pulls.items,
     events: boundedEvents.items,
     truncated: {
-      runs: boundedRuns.truncated || windowRunRows.length >= RUN_SQL_LIMIT || activityRows.length >= ACTIVITY_SQL_LIMIT,
-      pulls: pulls.truncated || pullRows.length >= PULL_SQL_LIMIT,
-      events: boundedEvents.truncated || eventRows.length > MAX_EVENTS,
+      runs: boundedRuns.truncated || windowRunRows.length >= cfg.runSqlLimit || activityRows.length >= cfg.activitySqlLimit,
+      pulls: pulls.truncated || pullRows.length >= cfg.pullSqlLimit,
+      events: boundedEvents.truncated || eventRows.length > cfg.maxEvents,
     },
   };
 }
@@ -679,25 +761,27 @@ export async function handleAgentTimeline(
   execCtx?: Pick<ExecutionContext, "waitUntil">,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const windowParam = new URL(request.url).searchParams.get("window") ?? "1h";
-  if (windowParam !== "1h") {
-    return json({ success: false, error: "window must be 1h" }, 400, origin);
+  const window = parseTimelineWindow(new URL(request.url).searchParams.get("window"));
+  if (!window) {
+    return json({ success: false, error: "window must be 1h or 24h" }, 400, origin);
   }
+  const cfg = TIMELINE_WINDOWS[window];
   try {
     const value = await cachedValue<AgentTimelineBody>(
       env,
-      AGENT_TIMELINE_CACHE_KEY,
-      AGENT_TIMELINE_TTL_S,
+      cfg.cacheKey,
+      cfg.ttlSeconds,
       async () => {
         const tally = newTally();
         const db = getReadSession(env, getDbContext(request));
-        const data = await computeAgentTimeline(db, Date.now(), tally);
-        recordD1Reads(env, "agents_timeline", tally);
+        const data = await computeAgentTimeline(db, Date.now(), tally, window);
+        // 1h keeps the original attribution label so its history is unbroken.
+        recordD1Reads(env, window === "1h" ? "agents_timeline" : "agents_timeline_24h", tally);
         return { success: true, data };
       },
       {
         staleWhileRevalidate: {
-          freshSeconds: AGENT_TIMELINE_FRESH_S,
+          freshSeconds: cfg.freshSeconds,
           waitUntil: execCtx ? (p) => execCtx.waitUntil(p) : undefined,
         },
       },

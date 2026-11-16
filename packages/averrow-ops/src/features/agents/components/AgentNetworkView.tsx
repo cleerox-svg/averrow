@@ -19,7 +19,10 @@ import { Maximize2, Minimize2, RotateCcw, Wind, ZoomIn, ZoomOut } from 'lucide-r
 import { useReducedMotion } from '@averrow/shared/ui';
 import type { Agent } from '@/hooks/useAgents';
 import { useFeeds } from '@/hooks/useFeeds';
-import { useAgentTimeline, useTimelineClock, type AgentTimeline } from '@/hooks/useAgentTimeline';
+import {
+  TIMELINE_WINDOW_MS, readStoredWindow, storeWindow, useAgentTimeline, useTimelineClock,
+  type AgentTimeline, type TimelineWindow,
+} from '@/hooks/useAgentTimeline';
 import { FlowCanvas, agentLabel } from '../network/FlowCanvas';
 import { RunTape } from '../network/RunTape';
 import { indexTimeline } from '../network/activity';
@@ -28,22 +31,24 @@ import { useElementWidth, useMountedElement } from '../network/useCanvasLoop';
 import { LiveChip } from '../network/LiveChip';
 import { ReplayControls } from '../network/ReplayControls';
 import {
-  DEFAULT_REPLAY_SPEED, STEP_FINE_MS, STEP_MS, advancePlayhead, canHandleReplayKey, clampPlayhead, stepPlayhead,
+  DEFAULT_REPLAY_SPEEDS, SLIDER_STEPS, advancePlayhead, canHandleReplayKey, clampPlayhead, pagePlayhead, stepPlayhead,
   type ReplaySpeed,
 } from '../network/replay';
-import { TAPE_WINDOW_MS } from '../network/tape';
+import { useIdentity } from '../network/useIdentity';
 
 const ZOOM_MIN = 0.6;
 const ZOOM_MAX = 1.6;
 const ZOOM_STEP = 0.2;
 
 // Focus styling for the canvas wrappers, scroll regions and small controls.
-const FOCUS_CSS = `
+export const FOCUS_CSS = `
 .agn-btn:focus-visible,.agn-chip:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
 .agn-scroll:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}
 .agn-slider:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}
 .agn-ring-within:has(:focus-visible){outline:2px solid var(--focus-ring);outline-offset:-2px}
 .agn-btn[aria-disabled="true"]{opacity:.4;cursor:default}
+/* Touch: every control keeps a 44px hit area on phones and coarse pointers, while the visual stays compact. */
+@media (max-width:639px),(pointer:coarse){.agn-btn,.agn-chip{min-width:44px;min-height:44px}.agn-slider{min-height:44px}}
 `;
 
 interface AgentNetworkViewProps {
@@ -99,12 +104,13 @@ function Chip({
   );
 }
 
-type SwatchKind = 'running' | 'transit' | 'failed' | 'partial' | 'idle' | 'event';
+type SwatchKind = 'colour' | 'running' | 'transit' | 'failed' | 'partial' | 'idle' | 'event';
 const LEGEND: Array<{ kind: SwatchKind; label: string }> = [
+  { kind: 'colour', label: 'Each agent has its own colour' },
   { kind: 'running', label: 'Running now' },
-  { kind: 'transit', label: 'Data in transit' },
-  { kind: 'failed', label: 'Last run failed' },
-  { kind: 'partial', label: 'Partial run (tape)' },
+  { kind: 'transit', label: 'Data in transit (source colour)' },
+  { kind: 'failed', label: 'Failed: red ring with ×' },
+  { kind: 'partial', label: 'Partial run (hatched, tape)' },
   { kind: 'idle', label: 'Idle link' },
   { kind: 'event', label: 'Dashed: event hand-off (pivot_detected)' },
 ];
@@ -114,12 +120,31 @@ function Swatch({ kind }: { kind: SwatchKind }) {
   switch (kind) {
     case 'running': // filled disc with an outer progress ring
       return <i aria-hidden="true" style={{ ...base, width: 12, height: 12, borderRadius: 999, background: 'var(--primary)', boxShadow: '0 0 0 2px var(--bg-card), 0 0 0 3.5px var(--primary-text)' }} />;
-    case 'transit': // small bright dot with a soft halo
-      return <i aria-hidden="true" style={{ ...base, width: 5, height: 5, borderRadius: 999, background: 'var(--primary-text)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--primary-text) 30%, transparent)', margin: '0 3px' }} />;
-    case 'failed': // hollow red ring
-      return <i aria-hidden="true" style={{ ...base, width: 12, height: 12, borderRadius: 999, border: '2px solid var(--sev-critical)' }} />;
-    case 'partial': // amber-ish status bar
-      return <i aria-hidden="true" style={{ ...base, width: 16, height: 6, borderRadius: 2, background: 'var(--sev-medium)' }} />;
+    case 'transit': // dots in the sources' own colours
+      return (
+        <span aria-hidden="true" style={{ ...base, display: 'inline-flex', gap: 3, alignItems: 'center' }}>
+          {['#38BDF8', '#A78BFA', '#FB923C'].map((col) => (
+            <i key={col} style={{ width: 5, height: 5, borderRadius: 999, background: col, boxShadow: `0 0 0 2px ${col}40`, display: 'inline-block' }} />
+          ))}
+        </span>
+      );
+    case 'colour': // identity colours: a small spread, not a rainbow
+      return <i aria-hidden="true" style={{ ...base, width: 12, height: 12, borderRadius: 999, background: 'conic-gradient(#38BDF8, #A78BFA, #FB923C, #4ADE80, #38BDF8)' }} />;
+    case 'failed': // red ring with a x: shape plus colour
+      return (
+        <i
+          aria-hidden="true"
+          style={{
+            ...base, width: 14, height: 14, borderRadius: 999, border: '2px solid var(--sev-critical)',
+            display: 'inline-grid', placeItems: 'center', fontStyle: 'normal', fontSize: 10, lineHeight: 1,
+            color: 'var(--sev-critical)', fontWeight: 700,
+          }}
+        >
+          ×
+        </i>
+      );
+    case 'partial': // hatched warning bar: a pattern, not just a hue
+      return <i aria-hidden="true" style={{ ...base, width: 16, height: 8, borderRadius: 2, border: '1px solid var(--sev-medium)', background: 'repeating-linear-gradient(135deg, var(--sev-medium) 0 2px, transparent 2px 4px)' }} />;
     case 'idle':
       return <i aria-hidden="true" style={{ ...base, width: 16, height: 0, borderTop: '2px solid var(--text-muted)', opacity: 0.45 }} />;
     case 'event':
@@ -144,8 +169,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const feedsQ = useFeeds();
   const feeds = useMemo(() => (feedsQ.data ?? []).filter((f) => Boolean(f.enabled)), [feedsQ.data]);
 
-  const timelineQ = useAgentTimeline();
+  const [timelineWindow, setTimelineWindow] = useState<TimelineWindow>(readStoredWindow);
+  const timelineQ = useAgentTimeline(timelineWindow);
   const timeline = timelineQ.data;
+  // The axis follows the data on screen (it keeps showing the previous window
+  // until the new payload lands), not the toggle.
+  const payloadWindow: TimelineWindow = timeline?.window ?? timelineWindow;
   const getNow = useTimelineClock(timeline?.generated_at, timelineQ.dataUpdatedAt);
   const liveIndex = useMemo(() => indexTimeline(timeline, feeds), [timeline, feeds]);
   const status: 'loading' | 'error' | 'ready' = timeline ? 'ready' : timelineQ.isError ? 'error' : 'loading';
@@ -153,33 +182,47 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const placement = useMemo(() => placeAgents(agents), [agents]);
   const byName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
   const labelOf = useMemo(() => (id: string) => agentLabel(id, byName), [byName]);
+  const identity = useIdentity(byName);
 
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
   const [showRetired, setShowRetired] = useState(false);
+  const [keyOpen, setKeyOpen] = useState(false);
 
   // ── Replay of the last hour, from the payload loaded when it was entered.
   // Refetches keep landing behind it but never move the playhead; Back to
   // live picks the newest payload up. The tape axis is frozen at entry
   // (`anchorMs`) so the playhead stays under the pointer when a scrub begins.
   const [replay, setReplay] = useState<{ snapshot: AgentTimeline; speed: ReplaySpeed; playing: boolean; anchorMs: number } | null>(null);
+  // The axis and controls follow a running replay's own payload first, then the
+  // payload on screen, then the toggle.
+  const dataWindow: TimelineWindow = replay?.snapshot.window ?? payloadWindow;
+  const windowMs = TIMELINE_WINDOW_MS[dataWindow];
+  const chooseWindow = (w: TimelineWindow) => {
+    if (w === timelineWindow) return;
+    storeWindow(w);
+    setReplay(null);
+    setTimelineWindow(w);
+  };
   const playheadRef = useRef(0);
   const [playheadShown, setPlayheadShown] = useState(0);
   const range = useMemo(() => {
     if (!replay) return null;
     const end = Date.parse(replay.snapshot.window_end);
     // A page left open for over an hour can put the axis start after the data end.
-    return { start: Math.min(Math.max(Date.parse(replay.snapshot.window_start), replay.anchorMs - TAPE_WINDOW_MS), end), end };
+    return { start: Math.min(Math.max(Date.parse(replay.snapshot.window_start), replay.anchorMs - TIMELINE_WINDOW_MS[replay.snapshot.window]), end), end };
   }, [replay]);
   const setPlayhead = useCallback((ms: number) => {
     playheadRef.current = ms;
     setPlayheadShown(ms);
   }, []);
-  const replayIndex = useMemo(() => (replay
+  const replaySnapshot = replay?.snapshot;
+  // Keyed on the snapshot, so play / pause / speed do not rebuild the index (or the bar cache).
+  const replayIndex = useMemo(() => (replaySnapshot
     // The live trust cap is about freshness; a replay shows the past as recorded.
-    ? { ...indexTimeline(replay.snapshot, feeds), capMs: Infinity }
-    : null), [replay, feeds]);
+    ? { ...indexTimeline(replaySnapshot, feeds), capMs: Infinity }
+    : null), [replaySnapshot, feeds]);
   const index = replayIndex ?? liveIndex;
   const liveGetNow = getNow;
   // Stable identity: the frame loops read the ref; `viewVersion` redraws static frames.
@@ -187,7 +230,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const viewNow = replay ? replayGetNow : liveGetNow;
 
   // Over an hour without a successful load: nothing left to replay.
-  const dataTooOld = !!timeline && !replay && liveGetNow() - Date.parse(timeline.window_end) > TAPE_WINDOW_MS;
+  const dataTooOld = !!timeline && !replay && liveGetNow() - Date.parse(timeline.window_end) > windowMs;
   const atEnd = !!range && playheadShown >= range.end;
   const playing = !!replay?.playing && !reducedMotion && !atEnd;
   const tapeReplay = useMemo(
@@ -208,13 +251,13 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   }, [replay]);
 
   const enterReplay = (at?: number, focus: 'transport' | 'slider' = 'transport') => {
-    if (!timeline) return;
+    if (!timeline || timelineQ.isPlaceholderData) return; // the other window's data is still loading
     const anchor = liveGetNow();
     const end = Date.parse(timeline.window_end);
-    if (anchor - end > TAPE_WINDOW_MS) return; // all of the data is older than the tape
-    const start = Math.min(Math.max(Date.parse(timeline.window_start), anchor - TAPE_WINDOW_MS), end);
+    if (anchor - end > windowMs) return; // all of the data is older than the tape
+    const start = Math.min(Math.max(Date.parse(timeline.window_start), anchor - windowMs), end);
     pendingFocus.current = focus;
-    setReplay({ snapshot: timeline, speed: DEFAULT_REPLAY_SPEED, playing: at === undefined && !reducedMotion, anchorMs: anchor });
+    setReplay({ snapshot: timeline, speed: DEFAULT_REPLAY_SPEEDS[timeline.window], playing: at === undefined && !reducedMotion, anchorMs: anchor });
     setPlayhead(clampPlayhead(at ?? start, start, end));
   };
   const scrub = (ms: number) => {
@@ -235,10 +278,11 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   // step enters replay relative to the newest data.
   const moveBy = (direction: -1 | 1, fine: boolean) => {
     if (replay && range) {
-      setPlayhead(stepPlayhead(playheadRef.current, direction, fine, range.start, range.end));
+      setPlayhead(stepPlayhead(playheadRef.current, direction, fine, range.start, range.end, replay.snapshot.window));
     } else if (timeline) {
       const base = Math.min(liveGetNow(), Date.parse(timeline.window_end));
-      enterReplay(base + direction * (fine ? STEP_FINE_MS : STEP_MS), 'slider');
+      const st = SLIDER_STEPS[timeline.window];
+      enterReplay(base + direction * (fine ? st.fine : st.coarse), 'slider');
     }
   };
   const sliderKey = (e: React.KeyboardEvent<HTMLElement>) => {
@@ -250,6 +294,11 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
       e.preventDefault();
       if (replay && range) setPlayhead(e.key === 'Home' ? range.start : range.end);
       else enterReplay(e.key === 'Home' ? 0 : Infinity, 'slider');
+    } else if ((e.key === 'PageUp' || e.key === 'PageDown') && dataWindow === '24h') {
+      e.preventDefault();
+      const dir = e.key === 'PageUp' ? 1 : -1;
+      if (replay && range) setPlayhead(pagePlayhead(playheadRef.current, dir, range.start, range.end, replay.snapshot.window));
+      else if (timeline) enterReplay(Math.min(liveGetNow(), Date.parse(timeline.window_end)) + dir * (SLIDER_STEPS['24h'].page as number), 'slider');
     } else if (e.key === ' ' && replay) {
       e.preventDefault();
       togglePlay();
@@ -341,7 +390,21 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
     >
       <style>{FOCUS_CSS}</style>
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <ul className="flex flex-wrap gap-x-5 gap-y-1 list-none p-0 m-0" aria-label="Legend">
+        <button
+          type="button"
+          className="agn-btn sm:hidden h-7 px-2.5 rounded font-mono text-[11px]"
+          style={{ background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-secondary)' }}
+          aria-expanded={keyOpen}
+          aria-controls="agn-legend"
+          onClick={() => setKeyOpen((v) => !v)}
+        >
+          Key
+        </button>
+        <ul
+          id="agn-legend"
+          className={`${keyOpen ? 'flex' : 'hidden'} sm:flex flex-wrap gap-x-5 gap-y-1 list-none p-0 m-0`}
+          aria-label="Legend"
+        >
           {LEGEND.map((l) => (
             <li key={l.label} className="inline-flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
               <Swatch kind={l.kind} />
@@ -362,10 +425,15 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           />
           <ReplayControls
             active={!!replay}
-            canStart={!!timeline && !dataTooOld}
-            startHint={dataTooOld ? 'The data is more than an hour old. Waiting for newer data.' : undefined}
+            canStart={!!timeline && !dataTooOld && !timelineQ.isPlaceholderData}
+            startHint={timelineQ.isPlaceholderData
+              ? `Loading the ${timelineWindow === '24h' ? '24 hour' : 'hour'} data…`
+              : dataTooOld
+                ? `The data is more than ${dataWindow === '24h' ? '24 hours' : 'an hour'} old. Waiting for newer data.`
+                : undefined}
             playing={playing}
-            speed={replay?.speed ?? DEFAULT_REPLAY_SPEED}
+            speed={replay?.speed ?? DEFAULT_REPLAY_SPEEDS[dataWindow]}
+            timelineWindow={dataWindow}
             atEnd={atEnd}
             playDisabled={reducedMotion}
             onStart={() => enterReplay()}
@@ -440,6 +508,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           replay={!!replay}
           playing={playing}
           viewVersion={playheadShown}
+          identity={identity}
           placement={placement}
         />
       </div>
@@ -480,17 +549,43 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
         tabIndex={0}
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)' }}
       >
-        <h3
-          id="agn-tape-title"
-          className="font-mono text-[10px] tracking-[0.14em] uppercase px-3 pt-3 m-0 font-medium"
-          style={{ color: 'var(--text-muted)' }}
-        >
-          Run tape · last hour (UTC)
-        </h3>
+        <div className="flex items-start justify-between gap-3 flex-wrap px-3 pt-3">
+          <h3
+            id="agn-tape-title"
+            className="font-mono text-[10px] tracking-[0.14em] uppercase m-0 font-medium"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            Run tape · {dataWindow === '24h' ? 'last 24 hours' : 'last hour'} (UTC)
+          </h3>
+          <div className="flex items-center gap-2" role="group" aria-label="Run tape window">
+            {([['1h', '1 hour'], ['24h', '24 hours']] as const).map(([w, label]) => {
+              const on = timelineWindow === w;
+              return (
+                <button
+                  key={w}
+                  type="button"
+                  className="agn-btn h-7 px-2.5 rounded font-mono text-[11px]"
+                  style={{
+                    color: on ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    background: on ? 'var(--primary-tint)' : 'var(--bg-card-deep)',
+                    border: `1px solid ${on ? 'var(--primary-border)' : 'var(--border-base)'}`,
+                    fontWeight: on ? 600 : 400,
+                  }}
+                  aria-pressed={on}
+                  onClick={() => chooseWindow(w)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <p id="agn-tape-hint" className="font-mono text-[10px] px-3 m-0 mt-1" style={{ color: 'var(--text-tertiary)' }}>
           {replay
-            ? 'Drag the time scale, or press ← → to move 1 minute (Shift: 10 seconds). Space plays or pauses.'
-            : 'Click or drag the time scale above the bars to replay the last hour.'}
+            ? (dataWindow === '24h'
+              ? 'Drag the time scale, or press ← → to move 10 minutes (Shift: 1 minute, PageUp or PageDown: 1 hour). Space plays or pauses.'
+              : 'Drag the time scale, or press ← → to move 1 minute (Shift: 10 seconds). Space plays or pauses.')
+            : `Click or drag the time scale above the bars to replay the last ${dataWindow === '24h' ? '24 hours' : 'hour'}.`}
         </p>
         <span id="agn-tape-note" className="sr-only">{BREAKER_NOTE}</span>
         <RunTape
@@ -510,6 +605,8 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           onScrub={timeline ? scrub : undefined}
           onSliderKey={sliderKey}
           sliderRef={sliderRef}
+          windowMs={windowMs}
+          identity={identity}
         />
         {truncated && (
           <div className="font-mono text-[10px] px-3 pb-2" style={{ color: 'var(--text-tertiary)' }}>

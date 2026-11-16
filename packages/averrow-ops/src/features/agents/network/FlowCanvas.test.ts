@@ -122,7 +122,7 @@ describe('drawFlow', () => {
 
   it('says status unknown, not ok, for an open run past the snapshot cap', () => {
     const { ctx, rec } = recorder();
-    drawFlow(ctx, params({ focus: 'cartographer', now: NOW + 100_000 }));
+    drawFlow(ctx, params({ focus: 'cartographer', now: NOW + 130_000 }));
     const lines = rec.calls.filter(([k]) => k === 'fillText').map(([, a]) => String(a[0]));
     expect(lines.some((l) => l.startsWith('status unknown since'))).toBe(true);
     expect(lines.some((l) => l.endsWith('· ok'))).toBe(false);
