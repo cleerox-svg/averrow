@@ -11,7 +11,14 @@
 -- the allowed values are documented here and in site-script-watch.ts.
 --
 -- ── Retention (enforced by the scanner PR, not here) ──────────────────
---   site_scans            90 days by scanned_at   (idx_site_scans_scanned)
+--   site_scans            90 days by scanned_at   (idx_site_scans_scanned),
+--                         EXCEPT each brand's latest `complete` scan, which
+--                         the sweep must keep (e.g. `AND id NOT IN (latest
+--                         complete per brand)`). isBaselineScan decides from
+--                         "any earlier complete scan"; sweeping a brand's last
+--                         one (a brand scanned rarely, or only skipped / failed
+--                         for 90 days) would make its next scan a silent
+--                         re-baseline that trusts whatever the page loads then.
 --   site_contacted_hosts  90 days by last_seen    (idx_site_contacted_hosts_last_seen)
 --   site_script_findings 180 days by created_at   (idx_site_script_findings_created)
 --   site_script_inventory by last_seen: a script not seen for 90 days is
@@ -37,7 +44,10 @@
 --   Inline script: is_inline = 1, script_host = '(inline)' (not a valid
 --     hostname, so it can never collide with a real host), path_norm =
 --     'sha256:<hex>' of the NORMALISED script text (normaliseInlineScriptText:
---     whitespace collapsed, long digit / hex runs masked). An edited inline
+--     whitespace collapsed; UUIDs, ISO-8601 timestamps, long hex runs, long
+--     mixed-case tokens and ≥ 8-digit runs masked; wallet addresses kept).
+--     Only executable inline scripts are inventoried (isExecutableScriptType:
+--     JSON / JSON-LD / importmap data blocks are skipped). An edited inline
 --     script is therefore a new row, never body_changed.
 --   last_sha256 / prev_sha256: body on the latest scan / the one before a
 --     change (`body_changed`). integrity: the script tag's SRI attribute on
@@ -55,9 +65,14 @@
 --   new_host           — external script host never seen for the brand
 --                        (public script CDNs exempt; shared-hosting tenants
 --                        such as *.herokuapp.com are NOT exempt)
---   new_script         — new path on an already-inventoried host (first-party
---                        content-hashed build files exempt), or a new inline
---                        script once inline scripts are inventoried
+--   new_script         — new path on an already-inventoried third-party host
+--                        or on ANY public script CDN (including its first
+--                        appearance — jsDelivr / unpkg / esm.sh serve
+--                        attacker-published code); on a first-party host a
+--                        content-hashed build file is exempt only when it
+--                        replaces an inventoried file of the same stem that
+--                        the scan no longer loads; or a new inline script once
+--                        inline scripts are inventoried
 --   body_changed       — same host + path_norm, different sha256
 --   sri_removed        — the script carried an integrity attribute before and
 --                        no longer does
@@ -67,11 +82,23 @@
 --                        ACTIVE threat (threat_id set)
 -- status: 'open' (default) | 'acknowledged' | 'dismissed' | 'resolved'.
 -- page_url: the page the finding was observed on.
--- dedupe_key: findingDedupeKey() — kind | host | path_norm | threat_id, plus
---   the new sha256 for body_changed (a second change while the first is open
---   is a new finding). One OPEN finding per (brand_id, dedupe_key): writers
---   INSERT … ON CONFLICT (brand_id, dedupe_key) WHERE status = 'open'
---   DO NOTHING. Once closed, the same key may open again.
+-- dedupe_key: findingDedupeKey(), JSON-encoded:
+--   host-level kinds (new_host, new_contacted_host, ioc_match) → kind | host
+--     (no path, no threat_id: a different path or a different matching
+--     threat on the same host does not open a second finding);
+--   script-level kinds (new_script, body_changed, sri_removed) → kind | host |
+--     path_norm, plus the new sha256 for body_changed (a second change while
+--     the first is open is a new finding).
+--   One OPEN finding per (brand_id, dedupe_key): writers INSERT … ON CONFLICT
+--   (brand_id, dedupe_key) WHERE status = 'open' DO NOTHING. Once closed, the
+--   same key may open again as a NEW row.
+--   REOPENING a closed row (UPDATE … SET status = 'open') can hit the same
+--   unique index: a newer open finding with that key may already exist (it
+--   was inserted after this one closed). A reopen must handle that — e.g.
+--   guard the UPDATE with `AND NOT EXISTS (SELECT 1 FROM site_script_findings
+--   o WHERE o.brand_id = f.brand_id AND o.dedupe_key = f.dedupe_key AND
+--   o.status = 'open')` and point the user at the open one — instead of
+--   failing on the constraint.
 --
 -- No FOREIGN KEYs to brands / threats: D1 enforces FKs, and brands / threats
 -- rows are retired by other writers that must not be blocked by this table.

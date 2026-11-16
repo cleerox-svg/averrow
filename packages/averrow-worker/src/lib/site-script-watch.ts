@@ -8,8 +8,9 @@
  *
  *   normaliseScriptUrl       URL → { host, path_norm (path + identity params), url, scheme, port }
  *   normaliseInlineScriptText / inlineScriptPathNorm   inline-script identity
+ *   isExecutableScriptType   which inline <script type> values are code (data blocks skipped)
  *   isFirstPartyHost         host equals / sits under the brand's canonical domain (punycode)
- *   looksContentHashed       build-hashed file paths (app.3f9a2c1b.js)
+ *   looksContentHashed / contentHashStem   build-hashed file paths (app.3f9a2c1b.js) and their stem
  *   diffSiteScan             scan vs stored inventory → new_host / new_script /
  *                            body_changed / sri_removed
  *   diffContactedHosts       requests vs stored contacted hosts → new_contacted_host
@@ -164,18 +165,118 @@ export function normaliseScriptUrl(raw: string, baseUrl?: string | null): Normal
 export const INLINE_SCRIPT_HOST = "(inline)";
 
 /**
+ * JavaScript MIME type essences (HTML spec): a `<script type>` equal to one
+ * of these (trimmed, ASCII case-insensitive, NO parameters) executes.
+ */
+const JS_MIME_TYPES: ReadonlySet<string> = new Set([
+  "application/ecmascript",
+  "application/javascript",
+  "application/x-ecmascript",
+  "application/x-javascript",
+  "text/ecmascript",
+  "text/javascript",
+  "text/javascript1.0",
+  "text/javascript1.1",
+  "text/javascript1.2",
+  "text/javascript1.3",
+  "text/javascript1.4",
+  "text/javascript1.5",
+  "text/jscript",
+  "text/livescript",
+  "text/x-ecmascript",
+  "text/x-javascript",
+]);
+
+/**
+ * Does a `<script>` with this `type` attribute execute? Absent / empty,
+ * `module` and the JavaScript MIME types do; everything else is a data
+ * block the browser never runs (application/json, application/ld+json,
+ * importmap, speculationrules, text/template, text/x-handlebars …).
+ *
+ * Only executable inline scripts are hashed and inventoried: a data block
+ * (Next.js `<script id="__NEXT_DATA__" type="application/json">`, JSON-LD)
+ * carries per-request state and would mint a "new" inline script on every
+ * scan. The decision is made on `type` ONLY, never on `id`: a
+ * `<script id="__NEXT_DATA__">` with no type executes like any other, so an
+ * id cannot exempt code from the inventory.
+ */
+export function isExecutableScriptType(type: string | null | undefined): boolean {
+  if (type === null || type === undefined) return true;
+  const t = type.trim().toLowerCase();
+  return t === "" || t === "module" || JS_MIME_TYPES.has(t);
+}
+
+const BASE58_CHARS = "[1-9A-HJ-NP-Za-km-z]";
+/**
+ * Wallet-address shapes the long-token mask must NOT hide (a skimmer / drainer
+ * swaps the recipient address; the hash has to change): Ethereum-style
+ * `0x` + 40 hex (EIP-55 mixed case included), Bitcoin legacy / P2SH base58
+ * (`1…` / `3…`, 26-35 chars) and TRON (`T` + 33 base58).
+ */
+const WALLET_ADDRESS_RE = new RegExp(`^(?:0x[0-9a-fA-F]{40}|[13]${BASE58_CHARS}{25,34}|T${BASE58_CHARS}{33})$`);
+
+const INLINE_NOISE_RE = new RegExp(
+  [
+    // 1. Ethereum-style address: kept verbatim (consumed first so no later rule masks part of it).
+    "0x[0-9a-fA-F]{40}(?![0-9A-Za-z])",
+    // 2. UUID.
+    "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    // 3. ISO-8601 date-time (seconds, fraction and offset optional).
+    "\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?(?:Z|[+-]\\d{2}:?\\d{2})?",
+    // 4. Standalone hex run ≥ 32 (nonces, digests, build ids).
+    "(?<![0-9A-Za-z])[0-9a-fA-F]{32,}(?![0-9A-Za-z])",
+    // 5. Any alphanumeric run ≥ 24 (decided in the callback).
+    "[A-Za-z0-9]{24,}",
+    // 6. Digit run ≥ 8 (epoch timestamps, request ids).
+    "\\d{8,}",
+  ].join("|"),
+  "g",
+);
+
+function maskInlineNoise(m: string): string {
+  if (/^0x[0-9a-fA-F]{40}$/.test(m)) return m;
+  if (/^[0-9a-fA-F]{8}-/.test(m)) return "#";
+  if (/^\d{4}-\d{2}-\d{2}/.test(m)) return "T0";
+  if (/^\d{8,}$/.test(m)) return "0";
+  if (/^[0-9a-fA-F]{32,}$/.test(m)) return "#";
+  // Alphanumeric run ≥ 24: a per-request token (CSRF, session, nonce) when it
+  // mixes digits, upper and lower case. Long camelCase identifiers (no digit)
+  // and wallet addresses stay; inside a kept run only ≥ 8-digit runs are masked.
+  if (WALLET_ADDRESS_RE.test(m)) return m;
+  if (/\d/.test(m) && /[A-Z]/.test(m) && /[a-z]/.test(m)) return "#";
+  return m.replace(/\d{8,}/g, "0");
+}
+
+/**
  * Normalise inline-script text before hashing, so per-request noise does
- * not mint a "new" script on every scan: whitespace collapsed, hex runs of
- * ≥ 32 chars (CSRF tokens, nonces, build ids) → `#`, digit runs of ≥ 8
- * (timestamps) → `0`. The caller hashes the result (SHA-256) and passes the
- * hex as the inline script's sha256.
+ * not mint a "new" script on every scan. Whitespace is collapsed, then:
+ *   - UUIDs                                         → `#`
+ *   - ISO-8601 date-times                           → `T0`
+ *   - standalone hex runs ≥ 32 (nonces, digests)    → `#`
+ *   - alphanumeric runs ≥ 24 mixing digits, upper and lower case
+ *     (CSRF / session tokens)                       → `#`
+ *   - digit runs ≥ 8 (epoch timestamps)             → `0`
+ * NOT masked: `0x` + 40-hex (Ethereum-style wallet addresses), Bitcoin
+ * legacy / P2SH and TRON base58 addresses — a drainer swapping the recipient
+ * must change the hash.
+ *
+ * Masking trade-offs (an attacker change that ONLY touches a masked value is
+ * invisible to the inline hash):
+ *   - numeric ids of ≥ 8 digits (merchant / account numbers, phone numbers)
+ *     are masked like timestamps; shorter numbers are kept, so a per-request
+ *     counter under 8 digits still churns the hash;
+ *   - base58 addresses of other chains (Solana: 32-44 mixed-case base58) are
+ *     indistinguishable from tokens and are masked;
+ *   - a long mixed-case token that happens to carry an API / publishable key
+ *     (e.g. a 24+ char payment publishable key) is masked, so swapping it is
+ *     not seen here (external SDK URLs keep their key params — see
+ *     SCRIPT_IDENTITY_PARAMS_BY_HOST);
+ *   - lowercase-only base36 tokens shorter than 32 chars are kept and churn.
+ * The caller hashes the result (SHA-256) and passes the hex as the inline
+ * script's sha256 — for executable scripts only (isExecutableScriptType).
  */
 export function normaliseInlineScriptText(text: string): string {
-  return text
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/[0-9a-f]{32,}/gi, "#")
-    .replace(/\d{8,}/g, "0");
+  return text.replace(/\s+/g, " ").trim().replace(INLINE_NOISE_RE, maskInlineNoise);
 }
 
 /** path_norm of an inline-script row: `sha256:<hex>` of the normalised text. */
@@ -210,7 +311,11 @@ export function isFirstPartyHost(host: string, canonicalDomain: string): boolean
 /**
  * Public script CDNs: a host here serves many unrelated sites, so its first
  * appearance on a brand's page says nothing about the brand on its own
- * (no new_host / new_contacted_host). A host matches an entry when it equals
+ * (no new_host / new_contacted_host). The CONTENT still matters: several of
+ * them (jsDelivr /gh/ and /npm/, unpkg, esm.sh, skypack) serve code anyone
+ * can publish, so every script on a CDN host is still diffed — a never-seen
+ * path raises new_script, even on the CDN's first appearance for the brand,
+ * and an inventoried one raises body_changed / sri_removed. A host matches an entry when it equals
  * it or is a subdomain of it. Deliberately NOT here: tag managers /
  * analytics (a new one is worth a look), polyfill.io (the 2024 compromise
  * this feature exists for) and tenant hosting (*.herokuapp.com,
@@ -252,7 +357,10 @@ export function isSharedScriptHost(host: string): boolean {
  * must not flag every site that loads any file from it. Scripts on these
  * hosts are matched only by full URL (threats.malicious_url,
  * matchUrlsAgainstThreats), never by host. Matched as the host or a
- * subdomain (`acct.blob.core.windows.net`, `bucket.s3.amazonaws.com`).
+ * subdomain. Exception: a subdomain of a storage-bucket service
+ * (STORAGE_BUCKET_HOSTS: `bucket.s3.amazonaws.com`,
+ * `acct.blob.core.windows.net`) is one tenant's bucket, so it ALSO gets an
+ * exact-host lookup key (threatLookupKeys), like a shared-hosting tenant.
  */
 export const URL_ONLY_IOC_HOSTS: ReadonlySet<string> = new Set([
   "githubusercontent.com",
@@ -285,45 +393,135 @@ export function isUrlOnlyIocHost(host: string): boolean {
   return findHostSuffix(host, URL_ONLY_IOC_HOSTS) !== null;
 }
 
+/**
+ * Object-storage services whose SUBDOMAINS are customer buckets / accounts
+ * (virtual-hosted style). The service host itself stays URL-only; a bucket
+ * host is a tenant and is looked up exactly (never its parents).
+ */
+export const STORAGE_BUCKET_HOSTS: ReadonlySet<string> = new Set([
+  "s3.amazonaws.com",
+  "blob.core.windows.net",
+  "storage.googleapis.com",
+  "firebasestorage.googleapis.com",
+]);
+
+/** Is `host` a tenant (strict subdomain) of a STORAGE_BUCKET_HOSTS service? */
+export function isStorageBucketTenant(host: string): boolean {
+  const h = normalizeHost(host);
+  const entry = findHostSuffix(h, STORAGE_BUCKET_HOSTS);
+  return entry !== null && entry !== h;
+}
+
 // ─── Content-hashed build files ─────────────────────────────────────
 
 /** Minimum length of a path token treated as a build hash. */
 export const CONTENT_HASH_MIN_LEN = 8;
 
-function isHashToken(t: string): boolean {
+/**
+ * An all-digit token that reads as a date / time: YYYYMMDD, YYYYMMDDhhmm,
+ * YYYYMMDDhhmmss (years 1990-2099, valid month and day) or a 10 / 13 digit
+ * epoch (seconds / milliseconds, 2001-2033). A dated release directory
+ * (`/js/20231105/checkout.js`) is a stable name, not a build hash.
+ */
+function isDateLikeDigits(t: string): boolean {
+  if (!/^\d+$/.test(t)) return false;
+  if ((t.length === 10 || t.length === 13) && t.startsWith("1")) return true;
+  if (t.length !== 8 && t.length !== 12 && t.length !== 14) return false;
+  const y = Number(t.slice(0, 4));
+  const mo = Number(t.slice(4, 6));
+  const d = Number(t.slice(6, 8));
+  return y >= 1990 && y <= 2099 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31;
+}
+
+/** A digit-free camelCase / PascalCase word sequence (CheckOut, PayPalSdk, checkOut). */
+const CAMEL_WORDS_RE = /^[a-z]*(?:[A-Z][a-z]+)+$/;
+
+/**
+ * Is `t` a build hash?
+ *
+ * Whole-name tokens (a whole dot-separated part of a segment: `app.<t>.js`,
+ * a `/<t>/` directory) count only when they are
+ *   - hex with at least one digit (`3f9a2c1b`, `0123abcd4567ef89`), or
+ *   - long (≥ 16) base64url with digits AND upper AND lower case (a Next.js
+ *     buildId `/_next/static/Xk9_2bQzT1aPq7LmN0vW/`).
+ * So digit-free names (`CheckOut`, `PayPalSdk`) and non-hex short names with
+ * digits (`sk1mmer2`) never count.
+ *
+ * Separator suffixes (after `-` / `_`: Vite / rollup `index-C5K0wNNo`) may
+ * also be mixed-case base36 / base64url: digits plus letters, or — digit-
+ * free — at least two upper and two lower case letters that are not a
+ * camelCase word sequence (`index-BxQzkPaL` yes, `app-CheckOut` no).
+ *
+ * Always: 8-128 chars, no run of ≥ 5 lowercase letters (a word: vendors,
+ * polyfills, handler), and never a date-like all-digit token.
+ */
+function isHashToken(t: string, separatorSuffix: boolean): boolean {
   if (t.length < CONTENT_HASH_MIN_LEN || t.length > 128) return false;
   if (!/^[A-Za-z0-9_-]+$/.test(t)) return false;
-  // A run of ≥ 5 lowercase letters is a word (vendors, polyfills, handler),
-  // not a hash: ~4% of random 8-char base64url tokens have one.
   if (/[a-z]{5,}/.test(t)) return false;
+  if (isDateLikeDigits(t)) return false;
   const digits = (t.match(/\d/g) ?? []).length;
-  if (/^[0-9a-f]+$/i.test(t)) return digits >= 1; // hex / numeric build ids
   const upper = (t.match(/[A-Z]/g) ?? []).length;
   const lower = (t.match(/[a-z]/g) ?? []).length;
-  return (digits >= 1 && upper + lower >= 1) || (upper >= 2 && lower >= 2);
+  if (/^[0-9a-f]+$/i.test(t)) return digits >= 1;
+  if (!separatorSuffix) return t.length >= 16 && digits >= 1 && upper >= 1 && lower >= 1;
+  if (digits >= 1) return upper + lower >= 1;
+  return upper >= 2 && lower >= 2 && !CAMEL_WORDS_RE.test(t.replace(/[-_]/g, ""));
+}
+
+/**
+ * The hashed part of one dot-separated token: the whole token, else the
+ * SHORTEST hashed separator suffix (from the last `-` / `_` whose remainder
+ * is a hash, so `_app-0123abcd4567ef89` keeps its `_app-` name), or null.
+ */
+function hashedPartOf(tok: string): { start: number } | null {
+  if (isHashToken(tok, false)) return { start: 0 };
+  for (let i = tok.length - 1; i >= 0; i--) {
+    if ((tok[i] === "-" || tok[i] === "_") && isHashToken(tok.slice(i + 1), true)) return { start: i + 1 };
+  }
+  return null;
 }
 
 /**
  * Does `path` look content-hashed — a build hash that changes on every
- * deploy? Checked on every path segment (filename and directories, so a
- * Next.js `/_next/static/<buildId>/…` counts), extension(s) stripped:
- * dot-separated tokens and every `-` / `_` suffix of each are tested, so
- * `app.3f9a2c1b.js`, `main.0123abcd4567ef89.chunk.js`, `index-C5K0wNNo.js`
- * and rollup's `index-B-x_9aQz.js` match while `jquery-3.7.1.min.js`,
- * `polyfills-es2015.js` and `checkout.js` do not. Query string ignored.
+ * deploy? Checked on every path segment (filename and directories), split
+ * on `.`: each part is tested whole and by its `-` / `_` suffixes (rules in
+ * isHashToken). `app.3f9a2c1b.js`, `main.0123abcd4567ef89.chunk.js`,
+ * `index-C5K0wNNo.js`, rollup's `index-B-x_9aQz.js` and a Next.js buildId
+ * directory match; `checkout.js`, `CheckOut.js`, `PayPalSdk.js`,
+ * `sk1mmer2.js`, `/js/20231105/checkout.js`, `jquery-3.7.1.min.js` and
+ * `polyfills-es2015.js` do not. Query string ignored.
+ *
+ * A hashed path alone is NOT a reason to stay silent — diffSiteScan also
+ * needs the predecessor it replaces (contentHashStem).
  */
 export function looksContentHashed(path: string): boolean {
   const pathname = path.split("?")[0] ?? "";
-  for (const seg of pathname.split("/")) {
-    if (!seg) continue;
-    for (const tok of seg.split(".")) {
-      if (isHashToken(tok)) return true;
-      for (let i = 0; i < tok.length; i++) {
-        if ((tok[i] === "-" || tok[i] === "_") && isHashToken(tok.slice(i + 1))) return true;
-      }
-    }
-  }
-  return false;
+  return pathname.split("/").some((seg) => seg.split(".").some((tok) => hashedPartOf(tok) !== null));
+}
+
+/**
+ * `path` with every build hash replaced by `#` (`/assets/index-C5K0wNNo.js`
+ * → `/assets/index-#.js`, `/app.3f9a2c1b.js` → `/app.#.js`); the query
+ * (identity params) is kept. Two builds of the same file share a stem.
+ */
+export function contentHashStem(path: string): string {
+  const q = path.indexOf("?");
+  const pathname = q === -1 ? path : path.slice(0, q);
+  const query = q === -1 ? "" : path.slice(q);
+  const stem = pathname
+    .split("/")
+    .map((seg) =>
+      seg
+        .split(".")
+        .map((tok) => {
+          const part = hashedPartOf(tok);
+          return part ? `${tok.slice(0, part.start)}#` : tok;
+        })
+        .join("."),
+    )
+    .join("/");
+  return stem + query;
 }
 
 // ─── Findings ───────────────────────────────────────────────────────
@@ -365,13 +563,31 @@ export interface SiteScriptFinding {
 }
 
 /**
- * site_script_findings.dedupe_key: kind, host, path_norm, threat_id — plus
- * the new sha256 for body_changed, so a second change while the first is
- * still open is recorded. JSON-encoded (unambiguous for any path). page_url
- * is not part of it: the same script on ten pages is one finding.
+ * Kinds that describe a HOST, not one script on it: one open finding per
+ * (brand, kind, host), whichever path / threat surfaced it.
  */
-export function findingDedupeKey(f: Pick<SiteScriptFinding, "kind" | "host" | "path_norm" | "threat_id" | "evidence">): string {
-  const parts: string[] = [f.kind, f.host, f.path_norm ?? "", f.threat_id ?? ""];
+export const HOST_LEVEL_FINDING_KINDS: ReadonlySet<SiteScriptFindingKind> = new Set([
+  "new_host",
+  "new_contacted_host",
+  "ioc_match",
+]);
+
+/**
+ * site_script_findings.dedupe_key, JSON-encoded (unambiguous for any path):
+ *   - host-level kinds (new_host, new_contacted_host, ioc_match): kind + host.
+ *     new_host is raised on whichever new path came first, and ioc_match on
+ *     the lowest matching threat id — neither must open a second finding for
+ *     the same host when the path or the matching threat differs. (A URL-only
+ *     ioc_match on a file host therefore collapses distinct bad files on that
+ *     host into one open finding; the first one's evidence is kept.)
+ *   - script-level kinds (new_script, body_changed, sri_removed): kind + host
+ *     + path_norm, plus the new sha256 for body_changed, so a second change
+ *     while the first is still open is recorded.
+ * page_url is never part of it: the same script on ten pages is one finding.
+ */
+export function findingDedupeKey(f: Pick<SiteScriptFinding, "kind" | "host" | "path_norm" | "evidence">): string {
+  if (HOST_LEVEL_FINDING_KINDS.has(f.kind)) return JSON.stringify([f.kind, f.host]);
+  const parts: string[] = [f.kind, f.host, f.path_norm ?? ""];
   if (f.kind === "body_changed") parts.push(f.evidence.sha256 ?? "");
   return JSON.stringify(parts);
 }
@@ -432,6 +648,13 @@ export interface ScannedScript {
   url?: string | null;
   /** Inline <script> body; sha256 is then the hash of normaliseInlineScriptText(text). */
   inline?: boolean;
+  /**
+   * The tag's `type` attribute (undefined / null = absent). An inline script
+   * whose type is not executable (isExecutableScriptType: application/json,
+   * ld+json, importmap …) is a data block and is dropped (counted in
+   * SiteScanDiff.data_blocks). External scripts are not filtered on it.
+   */
+  type?: string | null;
   /** External: SHA-256 of the body, null = not fetched. Inline: required. */
   sha256: string | null;
   /** The tag's SRI `integrity` attribute: undefined = not captured, null / '' = absent. */
@@ -476,6 +699,8 @@ export interface SiteScanDiff {
   baseline: boolean;
   /** Inputs dropped (non-http(s) / unparseable src, inline without a hash). */
   rejected: number;
+  /** Inline non-executable data blocks dropped (JSON, JSON-LD, import maps …). */
+  data_blocks: number;
 }
 
 export interface DiffSiteScanOptions {
@@ -524,13 +749,22 @@ function hasIntegrity(v: string | null | undefined): v is string {
  *                  exempt; a tenant on shared hosting (x.herokuapp.com,
  *                  d1.cloudfront.net, y.workers.dev) is exactly where a
  *                  skimmer lives and DOES raise it.
- *   new_script   — a new path_norm on an already-inventoried host. Third-
- *                  party hosts (CDNs included) always; first-party hosts
- *                  skip content-hashed build files (looksContentHashed).
+ *   new_script   — a new path_norm on a third-party host that is already
+ *                  inventoried OR is a public script CDN (a CDN's first
+ *                  appearance suppresses new_host, not its scripts:
+ *                  jsDelivr /gh/, unpkg and esm.sh serve attacker-published
+ *                  code). Always for third-party hosts. On an inventoried
+ *                  first-party host a content-hashed build file
+ *                  (looksContentHashed) is skipped ONLY when it replaces an
+ *                  inventoried file with the same contentHashStem on that
+ *                  host that this scan no longer loads (each predecessor
+ *                  covers one new file); a hashed file with no disappeared
+ *                  counterpart still raises new_script.
  *                  Inline scripts: '(inline)' counts as a first-party host,
  *                  so a new inline hash raises new_script once the inventory
  *                  holds any inline row (until then inline scripts are
- *                  silently baselined, like a new first-party host).
+ *                  silently baselined, like a new first-party host). Inline
+ *                  data blocks (non-executable `type`) are dropped.
  *   body_changed — same host + path_norm, both hashes known, different.
  *                  First-party scripts included (injected first-party JS is
  *                  the classic skimmer).
@@ -546,11 +780,16 @@ export function diffSiteScan(
   const observed: ObservedScript[] = [];
   const seen = new Map<string, ObservedScript>();
   let rejected = 0;
+  let dataBlocks = 0;
 
   for (const s of scripts) {
     const pageUrl = s.page_url ?? opts.pageUrl ?? null;
     let o: ObservedScript;
     if (s.inline) {
+      if (!isExecutableScriptType(s.type)) {
+        dataBlocks++;
+        continue;
+      }
       const sha = s.sha256?.trim().toLowerCase();
       if (!sha) {
         rejected++;
@@ -603,7 +842,7 @@ export function diffSiteScan(
     observed.push(o);
   }
 
-  if (opts.baseline === true) return { observed, findings: [], baseline: true, rejected };
+  if (opts.baseline === true) return { observed, findings: [], baseline: true, rejected, data_blocks: dataBlocks };
 
   const knownHosts = new Set<string>();
   const known = new Map<string, InventoryRow>();
@@ -612,6 +851,24 @@ export function diffSiteScan(
     knownHosts.add(host);
     known.set(scriptKey(host, r.path_norm), r);
   }
+
+  // Hashed first-party files this scan no longer loads, per (host, stem):
+  // the predecessors a new hashed build file may replace (one each).
+  const replaceable = new Map<string, number>();
+  for (const [key, r] of known) {
+    if (seen.has(key)) continue;
+    const host = key.slice(0, key.indexOf("\u0000"));
+    if (host === INLINE_SCRIPT_HOST || !looksContentHashed(r.path_norm)) continue;
+    const sk = scriptKey(host, contentHashStem(r.path_norm));
+    replaceable.set(sk, (replaceable.get(sk) ?? 0) + 1);
+  }
+  const replacesDisappeared = (o: ObservedScript): boolean => {
+    const sk = scriptKey(o.host, contentHashStem(o.path_norm));
+    const n = replaceable.get(sk) ?? 0;
+    if (n <= 0) return false;
+    replaceable.set(sk, n - 1);
+    return true;
+  };
 
   const findings: SiteScriptFinding[] = [];
   const newHostRaised = new Set<string>();
@@ -630,15 +887,21 @@ export function diffSiteScan(
 
   for (const o of observed) {
     if (!knownHosts.has(o.host)) {
-      if (!o.is_first_party && !o.cdn && !newHostRaised.has(o.host)) {
-        newHostRaised.add(o.host);
-        findings.push(finding("new_host", o));
+      // A new public script CDN: no new_host, but fall through so each of
+      // its scripts raises new_script below (it serves anyone's code).
+      if (!o.cdn) {
+        if (!o.is_first_party && !newHostRaised.has(o.host)) {
+          newHostRaised.add(o.host);
+          findings.push(finding("new_host", o));
+        }
+        continue;
       }
-      continue;
     }
     const row = known.get(scriptKey(o.host, o.path_norm));
     if (!row) {
-      if (o.is_inline || !o.is_first_party || !looksContentHashed(o.path_norm)) findings.push(finding("new_script", o));
+      const hashedReplacement =
+        !o.is_inline && o.is_first_party && looksContentHashed(o.path_norm) && replacesDisappeared(o);
+      if (!hashedReplacement) findings.push(finding("new_script", o));
       continue;
     }
     const prev = row.last_sha256 ?? null;
@@ -649,7 +912,7 @@ export function diffSiteScan(
       findings.push(finding("sri_removed", o, { integrity: null, prev_integrity: row.integrity }));
     }
   }
-  return { observed, findings, baseline: false, rejected };
+  return { observed, findings, baseline: false, rejected, data_blocks: dataBlocks };
 }
 
 // ─── Contacted-host diff ────────────────────────────────────────────
@@ -795,7 +1058,10 @@ function isNoiseKey(k: string): boolean {
  * threats.malicious_domain lookup keys for one host: the host itself, plus
  * its parent domains down to the registrable domain.
  *   - IP literal → the IP alone (no parents).
- *   - Public file host (URL_ONLY_IOC_HOSTS) → none: matched by URL only.
+ *   - Storage bucket (a subdomain of STORAGE_BUCKET_HOSTS:
+ *     `evil-bucket.s3.amazonaws.com`) → the host exactly. It is one tenant's
+ *     bucket; its scripts are ALSO matched by URL.
+ *   - Other public file host (URL_ONLY_IOC_HOSTS) → none: matched by URL only.
  *   - Shared hosting / public CDN tenant → the host exactly (its parents are
  *     the provider's domain, not the operator's).
  *   - A key that is itself a shared-hosting domain, CDN or file host is never
@@ -805,6 +1071,7 @@ export function threatLookupKeys(host: string): string[] {
   const h = toAsciiHost(host);
   if (!h || h.includes(" ")) return [];
   if (ipLiteral(h)) return [h];
+  if (isStorageBucketTenant(h)) return [h];
   if (isUrlOnlyIocHost(h)) return [];
   if (isSharedScriptHost(h)) return isNoiseKey(h) ? [] : [h];
   const keys = new Set<string>([h]);

@@ -12,13 +12,16 @@ import {
   SITE_SCRIPT_PATH_MAX,
   SCAN_SKIP_ACCEPT_AFTER,
   assessScanPlausibility,
+  contentHashStem,
   diffContactedHosts,
   diffSiteScan,
   findingDedupeKey,
   inlineScriptPathNorm,
   ipLiteral,
   isBaselineScan,
+  isExecutableScriptType,
   isFirstPartyHost,
+  isStorageBucketTenant,
   isSharedScriptHost,
   isUrlOnlyIocHost,
   isWellKnownScriptCdn,
@@ -191,7 +194,9 @@ describe("looksContentHashed", () => {
     "/static/js/main.0123abcd4567ef89.chunk.js",
     "/_next/static/chunks/pages/_app-0123abcd4567ef89.js",
     "/_next/static/Xk9_2bQzT1aPq7LmN0vW/_buildManifest.js",
-    "/build/20231105123456/app.js",
+    "/assets/index-BxQzkPaL.js", // digit-free mixed-case base64url, as a separator suffix
+    "/build/a1b2c3d4e5f6/app.js",
+    "/js/123456789.js", // numeric build id that is not date-like
   ])("hashed: %s", (p) => expect(looksContentHashed(p)).toBe(true));
 
   it.each([
@@ -203,7 +208,28 @@ describe("looksContentHashed", () => {
     "/js/bootstrap4.js",
     "/js/chunk-vendors.js",
     "/gtm.js?id=GTM-ABCDEFGH1",
+    // Whole-name digit-free mixed-case words, non-hex names with digits, dated dirs.
+    "/js/CheckOut.js",
+    "/js/PayPalSdk.js",
+    "/js/sk1mmer2.js",
+    "/js/20231105/checkout.js",
+    "/build/20231105123456/app.js",
+    "/js/1731800000/app.js",
+    "/js/app-CheckOut.js", // camelCase words are not a hash even as a suffix
+    "/js/app-20231105.js",
   ])("not hashed: %s", (p) => expect(looksContentHashed(p)).toBe(false));
+
+  it("contentHashStem replaces only the hash, keeping names and identity params", () => {
+    expect(contentHashStem("/assets/app.3f9a2c1b.js")).toBe("/assets/app.#.js");
+    expect(contentHashStem("/assets/app.1a2b3c4d.js")).toBe("/assets/app.#.js");
+    expect(contentHashStem("/assets/index-C5K0wNNo.js")).toBe("/assets/index-#.js");
+    expect(contentHashStem("/assets/index-Abc12345.js")).toBe("/assets/index-#.js");
+    expect(contentHashStem("/assets/index-B-x_9aQz.js")).toBe("/assets/index-#.js");
+    expect(contentHashStem("/_next/static/chunks/pages/_app-0123abcd4567ef89.js")).toBe("/_next/static/chunks/pages/_app-#.js");
+    expect(contentHashStem("/_next/static/Xk9_2bQzT1aPq7LmN0vW/_buildManifest.js")).toBe("/_next/static/#/_buildManifest.js");
+    expect(contentHashStem("/js/checkout.js?id=x")).toBe("/js/checkout.js?id=x");
+    expect(contentHashStem("/assets/vendor-C5K0wNNo.js")).not.toBe(contentHashStem("/assets/index-C5K0wNNo.js"));
+  });
 });
 
 describe("diffSiteScan", () => {
@@ -308,7 +334,7 @@ describe("diffSiteScan", () => {
     ]);
   });
 
-  it("only public script CDNs are exempt from new_host — shared-hosting tenants raise it", () => {
+  it("only public script CDNs are exempt from new_host — shared-hosting tenants raise it; CDN scripts still raise new_script", () => {
     const d = diffSiteScan(
       [
         { url: "https://cdn.jsdelivr.net/npm/other.js", sha256: SHA_A }, // known CDN host, new path → new_script
@@ -327,6 +353,8 @@ describe("diffSiteScan", () => {
     );
     expect(d.findings.map((f) => [f.kind, f.host])).toEqual([
       ["new_script", "cdn.jsdelivr.net"],
+      ["new_script", "cdnjs.cloudflare.com"], // never-seen CDN: no new_host, but the script is new
+      ["new_script", "unpkg.com"],
       ["new_host", "shop-x.herokuapp.com"],
       ["new_host", "d111111abcdef8.cloudfront.net"],
       ["new_host", "evil-bucket.s3.amazonaws.com"],
@@ -337,13 +365,12 @@ describe("diffSiteScan", () => {
     ]);
   });
 
-  it("new_script: always on known third-party hosts; first-party skips content-hashed builds", () => {
+  it("new_script: always on known third-party hosts; a hashed first-party file with no predecessor is new", () => {
     const d = diffSiteScan(
       [
         { url: "https://widgets.vendor.io/other.js", sha256: SHA_B },
         { url: "https://widgets.vendor.io/bundle.3f9a2c1b.js", sha256: SHA_B },
-        { url: "/assets/index-C5K0wNNo.js", sha256: SHA_B },
-        { url: "/assets/app.3f9a2c1b.js", sha256: SHA_B },
+        { url: "/assets/app.3f9a2c1b.js", sha256: SHA_B }, // hashed, but nothing it replaces
         { url: "/js/jquery-migrate.min.js", sha256: SHA_B },
         { url: "https://static.acme.com/new.js", sha256: SHA_A }, // new first-party HOST: silent
       ],
@@ -353,7 +380,93 @@ describe("diffSiteScan", () => {
     expect(d.findings.map((f) => [f.kind, f.host, f.path_norm])).toEqual([
       ["new_script", "widgets.vendor.io", "/other.js"],
       ["new_script", "widgets.vendor.io", "/bundle.3f9a2c1b.js"],
+      ["new_script", "www.acme.com", "/assets/app.3f9a2c1b.js"],
       ["new_script", "www.acme.com", "/js/jquery-migrate.min.js"],
+    ]);
+  });
+
+  it("first-party hashed build files are skipped only when they replace a disappeared file of the same stem", () => {
+    const inv: InventoryRow[] = [
+      { script_host: "www.acme.com", path_norm: "/assets/app.1a2b3c4d.js", last_sha256: SHA_A },
+      { script_host: "www.acme.com", path_norm: "/assets/index-Abc12345.js", last_sha256: SHA_A },
+      { script_host: "www.acme.com", path_norm: "/assets/vendor.9f8e7d6c.js", last_sha256: SHA_A },
+    ];
+    // A deploy: every hashed file replaced by its new build.
+    const deploy = diffSiteScan(
+      [
+        { url: "/assets/app.3f9a2c1b.js", sha256: SHA_B },
+        { url: "/assets/index-C5K0wNNo.js", sha256: SHA_B },
+        { url: "/assets/vendor.0a1b2c3d.js", sha256: SHA_B },
+      ],
+      inv,
+      opts,
+    );
+    expect(deploy.findings).toEqual([]);
+
+    // The predecessor is still loaded: the hashed newcomer is an addition, not a replacement.
+    const added = diffSiteScan(
+      [
+        { url: "/assets/app.1a2b3c4d.js", sha256: SHA_A },
+        { url: "/assets/app.3f9a2c1b.js", sha256: SHA_B },
+        { url: "/assets/index-Abc12345.js", sha256: SHA_A },
+        { url: "/assets/vendor.9f8e7d6c.js", sha256: SHA_A },
+      ],
+      inv,
+      opts,
+    );
+    expect(added.findings.map((f) => [f.kind, f.path_norm])).toEqual([["new_script", "/assets/app.3f9a2c1b.js"]]);
+
+    // One disappeared predecessor covers ONE new build file; a second of the same stem is new.
+    const two = diffSiteScan(
+      [
+        { url: "/assets/app.3f9a2c1b.js", sha256: SHA_B },
+        { url: "/assets/app.5e6f7a8b.js", sha256: SHA_C },
+        { url: "/assets/index-Abc12345.js", sha256: SHA_A },
+        { url: "/assets/vendor.9f8e7d6c.js", sha256: SHA_A },
+      ],
+      inv,
+      opts,
+    );
+    expect(two.findings.map((f) => [f.kind, f.path_norm])).toEqual([["new_script", "/assets/app.5e6f7a8b.js"]]);
+
+    // A different stem (or another host) never counts as the replacement.
+    const otherStem = diffSiteScan(
+      [
+        { url: "/assets/skim.3f9a2c1b.js", sha256: SHA_B },
+        { url: "https://static.acme.com/assets/app.3f9a2c1b.js", sha256: SHA_B },
+      ],
+      [...inv, { script_host: "static.acme.com", path_norm: "/x.js", last_sha256: SHA_A }],
+      opts,
+    );
+    expect(otherStem.findings.map((f) => [f.kind, f.host, f.path_norm])).toEqual([
+      ["new_script", "www.acme.com", "/assets/skim.3f9a2c1b.js"],
+      ["new_script", "static.acme.com", "/assets/app.3f9a2c1b.js"],
+    ]);
+
+    // The former false positives are not hashed at all: always new_script.
+    const fp = diffSiteScan(
+      ["/js/CheckOut.js", "/js/PayPalSdk.js", "/js/sk1mmer2.js", "/js/20231105/checkout.js"].map((url) => ({ url, sha256: SHA_B })),
+      [...inv, { script_host: "www.acme.com", path_norm: "/js/checkout.js", last_sha256: SHA_A }],
+      opts,
+    );
+    expect(fp.findings.map((f) => f.path_norm)).toEqual(["/js/CheckOut.js", "/js/PayPalSdk.js", "/js/sk1mmer2.js", "/js/20231105/checkout.js"]);
+  });
+
+  it("a never-seen CDN suppresses new_host but every script on it is new_script (jsDelivr /gh/, unpkg, esm.sh)", () => {
+    const d = diffSiteScan(
+      [
+        { url: "https://cdn.jsdelivr.net/gh/attacker/repo@main/skim.js", sha256: SHA_B },
+        { url: "https://esm.sh/evil-pkg@1.0.0", sha256: SHA_B },
+        { url: "https://unpkg.com/evil-pkg@1.0.0/index.js", sha256: SHA_B },
+        { url: "https://unpkg.com/evil-pkg@1.0.0/index.js?v=2", sha256: SHA_B }, // duplicate
+      ],
+      [],
+      opts,
+    );
+    expect(d.findings.map((f) => [f.kind, f.host, f.path_norm])).toEqual([
+      ["new_script", "cdn.jsdelivr.net", "/gh/attacker/repo@main/skim.js"],
+      ["new_script", "esm.sh", "/evil-pkg@1.0.0"],
+      ["new_script", "unpkg.com", "/evil-pkg@1.0.0/index.js"],
     ]);
   });
 
@@ -448,6 +561,23 @@ describe("diffSiteScan", () => {
     ]);
   });
 
+  it("drops inline data blocks (non-executable type) and keeps executable inline scripts", () => {
+    const withInline: InventoryRow[] = [...inventory, { script_host: INLINE_SCRIPT_HOST, path_norm: inlineScriptPathNorm(SHA_A), last_sha256: SHA_A }];
+    const d = diffSiteScan(
+      [
+        { inline: true, sha256: SHA_B, type: "application/json" }, // __NEXT_DATA__
+        { inline: true, sha256: SHA_B, type: "application/ld+json" },
+        { inline: true, sha256: SHA_B, type: "importmap" },
+        { inline: true, sha256: SHA_C, type: "module" },
+      ],
+      withInline,
+      opts,
+    );
+    expect(d.data_blocks).toBe(3);
+    expect(d.rejected).toBe(0);
+    expect(d.findings.map((f) => [f.kind, f.path_norm])).toEqual([["new_script", `sha256:${SHA_C}`]]);
+  });
+
   it("de-duplicates cache-buster variants of the same script, keeping the first known hash / integrity", () => {
     const d = diffSiteScan(
       [
@@ -472,6 +602,40 @@ describe("normaliseInlineScriptText", () => {
     expect(a).toBe('var csrf = "#"; var t = 0;');
     expect(b).toBe(a);
     expect(normaliseInlineScriptText("fetch('https://evil.example/c')")).not.toBe(normaliseInlineScriptText("fetch('https://shop.example/c')"));
+  });
+
+  it("masks UUIDs, ISO-8601 timestamps and long mixed-case tokens", () => {
+    const a = normaliseInlineScriptText(
+      'window.cfg = {req: "3f2504e0-4f89-11d3-9a0c-0305e82c3301", at: "2026-11-16T12:34:56.789Z", csrf: "aZ3kP9qLm2Xv7Rt1Yb5Nc8Wd"};',
+    );
+    const b = normaliseInlineScriptText(
+      'window.cfg = {req: "9B2E61A4-1C2D-4E5F-8A9B-0C1D2E3F4A5B", at: "2026-11-17T01:02:03+02:00", csrf: "Qw8Er4Ty6Ui2Op0As3Df5Gh7Jk9"};',
+    );
+    expect(a).toBe('window.cfg = {req: "#", at: "T0", csrf: "#"};');
+    expect(b).toBe(a);
+    // Long camelCase identifiers (no digits) are code, not tokens.
+    expect(normaliseInlineScriptText("handleCheckoutSubmitButtonClick()")).toBe("handleCheckoutSubmitButtonClick()");
+  });
+
+  it("does NOT mask wallet addresses: a swapped recipient changes the normalised text", () => {
+    const eth = (addr: string): string => normaliseInlineScriptText(`sendTo("${addr}")`);
+    const legit = eth("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+    expect(legit).toBe('sendTo("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")');
+    expect(eth("0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359")).not.toBe(legit);
+    expect(eth("0x" + "a".repeat(40))).not.toBe(eth("0x" + "b".repeat(40)));
+    expect(eth("0x1234567890123456789012345678901234567890")).not.toBe(eth("0x1234567890123456789012345678901234567891"));
+    const btc = (addr: string): string => normaliseInlineScriptText(`pay("${addr}")`);
+    expect(btc("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")).toBe('pay("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")');
+    expect(btc("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")).not.toBe(btc("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"));
+  });
+
+  it("isExecutableScriptType: only code types, never data blocks", () => {
+    for (const t of [undefined, null, "", " ", "module", "text/javascript", "TEXT/JavaScript", "application/javascript", "application/ecmascript", "text/jscript"]) {
+      expect(isExecutableScriptType(t), String(t)).toBe(true);
+    }
+    for (const t of ["application/json", "application/ld+json", "importmap", "speculationrules", "text/template", "text/x-handlebars-template", "text/javascript; charset=utf-8"]) {
+      expect(isExecutableScriptType(t), t).toBe(false);
+    }
   });
 
   it("inlineScriptPathNorm prefixes the lowercase hash", () => {
@@ -579,16 +743,28 @@ describe("findingDedupeKey", () => {
     evidence: { url: "https://evil.ru/s.js", sha256: SHA_A },
   };
 
-  it("ignores page_url and evidence except body_changed's new hash", () => {
-    expect(findingDedupeKey(base)).toBe(JSON.stringify(["new_host", "evil.ru", "/s.js", ""]));
-    expect(findingDedupeKey({ ...base, page_url: "https://acme.com/checkout", evidence: { url: null, sha256: SHA_B } })).toBe(
+  it("host-level kinds key on kind + host only (path, threat, page and evidence ignored)", () => {
+    expect(findingDedupeKey(base)).toBe(JSON.stringify(["new_host", "evil.ru"]));
+    expect(findingDedupeKey({ ...base, path_norm: "/t.js", page_url: "https://acme.com/checkout", evidence: { url: null, sha256: SHA_B } })).toBe(
       findingDedupeKey(base),
     );
+    const ioc = { ...base, kind: "ioc_match" as const, threat_id: "t1", path_norm: null };
+    expect(findingDedupeKey(ioc)).toBe(JSON.stringify(["ioc_match", "evil.ru"]));
+    expect(findingDedupeKey({ ...ioc, threat_id: "t2", path_norm: "/s.js" })).toBe(findingDedupeKey(ioc));
+    const nch = { ...base, kind: "new_contacted_host" as const, path_norm: null };
+    expect(findingDedupeKey(nch)).toBe(JSON.stringify(["new_contacted_host", "evil.ru"]));
+    expect(findingDedupeKey(ioc)).not.toBe(findingDedupeKey(base));
+  });
+
+  it("script-level kinds keep the path; body_changed also keys on the new hash", () => {
+    const ns = { ...base, kind: "new_script" as const };
+    expect(findingDedupeKey(ns)).toBe(JSON.stringify(["new_script", "evil.ru", "/s.js"]));
+    expect(findingDedupeKey({ ...ns, path_norm: "/t.js" })).not.toBe(findingDedupeKey(ns));
+    expect(findingDedupeKey({ ...ns, page_url: "https://acme.com/x" })).toBe(findingDedupeKey(ns));
+    expect(findingDedupeKey({ ...base, kind: "sri_removed" as const })).toBe(JSON.stringify(["sri_removed", "evil.ru", "/s.js"]));
     const bc = { ...base, kind: "body_changed" as const };
+    expect(findingDedupeKey(bc)).toBe(JSON.stringify(["body_changed", "evil.ru", "/s.js", SHA_A]));
     expect(findingDedupeKey(bc)).not.toBe(findingDedupeKey({ ...bc, evidence: { url: null, sha256: SHA_B } }));
-    expect(findingDedupeKey({ ...base, kind: "ioc_match", threat_id: "t1", path_norm: null })).toBe(
-      JSON.stringify(["ioc_match", "evil.ru", "", "t1"]),
-    );
   });
 });
 
@@ -615,14 +791,32 @@ describe("threatLookupKeys / threatUrlLookupKeys", () => {
       "drive.google.com",
       "bitbucket.org",
       "gitlab.com",
-      "acct.blob.core.windows.net",
       "s3.amazonaws.com",
-      "evil-bucket.s3.amazonaws.com",
+      "blob.core.windows.net",
+      "firebasestorage.googleapis.com",
     ]) {
       expect(isUrlOnlyIocHost(h), h).toBe(true);
+      expect(isStorageBucketTenant(h), h).toBe(false);
       expect(threatLookupKeys(h), h).toEqual([]);
     }
     expect(isUrlOnlyIocHost("githubusercontent.com.evil.io")).toBe(false);
+  });
+
+  it("storage-bucket subdomains are tenants: an exact-host key (never the parents), still URL-matched too", () => {
+    for (const h of [
+      "evil-bucket.s3.amazonaws.com",
+      "acct.blob.core.windows.net",
+      "bucket.storage.googleapis.com",
+      "x.firebasestorage.googleapis.com",
+      "a.b.s3.amazonaws.com",
+    ]) {
+      expect(isStorageBucketTenant(h), h).toBe(true);
+      expect(isUrlOnlyIocHost(h), h).toBe(true);
+      expect(threatLookupKeys(h), h).toEqual([h]);
+    }
+    expect(threatLookupKeys("EVIL-Bucket.S3.amazonaws.com.")).toEqual(["evil-bucket.s3.amazonaws.com"]);
+    expect(isStorageBucketTenant("s3.amazonaws.com.evil.io")).toBe(false);
+    expect(threatUrlLookupKeys("https://evil-bucket.s3.amazonaws.com/skim.js")).toEqual(["https://evil-bucket.s3.amazonaws.com/skim.js"]);
   });
 
   it("keeps an IP host as an exact key; converts IDNs", () => {
@@ -816,13 +1010,14 @@ describe.skipIf(!hasSqlite())("migration 0337 + threat matching (all migrations 
     ]);
     const view = matches.map((m) => [m.host, m.matched_value, m.match_kind, m.threat_id].join("|")).sort();
     expect(view).toEqual([
+      "acct.blob.core.windows.net|acct.blob.core.windows.net|exact|t-blob", // storage-bucket tenant: exact
       "skimmer.evil.com|evil.com|parent|t-parent",
       "skimmer.evil.com|skimmer.evil.com|exact|t-exact",
       "static.pay-cdn.net|pay-cdn.net|parent|t-pay",
     ]);
     for (const e of log) {
       expect(e.error).toBeUndefined();
-      expect(e.sql).not.toMatch(/evil|pay-cdn|example/);
+      expect(e.sql).not.toMatch(/evil|pay-cdn|example|blob/);
     }
   });
 
