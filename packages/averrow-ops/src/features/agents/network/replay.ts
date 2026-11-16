@@ -49,22 +49,22 @@ export function formatAge(ms: number): string {
 }
 
 export type ChipState =
-  | 'live' | 'paused' | 'motion-off' | 'reconnecting' | 'offline' | 'connecting' | 'replay';
+  | 'live' | 'animation-off' | 'animation-off-system' | 'reconnecting' | 'offline' | 'connecting' | 'replay';
 
 export interface ChipInput {
   /** Replay mode, or null when live. */
-  replay: { playhead: number; atEnd: boolean; newData: boolean } | null;
+  replay: { playhead: number; newData: boolean } | null;
   /** A payload is on screen. */
   hasPayload: boolean;
   /** The last fetch failed. */
   fetchFailed: boolean;
   /** The OS asks for reduced motion. */
   osReduced: boolean;
-  /** The Pause control is on. */
+  /** The animation control is off. */
   paused: boolean;
-  /** When the current payload was received (client clock, ms). */
+  /** When the current payload was received (client clock, ms). Shown as "checked". */
   receivedAt: number;
-  /** The payload's generated_at (ISO), if any. */
+  /** The payload's generated_at (ISO), if any. The data age is measured from it. */
   generatedAt: string | undefined;
   /** Client clock, ms. */
   now: number;
@@ -74,41 +74,70 @@ export interface ChipModel {
   state: ChipState;
   /** Visible text; changes with the age tick. */
   label: string;
-  /** Tooltip: the secondary "data as of" line. */
+  /** Tooltip: data as-of and checked times. */
   title: string;
   /** Screen-reader text. Depends on the state only, never on the age tick. */
   announce: string;
+  /** Small badge next to the label, or null. */
+  badge: 'New data' | null;
 }
 
 export function chipModel(i: ChipInput): ChipModel {
   const gen = i.generatedAt ? Date.parse(i.generatedAt) : NaN;
-  const title = Number.isFinite(gen) ? `Data as of ${fmtHMS(gen)} UTC` : 'No data yet';
-  const age = formatAge(i.now - i.receivedAt);
+  const hasGen = Number.isFinite(gen);
+  // The endpoint is KV-cached (~60s), so the data is older than the moment it
+  // was received: measure from generated_at.
+  const age = formatAge(hasGen ? i.now - gen : i.now - i.receivedAt);
+  const asOf = hasGen ? `${fmtHMS(gen)} UTC` : null;
+  const title = [asOf ? `Data as of ${asOf}` : 'No data yet', i.receivedAt ? `checked ${fmtHMS(i.receivedAt)} UTC` : null]
+    .filter(Boolean).join(' · ');
 
   if (i.replay) {
     const r = i.replay;
-    let label = `Replay · ${fmtHM(r.playhead)} UTC`;
-    let announce = 'Replay mode';
-    if (r.atEnd) { label += ' · end of data'; announce += ', end of data'; }
-    if (r.newData) { label += ' · new data available'; announce += ', new data available'; }
-    return { state: 'replay', label, title, announce };
+    return {
+      state: 'replay',
+      label: `Replay · ${fmtHM(r.playhead)} UTC${asOf ? ` · data as of ${asOf}` : ''}`,
+      title,
+      announce: r.newData ? 'Replay mode, new data available' : 'Replay mode',
+      badge: r.newData ? 'New data' : null,
+    };
   }
   if (!i.hasPayload) {
     return i.fetchFailed
-      ? { state: 'offline', label: 'Offline', title, announce: 'Offline' }
-      : { state: 'connecting', label: 'Connecting…', title, announce: 'Connecting' };
+      ? { state: 'offline', label: 'Offline', title, announce: 'Offline', badge: null }
+      : { state: 'connecting', label: 'Connecting…', title, announce: 'Connecting', badge: null };
   }
   if (i.fetchFailed) {
     return {
-      state: 'reconnecting', label: `Reconnecting… · ${age} old`, title,
-      announce: 'Reconnecting. Showing older data',
+      state: 'reconnecting', label: `Reconnecting… · ${asOf ? `data from ${asOf}, ` : ''}${age} old`, title,
+      announce: 'Reconnecting. Showing older data', badge: null,
     };
   }
   if (i.osReduced) {
-    return { state: 'motion-off', label: `Motion off · updated ${age} ago`, title, announce: 'Motion off' };
+    return {
+      state: 'animation-off-system', label: `Live · animation off (system setting) · data ${age} old`, title,
+      announce: 'Live, animation off by system setting', badge: null,
+    };
   }
   if (i.paused) {
-    return { state: 'paused', label: `Paused · updated ${age} ago`, title, announce: 'Motion paused' };
+    return { state: 'animation-off', label: `Live · animation off · data ${age} old`, title, announce: 'Live, animation off', badge: null };
   }
-  return { state: 'live', label: `Live · updated ${age} ago`, title, announce: 'Live' };
+  return { state: 'live', label: `Live · data ${age} old`, title, announce: 'Live', badge: null };
+}
+
+/**
+ * Whether a key event on a replay control may be handled. Never when a
+ * modifier is held, another handler already took it, or the target is a text
+ * field.
+ */
+export function canHandleReplayKey(e: {
+  defaultPrevented: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean; target: EventTarget | null;
+}): boolean {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return false;
+  const t = e.target as HTMLElement | null;
+  if (t && typeof t.tagName === 'string') {
+    const tag = t.tagName.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable) return false;
+  }
+  return true;
 }

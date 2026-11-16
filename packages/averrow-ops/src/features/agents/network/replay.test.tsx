@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  MAX_FRAME_MS, advancePlayhead, chipModel, clampPlayhead, formatAge, stepPlayhead, type ChipInput,
+  MAX_FRAME_MS, advancePlayhead, canHandleReplayKey, chipModel, clampPlayhead, formatAge, stepPlayhead, type ChipInput,
 } from './replay';
 import { LiveChip } from './LiveChip';
 import { EDGES } from './model';
@@ -11,31 +11,38 @@ import { FEEDS_FIXTURE, FIXTURE_NOW, TIMELINE_FIXTURE } from './fixtures';
 const NOW = Date.parse(FIXTURE_NOW);
 const MIN = 60_000;
 
+const GEN = Date.parse(FIXTURE_NOW);
 const base: ChipInput = {
   replay: null, hasPayload: true, fetchFailed: false, osReduced: false, paused: false,
-  receivedAt: 1_000_000, generatedAt: FIXTURE_NOW, now: 1_020_000,
+  // received 20 s after the server generated it (the endpoint is KV-cached)
+  receivedAt: GEN + 20_000, generatedAt: FIXTURE_NOW, now: GEN + 40_000,
 };
 
 describe('chip model', () => {
-  it('is live and ages with the clock', () => {
+  it('is live and measures the data age from generated_at, not from receipt', () => {
     const m = chipModel(base);
     expect(m.state).toBe('live');
-    expect(m.label).toBe('Live · updated 20s ago');
-    expect(m.title).toBe('Data as of 06:12:30 UTC');
-    expect(chipModel({ ...base, now: 1_000_000 + 125_000 }).label).toBe('Live · updated 2m 05s ago');
+    expect(m.label).toBe('Live · data 40s old'); // receipt age would read 20s
+    expect(m.title).toBe('Data as of 06:12:30 UTC · checked 06:12:50 UTC');
+    expect(chipModel({ ...base, now: GEN + 125_000 }).label).toBe('Live · data 2m 05s old');
   });
 
-  it('says Paused for the control and Motion off for the OS preference', () => {
-    expect(chipModel({ ...base, paused: true })).toMatchObject({ state: 'paused', label: 'Paused · updated 20s ago' });
-    expect(chipModel({ ...base, osReduced: true })).toMatchObject({ state: 'motion-off', label: 'Motion off · updated 20s ago' });
-    // the OS case wins when both are on
-    expect(chipModel({ ...base, osReduced: true, paused: true }).state).toBe('motion-off');
+  it('says animation off (not Paused: the data is live) for the control and the system setting', () => {
+    expect(chipModel({ ...base, paused: true })).toMatchObject({
+      state: 'animation-off', label: 'Live · animation off · data 40s old', announce: 'Live, animation off',
+    });
+    expect(chipModel({ ...base, osReduced: true })).toMatchObject({
+      state: 'animation-off-system', label: 'Live · animation off (system setting) · data 40s old',
+      announce: 'Live, animation off by system setting',
+    });
+    // the system setting wins when both are on
+    expect(chipModel({ ...base, osReduced: true, paused: true }).state).toBe('animation-off-system');
   });
 
-  it('is Reconnecting with the age while a refetch fails behind an older payload', () => {
-    const m = chipModel({ ...base, fetchFailed: true, now: 1_000_000 + 95_000 });
+  it('is Reconnecting with the data time and age while a refetch fails behind an older payload', () => {
+    const m = chipModel({ ...base, fetchFailed: true, now: GEN + 95_000 });
     expect(m.state).toBe('reconnecting');
-    expect(m.label).toBe('Reconnecting… · 1m 35s old');
+    expect(m.label).toBe('Reconnecting… · data from 06:12:30 UTC, 1m 35s old');
     expect(m.announce).toMatch(/older data/);
   });
 
@@ -44,18 +51,21 @@ describe('chip model', () => {
     expect(chipModel({ ...base, hasPayload: false, generatedAt: undefined }).state).toBe('connecting');
   });
 
-  it('shows the playhead in replay, plus end of data and new data', () => {
-    const r = { playhead: Date.parse('2026-11-15T05:42:30Z'), atEnd: false, newData: false };
-    expect(chipModel({ ...base, replay: r })).toMatchObject({ state: 'replay', label: 'Replay · 05:42 UTC' });
-    const both = chipModel({ ...base, replay: { ...r, atEnd: true, newData: true } });
-    expect(both.label).toBe('Replay · 05:42 UTC · end of data · new data available');
+  it('shows the playhead and the data time inline in replay; new data is a badge, not label text', () => {
+    const r = { playhead: Date.parse('2026-11-15T05:42:30Z'), newData: false };
+    const m = chipModel({ ...base, replay: r });
+    expect(m).toMatchObject({ state: 'replay', label: 'Replay · 05:42 UTC · data as of 06:12:30 UTC', badge: null });
+    const fresh = chipModel({ ...base, replay: { ...r, newData: true } });
+    expect(fresh.badge).toBe('New data');
+    expect(fresh.label).not.toMatch(/new data|end of data/i);
+    expect(fresh.announce).toBe('Replay mode, new data available');
     // replay beats every live state
     expect(chipModel({ ...base, replay: r, fetchFailed: true, paused: true }).state).toBe('replay');
   });
 
   it('keeps the screen-reader text independent of the age tick', () => {
-    const a = chipModel({ ...base, now: 1_020_000 });
-    const b = chipModel({ ...base, now: 1_300_000 });
+    const a = chipModel({ ...base, now: GEN + 20_000 });
+    const b = chipModel({ ...base, now: GEN + 300_000 });
     expect(a.label).not.toBe(b.label);
     expect(a.announce).toBe(b.announce);
   });
@@ -69,13 +79,29 @@ describe('chip model', () => {
   });
 });
 
+describe('replay key guard', () => {
+  const ev = (over: Partial<Parameters<typeof canHandleReplayKey>[0]> = {}) => ({
+    defaultPrevented: false, altKey: false, ctrlKey: false, metaKey: false, target: document.createElement('div'), ...over,
+  });
+  it('allows a plain key on a replay control', () => { expect(canHandleReplayKey(ev())).toBe(true); });
+  it('refuses with a modifier held, when already handled, or on a text field', () => {
+    expect(canHandleReplayKey(ev({ altKey: true }))).toBe(false);
+    expect(canHandleReplayKey(ev({ ctrlKey: true }))).toBe(false);
+    expect(canHandleReplayKey(ev({ metaKey: true }))).toBe(false);
+    expect(canHandleReplayKey(ev({ defaultPrevented: true }))).toBe(false);
+    expect(canHandleReplayKey(ev({ target: document.createElement('input') }))).toBe(false);
+    expect(canHandleReplayKey(ev({ target: document.createElement('textarea') }))).toBe(false);
+    expect(canHandleReplayKey(ev({ target: document.createElement('select') }))).toBe(false);
+  });
+});
+
 describe('LiveChip announcements', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
   it('re-renders the age every second but never changes the live-region text', () => {
     render(<LiveChip replay={null} hasPayload fetchFailed={false} osReduced={false} paused={false}
-      receivedAt={Date.now()} generatedAt={FIXTURE_NOW} />);
+      receivedAt={Date.now()} generatedAt={new Date().toISOString()} />);
     const status = screen.getByTestId('live-chip-status');
     const chip = screen.getByTestId('live-chip');
     expect(status).toHaveTextContent('Live');
@@ -90,13 +116,18 @@ describe('LiveChip announcements', () => {
     return Promise.resolve().then(() => { mo.disconnect(); expect(mutations).toHaveLength(0); });
   });
 
-  it('announces when the state changes', () => {
+  it('announces when the state changes and shows the New data badge', () => {
+    const gen = new Date().toISOString();
     const { rerender } = render(<LiveChip replay={null} hasPayload fetchFailed={false} osReduced={false} paused={false}
-      receivedAt={Date.now()} generatedAt={FIXTURE_NOW} />);
+      receivedAt={Date.now()} generatedAt={gen} />);
     rerender(<LiveChip replay={null} hasPayload fetchFailed osReduced={false} paused={false}
-      receivedAt={Date.now()} generatedAt={FIXTURE_NOW} />);
+      receivedAt={Date.now()} generatedAt={gen} />);
     expect(screen.getByTestId('live-chip-status')).toHaveTextContent('Reconnecting');
     expect(screen.getByTestId('live-chip')).toHaveAttribute('data-state', 'reconnecting');
+    rerender(<LiveChip replay={{ playhead: Date.now(), newData: true }} hasPayload fetchFailed={false} osReduced={false} paused={false}
+      receivedAt={Date.now()} generatedAt={gen} />);
+    expect(screen.getByTestId('live-chip-badge')).toHaveTextContent('New data');
+    expect(screen.getByTestId('live-chip-status')).toHaveTextContent('Replay mode, new data available');
   });
 });
 
@@ -126,6 +157,15 @@ describe('playhead maths', () => {
     expect(stepPlayhead(start + 5 * MIN, -1, true, start, NOW)).toBe(start + 5 * MIN - 10_000);
     expect(stepPlayhead(start + 5_000, -1, false, start, NOW)).toBe(start);
     expect(stepPlayhead(NOW - 5_000, 1, false, start, NOW)).toBe(NOW);
+  });
+});
+
+describe('statusWord for suspect runs', () => {
+  it('reads status unknown even with no cap', async () => {
+    const { statusWord } = await import('./RunTape');
+    const span = { id: 1, startMs: 0, endMs: null, status: 'running' as const, records: 0, error: null, clipped: false, member: 'x', suspect: true };
+    expect(statusWord(span, 10, Infinity)).toBe('status unknown');
+    expect(statusWord({ ...span, suspect: false }, 10, Infinity)).toBe('running');
   });
 });
 

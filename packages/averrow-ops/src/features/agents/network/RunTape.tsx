@@ -6,6 +6,12 @@
 // gains a bright outline and a solid end cap at the NOW edge. An open run
 // older than the snapshot's trust window is drawn neutral and dashed: it may
 // have finished since.
+//
+// Replay: the axis is fixed, a playhead replaces the NOW marker, a run that
+// spans the playhead is split there (the part before it reads as in progress,
+// the part after it is a ghost, so its final status is not shown early), and
+// runs that start after the playhead are ghosts. The time scale above the
+// lanes is a keyboard-operable slider; the canvas itself keeps pan/scroll.
 
 import { useCallback, useMemo, useRef } from 'react';
 import { useTokenColors } from '@averrow/shared/theme';
@@ -16,7 +22,7 @@ import {
   TAPE_TOP, buildTapeLanes, tapeGeometry, tapeHitTest, type TapeLane,
 } from './tape';
 import type { Placement } from './model';
-import { fmtHMS } from './replay';
+import { fmtHM, fmtHMS } from './replay';
 
 const TOKENS = [
   '--bg-page', '--bg-card-deep', '--border-base', '--text-primary', '--text-secondary', '--text-muted',
@@ -27,11 +33,6 @@ const SANS = '"Geist", ui-sans-serif, system-ui, sans-serif';
 const MONO = '"Geist Mono", ui-monospace, SFMono-Regular, monospace';
 const PULSE = 450;
 
-const clock = (ms: number) => {
-  const d = new Date(ms);
-  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
-};
-
 function fmtDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   const s = ms / 1000;
@@ -39,15 +40,27 @@ function fmtDuration(ms: number): string {
   return `${Math.round(s / 60)}m`;
 }
 
-function statusWord(s: Span, now: number, capMs: number): string {
-  if (s.endMs === null) return now > capMs ? 'status unknown' : 'running';
+/** Status of a run as of `now` (the live clock or the replay playhead). */
+export function statusWord(s: Span, now: number, capMs: number): string {
+  if (s.endMs === null) return s.suspect || now > capMs ? 'status unknown' : 'running';
+  if (s.endMs > now) return 'running'; // spans the playhead
   return s.status === 'success' ? 'ok' : s.status;
+}
+
+export interface TapeReplay {
+  /** The fixed time axis anchor (the live axis frozen when replay began). */
+  anchorMs: number;
+  /** Earliest and latest playhead position. */
+  startMs: number;
+  endMs: number;
+  playing: boolean;
 }
 
 export interface RunTapeProps {
   placement: Placement;
   index: TimelineIndex;
   status: 'loading' | 'error' | 'ready';
+  /** The view time: the live clock, or the replay playhead. */
   getNow: () => number;
   hoverId: string | null;
   onHover: (id: string | null) => void;
@@ -55,21 +68,27 @@ export interface RunTapeProps {
   onSelect: (name: string) => void;
   labelOf: (id: string) => string;
   width: number;
-  /** True under the OS preference or the Pause control. */
+  /** True under the OS preference or the animation control. */
   reducedMotion: boolean;
-  /** Replay: the tape is anchored to the payload window, `getNow` is the
-   *  playhead, and the NOW marker becomes a playhead. */
-  replay?: { anchorMs: number; playing: boolean } | null;
-  /** Click or drag on the time axis scrubs (and enters replay when live). */
+  /** Replay mode (memoise this object). */
+  replay?: TapeReplay | null;
+  /** Changes whenever the shown playhead changes: redraws static frames and
+   *  refreshes the text equivalent. */
+  viewVersion?: number;
+  /** Pointer on the time scale scrubs (and enters replay when live). */
   onScrub?: (ms: number) => void;
+  /** Keys on the time-scale slider (the parent owns the replay state). */
+  onSliderKey?: (e: React.KeyboardEvent<HTMLDivElement>) => void;
+  sliderRef?: React.Ref<HTMLDivElement>;
 }
 
 export function RunTape({
   placement, index, status, getNow, hoverId, onHover, selected, onSelect, labelOf, width, reducedMotion,
-  replay = null, onScrub,
+  replay = null, viewVersion = 0, onScrub, onSliderKey, sliderRef,
 }: RunTapeProps) {
   const [, setCanvasEl, canvasEl] = useMountedElement<HTMLCanvasElement>();
   const spanHover = useRef<{ lane: string; span: Span } | null>(null);
+  const ghost = useRef<number | null>(null);
   const scrubbing = useRef(false);
   const visible = useIsVisible(canvasEl);
   const { colors, version } = useTokenColors(TOKENS);
@@ -81,11 +100,10 @@ export function RunTape({
   };
 
   const { lanes, quiet } = useMemo(() => buildTapeLanes(placement, index, labelOf), [placement, index, labelOf]);
-  const geom = useMemo(
-    () => tapeGeometry(width, lanes.length, replay ? replay.anchorMs : getNow()),
-    [width, lanes.length, getNow, replay],
-  );
   const hasData = status === 'ready' && lanes.length > 0;
+  // While the replay clock runs the frame loop reads the playhead itself; the
+  // version only matters when it is not running (steps, scrubs).
+  const drawKey = replay?.playing ? 0 : viewVersion;
 
   const draw = useCallback((): boolean => {
     const canvas = canvasEl;
@@ -101,6 +119,16 @@ export function RunTape({
     let busy = false;
     ctx.clearRect(0, 0, g.width, g.height);
 
+    // Playhead pill geometry first, so tick labels can step aside.
+    const xn = g.x(now);
+    let pill: { lx: number; lw: number } | null = null;
+    if (replay) {
+      ctx.font = `600 10px ${MONO}`;
+      const lw = ctx.measureText(fmtHMS(now)).width + 10;
+      const rightSide = xn > g.x1 - 70;
+      pill = { lx: rightSide ? xn - 10 - lw : xn + 10, lw };
+    }
+
     // Time grid.
     ctx.font = `500 10px ${MONO}`;
     ctx.textAlign = 'center';
@@ -113,8 +141,11 @@ export function RunTape({
       ctx.moveTo(x, TAPE_TOP - 8);
       ctx.lineTo(x, g.height - 8);
       ctx.stroke();
-      ctx.fillStyle = c('--text-muted');
-      ctx.fillText(clock(t), x, 16);
+      const hidden = pill && x + 16 > pill.lx - 6 && x - 16 < pill.lx + pill.lw + 6;
+      if (!hidden) {
+        ctx.fillStyle = c('--text-muted');
+        ctx.fillText(fmtHM(t), x, 16);
+      }
     }
 
     lanes.forEach((lane, i) => {
@@ -138,44 +169,82 @@ export function RunTape({
       if (name !== lane.label) name = `${name.trimEnd()}…`;
       ctx.fillText(`${name}${tag}`, g.gx - 10, y + g.lh / 2 + 4);
 
+      const ghostBar = (x0: number, x1: number, radii: number | number[]) => {
+        ctx.beginPath();
+        ctx.roundRect(x0, y + 4, Math.max(x1 - x0, 3), g.lh - 8, radii);
+        ctx.fillStyle = c('--text-muted', 0.1);
+        ctx.fill();
+        ctx.setLineDash([3, 2]);
+        ctx.strokeStyle = c('--text-muted', 0.55);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      };
+
       for (const s of index.lanes.get(lane.id) ?? []) {
         const open = s.endMs === null;
-        const stale = open && now > index.capMs;
-        const end = s.endMs ?? Math.min(anchor, index.capMs);
+        const stale = open && (!!s.suspect || (!replay && now > index.capMs));
+        const end = s.endMs ?? (replay ? replay.endMs : Math.min(anchor, index.capMs));
         if (end < g.startMs || s.startMs > g.endMs) continue;
         const xa = g.x(Math.max(s.startMs, g.startMs));
         const xb = g.x(Math.min(end, g.endMs));
         const w = Math.max(xb - xa, 3);
-        const running = s.startMs <= now && (open ? !stale : (s.endMs as number) > now);
-        ctx.beginPath();
-        ctx.roundRect(xa, y + 4, w, g.lh - 8, s.clipped ? [0, 3, 3, 0] : 3);
-        if (stale) {
-          ctx.fillStyle = c('--text-muted', 0.3);
+        const radii = s.clipped ? [0, 3, 3, 0] : 3;
+
+        if (replay && s.startMs > now) {
+          ghostBar(xa, xb, radii); // has not started yet at the playhead
+        } else if (replay && !stale && end > now) {
+          // Spans the playhead: in progress up to it, ghost after it.
+          const xp = Math.min(Math.max(g.x(now), xa + 3), xb);
+          ctx.beginPath();
+          ctx.roundRect(xa, y + 4, Math.max(xp - xa, 3), g.lh - 8, radii);
+          ctx.fillStyle = c('--primary', lane.muted ? 0.6 : 0.75);
           ctx.fill();
-          ctx.setLineDash([3, 2]);
-          ctx.strokeStyle = c('--text-muted', 0.8);
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          ctx.setLineDash([]);
-        } else {
-          ctx.fillStyle = s.status === 'failed' ? c('--sev-critical')
-            : s.status === 'partial' ? partial(0.85)
-            : c('--primary', lane.muted ? 0.6 : 0.75);
-          ctx.fill();
-        }
-        if (running) {
-          // Outline + solid end cap: running reads without relying on colour.
           ctx.strokeStyle = c('--primary-text');
           ctx.lineWidth = 1.5;
           ctx.stroke();
           ctx.fillStyle = c('--primary-text');
-          ctx.fillRect(Math.max(xb - 3, xa), y + 2, 3, g.lh - 4);
+          ctx.fillRect(Math.max(xp - 3, xa), y + 2, 3, g.lh - 4);
+          if (xb > xp + 1) ghostBar(xp, xb, [0, 3, 3, 0]);
           if (!reducedMotion) {
             busy = true;
             ctx.fillStyle = c('--primary-text', 0.25 + 0.25 * Math.sin(phase / PULSE));
             ctx.beginPath();
-            ctx.arc(xb, y + g.lh / 2, 7, 0, Math.PI * 2);
+            ctx.arc(xp, y + g.lh / 2, 7, 0, Math.PI * 2);
             ctx.fill();
+          }
+        } else {
+          const running = !replay && open && !stale;
+          ctx.beginPath();
+          ctx.roundRect(xa, y + 4, w, g.lh - 8, radii);
+          if (stale) {
+            ctx.fillStyle = c('--text-muted', 0.3);
+            ctx.fill();
+            ctx.setLineDash([3, 2]);
+            ctx.strokeStyle = c('--text-muted', 0.8);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+          } else {
+            ctx.fillStyle = s.status === 'failed' ? c('--sev-critical')
+              : s.status === 'partial' ? partial(0.85)
+              : c('--primary', lane.muted ? 0.6 : 0.75);
+            ctx.fill();
+          }
+          if (running) {
+            // Outline + solid end cap: running reads without relying on colour.
+            ctx.strokeStyle = c('--primary-text');
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.fillStyle = c('--primary-text');
+            ctx.fillRect(Math.max(xb - 3, xa), y + 2, 3, g.lh - 4);
+            if (!reducedMotion) {
+              busy = true;
+              ctx.fillStyle = c('--primary-text', 0.25 + 0.25 * Math.sin(phase / PULSE));
+              ctx.beginPath();
+              ctx.arc(xb, y + g.lh / 2, 7, 0, Math.PI * 2);
+              ctx.fill();
+            }
           }
         }
         if (spanHover.current?.span === s) {
@@ -189,8 +258,7 @@ export function RunTape({
     });
 
     // NOW marker, or the replay playhead.
-    const xn = g.x(now);
-    if (replay) {
+    if (replay && pill) {
       ctx.strokeStyle = c('--primary-text');
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -204,21 +272,18 @@ export function RunTape({
       ctx.lineTo(xn, 20);
       ctx.closePath();
       ctx.fill();
-      // Label on a page-coloured pill so it never collides with the axis ticks.
-      const rightSide = xn > g.x1 - 70;
+      // Label on a page-coloured pill so it never collides with the ticks.
       ctx.font = `600 10px ${MONO}`;
-      const lw = ctx.measureText(fmtHMS(now)).width + 10;
-      const lx = rightSide ? xn - 10 - lw : xn + 10;
       ctx.fillStyle = c('--bg-page');
       ctx.beginPath();
-      ctx.roundRect(lx, 4, lw, 15, 4);
+      ctx.roundRect(pill.lx, 4, pill.lw, 15, 4);
       ctx.fill();
       ctx.strokeStyle = c('--primary-text');
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.textAlign = 'left';
       ctx.fillStyle = c('--text-primary');
-      ctx.fillText(fmtHMS(now), lx + 5, 15);
+      ctx.fillText(fmtHMS(now), pill.lx + 5, 15);
     } else {
       ctx.strokeStyle = c('--text-primary');
       ctx.lineWidth = 1.2;
@@ -236,13 +301,39 @@ export function RunTape({
       ctx.fillText('NOW', xn, 15);
     }
 
+    // Hover ghost on the time scale: where a click would put the playhead.
+    const gh = ghost.current;
+    if (gh !== null && !scrubbing.current) {
+      const gx = g.x(gh);
+      ctx.strokeStyle = c('--text-muted', 0.7);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(gx, 22);
+      ctx.lineTo(gx, g.height - 6);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = `500 10px ${MONO}`;
+      const lw = ctx.measureText(fmtHMS(gh)).width + 10;
+      const lx = Math.min(Math.max(gx - lw / 2, g.gx), g.x1 - lw);
+      ctx.fillStyle = c('--bg-page');
+      ctx.beginPath();
+      ctx.roundRect(lx, 24, lw, 14, 4);
+      ctx.fill();
+      ctx.strokeStyle = c('--text-muted', 0.7);
+      ctx.stroke();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = c('--text-secondary');
+      ctx.fillText(fmtHMS(gh), lx + 5, 34);
+    }
+
     // Tooltip for the hovered bar.
     const h = spanHover.current;
     if (h) {
       const li = lanes.findIndex((l) => l.id === h.lane);
       const s = h.span;
       const l1 = `${lanes[li]?.label ?? h.lane}  ·  ${statusWord(s, now, index.capMs)}${s.endMs === null ? '' : `  ·  ${fmtDuration(s.endMs - s.startMs)}`}`;
-      const l2 = `${clock(s.startMs)} UTC  ·  ${s.records.toLocaleString()} records${s.error ? `  ·  ${s.error.slice(0, 60)}` : ''}`;
+      const l2 = `${fmtHM(s.startMs)} UTC  ·  ${s.records.toLocaleString()} records${s.error ? `  ·  ${s.error.slice(0, 60)}` : ''}`;
       ctx.font = `500 12px ${SANS}`;
       const w1 = ctx.measureText(l1).width;
       ctx.font = `500 10px ${MONO}`;
@@ -268,7 +359,8 @@ export function RunTape({
       ctx.fillText(l2, x + 12, y + 34);
     }
     return busy || (!!replay?.playing && !reducedMotion);
-  }, [canvasEl, hasData, getNow, width, lanes, palette, hoverId, selected, index, reducedMotion, colors, replay]);
+    // drawKey: see above.
+  }, [canvasEl, hasData, getNow, width, lanes, palette, hoverId, selected, index, reducedMotion, colors, replay, drawKey]);
 
   // The pulse and NOW line move: a frame loop while any open run is within
   // its trust window (draw reports it), a slow repaint otherwise.
@@ -278,12 +370,13 @@ export function RunTape({
     const now = getNow();
     return lanes.map((lane) => ({
       lane,
-      runs: (index.lanes.get(lane.id) ?? []).slice(-8).reverse().map((s) => (
-        `${statusWord(s, now, index.capMs)}, started ${clock(s.startMs)} UTC, ${s.records.toLocaleString()} records`
+      // Runs that start after the playhead have not happened yet.
+      runs: (index.lanes.get(lane.id) ?? []).filter((s) => s.startMs <= now).slice(-8).reverse().map((s) => (
+        `${statusWord(s, now, index.capMs)}, started ${fmtHM(s.startMs)} UTC, ${s.records.toLocaleString()} records`
       )),
-    }));
-    // getNow is stable; the list refreshes with each timeline payload.
-  }, [lanes, index, getNow]);
+    })).filter((r) => r.runs.length > 0 || !replay);
+    // getNow is stable; the list refreshes with each payload and playhead step.
+  }, [lanes, index, getNow, viewVersion, replay]);
 
   if (status !== 'ready' || lanes.length === 0) {
     return (
@@ -299,39 +392,37 @@ export function RunTape({
     );
   }
 
+  const anchorNow = () => (replay ? replay.anchorMs : getNow());
+  const geomNow = () => tapeGeometry(width, lanes.length, anchorNow());
   const locate = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const anchor = replay ? replay.anchorMs : getNow();
+    const anchor = anchorNow();
     return tapeHitTest(tapeGeometry(width, lanes.length, anchor), lanes, index, anchor, e.clientX - rect.left, e.clientY - rect.top);
   };
 
+  // Slider values: the view time within the playable range.
+  const viewNow = getNow();
+  const minMs = replay ? replay.startMs : viewNow - 60 * 60 * 1000;
+  const maxMs = replay ? replay.endMs : viewNow;
+  const valueNow = Math.min(Math.max(viewNow, minMs), maxMs);
+
+  const msAt = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return geomNow().t(e.clientX - rect.left);
+  };
+  const endScrub = (e: React.PointerEvent<HTMLDivElement>) => {
+    scrubbing.current = false;
+    try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch { /* already released */ }
+  };
+
   return (
-    <div data-testid="run-tape" data-hover={hoverId ?? ''} className="agn-ring-within">
+    <div data-testid="run-tape" data-hover={hoverId ?? ''} className="agn-ring-within" style={{ position: 'relative', width: geomNow().width }}>
       <canvas
         ref={setCanvasEl}
         role="img"
         aria-label={`Run tape: ${lanes.length} lanes, runs over the last hour. A text list follows.`}
-        style={{ display: 'block', width: geom.width, height: geom.height, touchAction: 'pan-x pan-y' }}
-        onPointerDown={(e) => {
-          if (!onScrub) return;
-          const rect = e.currentTarget.getBoundingClientRect();
-          const y = e.clientY - rect.top;
-          if (y < TAPE_TOP) {
-            scrubbing.current = true;
-            e.currentTarget.setPointerCapture?.(e.pointerId);
-            onScrub(tapeGeometry(width, lanes.length, replay ? replay.anchorMs : getNow()).t(e.clientX - rect.left));
-          }
-        }}
-        onPointerUp={(e) => {
-          scrubbing.current = false;
-          e.currentTarget.releasePointerCapture?.(e.pointerId);
-        }}
+        style={{ display: 'block', width: geomNow().width, height: geomNow().height, touchAction: 'pan-x pan-y' }}
         onPointerMove={(e) => {
-          if (scrubbing.current && onScrub) {
-            const rect = e.currentTarget.getBoundingClientRect();
-            onScrub(tapeGeometry(width, lanes.length, replay ? replay.anchorMs : getNow()).t(e.clientX - rect.left));
-            return;
-          }
           const hit = locate(e);
           const lane: TapeLane | undefined = hit ? lanes[hit.lane] : undefined;
           const next = hit?.span && lane ? { lane: lane.id, span: hit.span } : null;
@@ -352,6 +443,43 @@ export function RunTape({
           if (lane?.agent) onSelect(lane.id);
         }}
       />
+      {onScrub && (
+        <div
+          ref={sliderRef}
+          role="slider"
+          tabIndex={0}
+          aria-label="Replay position"
+          aria-orientation="horizontal"
+          aria-valuemin={Math.round(minMs)}
+          aria-valuemax={Math.round(maxMs)}
+          aria-valuenow={Math.round(valueNow)}
+          aria-valuetext={`${fmtHMS(valueNow)} UTC`}
+          className="agn-slider"
+          // Only this strip captures the pointer; the canvas keeps pan/scroll.
+          style={{ position: 'absolute', left: 0, top: 0, width: geomNow().width, height: TAPE_TOP - 6, touchAction: 'none', cursor: 'ew-resize' }}
+          onKeyDown={onSliderKey}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            scrubbing.current = true;
+            e.currentTarget.setPointerCapture?.(e.pointerId);
+            ghost.current = null;
+            onScrub(msAt(e));
+          }}
+          onPointerMove={(e) => {
+            if (scrubbing.current) {
+              if (e.buttons === 0) { endScrub(e); return; }
+              onScrub(msAt(e));
+              return;
+            }
+            ghost.current = msAt(e);
+            draw();
+          }}
+          onPointerUp={endScrub}
+          onPointerCancel={endScrub}
+          onLostPointerCapture={() => { scrubbing.current = false; }}
+          onPointerLeave={() => { if (ghost.current !== null) { ghost.current = null; draw(); } }}
+        />
+      )}
       <ul className="sr-only" aria-label="Runs in the last hour, by lane">
         {srRuns.map(({ lane, runs }) => (
           <li key={lane.id}>

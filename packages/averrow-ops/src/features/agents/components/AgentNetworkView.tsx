@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { History, Maximize2, Minimize2, Pause, Play, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import { Maximize2, Minimize2, RotateCcw, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import { useReducedMotion } from '@averrow/shared/ui';
 import type { Agent } from '@/hooks/useAgents';
 import { useFeeds } from '@/hooks/useFeeds';
@@ -28,8 +28,10 @@ import { useElementWidth, useMountedElement } from '../network/useCanvasLoop';
 import { LiveChip } from '../network/LiveChip';
 import { ReplayControls } from '../network/ReplayControls';
 import {
-  DEFAULT_REPLAY_SPEED, advancePlayhead, clampPlayhead, stepPlayhead, type ReplaySpeed,
+  DEFAULT_REPLAY_SPEED, STEP_FINE_MS, STEP_MS, advancePlayhead, canHandleReplayKey, clampPlayhead, stepPlayhead,
+  type ReplaySpeed,
 } from '../network/replay';
+import { TAPE_WINDOW_MS } from '../network/tape';
 
 const ZOOM_MIN = 0.6;
 const ZOOM_MAX = 1.6;
@@ -39,6 +41,7 @@ const ZOOM_STEP = 0.2;
 const FOCUS_CSS = `
 .agn-btn:focus-visible,.agn-chip:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
 .agn-scroll:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}
+.agn-slider:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}
 .agn-ring-within:has(:focus-visible){outline:2px solid var(--focus-ring);outline-offset:-2px}
 .agn-btn[aria-disabled="true"]{opacity:.4;cursor:default}
 `;
@@ -157,12 +160,16 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
 
   // ── Replay of the last hour, from the payload loaded when it was entered.
   // Refetches keep landing behind it but never move the playhead; Back to
-  // live picks the newest payload up.
-  const [replay, setReplay] = useState<{ snapshot: AgentTimeline; speed: ReplaySpeed; playing: boolean } | null>(null);
+  // live picks the newest payload up. The tape axis is frozen at entry
+  // (`anchorMs`) so the playhead stays under the pointer when a scrub begins.
+  const [replay, setReplay] = useState<{ snapshot: AgentTimeline; speed: ReplaySpeed; playing: boolean; anchorMs: number } | null>(null);
   const playheadRef = useRef(0);
   const [playheadShown, setPlayheadShown] = useState(0);
   const range = useMemo(() => (replay
-    ? { start: Date.parse(replay.snapshot.window_start), end: Date.parse(replay.snapshot.window_end) }
+    ? {
+      start: Math.max(Date.parse(replay.snapshot.window_start), replay.anchorMs - TAPE_WINDOW_MS),
+      end: Date.parse(replay.snapshot.window_end),
+    }
     : null), [replay]);
   const setPlayhead = useCallback((ms: number) => {
     playheadRef.current = ms;
@@ -174,30 +181,75 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
     : null), [replay, feeds]);
   const index = replayIndex ?? liveIndex;
   const liveGetNow = getNow;
-  // Identity changes with the shown playhead so static canvases redraw.
-  const replayGetNow = useCallback(() => playheadRef.current, [playheadShown, replay]);
+  // Stable identity: the frame loops read the ref; `viewVersion` redraws static frames.
+  const replayGetNow = useCallback(() => playheadRef.current, []);
   const viewNow = replay ? replayGetNow : liveGetNow;
 
   const atEnd = !!range && playheadShown >= range.end;
   const playing = !!replay?.playing && !reducedMotion && !atEnd;
+  const tapeReplay = useMemo(
+    () => (replay && range ? { anchorMs: replay.anchorMs, startMs: range.start, endMs: range.end, playing } : null),
+    [replay, range, playing],
+  );
 
-  const enterReplay = (at?: number) => {
+  // Focus follows the control that replaced the focused one.
+  const startRef = useRef<HTMLButtonElement | null>(null);
+  const playRef = useRef<HTMLButtonElement | null>(null);
+  const sliderRef = useRef<HTMLDivElement | null>(null);
+  const pendingFocus = useRef<'transport' | 'slider' | 'start' | null>(null);
+  useEffect(() => {
+    const target = pendingFocus.current;
+    if (!target) return;
+    pendingFocus.current = null;
+    (target === 'transport' ? playRef : target === 'slider' ? sliderRef : startRef).current?.focus();
+  }, [replay]);
+
+  const enterReplay = (at?: number, focus: 'transport' | 'slider' = 'transport') => {
     if (!timeline) return;
-    const start = Date.parse(timeline.window_start);
+    const anchor = liveGetNow();
+    const start = Math.max(Date.parse(timeline.window_start), anchor - TAPE_WINDOW_MS);
     const end = Date.parse(timeline.window_end);
-    const t = clampPlayhead(at ?? start, start, end);
-    setReplay({ snapshot: timeline, speed: DEFAULT_REPLAY_SPEED, playing: at === undefined && !reducedMotion });
-    setPlayhead(t);
+    pendingFocus.current = focus;
+    setReplay({ snapshot: timeline, speed: DEFAULT_REPLAY_SPEED, playing: at === undefined && !reducedMotion, anchorMs: anchor });
+    setPlayhead(clampPlayhead(at ?? start, start, end));
   };
   const scrub = (ms: number) => {
-    if (!replay) { enterReplay(ms); return; }
+    if (!replay) { enterReplay(ms, 'slider'); return; }
     setPlayhead(clampPlayhead(ms, range!.start, range!.end));
+  };
+  const backToLive = () => {
+    pendingFocus.current = 'start';
+    setReplay(null);
   };
   const togglePlay = () => {
     if (!replay || !range || reducedMotion) return;
     if (playing) { setReplay({ ...replay, playing: false }); return; }
     if (atEnd) setPlayhead(range.start);
     setReplay({ ...replay, playing: true });
+  };
+  // ←/→ on the slider or transport: 1 min (Shift: 10 s). From live, the first
+  // step enters replay relative to the newest data.
+  const moveBy = (direction: -1 | 1, fine: boolean) => {
+    if (replay && range) {
+      setPlayhead(stepPlayhead(playheadRef.current, direction, fine, range.start, range.end));
+    } else if (timeline) {
+      const base = Math.min(liveGetNow(), Date.parse(timeline.window_end));
+      enterReplay(base + direction * (fine ? STEP_FINE_MS : STEP_MS), 'slider');
+    }
+  };
+  const sliderKey = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (!canHandleReplayKey(e)) return;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      moveBy(e.key === 'ArrowLeft' ? -1 : 1, e.shiftKey);
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      if (replay && range) setPlayhead(e.key === 'Home' ? range.start : range.end);
+      else enterReplay(e.key === 'Home' ? 0 : Infinity, 'slider');
+    } else if (e.key === ' ' && replay) {
+      e.preventDefault();
+      togglePlay();
+    }
   };
 
   // The replay clock: wall time scaled by the speed. Particles keep their
@@ -212,6 +264,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
       last = nowPerf;
       playheadRef.current = step.playhead;
       if (step.atEnd) { setPlayhead(step.playhead); setReplay((r) => (r ? { ...r, playing: false } : r)); return; }
+      // React only needs the playhead for its label, at most 4 times a second.
       if (nowPerf - shownAt >= 250) { shownAt = nowPerf; setPlayheadShown(step.playhead); }
       raf = requestAnimationFrame(tick);
     };
@@ -238,19 +291,6 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
   const onSelect = (name: string) => {
     if (fullscreen) setFullscreen(false);
     onSelectAgent(name);
-  };
-
-  // Replay keys: Space plays or pauses, arrows step 1 min (Shift: 10 s). A
-  // focused button keeps its native Space/Enter behaviour.
-  const replayKeys = (e: React.KeyboardEvent<HTMLElement>) => {
-    if (!replay || !range) return;
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-      e.preventDefault();
-      setPlayhead(stepPlayhead(playheadRef.current, e.key === 'ArrowLeft' ? -1 : 1, e.shiftKey, range.start, range.end));
-    } else if (e.key === ' ' && !(e.target instanceof HTMLButtonElement)) {
-      e.preventDefault();
-      togglePlay();
-    }
   };
 
   // Tab cycles inside the dialog while it is open.
@@ -286,7 +326,6 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
       onKeyDown={(e) => {
         if (fullscreen && e.key === 'Escape') { e.stopPropagation(); setFullscreen(false); return; }
         trapTab(e);
-        replayKeys(e);
       }}
       className={fullscreen ? 'fixed inset-0 z-50 overflow-auto p-4 space-y-3 outline-none' : 'space-y-3'}
       style={fullscreen ? { background: 'var(--bg-page)' } : undefined}
@@ -301,9 +340,9 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
             </li>
           ))}
         </ul>
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
           <LiveChip
-            replay={replay ? { playhead: playheadShown, atEnd, newData: !!timeline && timeline.generated_at !== replay.snapshot.generated_at } : null}
+            replay={replay ? { playhead: playheadShown, newData: !!timeline && timeline.generated_at !== replay.snapshot.generated_at } : null}
             hasPayload={!!timeline}
             fetchFailed={timelineQ.isError}
             osReduced={osReduced}
@@ -311,48 +350,42 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
             receivedAt={timelineQ.dataUpdatedAt}
             generatedAt={timeline?.generated_at}
           />
-          {replay ? (
-            <ReplayControls
-              playing={playing}
-              speed={replay.speed}
-              atEnd={atEnd}
-              playDisabled={reducedMotion}
-              onPlayPause={togglePlay}
-              onSpeed={(speed) => setReplay({ ...replay, speed })}
-              onBack={() => setReplay(null)}
-            />
-          ) : (
-            <button
-              type="button"
-              className="agn-btn h-8 px-2.5 rounded font-mono text-[11px] inline-flex items-center gap-1.5"
-              style={{ background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-secondary)' }}
-              aria-disabled={!timeline ? true : undefined}
-              title="Replay the last hour. You can also click or drag the run tape's time axis."
-              onClick={() => { if (timeline) enterReplay(); }}
+          <ReplayControls
+            active={!!replay}
+            canStart={!!timeline}
+            playing={playing}
+            speed={replay?.speed ?? DEFAULT_REPLAY_SPEED}
+            atEnd={atEnd}
+            playDisabled={reducedMotion}
+            onStart={() => enterReplay()}
+            onPlayPause={togglePlay}
+            onSpeed={(speed) => setReplay((r) => (r ? { ...r, speed } : r))}
+            onBack={backToLive}
+            onStep={moveBy}
+            startRef={startRef}
+            playRef={playRef}
+          />
+          <span aria-hidden="true" className="hidden sm:block w-px h-6" style={{ background: 'var(--border-base)' }} />
+          <div className="flex items-center gap-1.5" role="group" aria-label="View">
+            <CtrlButton
+              aria-label={reducedMotion ? 'Turn animation on' : 'Turn animation off'}
+              title={osReduced ? 'Animation is off (system reduced-motion setting)' : undefined}
+              disabled={osReduced}
+              onClick={() => setPaused((p) => !p)}
             >
-              <History size={14} aria-hidden="true" />
-              Replay
-            </button>
-          )}
-          <CtrlButton
-            aria-label={paused || osReduced ? 'Play motion' : 'Pause motion'}
-            aria-pressed={reducedMotion}
-            title={osReduced ? 'Motion is off (system reduced-motion setting)' : undefined}
-            disabled={osReduced}
-            onClick={() => setPaused((p) => !p)}
-          >
-            {reducedMotion ? <Play size={14} /> : <Pause size={14} />}
-          </CtrlButton>
-          <CtrlButton aria-label={`Zoom out (${pct})`} onClick={() => setZoom((z) => clampZoom(z - ZOOM_STEP))} disabled={zoom <= ZOOM_MIN}><ZoomOut size={14} /></CtrlButton>
-          <CtrlButton aria-label={`Zoom in (${pct})`} onClick={() => setZoom((z) => clampZoom(z + ZOOM_STEP))} disabled={zoom >= ZOOM_MAX}><ZoomIn size={14} /></CtrlButton>
-          <CtrlButton aria-label={`Reset zoom (${pct})`} onClick={() => setZoom(1)} disabled={zoom === 1}><RotateCcw size={14} /></CtrlButton>
-          <CtrlButton
-            buttonRef={exitRef}
-            aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
-            onClick={() => setFullscreen((f) => !f)}
-          >
-            {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </CtrlButton>
+              {reducedMotion ? <ZapOff size={14} /> : <Zap size={14} />}
+            </CtrlButton>
+            <CtrlButton aria-label={`Zoom out (${pct})`} onClick={() => setZoom((z) => clampZoom(z - ZOOM_STEP))} disabled={zoom <= ZOOM_MIN}><ZoomOut size={14} /></CtrlButton>
+            <CtrlButton aria-label={`Zoom in (${pct})`} onClick={() => setZoom((z) => clampZoom(z + ZOOM_STEP))} disabled={zoom >= ZOOM_MAX}><ZoomIn size={14} /></CtrlButton>
+            <CtrlButton aria-label={`Reset zoom (${pct})`} onClick={() => setZoom(1)} disabled={zoom === 1}><RotateCcw size={14} /></CtrlButton>
+            <CtrlButton
+              buttonRef={exitRef}
+              aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+              onClick={() => setFullscreen((f) => !f)}
+            >
+              {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </CtrlButton>
+          </div>
         </div>
       </div>
 
@@ -395,6 +428,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           reducedMotion={reducedMotion}
           replay={!!replay}
           playing={playing}
+          viewVersion={playheadShown}
           placement={placement}
         />
       </div>
@@ -431,6 +465,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
         className="agn-scroll rounded-lg overflow-x-auto"
         role="region"
         aria-labelledby="agn-tape-title"
+        aria-describedby="agn-tape-hint"
         tabIndex={0}
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)' }}
       >
@@ -440,10 +475,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           style={{ color: 'var(--text-muted)' }}
         >
           Run tape · last hour (UTC)
-          <span className="normal-case tracking-normal ml-3" style={{ color: 'var(--text-tertiary)' }}>
-            {replay ? 'Drag the time axis, or use ← → to step (Shift: 10 s)' : 'Click or drag the time axis to replay'}
-          </span>
         </h3>
+        <p id="agn-tape-hint" className="font-mono text-[10px] px-3 m-0 mt-1" style={{ color: 'var(--text-tertiary)' }}>
+          {replay
+            ? 'Drag the time scale, or press ← → to move 1 minute (Shift: 10 seconds). Space plays or pauses. Breaker and event states show their current value.'
+            : 'Click or drag the time scale above the bars to replay the last hour.'}
+        </p>
         <RunTape
           placement={placement}
           index={index}
@@ -456,8 +493,11 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect: onSelectAgen
           labelOf={labelOf}
           width={Math.max(width - 2, 0)}
           reducedMotion={reducedMotion}
-          replay={replay && range ? { anchorMs: range.end, playing } : null}
+          replay={tapeReplay}
+          viewVersion={playheadShown}
           onScrub={timeline ? scrub : undefined}
+          onSliderKey={sliderKey}
+          sliderRef={sliderRef}
         />
         {truncated && (
           <div className="font-mono text-[10px] px-3 pb-2" style={{ color: 'var(--text-tertiary)' }}>

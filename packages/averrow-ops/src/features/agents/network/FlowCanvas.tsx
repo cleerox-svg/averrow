@@ -28,6 +28,7 @@ import {
   IDLE, activeMembers, edgeActivity, edgeParticles, laneActivity,
   type NodeActivity, type TimelineIndex,
 } from './activity';
+import { fmtHM, fmtHMS } from './replay';
 import { fitCanvas, useCanvasLoop, useIsVisible, useMountedElement } from './useCanvasLoop';
 
 const TOKEN_NAMES = [
@@ -74,12 +75,6 @@ const PULSE = 450;
 export function agentLabel(id: string, agents?: ReadonlyMap<string, Agent>): string {
   const meta = AGENT_METADATA[id as AgentId];
   return meta?.displayName ?? agents?.get(id)?.display_name ?? id;
-}
-
-function fmtClock(ms: number): string {
-  const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
 function fit(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
@@ -464,7 +459,7 @@ function tooltipFor(p: DrawParams, focus: string | null): Tip | null {
     if (!d) return null;
     const m = activeMembers(p.index, FEED_GROUP_NODE[d.group], now).get(d.name);
     const l2 = !p.hasTimeline ? 'no timeline data' : m ? (m.running ? 'pulling now' : m.failed ? 'last pull failed' : 'pulled in the last hour') : 'no pull in the last hour';
-    return { x: d.x, y: d.y, r: 6, l1: `${d.name}  ·  ${FEED_GROUP_LABEL[d.group].toLowerCase()}${p.replay ? `  ·  at ${fmtClock(now).slice(0, 5)} UTC` : ''}`, l2, bad: !!m?.failed };
+    return { x: d.x, y: d.y, r: 6, l1: `${d.name}  ·  ${FEED_GROUP_LABEL[d.group].toLowerCase()}${p.replay ? `  ·  at ${fmtHM(now)} UTC` : ''}`, l2, bad: !!m?.failed };
   }
   const id = focus;
   if (!id) return null;
@@ -476,16 +471,16 @@ function tooltipFor(p: DrawParams, focus: string | null): Tip | null {
   }
   const st = nodeState(p, id);
   const cron = CRON_LABEL[id];
-  const l1 = `${n.label}${cron ? `  ·  ${cron}` : ''}${p.replay ? `  ·  at ${fmtClock(now).slice(0, 5)} UTC` : ''}`;
+  const l1 = `${n.label}${cron ? `  ·  ${cron}` : ''}${p.replay ? `  ·  at ${fmtHM(now)} UTC` : ''}`;
   let l2: string;
   if (!p.hasTimeline) {
     l2 = st.failed ? 'last run failed' : 'timeline unavailable';
   } else if (st.stale) {
-    l2 = `status unknown since ${fmtClock(st.lastStartMs ?? now)} UTC`;
+    l2 = `status unknown since ${fmtHMS(st.lastStartMs ?? now)} UTC`;
   } else if (st.running) {
-    l2 = `running since ${fmtClock(st.lastStartMs ?? now)} UTC`;
+    l2 = `running since ${fmtHMS(st.lastStartMs ?? now)} UTC`;
   } else if (st.lastStartMs !== null) {
-    l2 = `last run ${fmtClock(st.lastStartMs)} UTC${st.failed ? ' · failed' : ' · ok'}`;
+    l2 = `last run ${fmtHMS(st.lastStartMs)} UTC${st.failed ? ' · failed' : ' · ok'}`;
   } else {
     l2 = 'no run in the last hour';
   }
@@ -540,13 +535,15 @@ export interface FlowCanvasProps {
   replay?: boolean;
   /** The replay clock is advancing: keep the frame loop at full rate. */
   playing?: boolean;
+  /** Changes with the shown playhead: redraws static frames and refreshes the text list. */
+  viewVersion?: number;
   /** Placement is computed by the parent so the rails and canvas agree. */
   placement: Placement;
 }
 
 export function FlowCanvas({
   byName, feeds, index, hasTimeline, getNow, hoverId, onHover, selected, onSelect,
-  zoom, width, reducedMotion, placement, replay = false, playing = false,
+  zoom, width, reducedMotion, placement, replay = false, playing = false, viewVersion = 0,
 }: FlowCanvasProps) {
   const [canvasRef, setCanvasEl, canvasEl] = useMountedElement<HTMLCanvasElement>();
   const dotHoverRef = useRef<string | null>(null);
@@ -561,6 +558,8 @@ export function FlowCanvas({
     [width, placement, feeds, byName],
   );
 
+  // While the replay clock runs the frame loop reads the playhead itself.
+  const drawKey = playing ? 0 : viewVersion;
   const draw = useCallback((): boolean => {
     const canvas = canvasRef.current;
     if (!canvas) return false;
@@ -571,7 +570,7 @@ export function FlowCanvas({
       focus: hoverId ?? selected, selected, dotHover: dotHoverRef.current, reducedMotion,
     });
     return busy || (playing && !reducedMotion);
-  }, [layout, palette, zoom, byName, index, hasTimeline, getNow, hoverId, selected, reducedMotion, replay, playing]);
+  }, [layout, palette, zoom, byName, index, hasTimeline, getNow, hoverId, selected, reducedMotion, replay, playing, drawKey]);
 
   // No timeline, reduced motion or Pause: draw once per change, no frame loop.
   useCanvasLoop(draw, !reducedMotion && hasTimeline, visible, [draw, version]);
@@ -596,7 +595,7 @@ export function FlowCanvas({
     const ids = [...Object.values(placement.stages).flat(), ...placement.onDemand, ...placement.ops];
     return ids.map((id) => ({ id, label: agentLabel(id, byName), state: stateOf(id) }));
     // getNow is stable; the list refreshes with each timeline payload.
-  }, [placement, byName, hasTimeline, index, getNow]);
+  }, [placement, byName, hasTimeline, index, getNow, viewVersion]);
 
   return (
     <div data-testid="flow-canvas" data-hover={hoverId ?? ''} className="agn-ring-within">
