@@ -60,8 +60,10 @@ export interface TimelineEvent {
   status: string;
 }
 
+export type TimelineWindow = '1h' | '24h';
+
 export interface AgentTimeline {
-  window: '1h';
+  window: TimelineWindow;
   generated_at: string;
   window_start: string;
   window_end: string;
@@ -72,17 +74,36 @@ export interface AgentTimeline {
 }
 
 export const TIMELINE_REFETCH_MS = 60_000;
+/** The 24h payload is cached longer server-side (300s), so it refetches less often. */
+export const TIMELINE_REFETCH_24H_MS = 300_000;
+export const TIMELINE_WINDOW_MS: Record<TimelineWindow, number> = { '1h': 3_600_000, '24h': 86_400_000 };
 
-export function useAgentTimeline() {
+const WINDOW_STORAGE_KEY = 'averrow.agents.timelineWindow';
+
+/** The viewer's remembered window (1h when unset or storage is blocked). */
+export function readStoredWindow(): TimelineWindow {
+  try {
+    const v = window.localStorage.getItem(WINDOW_STORAGE_KEY);
+    return v === '24h' ? '24h' : '1h';
+  } catch {
+    return '1h';
+  }
+}
+
+export function storeWindow(w: TimelineWindow): void {
+  try { window.localStorage.setItem(WINDOW_STORAGE_KEY, w); } catch { /* blocked storage: per-session only */ }
+}
+
+export function useAgentTimeline(window: TimelineWindow = '1h') {
   return useQuery({
-    queryKey: ['agents', 'timeline', '1h'],
+    queryKey: ['agents', 'timeline', window],
     queryFn: async () => {
-      const res = await api.get<AgentTimeline>('/api/agents/timeline?window=1h');
+      const res = await api.get<AgentTimeline>(`/api/agents/timeline?window=${window}`);
       if (!res.success || !res.data) throw new Error(res.error ?? 'Timeline unavailable');
       return res.data;
     },
     placeholderData: keepPreviousData,
-    refetchInterval: TIMELINE_REFETCH_MS,
+    refetchInterval: window === '24h' ? TIMELINE_REFETCH_24H_MS : TIMELINE_REFETCH_MS,
     // A failed refetch keeps the last good data on screen; the view shows a
     // quiet "timeline unavailable" note only when there is nothing to draw.
   });

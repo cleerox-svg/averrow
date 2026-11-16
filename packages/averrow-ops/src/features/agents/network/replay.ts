@@ -1,11 +1,37 @@
 // Replay of the last hour, client-side from the loaded timeline payload, and
 // the live-status chip model. Pure functions: no DOM, no React.
 
-export const REPLAY_SPEEDS = [1, 10, 60] as const;
-export type ReplaySpeed = (typeof REPLAY_SPEEDS)[number];
-export const DEFAULT_REPLAY_SPEED: ReplaySpeed = 10;
+import type { TimelineWindow } from '@/hooks/useAgentTimeline';
+
+/** Replay clock multiplier (clock seconds per wall second). */
+export type ReplaySpeed = number;
+export const REPLAY_SPEEDS: Record<TimelineWindow, readonly ReplaySpeed[]> = {
+  '1h': [1, 10, 60],
+  '24h': [60, 600, 3600],
+};
+export const DEFAULT_REPLAY_SPEEDS: Record<TimelineWindow, ReplaySpeed> = { '1h': 10, '24h': 600 };
+export const DEFAULT_REPLAY_SPEED: ReplaySpeed = DEFAULT_REPLAY_SPEEDS['1h'];
 export const STEP_MS = 60_000;
 export const STEP_FINE_MS = 10_000;
+/** Slider steps per window: arrows, Shift+arrows, and PageUp/PageDown (24h only). */
+export const SLIDER_STEPS: Record<TimelineWindow, { coarse: number; fine: number; page: number | null }> = {
+  '1h': { coarse: STEP_MS, fine: STEP_FINE_MS, page: null },
+  '24h': { coarse: 10 * 60_000, fine: 60_000, page: 60 * 60_000 },
+};
+
+/** Visible speed label: "10×" on the hour view, "10 min/s" on 24h. */
+export function speedLabel(window: TimelineWindow, speed: ReplaySpeed): string {
+  if (window === '1h') return `${speed}×`;
+  return speed >= 3600 ? `${speed / 3600} h/s` : `${speed / 60} min/s`;
+}
+
+/** Spoken speed label. */
+export function speedAria(window: TimelineWindow, speed: ReplaySpeed): string {
+  if (window === '1h') return `${speed} times speed`;
+  return speed >= 3600
+    ? `${speed / 3600} ${speed === 3600 ? 'hour' : 'hours'} per second`
+    : `${speed / 60} ${speed === 60 ? 'minute' : 'minutes'} per second`;
+}
 /** A hidden tab must not jump the playhead when frames resume. */
 export const MAX_FRAME_MS = 250;
 
@@ -25,8 +51,18 @@ export function advancePlayhead(
 /** One keyboard step: 1 min, or 10 s with Shift. */
 export function stepPlayhead(
   playhead: number, direction: -1 | 1, fine: boolean, start: number, end: number,
+  window: TimelineWindow = '1h',
 ): number {
-  return clampPlayhead(playhead + direction * (fine ? STEP_FINE_MS : STEP_MS), start, end);
+  const st = SLIDER_STEPS[window];
+  return clampPlayhead(playhead + direction * (fine ? st.fine : st.coarse), start, end);
+}
+
+/** PageUp / PageDown: a coarse jump on the 24h view (one hour); no-op on 1h. */
+export function pagePlayhead(
+  playhead: number, direction: -1 | 1, start: number, end: number, window: TimelineWindow,
+): number {
+  const page = SLIDER_STEPS[window].page;
+  return page === null ? playhead : clampPlayhead(playhead + direction * page, start, end);
 }
 
 const p2 = (n: number) => String(n).padStart(2, '0');

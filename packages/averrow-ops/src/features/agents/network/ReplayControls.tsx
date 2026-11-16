@@ -3,9 +3,12 @@
 // restart, speed, back to live).
 
 import { History, Pause, Play, RotateCcw } from 'lucide-react';
-import { REPLAY_SPEEDS, canHandleReplayKey, type ReplaySpeed } from './replay';
+import type { TimelineWindow } from '@/hooks/useAgentTimeline';
+import { REPLAY_SPEEDS, canHandleReplayKey, speedAria, speedLabel, type ReplaySpeed } from './replay';
 
 export interface ReplayControlsProps {
+  /** The timeline window: sets the available speeds and their labels. */
+  window?: TimelineWindow;
   /** In replay mode. */
   active: boolean;
   /** Live: a payload exists to replay. */
@@ -30,7 +33,7 @@ export interface ReplayControlsProps {
 const btn: React.CSSProperties = { color: 'var(--text-secondary)' };
 
 export function ReplayControls({
-  active, canStart, startHint, playing, speed, atEnd, playDisabled,
+  window = '1h', active, canStart, startHint, playing, speed, atEnd, playDisabled,
   onStart, onPlayPause, onSpeed, onBack, onStep, startRef, playRef,
 }: ReplayControlsProps) {
   const playLabel = playing ? 'Pause' : atEnd ? 'Restart' : 'Play';
@@ -56,11 +59,11 @@ export function ReplayControls({
           className="agn-btn h-7 px-2.5 rounded font-mono text-[11px] inline-flex items-center gap-1.5"
           style={btn}
           aria-disabled={!canStart ? true : undefined}
-          title={startHint ?? "Replay the last hour. You can also click or drag the run tape's time scale."}
+          title={startHint ?? `Replay the last ${window === '24h' ? '24 hours' : 'hour'}. You can also click or drag the run tape's time scale.`}
           onClick={() => { if (canStart) onStart(); }}
         >
           <History size={14} aria-hidden="true" />
-          Replay last hour
+          Replay last {window === '24h' ? '24 hours' : 'hour'}
         </button>
       ) : (
         <>
@@ -77,7 +80,7 @@ export function ReplayControls({
             {playLabel}
           </button>
           <div className="flex gap-1" role="group" aria-label="Replay speed">
-            {REPLAY_SPEEDS.map((s) => {
+            {REPLAY_SPEEDS[window].map((s) => {
               const on = speed === s;
               return (
                 <button
@@ -90,11 +93,11 @@ export function ReplayControls({
                     border: `1px solid ${on ? 'var(--primary-border)' : 'transparent'}`,
                     fontWeight: on ? 600 : 400,
                   }}
-                  aria-label={`${s} times speed`}
+                  aria-label={speedAria(window, s)}
                   aria-pressed={on}
                   onClick={() => onSpeed(s)}
                 >
-                  {s}×
+                  {speedLabel(window, s)}
                 </button>
               );
             })}

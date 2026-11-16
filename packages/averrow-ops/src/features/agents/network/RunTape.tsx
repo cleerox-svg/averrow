@@ -19,10 +19,12 @@ import type { Span, TimelineIndex } from './activity';
 import { makePalette } from './FlowCanvas';
 import { fitCanvas, useCanvasLoop, useIsVisible, useMountedElement } from './useCanvasLoop';
 import {
-  TAPE_TOP, buildTapeLanes, tapeGeometry, tapeHitTest, type TapeLane,
+  TAPE_TOP, TAPE_WINDOW_MS, barsForLane, buildTapeLanes, mergeQuantumMs, tapeGeometry, tapeHitTest, tapeTickMs,
+  type TapeLane,
 } from './tape';
 import type { Placement } from './model';
 import { fmtHM, fmtHMS } from './replay';
+import type { Identity } from './colors';
 
 const TOKENS = [
   '--bg-page', '--bg-card-deep', '--border-base', '--text-primary', '--text-secondary', '--text-muted',
@@ -80,11 +82,15 @@ export interface RunTapeProps {
   /** Keys on the time-scale slider (the parent owns the replay state). */
   onSliderKey?: (e: React.KeyboardEvent<HTMLDivElement>) => void;
   sliderRef?: React.Ref<HTMLDivElement>;
+  /** The axis length: 1h (default) or 24h. */
+  windowMs?: number;
+  /** Identity colours: lane bars wear their agent's colour. */
+  identity?: Identity;
 }
 
 export function RunTape({
   placement, index, status, getNow, hoverId, onHover, selected, onSelect, labelOf, width, reducedMotion,
-  replay = null, viewVersion = 0, onScrub, onSliderKey, sliderRef,
+  replay = null, viewVersion = 0, onScrub, onSliderKey, sliderRef, windowMs = TAPE_WINDOW_MS, identity,
 }: RunTapeProps) {
   const [, setCanvasEl, canvasEl] = useMountedElement<HTMLCanvasElement>();
   const spanHover = useRef<{ lane: string; span: Span } | null>(null);
@@ -101,6 +107,7 @@ export function RunTape({
 
   const { lanes, quiet } = useMemo(() => buildTapeLanes(placement, index, labelOf), [placement, index, labelOf]);
   const hasData = status === 'ready' && lanes.length > 0;
+  const windowWord = windowMs > TAPE_WINDOW_MS ? 'last 24 hours' : 'last hour';
   // While the replay clock runs the frame loop reads the playhead itself; the
   // version only matters when it is not running (steps, scrubs).
   const drawKey = replay?.playing ? 0 : viewVersion;
@@ -112,7 +119,8 @@ export function RunTape({
     const now = getNow();
     const anchor = replay ? replay.anchorMs : now;
     const phase = Date.now();
-    const g = tapeGeometry(width, lanes.length, anchor);
+    const g = tapeGeometry(width, lanes.length, anchor, windowMs);
+    const quantum = mergeQuantumMs(windowMs, g.x1 - g.gx);
     const ctx = fitCanvas(canvas, g.width, g.height);
     if (!ctx) return false;
     const c = palette;
@@ -134,7 +142,7 @@ export function RunTape({
     // Time grid.
     ctx.font = `500 10px ${MONO}`;
     ctx.textAlign = 'center';
-    const step = 10 * 60 * 1000;
+    const step = tapeTickMs(windowMs);
     for (let t = Math.ceil(g.startMs / step) * step; t < g.endMs; t += step) {
       const x = g.x(t);
       ctx.strokeStyle = c('--text-muted', 0.18);
@@ -191,14 +199,24 @@ export function RunTape({
         ctx.setLineDash([]);
       };
 
-      for (const s of index.lanes.get(lane.id) ?? []) {
+      // Lane colour: the agent's identity (feed groups: their own), muted lanes dimmer.
+      const laneCss = (a: number) => (identity ? identity.css(lane.id, a) : c('--primary', a));
+      const barAlpha = lane.muted ? 0.55 : 0.8;
+      if (identity) {
+        ctx.fillStyle = laneCss(1);
+        ctx.beginPath();
+        ctx.arc(g.gx - 4, y + g.lh / 2, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (const s of barsForLane(index, lane.id, quantum)) {
         const open = s.endMs === null;
         const stale = open && (!!s.suspect || (!replay && now > index.capMs));
         const end = s.endMs ?? (replay ? replay.endMs : Math.min(anchor, index.capMs));
         if (end < g.startMs || s.startMs > g.endMs) continue;
         const xa = g.x(Math.max(s.startMs, g.startMs));
         const xb = g.x(Math.min(end, g.endMs));
-        const w = Math.max(xb - xa, 3);
+        const w = Math.max(xb - xa, windowMs > TAPE_WINDOW_MS ? 1.5 : 3);
         const radii = s.clipped ? [0, 3, 3, 0] : 3;
 
         if (replay && s.startMs > now) {
@@ -208,7 +226,7 @@ export function RunTape({
           const xp = Math.min(Math.max(g.x(now), xa + 3), xb);
           ctx.beginPath();
           ctx.roundRect(xa, y + 4, Math.max(xp - xa, 3), g.lh - 8, radii);
-          ctx.fillStyle = c('--primary', lane.muted ? 0.6 : 0.75);
+          ctx.fillStyle = laneCss(barAlpha);
           ctx.fill();
           ctx.strokeStyle = c('--primary-text');
           ctx.lineWidth = 1.5;
@@ -236,10 +254,24 @@ export function RunTape({
             ctx.stroke();
             ctx.setLineDash([]);
           } else {
-            ctx.fillStyle = s.status === 'failed' ? c('--sev-critical')
-              : s.status === 'partial' ? partial(0.85)
-              : c('--primary', lane.muted ? 0.6 : 0.75);
-            ctx.fill();
+            if (s.status === 'failed') {
+              // Failure is a hollow, striped red bar: never confusable with a
+              // red-family lane colour, which draws as a solid fill.
+              ctx.fillStyle = c('--sev-critical', 0.16);
+              ctx.fill();
+              ctx.strokeStyle = c('--sev-critical');
+              ctx.lineWidth = 1.6;
+              ctx.stroke();
+              if (w >= 6) {
+                ctx.beginPath();
+                ctx.moveTo(xa + 2, y + g.lh - 5);
+                ctx.lineTo(xa + w - 2, y + 5);
+                ctx.stroke();
+              }
+            } else {
+              ctx.fillStyle = s.status === 'partial' ? partial(0.85) : laneCss(barAlpha);
+              ctx.fill();
+            }
           }
           if (running) {
             // Outline + solid end cap: running reads without relying on colour.
@@ -257,7 +289,7 @@ export function RunTape({
             }
           }
         }
-        if (spanHover.current?.span === s) {
+        if (spanHover.current?.span === (s.rep ?? s)) {
           ctx.strokeStyle = c('--text-primary');
           ctx.lineWidth = 1.5;
           ctx.beginPath();
@@ -370,7 +402,7 @@ export function RunTape({
     }
     return busy || (!!replay?.playing && !reducedMotion);
     // drawKey: see above.
-  }, [canvasEl, hasData, getNow, width, lanes, palette, hoverId, selected, index, reducedMotion, colors, replay, drawKey]);
+  }, [canvasEl, hasData, getNow, width, lanes, palette, hoverId, selected, index, reducedMotion, colors, replay, drawKey, windowMs, identity]);
 
   // The pulse and NOW line move: a frame loop while any open run is within
   // its trust window (draw reports it), a slow repaint otherwise.
@@ -397,22 +429,23 @@ export function RunTape({
       >
         {status === 'loading' && <span role="status">Loading the last hour of runs…</span>}
         {status === 'error' && 'Run timeline unavailable. The map above still shows structure.'}
-        {status === 'ready' && <span role="status">No agent runs or feed pulls in the last hour.</span>}
+        {status === 'ready' && <span role="status">No agent runs or feed pulls in the {windowWord}.</span>}
       </div>
     );
   }
 
   const anchorNow = () => (replay ? replay.anchorMs : getNow());
-  const geomNow = () => tapeGeometry(width, lanes.length, anchorNow());
+  const geomNow = () => tapeGeometry(width, lanes.length, anchorNow(), windowMs);
   const locate = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const anchor = anchorNow();
-    return tapeHitTest(tapeGeometry(width, lanes.length, anchor), lanes, index, anchor, e.clientX - rect.left, e.clientY - rect.top);
+    const g = tapeGeometry(width, lanes.length, anchor, windowMs);
+    return tapeHitTest(g, lanes, index, anchor, e.clientX - rect.left, e.clientY - rect.top, mergeQuantumMs(windowMs, g.x1 - g.gx));
   };
 
   // Slider values: the view time within the playable range.
   const viewNow = getNow();
-  const minMs = replay ? replay.startMs : viewNow - 60 * 60 * 1000;
+  const minMs = replay ? replay.startMs : viewNow - windowMs;
   const maxMs = replay ? replay.endMs : viewNow;
   const valueNow = Math.min(Math.max(viewNow, minMs), maxMs);
 
@@ -430,7 +463,7 @@ export function RunTape({
       <canvas
         ref={setCanvasEl}
         role="img"
-        aria-label={`Run tape: ${lanes.length} lanes, runs over the last hour. A text list follows.`}
+        aria-label={`Run tape: ${lanes.length} lanes, runs over the ${windowWord}. A text list follows.`}
         style={{ display: 'block', width: geomNow().width, height: geomNow().height, touchAction: 'pan-x pan-y' }}
         onPointerMove={(e) => {
           const hit = locate(e);
@@ -490,7 +523,7 @@ export function RunTape({
           onPointerLeave={() => { if (ghost.current !== null) { ghost.current = null; draw(); } }}
         />
       )}
-      <ul className="sr-only" aria-label="Runs in the last hour, by lane">
+      <ul className="sr-only" aria-label={`Runs in the ${windowWord}, by lane`}>
         {srRuns.map(({ lane, runs }) => (
           <li key={lane.id}>
             {lane.agent ? (
@@ -514,7 +547,7 @@ export function RunTape({
       </ul>
       {quiet > 0 && (
         <div className="font-mono text-[10px] px-3 pb-2" style={{ color: 'var(--text-tertiary)' }}>
-          {quiet} {quiet === 1 ? 'agent' : 'agents'} had no run in the last hour.
+          {quiet} {quiet === 1 ? 'agent' : 'agents'} had no run in the {windowWord}.
         </div>
       )}
     </div>

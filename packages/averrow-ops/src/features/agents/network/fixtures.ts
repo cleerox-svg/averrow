@@ -163,3 +163,42 @@ export const TIMELINE_FIXTURE: AgentTimeline = {
   } satisfies TimelineEvent],
   truncated: { runs: false, pulls: false, events: false },
 };
+
+/**
+ * A worst-case 24h payload: about 6000 runs across the registry plus 4000
+ * feed pulls (Navigator alone is ~288/day; grouped feeds pull hourly). Used by
+ * the tape performance guard.
+ */
+export function makeBigTimeline(): AgentTimeline {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const startMs = NOW_MS - dayMs;
+  const ids = Object.keys(AGENT_METADATA).filter((id) => id !== 'flight_control');
+  const runs: TimelineRun[] = [];
+  let k = 0;
+  while (runs.length < 6000) {
+    const id = ids[k % ids.length]!;
+    // deterministic spread over the day
+    const t = startMs + ((k * 7919) % 86_400) * 1000;
+    const dur = 2 + ((k * 13) % 40);
+    runs.push({
+      id: `big-r${k}`, agent_id: id, source: 'agent_runs', started_at: new Date(t).toISOString(),
+      completed_at: new Date(t + dur * 1000).toISOString(), status: k % 97 === 0 ? 'failed' : k % 31 === 0 ? 'partial' : 'success',
+      open: false, clipped_start: false, duration_ms: dur * 1000, records_processed: k % 50, error: null,
+    });
+    k++;
+  }
+  const feedNames = ['phishtank', 'openphish', 'urlhaus', 'otx_alienvault', 'greynoise', 'reddit', 'github', 'nrd_hagezi'];
+  const pulls: TimelinePull[] = [];
+  for (let i = 0; i < 4000; i++) {
+    const t = startMs + ((i * 6007) % 86_400) * 1000;
+    pulls.push({
+      id: `big-p${i}`, feed_name: feedNames[i % feedNames.length]!, started_at: new Date(t).toISOString(),
+      completed_at: new Date(t + 6000).toISOString(), status: 'success', open: false, clipped_start: false,
+      records_ingested: i % 30, records_rejected: 0, duration_ms: 6000, error: null,
+    });
+  }
+  return {
+    window: '24h', generated_at: FIXTURE_NOW, window_start: new Date(startMs).toISOString(), window_end: FIXTURE_NOW,
+    runs, pulls, events: [], truncated: { runs: false, pulls: false, events: false },
+  };
+}

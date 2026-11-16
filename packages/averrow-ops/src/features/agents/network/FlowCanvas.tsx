@@ -20,7 +20,7 @@ import type { Agent } from '@/hooks/useAgents';
 import type { FeedOverview } from '@/hooks/useFeeds';
 import { AGENT_METADATA, type AgentId } from '@/lib/agent-metadata';
 import {
-  CRON_LABEL, EDGES, FEED_GROUP_LABEL, FEED_GROUP_NODE, FEED_NRD, FLIGHT_CONTROL, HUB_THREATS, SATELLITES,
+  CRON_LABEL, EDGES, FEED_GROUP_LABEL, FEED_GROUP_NODE, FEED_NRD, FLIGHT_CONTROL, HUB_THREATS, INBOX_ABUSE, SATELLITES,
   computeLayout, edgePath, hitTest, pointAt,
   type Layout, type LayoutNode, type NetworkEdge, type Placement, type Pt,
 } from './model';
@@ -29,6 +29,7 @@ import {
   type NodeActivity, type TimelineIndex,
 } from './activity';
 import { fmtHM, fmtHMS } from './replay';
+import { inkFor, rgbCss, type Identity } from './colors';
 import { fitCanvas, useCanvasLoop, useIsVisible, useMountedElement } from './useCanvasLoop';
 
 const TOKEN_NAMES = [
@@ -107,6 +108,8 @@ export interface DrawParams {
   /** Clock for pulses and particle travel; defaults to `now`. Replay passes
    *  the wall clock so animation speed does not follow replay speed. */
   phase?: number;
+  /** Per-node identity colours (agent colour, feed-group colour, hub primary). */
+  identity?: Identity;
   /** Rendering a past instant (tooltips say "at HH:MM UTC"). */
   replay?: boolean;
   focus: string | null;
@@ -120,12 +123,25 @@ export function visibleEdges(focus: string | null): NetworkEdge[] {
   return EDGES.filter((e) => e.tier === 'spine' || (focus !== null && (e.from === focus || e.to === focus)));
 }
 
+/** Colour of the node an edge starts from (hub: primary; inbox: its classifier). */
+function sourceNodeId(from: string): string {
+  return from === INBOX_ABUSE ? 'abuse_mailbox_classifier' : from;
+}
+
+/** rgba() of a node's identity colour, or the primary accent without identities. */
+function tintOf(p: DrawParams, id: string, alpha: number): string {
+  return p.identity ? p.identity.css(id, alpha) : p.palette('--primary', alpha);
+}
+
+const INK_LIGHT: [number, number, number] = [255, 255, 255];
+const INK_DARK: [number, number, number] = [10, 11, 14];
+
 export interface EdgeStyle { stroke: string; width: number; dash: number[] }
 
 /** How an edge is stroked. Idle structure reads at >= ~0.28 alpha on dark. */
 export function edgeStyle(
   e: Pick<NetworkEdge, 'mechanism' | 'tier'>,
-  s: { live: boolean; touches: boolean; dim: boolean },
+  s: { live: boolean; touches: boolean; dim: boolean; /** source node colour for a live edge, as rgba(...) at full alpha */ tint?: (alpha: number) => string },
   c: Palette,
 ): EdgeStyle {
   if (e.mechanism === 'EVENT') {
@@ -138,13 +154,13 @@ export function edgeStyle(
   if (e.mechanism === 'INLINE') {
     return {
       dash: [], width: s.live ? 1.8 : 1.2,
-      stroke: s.dim ? c('--text-muted', 0.12) : s.live ? c('--primary', 0.85) : s.touches ? c('--primary-text', 0.7) : c('--text-muted', 0.45),
+      stroke: s.dim ? c('--text-muted', 0.12) : s.live ? (s.tint ? s.tint(0.85) : c('--primary', 0.85)) : s.touches ? c('--primary-text', 0.7) : c('--text-muted', 0.45),
     };
   }
   // TABLE: the quietest link.
   return {
     dash: [], width: s.live ? 1.4 : 1,
-    stroke: s.dim ? c('--text-muted', 0.12) : s.live ? c('--primary', 0.6) : s.touches ? c('--primary-text', 0.6) : c('--text-muted', 0.28),
+    stroke: s.dim ? c('--text-muted', 0.12) : s.live ? (s.tint ? s.tint(0.6) : c('--primary', 0.6)) : s.touches ? c('--primary-text', 0.6) : c('--text-muted', 0.28),
   };
 }
 
@@ -270,7 +286,7 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
   // Edges, quiet ones first so live and focused ones sit on top.
   const rank = (e: NetworkEdge) => (focus && (e.from === focus || e.to === focus) ? 3 : e.mechanism === 'TABLE' ? 0 : e.mechanism === 'INLINE' ? 1 : 2);
   const ordered = [...edges].sort((x, y) => rank(x) - rank(y));
-  const particles: Pt[] = [];
+  const particles: Array<Pt & { color: string; glow: string }> = [];
 
   for (const e of ordered) {
     const a = layout.nodes[e.from];
@@ -280,7 +296,8 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
     const dim = !!focus && !touches;
     const act = p.hasTimeline ? edgeActivity(p.index, e, now) : IDLE;
     const path = pathFor(layout, e, a, t);
-    const st = edgeStyle(e, { live: act.emitting, touches, dim }, c);
+    const srcId = sourceNodeId(e.from);
+    const st = edgeStyle(e, { live: act.emitting, touches, dim, tint: (a) => tintOf(p, srcId, a) }, c);
     ctx.setLineDash(st.dash);
     ctx.lineWidth = st.width;
     ctx.strokeStyle = st.stroke;
@@ -296,7 +313,12 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
     }
 
     if (!dim) {
-      for (const k of edgeParticles(e, act, now, p.reducedMotion, phase)) particles.push(pointAt(path, k));
+      const color = tintOf(p, srcId, 1);
+      const glow = tintOf(p, srcId, 0.28);
+      for (const k of edgeParticles(e, act, now, p.reducedMotion, phase)) {
+        const pt = pointAt(path, k);
+        particles.push({ x: pt.x, y: pt.y, color, glow });
+      }
     }
   }
   if (particles.length) busy = true;
@@ -316,20 +338,20 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
       ctx.beginPath();
       ctx.moveTo(d.x, d.y);
       ctx.lineTo(grp.x, grp.y);
-      ctx.strokeStyle = c('--primary-text', 0.35);
+      ctx.strokeStyle = tintOf(p, gid, 0.45);
       ctx.lineWidth = 1;
       ctx.stroke();
     }
     ctx.beginPath();
     ctx.arc(d.x, d.y, hot ? 5 : 4, 0, Math.PI * 2);
-    ctx.fillStyle = st?.failed ? c('--sev-critical') : st?.running ? c('--primary-text') : c('--text-muted', dim ? 0.3 : 0.75);
+    ctx.fillStyle = st?.failed ? c('--sev-critical') : st?.running ? tintOf(p, gid, 1) : tintOf(p, gid, dim ? 0.18 : 0.5);
     ctx.fill();
     if (st?.running) {
       busy = true;
       if (!p.reducedMotion) {
         ctx.beginPath();
         ctx.arc(d.x, d.y, 7 + Math.sin(phase / PULSE), 0, Math.PI * 2);
-        ctx.strokeStyle = c('--primary', 0.5);
+        ctx.strokeStyle = tintOf(p, gid, 0.55);
         ctx.lineWidth = 1;
         ctx.stroke();
       }
@@ -338,11 +360,11 @@ export function drawFlow(ctx: CanvasRenderingContext2D, p: DrawParams): boolean 
 
   // Particles above edges.
   for (const pt of particles) {
-    ctx.fillStyle = c('--primary-text', 0.25);
+    ctx.fillStyle = pt.glow;
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = c('--primary-text');
+    ctx.fillStyle = pt.color;
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, 2.2, 0, Math.PI * 2);
     ctx.fill();
@@ -373,8 +395,11 @@ function drawAgentNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNo
   const calm = p.reducedMotion;
   const satellite = SATELLITES.includes(n.id);
 
-  if (st.running && !st.failed) {
-    ctx.fillStyle = c('--primary', 0.18);
+  const id = n.id;
+  const live = st.running && !st.failed;
+  if (live) {
+    // Vivid when running: a glow in the agent's own colour.
+    ctx.fillStyle = tintOf(p, id, 0.22);
     ctx.beginPath();
     ctx.arc(n.x, n.y, n.r + 6 + (calm ? 0 : 2 * Math.sin((p.phase ?? now) / PULSE)), 0, Math.PI * 2);
     ctx.fill();
@@ -386,36 +411,69 @@ function drawAgentNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNo
     ctx.arc(n.x, n.y, n.r + 9, 0, Math.PI * 2);
     ctx.stroke();
   }
-  ctx.fillStyle = st.running && !st.failed ? c('--primary') : c('--bg-card-deep');
-  ctx.strokeStyle = st.failed ? c('--sev-critical') : st.running ? c('--primary-text') : c('--text-muted', 0.45);
-  ctx.lineWidth = st.failed ? 2.2 : 1.2;
-  // Dashed = paused, or an inline step of its parent rather than a scheduled job.
-  ctx.setLineDash(st.paused || satellite ? [3, 3] : []);
+  // Idle is dim: a card-coloured disc with a faint tint and a thin coloured ring.
+  ctx.fillStyle = live ? tintOf(p, id, 0.92) : c('--bg-card-deep');
   ctx.beginPath();
   ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
   ctx.fill();
+  if (!live) {
+    ctx.fillStyle = tintOf(p, id, 0.1);
+    ctx.fill();
+  }
+  ctx.strokeStyle = st.failed ? c('--sev-critical') : live ? tintOf(p, id, 1) : tintOf(p, id, 0.7);
+  ctx.lineWidth = st.failed ? 2.4 : live ? 1.6 : 1.4;
+  // Dashed = paused, or an inline step of its parent rather than a scheduled job.
+  ctx.setLineDash(st.paused || satellite ? [3, 3] : []);
   ctx.stroke();
   ctx.setLineDash([]);
 
   if (st.running) {
-    ctx.strokeStyle = c('--primary-text');
+    ctx.strokeStyle = tintOf(p, id, 1);
     ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.arc(n.x, n.y, n.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(st.progress, 0.04));
     ctx.stroke();
   }
+  if (st.failed) drawFailedBadge(ctx, c, n);
 
   const cron = CRON_LABEL[n.id];
   if (cron) {
     ctx.font = `500 ${satellite ? 8 : cron.length > 3 ? 9 : 10}px ${MONO}`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = st.running && !st.failed ? c('--primary-ink') : c('--text-muted');
+    ctx.fillStyle = live ? inkOn(p, id) : c('--text-muted');
     ctx.fillText(cron, n.x, n.y + 3);
   }
   ctx.font = `500 11px ${SANS}`;
   ctx.textAlign = 'center';
   haloText(ctx, c, fit(ctx, n.label, 118), n.x, n.y + n.r + 16, st.running ? c('--text-primary') : c('--text-secondary'));
   return st.running;
+}
+
+/** Text/ink colour for use on a running (filled) node. */
+function inkOn(p: DrawParams, id: string): string {
+  if (!p.identity) return p.palette('--primary-ink');
+  return rgbCss(inkFor(p.identity.rgb(id), INK_LIGHT, INK_DARK));
+}
+
+/**
+ * Failure is shape plus red, never hue alone: a red ring AND a x badge on the
+ * node, so a red-family agent colour cannot be mistaken for (or hide) a failure.
+ */
+export function drawFailedBadge(ctx: CanvasRenderingContext2D, c: Palette, n: Pick<LayoutNode, 'x' | 'y' | 'r'>): void {
+  const bx = n.x + n.r * 0.8;
+  const by = n.y - n.r * 0.8;
+  ctx.fillStyle = c('--sev-critical');
+  ctx.beginPath();
+  ctx.arc(bx, by, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,1)';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(bx - 2.6, by - 2.6);
+  ctx.lineTo(bx + 2.6, by + 2.6);
+  ctx.moveTo(bx + 2.6, by - 2.6);
+  ctx.lineTo(bx - 2.6, by + 2.6);
+  ctx.stroke();
 }
 
 function drawPlainNode(ctx: CanvasRenderingContext2D, p: DrawParams, n: LayoutNode): void {
@@ -537,13 +595,15 @@ export interface FlowCanvasProps {
   playing?: boolean;
   /** Changes with the shown playhead: redraws static frames and refreshes the text list. */
   viewVersion?: number;
+  /** Identity colours (memoised by the parent). */
+  identity?: Identity;
   /** Placement is computed by the parent so the rails and canvas agree. */
   placement: Placement;
 }
 
 export function FlowCanvas({
   byName, feeds, index, hasTimeline, getNow, hoverId, onHover, selected, onSelect,
-  zoom, width, reducedMotion, placement, replay = false, playing = false, viewVersion = 0,
+  zoom, width, reducedMotion, placement, replay = false, playing = false, viewVersion = 0, identity,
 }: FlowCanvasProps) {
   const [canvasRef, setCanvasEl, canvasEl] = useMountedElement<HTMLCanvasElement>();
   const dotHoverRef = useRef<string | null>(null);
@@ -566,11 +626,11 @@ export function FlowCanvas({
     const ctx = fitCanvas(canvas, layout.width * zoom, layout.height * zoom);
     if (!ctx) return false;
     const busy = drawFlow(ctx, {
-      layout, palette, zoom, agents: byName, index, hasTimeline, now: getNow(), phase: Date.now(), replay,
+      layout, palette, zoom, agents: byName, index, hasTimeline, now: getNow(), phase: Date.now(), replay, identity,
       focus: hoverId ?? selected, selected, dotHover: dotHoverRef.current, reducedMotion,
     });
     return busy || (playing && !reducedMotion);
-  }, [layout, palette, zoom, byName, index, hasTimeline, getNow, hoverId, selected, reducedMotion, replay, playing, drawKey]);
+  }, [layout, palette, zoom, byName, index, hasTimeline, getNow, hoverId, selected, reducedMotion, replay, playing, drawKey, identity]);
 
   // No timeline, reduced motion or Pause: draw once per change, no frame loop.
   useCanvasLoop(draw, !reducedMotion && hasTimeline, visible, [draw, version]);
