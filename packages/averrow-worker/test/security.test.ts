@@ -75,6 +75,18 @@ describe("applySecurityHeaders", () => {
     expect(fileCsp).toBe(buildContentSecurityPolicy("/scan/"));
   });
 
+  it("never allows a public JS CDN as a script or style source", () => {
+    // A shared CDN in script-src lets injected markup load any package's
+    // code from it; nothing on the platform loads from these hosts.
+    for (const path of [undefined, "/", "/scan/", "/ops/", "/tenant/", "/status"]) {
+      const csp = buildContentSecurityPolicy(path);
+      for (const host of ["cdn.jsdelivr.net", "cdnjs.cloudflare.com", "unpkg.com"]) {
+        expect(directive(csp, "script-src")).not.toContain(host);
+        expect(directive(csp, "style-src")).not.toContain(host);
+      }
+    }
+  });
+
   it("adds Referrer-Policy", () => {
     const res = applySecurityHeaders(makeResponse());
     expect(res.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
