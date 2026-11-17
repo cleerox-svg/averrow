@@ -3280,6 +3280,7 @@ export const SCHEDULE_OWNED_AGENTS: ReadonlySet<string> = new Set([
   'trademark_monitor',     // 23 * * * *
   'executive_monitor',     // 26 */6 * * *
   'page_capture',          // */10 * * * *
+  'site_script_watch',     // */10 * * * * (after page_capture, budget permitting)
   // FC's own scheduling paths (dispatched elsewhere in this file):
   'flight_control',        // 7 * * * * (FC itself — recovering it from inside FC is meaningless)
   'curator',               // weekly hygiene dispatch with its own failure backoff

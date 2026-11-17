@@ -827,6 +827,17 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
           return Response.json({ triggered: true, agent: 'page_capture' });
         }
 
+        // Site Script Watch — manual trigger / fallback for the scan that
+        // rides the `*/10 * * * *` cron after page_capture. Scans at most one
+        // due customer brand (lib/site-script-scan.ts).
+        if (url.pathname === '/api/internal/agents/site_script_watch/run') {
+          const { agentModules } = await import('./agents/index');
+          const { executeAgent } = await import('./lib/agentRunner');
+          const mod = agentModules["site_script_watch"];
+          if (mod) ctx.waitUntil(executeAgent(env, mod, { trigger: 'manual' }, "api", "event"));
+          return Response.json({ triggered: true, agent: 'site_script_watch' });
+        }
+
         // Phantom-domain enumerator — manual / on-demand trigger (no cron
         // in this PR; spec §5). Predicts each monitored brand's LLM-
         // hallucination domain surface and writes phantom_domains rows at

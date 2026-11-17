@@ -112,6 +112,7 @@ const MANIFEST_NAME_OVERRIDES: Record<string, string> = {
   qualified_report: "qualified-report",
   scan_report: "scan-report",
   seed_strategist: "seed-strategist",
+  site_script_watch: "siteScriptWatch",
   social_ai_assessor: "social-ai-assessor",
   social_discovery: "socialDiscovery",
   social_monitor: "socialMonitor",

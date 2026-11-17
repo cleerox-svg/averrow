@@ -58,11 +58,38 @@ describe("page_capture dedicated cron dispatch", () => {
     calls.length = 0;
   });
 
-  it("'*/10 * * * *' dispatches page_capture only, with scheduledTime", async () => {
+  it("'*/10 * * * *' dispatches page_capture only, with scheduledTime (tick window already spent → no site scan)", async () => {
     const { handleScheduled } = await import("../src/cron/orchestrator");
     await handleScheduled(ev("*/10 * * * *", "2026-10-12T00:10:00Z"), env, ctx);
     expect(calls.map((c) => c.agent)).toEqual(["page_capture"]);
     expect(calls[0]!.input).toEqual({ scheduledTime: "2026-10-12T00:10:00.000Z" });
+  });
+
+  it("'*/10 * * * *' runs site_script_watch AFTER page_capture while the tick window has budget", async () => {
+    const { handleScheduled } = await import("../src/cron/orchestrator");
+    const { SITE_SCRIPT_TICK_WINDOW_MS } = await import("../src/lib/site-script-scan");
+    const fired = Date.parse("2026-10-12T00:10:00Z");
+    vi.useFakeTimers({ toFake: ["Date"], now: fired + 30_000 });
+    try {
+      await handleScheduled(ev("*/10 * * * *", "2026-10-12T00:10:00Z"), env, ctx);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(calls.map((c) => c.agent)).toEqual(["page_capture", "site_script_watch"]);
+    expect(calls[1]!.input).toEqual({ scheduledTime: "2026-10-12T00:10:00.000Z", budgetMs: SITE_SCRIPT_TICK_WINDOW_MS - 30_000 });
+  });
+
+  it("'*/10 * * * *' skips site_script_watch cleanly when page_capture left too little of the window", async () => {
+    const { handleScheduled } = await import("../src/cron/orchestrator");
+    const { SITE_SCRIPT_TICK_WINDOW_MS, SITE_SCAN_MIN_BUDGET_MS } = await import("../src/lib/site-script-scan");
+    const fired = Date.parse("2026-10-12T00:10:00Z");
+    vi.useFakeTimers({ toFake: ["Date"], now: fired + SITE_SCRIPT_TICK_WINDOW_MS - SITE_SCAN_MIN_BUDGET_MS + 1 });
+    try {
+      await handleScheduled(ev("*/10 * * * *", "2026-10-12T00:10:00Z"), env, ctx);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(calls.map((c) => c.agent)).toEqual(["page_capture"]);
   });
 
   it("'*/5 * * * *' at a shared minute dispatches navigator only — never page_capture", async () => {
@@ -78,7 +105,8 @@ describe("page_capture dedicated cron dispatch", () => {
     const { handleScheduled } = await import("../src/cron/orchestrator");
     await handleScheduled(ev("*/5 * * * *", "2026-10-12T00:20:00Z"), env, ctx);
     await handleScheduled(ev("*/10 * * * *", "2026-10-12T00:20:00Z"), env, ctx);
-    expect(calls.map((c) => c.agent).sort()).toEqual(["navigator", "page_capture"]);
+    // Never a second page_capture; site_script_watch only rides the */10 event.
+    expect(calls.filter((c) => c.agent !== "site_script_watch").map((c) => c.agent).sort()).toEqual(["navigator", "page_capture"]);
   });
 
   it("the branch is an exact match above the hourly-mesh guard, and wrangler declares the trigger", () => {

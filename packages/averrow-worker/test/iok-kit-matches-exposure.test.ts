@@ -94,11 +94,17 @@ describe("IOK kit matches: source graph stays staff-only context", () => {
 // network.json holds response headers, cookie VALUES and the raw body. The
 // object has no reader at all: this pins that it stays that way.
 describe("network evidence object stays unreachable", () => {
-  it("only the capture pipeline and its browser driver touch the network evidence module", () => {
+  it("only the capture pipeline and the two browser drivers touch the network evidence module", () => {
+    // lib/site-script-browser.ts (Site Script Watch) imports only the size
+    // tracker / body-size verdict / caps and the interceptor's collector; it
+    // never serializes, stores or reads a network.json object (pinned below).
     expect(filesMatching(/["']\.\.?\/(?:lib\/)?page-capture-network["']|["']\.\/page-capture-network["']/)).toEqual([
       "lib/page-capture-browser.ts",
       "lib/page-capture.ts",
+      "lib/site-script-browser.ts",
     ]);
+    const ssb = code(FILES.find((f) => f.rel === "lib/site-script-browser.ts")!.text);
+    expect(ssb).not.toMatch(/serializeNetworkEvidence|toIokNetworkInput|summarizeNetworkEvidence|\.finish\(/);
   });
 
   it("only lib/page-capture.ts names the object key or its D1 columns", () => {
