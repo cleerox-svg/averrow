@@ -177,8 +177,9 @@ export function makeBigTimeline(): AgentTimeline {
   let k = 0;
   while (runs.length < 6000) {
     const id = ids[k % ids.length]!;
-    // deterministic spread over the day
-    const t = startMs + ((k * 7919) % 86_400) * 1000;
+    // deterministic spread over the day (stride picked so the per-lane spacing is not a
+    // multiple of the merge quantum for the current agent count; re-pick if the registry grows)
+    const t = startMs + ((k * 7001) % 86_400) * 1000;
     const dur = 2 + ((k * 13) % 40);
     runs.push({
       id: `big-r${k}`, agent_id: id, source: 'agent_runs', started_at: new Date(t).toISOString(),

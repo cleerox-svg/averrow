@@ -50,6 +50,7 @@ export type AgentId =
   | 'campaign_hunter'
   | 'abuse_mailbox_classifier'
   | 'page_capture'
+  | 'site_script_watch'
   | 'executive_monitor'
   | 'phantom_enumerator';
 
@@ -171,6 +172,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#0A8AB5',
     category: 'response',
     pipelinePosition: 45,
+  },
+  site_script_watch: {
+    id: 'site_script_watch',
+    displayName: 'Site Script Watch',
+    codename: null,
+    subtitle: 'Renders customer sites in an isolated browser and flags new or changed third-party scripts and known-bad hosts',
+    color: '#0A8AB5',
+    category: 'response',
+    pipelinePosition: 46,
   },
   strategist: {
     id: 'strategist',

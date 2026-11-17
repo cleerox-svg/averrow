@@ -95,7 +95,7 @@ describe('placement coverage', () => {
     expect(p.hasFlightControl).toBe(true);
     expect(p.stages.respond).toEqual(['sparrow', 'evidence_assembler']);
     // the 7 agents the old view never rendered are now on the canvas or rail
-    for (const id of ['abuse_mailbox_classifier', 'page_capture', 'trademark_monitor', 'ct_monitor', 'executive_monitor']) {
+    for (const id of ['abuse_mailbox_classifier', 'page_capture', 'site_script_watch', 'trademark_monitor', 'ct_monitor', 'executive_monitor']) {
       expect(Object.values(p.stages).flat()).toContain(id);
     }
   });

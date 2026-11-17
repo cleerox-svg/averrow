@@ -99,6 +99,7 @@ export const EDGES: readonly NetworkEdge[] = [
   { from: 'ct_monitor', to: 'observer', mechanism: 'TABLE', tier: 'detail', via: 'ct findings' },
   { from: 'lookalike_scanner', to: 'narrator', mechanism: 'TABLE', tier: 'detail', via: 'lookalike_domains' },
   { from: 'lookalike_scanner', to: 'observer', mechanism: 'TABLE', tier: 'detail', via: 'lookalike_domains' },
+  { from: HUB_THREATS, to: 'site_script_watch', mechanism: 'TABLE', tier: 'detail', via: 'threats / brands (site_* tables)' },
   { from: 'lookalike_scanner', to: 'trademark_monitor', mechanism: 'TABLE', tier: 'detail', via: 'lookalike_domains' },
   { from: 'watchdog', to: 'sparrow', mechanism: 'TABLE', tier: 'detail', via: 'social findings' },
   { from: 'watchdog', to: 'analyst', mechanism: 'TABLE', tier: 'detail', via: 'social findings' },
@@ -126,7 +127,7 @@ export const STAGE_AGENTS: Record<Stage, readonly string[]> = {
     'lookalike_scanner', 'ct_monitor', 'trademark_monitor', 'executive_monitor',
   ],
   ingest: ['sentinel', 'watchdog', 'abuse_mailbox_classifier', 'auto_seeder'],
-  enrich: ['enricher', 'cartographer', 'navigator', 'page_capture', 'cube_healer', 'geoip_refresh', 'curator'],
+  enrich: ['enricher', 'cartographer', 'navigator', 'page_capture', 'site_script_watch', 'cube_healer', 'geoip_refresh', 'curator'],
   correlate: ['nexus', 'attributor', 'analyst', 'news_watcher', 'strategist'],
   narrate: ['observer', 'narrator', 'notification_narrator', 'seed_strategist'],
   respond: ['sparrow', 'evidence_assembler'],
@@ -148,7 +149,7 @@ export const STAGE_LABEL: Record<Stage, string> = {
 /** Cron minute / cadence shown inside each node (from the schedule in
  *  wrangler.toml). Four characters or fewer. Event-driven agents read 'evt'. */
 export const CRON_LABEL: Record<string, string> = {
-  navigator: '/5m', page_capture: '/10m', enricher: ':08', cartographer: ':09',
+  navigator: '/5m', page_capture: '/10m', site_script_watch: '/10m', enricher: ':08', cartographer: ':09',
   analyst: ':07', strategist: ':10', sparrow: ':11', cube_healer: ':12',
   app_store_monitor: ':13', dark_web_monitor: ':14', social_discovery: ':15', social_monitor: ':15',
   ct_monitor: ':18', lookalike_scanner: ':22', trademark_monitor: ':23', executive_monitor: ':26',
