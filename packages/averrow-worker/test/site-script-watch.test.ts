@@ -30,6 +30,7 @@ import {
   matchUrlsAgainstThreats,
   normaliseInlineScriptText,
   normaliseScriptUrl,
+  redactEvidenceUrl,
   threatLookupKeys,
   threatMatchSql,
   threatUrlLookupKeys,
@@ -836,11 +837,11 @@ describe("threatLookupKeys / threatUrlLookupKeys", () => {
 describe("threatMatchSql", () => {
   it("binds every value and filters active threats on the given column", () => {
     expect(threatMatchSql(3)).toBe(
-      "SELECT malicious_domain AS matched_value, MIN(id) AS threat_id FROM threats " +
+      "SELECT malicious_domain AS matched_value, MIN(id) AS threat_id, source_feed FROM threats " +
         "WHERE malicious_domain IN (?, ?, ?) AND +status = 'active' GROUP BY malicious_domain",
     );
     expect(threatMatchSql(1, "malicious_url")).toBe(
-      "SELECT malicious_url AS matched_value, MIN(id) AS threat_id FROM threats " +
+      "SELECT malicious_url AS matched_value, MIN(id) AS threat_id, source_feed FROM threats " +
         "WHERE malicious_url IN (?) AND +status = 'active' GROUP BY malicious_url",
     );
   });
@@ -1091,5 +1092,62 @@ describe.skipIf(!hasSqlite())("migration 0337 + threat matching (all migrations 
     expect(await matchHostsAgainstThreats(db, ["cdn.jsdelivr.net", "", "github.io", "raw.githubusercontent.com", INLINE_SCRIPT_HOST])).toEqual([]);
     expect(await matchUrlsAgainstThreats(db, ["data:x", "not a url"])).toEqual([]);
     expect(log).toHaveLength(0);
+  });
+});
+
+describe("redactEvidenceUrl (stored URLs keep param names, drop values)", () => {
+  it("drops query values except the host's identity params; drops fragment and userinfo", () => {
+    expect(redactEvidenceUrl("https://acme.com/checkout?token=s3cr3t&step=2#pay")).toBe("https://acme.com/checkout?token=&step=");
+    expect(redactEvidenceUrl("https://www.googletagmanager.com/gtm.js?id=GTM-1&cb=9")).toBe(
+      "https://www.googletagmanager.com/gtm.js?id=GTM-1&cb=",
+    );
+    expect(redactEvidenceUrl("https://www.paypal.com/sdk/js?client-id=AB1&currency=USD")).toBe(
+      "https://www.paypal.com/sdk/js?client-id=AB1&currency=",
+    );
+    expect(redactEvidenceUrl("https://user:pw@exfil.example/c?cc=4111111111111111")).toBe("https://exfil.example/c?cc=");
+    expect(redactEvidenceUrl("wss://ws.example/s?sid=abc")).toBe("wss://ws.example/s?sid=");
+    expect(redactEvidenceUrl("https://acme.com/")).toBe("https://acme.com/");
+    expect(redactEvidenceUrl("not a url?secret=1")).toBe("not a url");
+    expect(redactEvidenceUrl(null)).toBeNull();
+  });
+});
+
+describe("diffContactedHosts with per-host entries", () => {
+  it("adds each entry's request count (default 1)", () => {
+    const d = diffContactedHosts(
+      [
+        { url: "https://beacon.example/a", count: 7 },
+        { url: "https://beacon.example/b" },
+        { url: "https://other.example/x", count: 0 },
+      ],
+      [],
+      { canonicalDomain: "acme.com", pageUrl: "https://acme.com/", baseline: true },
+    );
+    expect(d.observed.map((o) => [o.host, o.request_count])).toEqual([
+      ["beacon.example", 8],
+      ["other.example", 1],
+    ]);
+  });
+});
+
+describe.skipIf(!hasSqlite())("threat match carries source_feed; URL-match host form", () => {
+  it("returns the source_feed of the lowest-id matching threat, in the same statement", async () => {
+    const raw = openMigratedDb();
+    const ins = raw.prepare(
+      "INSERT INTO threats (id, source_feed, threat_type, malicious_domain, malicious_url, status) VALUES (?, ?, 'phishing', ?, ?, 'active')",
+    );
+    ins.run("t-b", "threatfox", "evil.example", null);
+    ins.run("t-a", "urlhaus", "evil.example", null);
+    ins.run("t-u", "phishtank", null, "https://evil.example./x.js");
+    const log: StatementLogEntry[] = [];
+    const db = d1FromSqlite(raw, { log });
+    const hm = await matchHostsAgainstThreats(db, ["evil.example"]);
+    expect(hm).toEqual([{ host: "evil.example", matched_value: "evil.example", match_kind: "exact", threat_id: "t-a", source_feed: "urlhaus" }]);
+    expect(log).toHaveLength(1);
+    // A URL match on a trailing-dot host reports the same host form as a host match.
+    const um = await matchUrlsAgainstThreats(db, ["https://evil.example./x.js"]);
+    expect(um).toEqual([
+      { host: "evil.example", matched_value: "https://evil.example./x.js", match_kind: "url", threat_id: "t-u", source_feed: "phishtank" },
+    ]);
   });
 });

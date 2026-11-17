@@ -159,6 +159,38 @@ export function normaliseScriptUrl(raw: string, baseUrl?: string | null): Normal
   };
 }
 
+/**
+ * A URL safe to STORE as evidence (finding page_url / evidence url /
+ * initiator_url, inventory first_page_url): query param NAMES are kept but
+ * their VALUES are dropped (`?token=abc&id=GTM-1` → `?token=&id=GTM-1`),
+ * except the identity params normaliseScriptUrl keeps for that host (`id`
+ * everywhere plus SCRIPT_IDENTITY_PARAMS_BY_HOST). A page or beacon URL can
+ * carry a session token or a shopper's data (an exfil request IS that data);
+ * none of it belongs in our store. The fragment and any userinfo are
+ * dropped. Matching and the inventory keys use the unredacted URL; only what
+ * is persisted is redacted. Unparseable input keeps only what precedes the
+ * first `?` / `#`. Truncated to SITE_SCRIPT_EVIDENCE_URL_MAX.
+ */
+export function redactEvidenceUrl(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return truncate(raw.split(/[?#]/)[0] ?? "", SITE_SCRIPT_EVIDENCE_URL_MAX);
+  }
+  url.hash = "";
+  url.username = "";
+  url.password = "";
+  if (url.search) {
+    const keep = identityParamsFor(url.hostname.toLowerCase().replace(/\.+$/, ""));
+    const params = new URLSearchParams();
+    for (const [k, v] of url.searchParams.entries()) params.append(k, keep.has(k) ? v : "");
+    url.search = params.toString();
+  }
+  return truncate(url.href, SITE_SCRIPT_EVIDENCE_URL_MAX);
+}
+
 // ─── Inline scripts ─────────────────────────────────────────────────
 
 /** script_host of an inline-script inventory row (never a valid hostname). */
@@ -920,6 +952,12 @@ export function diffSiteScan(
 /** One network request the page made (script, XHR / fetch, beacon, websocket). */
 export interface ContactedRequest {
   url: string;
+  /**
+   * Requests this entry stands for (default 1). The site-scan driver records
+   * ONE entry per contacted host (its first URL + initiator) with the
+   * host's request count, so a request cap can never hide a late new host.
+   */
+  count?: number;
   /** URL of the script that made the request, when the capture knows it. */
   initiator_url?: string | null;
   /** The page it was made from (defaults to DiffContactedHostsOptions.pageUrl). */
@@ -982,9 +1020,10 @@ export function diffContactedHosts(
     }
     const host = url.hostname.toLowerCase().replace(/\.+$/, "");
     const init = r.initiator_url ? normaliseScriptUrl(r.initiator_url, pageUrl) : null;
+    const n = typeof r.count === "number" && Number.isFinite(r.count) && r.count >= 1 ? Math.floor(r.count) : 1;
     const prior = byHost.get(host);
     if (prior) {
-      prior.request_count++;
+      prior.request_count += n;
       if (!prior.initiator_host && init) {
         prior.initiator_host = init.host;
         prior.initiator_path = init.path_norm;
@@ -994,7 +1033,7 @@ export function diffContactedHosts(
     }
     const o: ObservedContactedHost = {
       host,
-      request_count: 1,
+      request_count: n,
       first_url: truncate(url.href, SITE_SCRIPT_EVIDENCE_URL_MAX),
       initiator_host: init?.host ?? null,
       initiator_path: init?.path_norm ?? null,
@@ -1048,6 +1087,8 @@ export interface ThreatMatch {
    */
   match_kind: "exact" | "parent" | "ip" | "url";
   threat_id: string;
+  /** source_feed of that (lowest-id) threat. */
+  source_feed: string | null;
 }
 
 function isNoiseKey(k: string): boolean {
@@ -1100,7 +1141,10 @@ export type ThreatMatchColumn = "malicious_domain" | "malicious_url" | "ip_addre
 
 /**
  * The lookup statement for `n` values of one threats column. Columns are a
- * fixed set (never caller input); values are always bound.
+ * fixed set (never caller input); values are always bound. `source_feed` is
+ * a bare column next to the single MIN() aggregate, so SQLite returns it
+ * from the row MIN(id) picked (the matched threat's own feed) — no second
+ * round trip to read it.
  *
  *   malicious_domain — idx_threats_domain. `ioc_value`'s index (0001) went
  *     with 0013's table rebuild and was never restored (see 0312's header),
@@ -1118,24 +1162,30 @@ export type ThreatMatchColumn = "malicious_domain" | "malicious_url" | "ip_addre
 export function threatMatchSql(n: number, column: ThreatMatchColumn = "malicious_domain"): string {
   const placeholders = Array.from({ length: n }, () => "?").join(", ");
   return (
-    `SELECT ${column} AS matched_value, MIN(id) AS threat_id FROM threats ` +
+    `SELECT ${column} AS matched_value, MIN(id) AS threat_id, source_feed FROM threats ` +
     `WHERE ${column} IN (${placeholders}) AND +status = 'active' ` +
     `GROUP BY ${column}`
   );
+}
+
+interface ThreatRow {
+  matched_value: string;
+  threat_id: string;
+  source_feed: string | null;
 }
 
 async function probeThreats(
   db: D1Database | D1DatabaseSession,
   column: ThreatMatchColumn,
   keys: readonly string[],
-): Promise<Array<{ matched_value: string; threat_id: string }>> {
-  const out: Array<{ matched_value: string; threat_id: string }> = [];
+): Promise<ThreatRow[]> {
+  const out: ThreatRow[] = [];
   for (let i = 0; i < keys.length; i += SITE_SCRIPT_MATCH_CHUNK) {
     const chunk = keys.slice(i, i + SITE_SCRIPT_MATCH_CHUNK);
     const res = await db
       .prepare(threatMatchSql(chunk.length, column))
       .bind(...chunk)
-      .all<{ matched_value: string; threat_id: string }>();
+      .all<ThreatRow>();
     out.push(...(res.results ?? []));
   }
   return out;
@@ -1178,6 +1228,7 @@ export async function matchHostsAgainstThreats(
           matched_value: row.matched_value,
           match_kind: row.matched_value === host ? "exact" : "parent",
           threat_id: row.threat_id,
+          source_feed: row.source_feed ?? null,
         });
       }
     }
@@ -1185,7 +1236,7 @@ export async function matchHostsAgainstThreats(
   if (ipKeys.size) {
     for (const row of await probeThreats(db, "ip_address", [...ipKeys.keys()])) {
       for (const host of ipKeys.get(row.matched_value) ?? []) {
-        out.push({ host, matched_value: row.matched_value, match_kind: "ip", threat_id: row.threat_id });
+        out.push({ host, matched_value: row.matched_value, match_kind: "ip", threat_id: row.threat_id, source_feed: row.source_feed ?? null });
       }
     }
   }
@@ -1209,8 +1260,10 @@ export async function matchUrlsAgainstThreats(
   const out: ThreatMatch[] = [];
   for (const row of await probeThreats(db, "malicious_url", [...keys.keys()])) {
     for (const u of keys.get(row.matched_value) ?? []) {
-      const host = parseAbsolute(u, null, SCRIPT_PROTOCOLS)?.hostname.toLowerCase() ?? "";
-      out.push({ host, matched_value: row.matched_value, match_kind: "url", threat_id: row.threat_id });
+      // Same host form as matchHostsAgainstThreats (trailing dot stripped), so
+      // a URL match and a host match on one host share an ioc_match dedupe key.
+      const host = parseAbsolute(u, null, SCRIPT_PROTOCOLS)?.hostname.toLowerCase().replace(/\.+$/, "") ?? "";
+      out.push({ host, matched_value: row.matched_value, match_kind: "url", threat_id: row.threat_id, source_feed: row.source_feed ?? null });
     }
   }
   return out;

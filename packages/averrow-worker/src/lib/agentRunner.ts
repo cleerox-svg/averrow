@@ -61,7 +61,8 @@ export type AgentName =
   | "ct_monitor"
   | "executive_monitor"
   | "phantom_enumerator"
-  | "page_capture";
+  | "page_capture"
+  | "site_script_watch";
 
 export type TriggerType = "scheduled" | "event" | "manual" | "api";
 export type RunStatus = "success" | "partial" | "failed";

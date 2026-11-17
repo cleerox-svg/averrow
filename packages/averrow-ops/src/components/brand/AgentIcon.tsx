@@ -829,6 +829,16 @@ const icons: Record<string, (size: number) => JSX.Element> = {
     </svg>
   ),
 
+  // Site Script Watch — a code-bracket glyph with a scan line.
+  site_script_watch: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      <path d="M14 11 L7 18 L14 25" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
+      <path d="M22 11 L29 18 L22 25" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
+      <line x1="5" y1="18" x2="31" y2="18" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="18" cy="18" r="1.6" fill="currentColor" />
+    </svg>
+  ),
+
   // Evidence Assembler — assembles takedown evidence packages.
   // Visual: an evidence folder / dossier with a paperclip + pages
   // and a small AI sparkle marker indicating the AI-generated draft.

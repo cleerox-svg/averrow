@@ -600,22 +600,41 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
   // anywhere here or in lib/page-capture.ts; its once-a-day retention sweep
   // is an hour-only gate (UTC hour 0) deduped by a KV day stamp. MUST stay
   // above the `event.cron !== '7 * * * *'` mesh guard below.
+  //
+  // Site Script Watch (lib/site-script-scan.ts) runs AFTER page_capture in
+  // the same invocation, only when SITE_SCAN_MIN_BUDGET_MS of the tick's
+  // SITE_SCRIPT_TICK_WINDOW_MS (measured from scheduledTime) is left — so a
+  // scan never runs into the next tick. Same cron-audit stance: no minute
+  // gate; its retention sweep is the same hour-0 + KV-stamp pattern.
   if (event.cron === '*/10 * * * *') {
+    const scheduledTime = new Date(event.scheduledTime).toISOString();
     try {
       const { agentModules } = await import('../agents');
       const { executeAgent } = await import('../lib/agentRunner');
       const mod = agentModules['page_capture'];
       if (mod) {
-        await executeAgent(
-          env,
-          mod,
-          { scheduledTime: new Date(event.scheduledTime).toISOString() },
-          'cron',
-          'scheduled',
-        );
+        await executeAgent(env, mod, { scheduledTime }, 'cron', 'scheduled');
       }
     } catch (err) {
       logger.error('page_capture_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    try {
+      const { SITE_SCAN_MIN_BUDGET_MS, siteScriptTickBudgetMs, siteScriptTickDeadlineMs } = await import('../lib/site-script-scan');
+      const budgetMs = siteScriptTickBudgetMs(event.scheduledTime, Date.now());
+      if (budgetMs < SITE_SCAN_MIN_BUDGET_MS) {
+        logger.info('site_script_watch_skipped_budget', { budgetMs });
+      } else {
+        const { agentModules } = await import('../agents');
+        const { executeAgent } = await import('../lib/agentRunner');
+        const mod = agentModules['site_script_watch'];
+        // Absolute deadline (scheduledTime + window), not a relative budget:
+        // executeAgent's own bookkeeping before the agent starts must not
+        // stretch the scan past the tick window.
+        const deadlineMs = siteScriptTickDeadlineMs(event.scheduledTime);
+        if (mod) await executeAgent(env, mod, { scheduledTime, deadlineMs }, 'cron', 'scheduled');
+      }
+    } catch (err) {
+      logger.error('site_script_watch_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
     }
     return;
   }
