@@ -829,13 +829,16 @@ page_capture: */10 * * * *  (every 10 min — phishing page evidence capture, sp
                              or triage; credit "Rules: IOK by phish.report (ODbL)" wherever
                              shown; a regex runs only if listed in `lib/iok-regex-allowlist.ts`.
                              Site Script Watch (`site_script_watch`, lib/site-script-scan.ts) rides the
-                             same `*/10` invocation AFTER page_capture, only while ≥ 50 s of the tick's
-                             7-min window (from scheduledTime, `siteScriptTickBudgetMs`) is left, else
-                             skipped (no run row): ≤ 1 due customer brand per run (trusted canonical, not
-                             shared hosting, no scan in 6 h), renders its home page through the page-capture
-                             browser plumbing + SSRF guard, writes the four site_* tables. Same hour-0
-                             retention + KV stamp (`site_script_watch:sweep:<date>`), no minute gate, no AI.
-                             Manual: `POST /api/internal/agents/site_script_watch/run`.)
+                             same `*/10` invocation AFTER page_capture, with an absolute deadline
+                             (scheduledTime + the tick's 7-min window) and only while ≥ 50 s of it is
+                             left, else skipped (no run row): ≤ 1 due customer brand per run (trusted
+                             canonical, not shared hosting; due = no scan in 6 h, or 1 h after a failed
+                             scan), renders its home page through the page-capture browser plumbing + SSRF
+                             guard (DOM read at ~3 s and ~10 s), writes the four site_* tables. A browser
+                             that won't open claims nothing (run `partial`, brand stays due). Stored URLs
+                             keep query param names, not values. Same hour-0 retention + KV stamp
+                             (`site_script_watch:sweep:<date>`), no minute gate, no AI. Manual (awaited
+                             in-request): `POST /api/internal/agents/site_script_watch/run`.)
 daily_snapshots: 28 0,12 * * * (00:28 + 12:28 UTC — writes `daily_snapshots` brand +
                              provider rows; Flight Control's provider-escalation watcher
                              compares `hosting_providers.active_threat_count` to YESTERDAY's
@@ -1702,7 +1705,8 @@ page_capture_kit_matches  ← IOK phishing-kit rule matches per capture (migrati
                             replaced on re-evaluation, deleted when the capture expires. Staff-only context:
                             read only by `GET /api/intel/identity-threats/detections/:threatId`, never a
                             tenant/public API, never alerts. Rules: IOK by phish.report (ODbL), `docs/licences/iok.md`
-site_scans                ← Site Script Watch scan history per brand (migration 0337): running | complete | skipped | failed.
+site_scans                ← Site Script Watch scan history per brand (migration 0337): running | complete | skipped | failed
+                            (skipped = implausibly small; IOC matches still recorded).
                             The baseline decision reads it (no earlier complete scan), never the inventory; the sweep
                             keeps each brand's latest complete scan. Only writer: lib/site-script-scan.ts
 site_script_inventory     ← Per-brand scripts seen on its own site, one row per (brand, script_host, path_norm); inline
@@ -1710,7 +1714,8 @@ site_script_inventory     ← Per-brand scripts seen on its own site, one row pe
 site_contacted_hosts      ← Per-brand hosts its site contacted, with the FIRST initiating script kept (migration 0337)
 site_script_findings      ← new_host / new_script / body_changed / sri_removed / new_contacted_host / ioc_match
                             (migration 0337); one OPEN row per (brand_id, dedupe_key) — insert ON CONFLICT … WHERE
-                            status = 'open' DO NOTHING. No reader / alert yet
+                            status = 'open' DO NOTHING. Status open | closed | expired (open > 180 d → expired, deleted
+                            next sweep). No reader / alert yet
 bot_traffic_snapshots     ← Cloudflare Radar internet bot-vs-human share, top bot countries/ASNs, verified-bot
                             categories (migration 0290). Platform context, NOT threats; written only by the
                             `cf_radar_bots` feed (daily via its feed_configs interval, `itemsNew=0` so it never
