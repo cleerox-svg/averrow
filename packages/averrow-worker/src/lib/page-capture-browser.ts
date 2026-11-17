@@ -96,14 +96,23 @@ function schemeOf(url: string): string {
   return i > 0 ? url.slice(0, i + 1).toLowerCase() : "";
 }
 
-async function decide(req: HTTPRequest, page: Page, ctx: {
+/** Per-page state the request interceptor reads and updates. */
+export interface InterceptContext {
   guard: CaptureRequest["guard"];
   chain: string[];
   recording: { on: boolean };
   blocked: { reason: string | null; retryable: boolean };
   budget: PageHostBudget;
   net: NetworkCollector;
-}): Promise<void> {
+}
+
+/**
+ * The interception decision for ONE request: per-page host cap, the SSRF
+ * guard on every http(s) navigation and sub-resource, non-http(s) / media /
+ * font aborts. Shared with the Site Script Watch driver
+ * (lib/site-script-browser.ts) so both browser paths enforce one contract.
+ */
+export async function interceptRequest(req: HTTPRequest, page: Page, ctx: InterceptContext): Promise<void> {
   if (req.isInterceptResolutionHandled()) return;
   const url = req.url();
   const scheme = schemeOf(url);
@@ -182,33 +191,11 @@ export async function captureOnPage(browser: Browser, req: CaptureRequest): Prom
   if (req.signal.aborted) onAbort();
   else req.signal.addEventListener("abort", onAbort, { once: true });
   try {
-    page.on("dialog", (d) => { d.dismiss().catch(() => undefined); });
-    page.on("popup", (p) => { if (p) p.close().catch(() => undefined); });
-    // One CDP session: download deny, a clean cookie jar, and the decoded size
-    // of every response (so the main document's body is read only when its
-    // real size is known to be small). Each step is time-boxed and best-effort;
-    // if the jar cannot be cleared this capture records NO cookies (a previous
-    // page's cookies must never be attributed to this one).
-    const sizes = new BodySizeTracker();
-    let cookiesTrusted = false;
-    let cdp: Awaited<ReturnType<Page["createCDPSession"]>> | null = null;
-    try {
-      cdp = await orTimeout(page.createCDPSession(), NET_COOKIE_CLEAR_TIMEOUT_MS);
-    } catch { cdp = null; }
-    if (cdp) {
-      const session = cdp;
-      try { await session.send("Page.setDownloadBehavior", { behavior: "deny" }); } catch { /* interception below still never saves a file */ }
-      try {
-        cookiesTrusted = (await orTimeout(session.send("Network.clearBrowserCookies").then(() => true), NET_COOKIE_CLEAR_TIMEOUT_MS)) === true;
-      } catch { cookiesTrusted = false; }
-      try {
-        session.on("Network.dataReceived", (e) => { sizes.noteData(e.requestId, e.dataLength); });
-        session.on("Network.loadingFinished", (e) => { sizes.noteFinished(e.requestId); });
-        await orTimeout(session.send("Network.enable"), NET_COOKIE_CLEAR_TIMEOUT_MS);
-      } catch { /* no size knowledge → the body is only read on a strict Content-Length check */ }
-    }
+    hardenPage(page);
+    // If the cookie jar cannot be cleared this capture records NO cookies.
+    const { sizes, cookiesTrusted } = await openPageCdp(page);
     await page.setRequestInterception(true);
-    page.on("request", (r) => { void decide(r, page, { guard: req.guard, chain, recording, blocked, budget, net }); });
+    page.on("request", (r) => { void interceptRequest(r, page, { guard: req.guard, chain, recording, blocked, budget, net }); });
 
     await page.setViewport({ ...DESKTOP_VIEWPORT });
     await page.setUserAgent(DESKTOP_UA);
@@ -281,8 +268,48 @@ export async function captureOnPage(browser: Browser, req: CaptureRequest): Prom
   }
 }
 
+/** Dismiss dialogs and close popups for the page's lifetime (navigation only). */
+export function hardenPage(page: Page): void {
+  page.on("dialog", (d) => { d.dismiss().catch(() => undefined); });
+  page.on("popup", (p) => { if (p) p.close().catch(() => undefined); });
+}
+
+/**
+ * One CDP session: download deny, a clean cookie jar, and the decoded size
+ * of every response (so a body is read only when its real size is known to
+ * be small). Each step is time-boxed and best-effort; `cookiesTrusted` is
+ * false when the jar could not be cleared (a previous page's cookies must
+ * never be attributed to this one).
+ */
+export async function openPageCdp(page: Page): Promise<{ sizes: BodySizeTracker; cookiesTrusted: boolean }> {
+  const sizes = new BodySizeTracker();
+  let cookiesTrusted = false;
+  let cdp: Awaited<ReturnType<Page["createCDPSession"]>> | null = null;
+  try {
+    cdp = await orTimeout(page.createCDPSession(), NET_COOKIE_CLEAR_TIMEOUT_MS);
+  } catch { cdp = null; }
+  if (cdp) {
+    const session = cdp;
+    try { await session.send("Page.setDownloadBehavior", { behavior: "deny" }); } catch { /* interception still never saves a file */ }
+    try {
+      cookiesTrusted = (await orTimeout(session.send("Network.clearBrowserCookies").then(() => true), NET_COOKIE_CLEAR_TIMEOUT_MS)) === true;
+    } catch { cookiesTrusted = false; }
+    try {
+      session.on("Network.dataReceived", (e) => { sizes.noteData(e.requestId, e.dataLength); });
+      session.on("Network.loadingFinished", (e) => { sizes.noteFinished(e.requestId); });
+      await orTimeout(session.send("Network.enable"), NET_COOKIE_CLEAR_TIMEOUT_MS);
+    } catch { /* no size knowledge → a body is only read on a strict Content-Length check */ }
+  }
+  return { sizes, cookiesTrusted };
+}
+
+/** One Browser Rendering session (page capture and Site Script Watch). */
+export function launchBrowser(binding: Fetcher): Promise<Browser> {
+  return puppeteer.launch(binding, { keep_alive: KEEP_ALIVE_MS });
+}
+
 /** Resolve to null when `p` has not settled within `ms` (a late result is ignored). */
-function orTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+export function orTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   p.catch(() => undefined);
   return Promise.race([p, new Promise<null>((r) => { timer = setTimeout(() => r(null), ms); })])
@@ -328,7 +355,7 @@ function emptyCapture(chain: string[], blockedReason: string, retryable: boolean
 export function puppeteerCaptureDriver(binding: Fetcher): CaptureDriver {
   return {
     async open(): Promise<CaptureSession> {
-      const browser = await puppeteer.launch(binding, { keep_alive: KEEP_ALIVE_MS });
+      const browser = await launchBrowser(binding);
       return {
         capture: (req) => captureOnPage(browser, req),
         // Called from runPageCapture's finally on every path.

@@ -722,16 +722,34 @@ export async function capturePage(
     if (pre.retryable) throw new Error(`target unresolvable: ${pre.reason}`);
     throw new CaptureRefusedError(`refused target: ${pre.reason}`);
   }
+  return runWithHardTimeout(
+    (signal) => session.capture({ targetUrl, timeoutMs, guard, signal }),
+    timeoutMs,
+    "capture",
+  );
+}
+
+/**
+ * Run browser work under a hard wall-clock limit (shared by page capture and
+ * Site Script Watch). On timeout or failure the work's signal is aborted (the
+ * driver closes its page) and the close gets a bounded grace period before
+ * the error is re-thrown, so nothing keeps running into the next page.
+ */
+export async function runWithHardTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const work = session.capture({ targetUrl, timeoutMs, guard, signal: controller.signal });
+  const work = run(controller.signal);
   // Swallow a late rejection after the timeout wins the race.
   const settled = work.then(() => undefined, () => undefined);
   try {
     return await Promise.race([
       work,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`capture timed out after ${timeoutMs}ms`)), timeoutMs);
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
       }),
     ]);
   } catch (err) {
