@@ -829,13 +829,18 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
 
         // Site Script Watch — manual trigger / fallback for the scan that
         // rides the `*/10 * * * *` cron after page_capture. Scans at most one
-        // due customer brand (lib/site-script-scan.ts).
+        // due customer brand (lib/site-script-scan.ts). AWAITED in-request: a
+        // render takes up to ~30 s plus writes, past the ~30 s ctx.waitUntil
+        // allows after the response (same pattern as
+        // /api/internal/geoip-refresh). Trigger 'manual' → executeAgent's
+        // short finalize retry and the scan's short D1 write retry.
         if (url.pathname === '/api/internal/agents/site_script_watch/run') {
           const { agentModules } = await import('./agents/index');
           const { executeAgent } = await import('./lib/agentRunner');
           const mod = agentModules["site_script_watch"];
-          if (mod) ctx.waitUntil(executeAgent(env, mod, { trigger: 'manual' }, "api", "event"));
-          return Response.json({ triggered: true, agent: 'site_script_watch' });
+          if (!mod) return new Response('site_script_watch agent not registered', { status: 500 });
+          const result = await executeAgent(env, mod, { trigger: 'manual' }, "api", "manual");
+          return Response.json({ triggered: true, agent: 'site_script_watch', data: result });
         }
 
         // Phantom-domain enumerator — manual / on-demand trigger (no cron

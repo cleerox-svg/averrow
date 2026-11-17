@@ -619,7 +619,7 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
       logger.error('page_capture_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
     }
     try {
-      const { SITE_SCAN_MIN_BUDGET_MS, siteScriptTickBudgetMs } = await import('../lib/site-script-scan');
+      const { SITE_SCAN_MIN_BUDGET_MS, siteScriptTickBudgetMs, siteScriptTickDeadlineMs } = await import('../lib/site-script-scan');
       const budgetMs = siteScriptTickBudgetMs(event.scheduledTime, Date.now());
       if (budgetMs < SITE_SCAN_MIN_BUDGET_MS) {
         logger.info('site_script_watch_skipped_budget', { budgetMs });
@@ -627,7 +627,11 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
         const { agentModules } = await import('../agents');
         const { executeAgent } = await import('../lib/agentRunner');
         const mod = agentModules['site_script_watch'];
-        if (mod) await executeAgent(env, mod, { scheduledTime, budgetMs }, 'cron', 'scheduled');
+        // Absolute deadline (scheduledTime + window), not a relative budget:
+        // executeAgent's own bookkeeping before the agent starts must not
+        // stretch the scan past the tick window.
+        const deadlineMs = siteScriptTickDeadlineMs(event.scheduledTime);
+        if (mod) await executeAgent(env, mod, { scheduledTime, deadlineMs }, 'cron', 'scheduled');
       }
     } catch (err) {
       logger.error('site_script_watch_dispatch_error', { error: err instanceof Error ? err.message : String(err) });

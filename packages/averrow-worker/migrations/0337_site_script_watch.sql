@@ -24,6 +24,18 @@
 --   site_script_inventory by last_seen: a script not seen for 90 days is
 --                         dropped (idx_site_script_inventory_last_seen), so a
 --                         script that comes back is "new" again.
+--                         NOTE: the inventory can age out while the brand's
+--                         latest complete scan is kept (e.g. 90 days of only
+--                         failed / skipped scans). The next complete scan is
+--                         then NOT a baseline and diffs against a pruned
+--                         inventory, so returning scripts / hosts are reported
+--                         as new — this errs toward over-reporting, never
+--                         toward silently trusting the page. No schema change.
+--   site_script_findings  open findings are also age-capped: the daily sweep
+--                         sets OPEN rows older than 180 days to 'expired'
+--                         (moving a row out of 'open' cannot hit the
+--                         open-dedupe unique index), and the next sweep
+--                         deletes them with the other closed rows.
 --
 -- ── site_scans ────────────────────────────────────────────────────────
 -- One row per scan of a brand's site. url = the entry page fetched (a scan
@@ -31,7 +43,8 @@
 --   status: 'running' | 'complete' | 'failed' | 'skipped'. 'skipped' = the
 --   scan finished but looked implausible (e.g. 0 scripts where the previous
 --   complete scan had several, assessScanPlausibility) — it is neither
---   diffed nor counted as history for the baseline decision.
+--   diffed nor counted as history for the baseline decision (its ioc_match
+--   findings are still recorded).
 --   scripts_count / hosts_count = distinct normalised scripts / external
 --   script hosts seen. capture_ref = R2 key of any stored evidence object.
 --
@@ -80,7 +93,8 @@
 --                        (first-party and public script CDNs exempt)
 --   ioc_match          — a script / contacted host / script URL matches an
 --                        ACTIVE threat (threat_id set)
--- status: 'open' (default) | 'acknowledged' | 'dismissed' | 'resolved'.
+-- status: 'open' (default) | 'acknowledged' | 'dismissed' | 'resolved' |
+--   'expired' (set by the retention sweep on an open finding > 180 days old).
 -- page_url: the page the finding was observed on.
 -- dedupe_key: findingDedupeKey(), JSON-encoded:
 --   host-level kinds (new_host, new_contacted_host, ioc_match) → kind | host

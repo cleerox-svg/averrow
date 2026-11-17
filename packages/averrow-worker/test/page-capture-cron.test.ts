@@ -76,7 +76,8 @@ describe("page_capture dedicated cron dispatch", () => {
       vi.useRealTimers();
     }
     expect(calls.map((c) => c.agent)).toEqual(["page_capture", "site_script_watch"]);
-    expect(calls[1]!.input).toEqual({ scheduledTime: "2026-10-12T00:10:00.000Z", budgetMs: SITE_SCRIPT_TICK_WINDOW_MS - 30_000 });
+    // An ABSOLUTE deadline (scheduledTime + window), not a relative budget.
+    expect(calls[1]!.input).toEqual({ scheduledTime: "2026-10-12T00:10:00.000Z", deadlineMs: fired + SITE_SCRIPT_TICK_WINDOW_MS });
   });
 
   it("'*/10 * * * *' skips site_script_watch cleanly when page_capture left too little of the window", async () => {

@@ -64,7 +64,7 @@ function scan(o: Partial<RawSiteScan> = {}): RawSiteScan {
     requests: [],
     blockedNavigation: null,
     hostCapHit: false,
-    requestsDropped: 0,
+    contactedHostsDropped: 0,
     bodiesHashed: 0,
     bodiesSkipped: 0,
     inlineCut: 0,
@@ -374,10 +374,159 @@ describe.skipIf(!hasSqlite())("site script watch pipeline (real SQLite)", () => 
     const { raw, env } = setup();
     addBrand(raw, "b_acme", "acme.com");
     const fd = fakeDriver(() => scan());
-    const s = await runSiteScriptWatch(env, { driver: fd.driver, now: () => T0, resolve: resolveHost, budgetMs: SITE_SCAN_MIN_BUDGET_MS - 1 });
+    const s = await runSiteScriptWatch(env, { driver: fd.driver, now: () => T0, resolve: resolveHost, deadlineMs: Date.now() + SITE_SCAN_MIN_BUDGET_MS - 1_000 });
     expect(s.skipped).toBe("budget");
     expect(fd.seen).toEqual([]);
     expect(rows(raw, "SELECT * FROM site_scans")).toEqual([]);
+  });
+
+  it("a throw after the claim marks the scan failed with the real error and is rethrown", async () => {
+    const { raw, db, env } = setup();
+    addBrand(raw, "b_acme", "acme.com");
+    const readDb = {
+      ...db,
+      prepare: (sql: string) => {
+        if (/FROM site_script_inventory/.test(sql)) throw new Error("D1_ERROR: replica read exploded");
+        return db.prepare(sql);
+      },
+    } as unknown as D1Database;
+    const fd = fakeDriver(() => scan({ scripts: BASE_SCRIPTS, requests: BASE_REQUESTS }));
+    await expect(runSiteScriptWatch(env, { driver: fd.driver, now: () => T0, resolve: resolveHost, readDb })).rejects.toThrow(
+      "replica read exploded",
+    );
+    expect(rows(raw, "SELECT status, error FROM site_scans")).toEqual([{ status: "failed", error: "D1_ERROR: replica read exploded" }]);
+    expect(fd.closed()).toBe(1);
+  });
+
+  it("a baseline that fails mid-write leaves a partial inventory that the next scan ignores (still a baseline)", async () => {
+    const { raw, db, env } = setup();
+    addBrand(raw, "b_acme", "acme.com");
+    const many = Array.from({ length: 60 }, (_, i) => ({ url: `https://skim${i}.example/s.js`, sha256: SHA_A, integrity: null }));
+    const fd = fakeDriver(() => scan({ scripts: many, requests: BASE_REQUESTS }));
+    let batches = 0;
+    const flaky = {
+      ...db,
+      batch: async (stmts: D1PreparedStatement[]) => {
+        batches++;
+        if (batches === 2) throw new Error("D1_ERROR: batch rejected");
+        return db.batch(stmts);
+      },
+    } as unknown as D1Database;
+    const flakyEnv = { ...env, DB: flaky } as Env;
+    await expect(runSiteScriptWatch(flakyEnv, { driver: fd.driver, now: () => T0, resolve: resolveHost, readDb: db })).rejects.toThrow(
+      "batch rejected",
+    );
+    expect(rows(raw, "SELECT status, error FROM site_scans")).toEqual([{ status: "failed", error: "D1_ERROR: batch rejected" }]);
+    // The first 50-statement batch (inventory) landed; the scan is not complete.
+    expect((rows<{ n: number }>(raw, "SELECT COUNT(*) AS n FROM site_script_inventory")[0]!).n).toBe(50);
+
+    // Failed → retried after 1 h (not 6 h); the retry is a baseline again:
+    // the baseline decision reads only an earlier COMPLETE scan.
+    const early = await runSiteScriptWatch(env, { driver: fd.driver, now: () => hoursLater(0.5), resolve: resolveHost });
+    expect(early.skipped).toBe("no_due_brand");
+    const again = await runSiteScriptWatch(env, { driver: fd.driver, now: () => hoursLater(1.5), resolve: resolveHost });
+    expect(again).toMatchObject({ scan_status: "complete", baseline: true, findings_found: 0 });
+    expect(rows(raw, "SELECT COUNT(*) AS n FROM site_script_findings")).toEqual([{ n: 0 }]);
+  });
+
+  it("a site failure retries after 1 h; a complete scan waits the full 6 h", async () => {
+    const { raw, db } = setup();
+    addBrand(raw, "b_fail", "fail.com");
+    addBrand(raw, "b_ok", "ok.com");
+    const ins = raw.prepare("INSERT INTO site_scans (id, brand_id, url, status, scanned_at) VALUES (?, ?, 'u', ?, ?)");
+    ins.run("s_fail", "b_fail", "failed", d1Ts(T0));
+    ins.run("s_ok", "b_ok", "complete", d1Ts(T0));
+    expect(await pickDueBrand(db, hoursLater(0.5))).toBeNull();
+    expect((await pickDueBrand(db, hoursLater(1.5)))?.id).toBe("b_fail");
+    expect(await claimScan(db, "ssc_x", "b_ok", "https://ok.com/", hoursLater(1.5))).toBe(false);
+    expect(await claimScan(db, "ssc_y", "b_fail", "https://fail.com/", hoursLater(1.5))).toBe(true);
+    // A running claim blocks like a complete scan.
+    expect(await claimScan(db, "ssc_z", "b_fail", "https://fail.com/", hoursLater(3))).toBe(false);
+  });
+
+  it("browser session unavailable (infra): nothing claimed, run degraded, the brand keeps its slot", async () => {
+    const { raw, env } = setup();
+    addBrand(raw, "b_acme", "acme.com");
+    const down: SiteScanDriver = {
+      async open() {
+        throw new Error("Unable to create new browser: code 429");
+      },
+    };
+    const s = await runSiteScriptWatch(env, { driver: down, now: () => T0, resolve: resolveHost });
+    expect(s).toMatchObject({ skipped: "browser_unavailable", scan_id: null, scan_status: null });
+    expect(String(s.browser_error)).toMatch(/429/);
+    expect(rows(raw, "SELECT * FROM site_scans")).toEqual([]);
+    // Still due on the very next run.
+    const fd = fakeDriver(() => scan({ scripts: BASE_SCRIPTS, requests: BASE_REQUESTS }));
+    const next = await runSiteScriptWatch(env, { driver: fd.driver, now: () => hoursLater(0.2), resolve: resolveHost });
+    expect(next.scan_status).toBe("complete");
+  });
+
+  it("agent wrapper: browser unavailable → degraded result", async () => {
+    const { raw, env } = setup();
+    addBrand(raw, "b_acme", "acme.com");
+    // env.BROWSER is a dummy object: launching it fails like an infra outage.
+    const res = await siteScriptWatchAgent.execute({ env, runId: "run_2", agentName: "site_script_watch", input: { trigger: "manual" }, triggeredBy: "test" });
+    expect(res.degraded?.reason).toMatch(/browser session unavailable/);
+    expect(res.itemsProcessed).toBe(0);
+    expect(rows(raw, "SELECT * FROM site_scans")).toEqual([]);
+  });
+
+  it("an implausibly small (skipped) scan still records ioc_match findings", async () => {
+    const { raw, env } = setup();
+    addBrand(raw, "b_acme", "acme.com");
+    addThreat(raw, "t_drop", { domain: "drop.example", feed: "threatfox" });
+    const many = Array.from({ length: 5 }, (_, i) => ({ url: `https://acme.com/s${i}.js`, sha256: SHA_A, integrity: null }));
+    let next = scan({ scripts: many, requests: BASE_REQUESTS });
+    const fd = fakeDriver(() => next);
+    await runSiteScriptWatch(env, { driver: fd.driver, now: () => T0, resolve: resolveHost });
+
+    next = scan({ scripts: [], requests: [{ url: "https://c.drop.example/x?cc=4111", initiator_url: "https://acme.com/s0.js?sid=9" }] });
+    const s2 = await runSiteScriptWatch(env, { driver: fd.driver, now: () => hoursLater(7), resolve: resolveHost });
+    expect(s2).toMatchObject({ scan_status: "skipped", ioc_matches: 1, findings_inserted: 1, by_kind: { ioc_match: 1 } });
+    const f = rows<{ kind: string; host: string; evidence_json: string }>(raw, "SELECT kind, host, evidence_json FROM site_script_findings");
+    expect(f.map((x) => [x.kind, x.host])).toEqual([["ioc_match", "c.drop.example"]]);
+    // Stored URLs keep param names, never values.
+    expect(JSON.parse(f[0]!.evidence_json)).toMatchObject({ url: "https://c.drop.example/x?cc=", initiator_url: "https://acme.com/s0.js?sid=" });
+    // Only the inventory / contacted hosts / diff are skipped.
+    expect(rows(raw, "SELECT host FROM site_contacted_hosts WHERE host = 'c.drop.example'")).toEqual([]);
+    expect(rows(raw, "SELECT status FROM site_scans ORDER BY scanned_at")).toEqual([{ status: "complete" }, { status: "skipped" }]);
+  });
+
+  it("stored page_url / first_page_url / evidence drop query values", async () => {
+    const { raw, env } = setup();
+    addBrand(raw, "b_acme", "acme.com");
+    let next = scan({ finalUrl: "https://acme.com/?session=abc", scripts: BASE_SCRIPTS, requests: BASE_REQUESTS });
+    const fd = fakeDriver(() => next);
+    await runSiteScriptWatch(env, { driver: fd.driver, now: () => T0, resolve: resolveHost });
+    expect(rows(raw, "SELECT DISTINCT first_page_url FROM site_script_inventory")).toEqual([{ first_page_url: "https://acme.com/?session=" }]);
+    next = scan({
+      finalUrl: "https://acme.com/?session=abc",
+      scripts: [...BASE_SCRIPTS, { url: "https://skim.example/x.js?k=v", sha256: SHA_B, integrity: null }],
+      requests: [...BASE_REQUESTS, { url: "https://exfil.example/c?card=4111", initiator_url: "https://skim.example/x.js?k=v" }],
+    });
+    await runSiteScriptWatch(env, { driver: fd.driver, now: () => hoursLater(7), resolve: resolveHost });
+    const f = rows<{ kind: string; page_url: string; evidence_json: string }>(raw, "SELECT kind, page_url, evidence_json FROM site_script_findings ORDER BY kind");
+    expect(f.map((x) => x.page_url)).toEqual(["https://acme.com/?session=", "https://acme.com/?session="]);
+    expect(JSON.parse(f[0]!.evidence_json)).toMatchObject({ url: "https://exfil.example/c?card=", initiator_url: "https://skim.example/x.js?k=" });
+    expect(JSON.parse(f[1]!.evidence_json)).toMatchObject({ url: "https://skim.example/x.js?k=" });
+  });
+
+  it("deadlineMs is absolute: a deadline already mostly spent skips before any claim", async () => {
+    const { raw, env } = setup();
+    addBrand(raw, "b_acme", "acme.com");
+    const fd = fakeDriver(() => scan());
+    const s = await runSiteScriptWatch(env, { driver: fd.driver, now: () => T0, resolve: resolveHost, deadlineMs: Date.now() - 1 });
+    expect(s.skipped).toBe("budget");
+    expect(rows(raw, "SELECT * FROM site_scans")).toEqual([]);
+  });
+
+  it("manual route awaits the run in-request with the 'manual' trigger", () => {
+    const src = readFileSync(fileURLToPath(new URL("../src/index.ts", import.meta.url)), "utf8");
+    const i = src.indexOf("'/api/internal/agents/site_script_watch/run'");
+    const block = src.slice(i, src.indexOf("\n        }\n", i));
+    expect(block).toMatch(/await executeAgent\(env, mod, \{ trigger: 'manual' \}, "api", "manual"\)/);
+    expect(block).not.toMatch(/waitUntil/);
   });
 
   it("reaps a `running` scan a dead worker left behind", async () => {
@@ -416,7 +565,9 @@ describe.skipIf(!hasSqlite())("site script watch pipeline (real SQLite)", () => 
 
     const midnight = new Date("2026-11-17T00:10:00Z");
     const r = await maybeDailySiteScriptSweep(env, midnight);
-    expect(r).toEqual({ ran: true, scans: 3, contacted: 1, findings: 1, inventory: 1 });
+    expect(r).toEqual({ ran: true, scans: 3, contacted: 1, findings: 1, inventory: 1, expired: 1 });
+    // The 200-day-old OPEN finding hit the age cap: expired (not deleted the same day).
+    expect(rows(raw, "SELECT id, status FROM site_script_findings WHERE id = 'f_open_old'")).toEqual([{ id: "f_open_old", status: "expired" }]);
     expect(cache.store.has(`${SITE_SCRIPT_SWEEP_STAMP_PREFIX}2026-11-17`)).toBe(true);
     expect(rows(raw, "SELECT id FROM site_scans ORDER BY id").map((x) => (x as { id: string }).id)).toEqual([
       "a_latest_complete",
@@ -431,6 +582,28 @@ describe.skipIf(!hasSqlite())("site script watch pipeline (real SQLite)", () => 
 
     // Second hour-0 tick the same day: stamped → no-op.
     expect((await maybeDailySiteScriptSweep(env, new Date("2026-11-17T00:20:00Z"))).ran).toBe(false);
+
+    // Next day: the expired row is now a closed > 180-day row → deleted; the
+    // freed dedupe key can open again.
+    const r2 = await maybeDailySiteScriptSweep(env, new Date("2026-11-18T00:10:00Z"));
+    expect(r2).toMatchObject({ findings: 1, expired: 0 });
+    expect(rows(raw, "SELECT id FROM site_script_findings")).toEqual([{ id: "f_closed_recent" }]);
+  });
+
+  it("expiring an open finding never collides with a newer open finding on the same key", async () => {
+    const { raw, env } = setup();
+    const veryOld = d1Ts(new Date(T0.getTime() - 200 * 86_400_000));
+    // An old open finding; a newer one with the same key cannot coexist as
+    // open, so model the realistic state: old open + an older closed copy.
+    const fIns = raw.prepare("INSERT INTO site_script_findings (id, brand_id, scan_id, kind, host, dedupe_key, created_at, status) VALUES (?, 'b_a', 's', 'new_host', 'h', 'k', ?, ?)");
+    fIns.run("f_closed", veryOld, "expired");
+    fIns.run("f_open", veryOld, "open");
+    const r = await maybeDailySiteScriptSweep(env, new Date("2026-11-17T00:10:00Z"));
+    expect(r.expired).toBe(1);
+    expect(rows(raw, "SELECT COUNT(*) AS n FROM site_script_findings WHERE status = 'open'")).toEqual([{ n: 0 }]);
+    // The key is free: a new open finding on it inserts.
+    raw.prepare("INSERT INTO site_script_findings (id, brand_id, scan_id, kind, host, dedupe_key, status) VALUES ('f_new', 'b_a', 's', 'new_host', 'h', 'k', 'open')").run();
+    expect(rows(raw, "SELECT COUNT(*) AS n FROM site_script_findings WHERE status = 'open'")).toEqual([{ n: 1 }]);
   });
 
   it("agent wrapper: no-op without BROWSER, still writes the telemetry event", async () => {

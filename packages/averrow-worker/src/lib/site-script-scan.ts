@@ -11,25 +11,50 @@
 // One run = at most ONE brand:
 //   1. due brand  — brands.tier = 'customer' with a trusted canonical_domain
 //                   (TRUSTED_BRAND_CANONICAL_SQL) that is not on shared
-//                   hosting, and no site_scans row in the last
-//                   SITE_SCAN_INTERVAL_HOURS; never-scanned first, then
+//                   hosting, no non-failed site_scans row in the last
+//                   SITE_SCAN_INTERVAL_HOURS and no scan at all in the last
+//                   SITE_SCAN_FAILED_RETRY_HOURS; never-scanned first, then
 //                   oldest scan first. Derived from site_scans (no new column).
-//   2. claim      — INSERT a `running` site_scans row guarded by the same
-//                   "no scan in the window" predicate, so two overlapping runs
-//                   cannot scan one brand twice.
-//   3. render     — https://<canonical_domain>/ under a hard timeout.
-//   4. decide     — baseline = no earlier `complete` scan (isBaselineScan);
-//                   implausibly small scan → `skipped`, nothing else written
-//                   (assessScanPlausibility).
-//   5. diff       — diffSiteScan (scripts) + diffContactedHosts (requests).
-//   6. IOC match  — script hosts + contacted hosts (matchHostsAgainstThreats)
+//   2. pre-check  — the SSRF / DNS guard on https://<canonical_domain>/. A
+//                   refusal is a SITE failure: claimed + failed (below).
+//   3. session    — open the browser session BEFORE claiming. An infra
+//                   failure here (Browser Rendering down / over its session
+//                   limit) claims nothing and ends the run degraded, so it
+//                   never burns the brand's slot.
+//   4. claim      — INSERT a `running` site_scans row guarded by the same
+//                   due predicate, so two overlapping runs cannot scan one
+//                   brand twice.
+//   5. render     — https://<canonical_domain>/ under a hard timeout. A
+//                   site-level failure (navigation error / timeout, refused
+//                   redirect) marks the scan `failed`; a failed scan is retried
+//                   after SITE_SCAN_FAILED_RETRY_HOURS (1 h), not the 6 h
+//                   interval — failures are mostly transient and the customer
+//                   tier is small, so an hourly retry costs little; a site that
+//                   fails every time is retried hourly (≤ 24 renders a day).
+//   6. decide     — baseline = no earlier `complete` scan (isBaselineScan);
+//                   implausibly small scan → `skipped` (assessScanPlausibility):
+//                   no inventory / contacted-host write and no diff findings,
+//                   but its IOC matches ARE recorded (step 8).
+//   7. diff       — diffSiteScan (scripts) + diffContactedHosts (requests).
+//   8. IOC match  — script hosts + contacted hosts (matchHostsAgainstThreats)
 //                   and script URLs (matchUrlsAgainstThreats) against ACTIVE
-//                   threats → `ioc_match` (also on a baseline scan: a site
-//                   that already loads a known-bad host is a finding).
-//   7. persist    — findings (INSERT … ON CONFLICT on the open-dedupe index DO
+//                   threats → `ioc_match` (also on a baseline or skipped scan:
+//                   a site that loads a known-bad host is a finding however
+//                   the rest of the scan looks).
+//   9. persist    — findings (INSERT … ON CONFLICT on the open-dedupe index DO
 //                   NOTHING), inventory + contacted-host upserts and the scan
 //                   completion, in atomic D1 batches retried past the overload
-//                   window. Writes on env.DB; reads on a read session.
+//                   window, findings FIRST and the completion LAST. Writes on
+//                   env.DB; reads on a read session. Stored URLs keep param
+//                   names but drop values (redactEvidenceUrl).
+// Anything that throws after the claim marks the scan `failed` with the real
+// error and is rethrown (agent_runs records it). A write that fails half way
+// can leave part of the inventory behind, which is safe because:
+//   - the baseline decision reads only an earlier COMPLETE scan, never the
+//     inventory, so a baseline that died mid-write is simply re-run as a
+//     baseline (its partial inventory is ignored by the baseline diff);
+//   - findings are written before the inventory, so any inventory row a
+//     failed non-baseline scan left behind already has its finding stored.
 // Plus: a reaper for `running` rows a dead worker left behind, and a
 // once-a-day retention sweep (UTC hour 0, hour-only gate, KV day stamp).
 //
@@ -38,13 +63,12 @@
 import type { D1Database, D1DatabaseSession, D1PreparedStatement } from "@cloudflare/workers-types";
 import type { Env } from "../types";
 import { getReadSession } from "./db";
-import { D1_OVERLOAD_RETRY_BASE_MS, withD1Retry } from "./d1-retry";
+import { D1_OVERLOAD_RETRY_BASE_MS, withD1Retry, type D1RetryOptions } from "./d1-retry";
 import { d1Ts, makeNavigationGuard, runWithHardTimeout, type NavigationGuard } from "./page-capture";
 import type { FetchDeps } from "./page-fetch";
 import { TRUSTED_BRAND_CANONICAL_SQL, isUnderSharedHosting } from "./safeDomains";
 import {
   SITE_SCRIPT_EVIDENCE_URL_MAX,
-  SITE_SCRIPT_MATCH_CHUNK,
   assessScanPlausibility,
   diffContactedHosts,
   diffSiteScan,
@@ -53,10 +77,13 @@ import {
   matchHostsAgainstThreats,
   matchUrlsAgainstThreats,
   normaliseScriptUrl,
+  redactEvidenceUrl,
   toAsciiHost,
   SCAN_SKIP_ACCEPT_AFTER,
   type ContactedRequest,
   type InventoryRow,
+  type ObservedContactedHost,
+  type ObservedScript,
   type ScannedScript,
   type SiteScriptFinding,
   type SiteScriptFindingEvidence,
@@ -66,8 +93,10 @@ import {
 
 // ─── Tunables ────────────────────────────────────────────────────────
 
-/** A brand is due when it has no site_scans row this recent. */
+/** A brand is due when it has no non-failed site_scans row this recent. */
 export const SITE_SCAN_INTERVAL_HOURS = 6;
+/** …and no scan at all this recent: a failed scan is retried after 1 h. */
+export const SITE_SCAN_FAILED_RETRY_HOURS = 1;
 /** Hard per-site wall-clock limit (navigation + settle + DOM + body hashing). */
 export const SITE_SCAN_PAGE_TIMEOUT_MS = 30_000;
 /** Time kept back after the page for reads + writes. */
@@ -103,7 +132,9 @@ const SWEEP_MAX_ROUNDS = 10;
 export const SITE_SCRIPT_SWEEP_STAMP_PREFIX = "site_script_watch:sweep:";
 
 /** Overload-aware retry for every write (D1's 10 s window, lib/d1-retry.ts). */
-const WRITE_RETRY = { retries: 3, overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS, label: "site_script_watch" } as const;
+const WRITE_RETRY: D1RetryOptions = { retries: 3, overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS, label: "site_script_watch" };
+/** Manual (in-request) runs keep the short default backoff, like executeAgent's 'manual' finalize. */
+const WRITE_RETRY_SHORT: D1RetryOptions = { retries: 3, label: "site_script_watch" };
 
 // ─── Driver contract (lib/site-script-browser.ts is the puppeteer one) ──
 
@@ -125,8 +156,8 @@ export interface RawSiteScan {
   blockedRetryable?: boolean;
   /** The per-page host cap was hit (later new hosts were aborted). */
   hostCapHit: boolean;
-  /** Distinct request URLs not recorded (NET_MAX_REQUESTS). */
-  requestsDropped: number;
+  /** Distinct contacted hosts not recorded (SITE_SCAN_MAX_CONTACTED_HOSTS). */
+  contactedHostsDropped: number;
   bodiesHashed: number;
   bodiesSkipped: number;
   /** Inline scripts whose text exceeded the in-page cap (not inventoried). */
@@ -164,6 +195,17 @@ export function siteScriptTickBudgetMs(scheduledTimeMs: number, nowMs: number): 
   return SITE_SCRIPT_TICK_WINDOW_MS - Math.max(0, nowMs - scheduledTimeMs);
 }
 
+/**
+ * Absolute end (epoch ms) of the site scan's share of a `*\/10` invocation:
+ * scheduledTime + SITE_SCRIPT_TICK_WINDOW_MS. The cron branch passes it as
+ * the run's deadline (not a relative budget, which would start counting
+ * only when the agent starts and drift past the window by executeAgent's
+ * own bookkeeping). Pure.
+ */
+export function siteScriptTickDeadlineMs(scheduledTimeMs: number): number {
+  return scheduledTimeMs + SITE_SCRIPT_TICK_WINDOW_MS;
+}
+
 // ─── Due brand + claim ───────────────────────────────────────────────
 
 export interface DueBrand {
@@ -173,8 +215,9 @@ export interface DueBrand {
 }
 
 /**
- * Customer-tier brands with a trusted canonical domain and no scan inside the
- * interval, never-scanned first, then oldest scan. idx_brands_tier narrows to
+ * Customer-tier brands with a trusted canonical domain, no non-failed scan
+ * inside the interval and no scan at all inside the failed-retry window,
+ * never-scanned first, then oldest scan. idx_brands_tier narrows to
  * the customer tier; the correlated reads seek idx_site_scans_brand_scanned.
  */
 export const DUE_BRANDS_SQL =
@@ -184,7 +227,8 @@ export const DUE_BRANDS_SQL =
     WHERE b.tier = 'customer'
       AND b.canonical_domain IS NOT NULL AND b.canonical_domain <> ''
       AND (${TRUSTED_BRAND_CANONICAL_SQL}) = 1
-      AND NOT EXISTS (SELECT 1 FROM site_scans r WHERE r.brand_id = b.id AND r.scanned_at >= ?)
+      AND NOT EXISTS (SELECT 1 FROM site_scans r WHERE r.brand_id = b.id AND r.scanned_at >= ? AND r.status <> 'failed')
+      AND NOT EXISTS (SELECT 1 FROM site_scans f WHERE f.brand_id = b.id AND f.scanned_at >= ?)
     ORDER BY last_scan_at IS NOT NULL, last_scan_at, b.id
     LIMIT ?`;
 
@@ -198,9 +242,16 @@ export function scannableCanonicalHost(raw: string): string | null {
   return host;
 }
 
+function dueCutoffs(now: Date): [string, string] {
+  return [
+    d1Ts(addMs(now, -SITE_SCAN_INTERVAL_HOURS * 3_600_000)),
+    d1Ts(addMs(now, -SITE_SCAN_FAILED_RETRY_HOURS * 3_600_000)),
+  ];
+}
+
 export async function pickDueBrand(db: D1Database | D1DatabaseSession, now: Date): Promise<(DueBrand & { host: string }) | null> {
-  const cutoff = d1Ts(addMs(now, -SITE_SCAN_INTERVAL_HOURS * 3_600_000));
-  const res = await db.prepare(DUE_BRANDS_SQL).bind(cutoff, DUE_CANDIDATES).all<DueBrand>();
+  const [cutoff, failedCutoff] = dueCutoffs(now);
+  const res = await db.prepare(DUE_BRANDS_SQL).bind(cutoff, failedCutoff, DUE_CANDIDATES).all<DueBrand>();
   for (const b of res.results ?? []) {
     const host = scannableCanonicalHost(b.canonical_domain);
     if (host) return { ...b, host };
@@ -208,20 +259,28 @@ export async function pickDueBrand(db: D1Database | D1DatabaseSession, now: Date
   return null;
 }
 
-/** Claim: insert the `running` row only if no scan landed inside the interval meanwhile. */
-export async function claimScan(db: D1Database, scanId: string, brandId: string, url: string, now: Date): Promise<boolean> {
-  const cutoff = d1Ts(addMs(now, -SITE_SCAN_INTERVAL_HOURS * 3_600_000));
+/** Claim: insert the `running` row only if the brand is still due (same predicate as DUE_BRANDS_SQL). */
+export async function claimScan(
+  db: D1Database,
+  scanId: string,
+  brandId: string,
+  url: string,
+  now: Date,
+  retry: D1RetryOptions = WRITE_RETRY,
+): Promise<boolean> {
+  const [cutoff, failedCutoff] = dueCutoffs(now);
   const res = await withD1Retry(
     () =>
       db
         .prepare(
           `INSERT INTO site_scans (id, brand_id, url, status, scanned_at)
            SELECT ?, ?, ?, 'running', ?
-            WHERE NOT EXISTS (SELECT 1 FROM site_scans WHERE brand_id = ? AND scanned_at >= ?)`,
+            WHERE NOT EXISTS (SELECT 1 FROM site_scans WHERE brand_id = ? AND scanned_at >= ? AND status <> 'failed')
+              AND NOT EXISTS (SELECT 1 FROM site_scans WHERE brand_id = ? AND scanned_at >= ?)`,
         )
-        .bind(scanId, brandId, url, d1Ts(now), brandId, cutoff)
+        .bind(scanId, brandId, url, d1Ts(now), brandId, cutoff, brandId, failedCutoff)
         .run(),
-    WRITE_RETRY,
+    retry,
   );
   return (res.meta?.changes ?? 0) > 0;
 }
@@ -304,7 +363,7 @@ export interface IocEvidence extends SiteScriptFindingEvidence {
 
 const MATCH_RANK: Record<ThreatMatch["match_kind"], number> = { url: 0, exact: 1, ip: 2, parent: 3 };
 
-interface IocCandidate {
+export interface IocCandidate {
   match: ThreatMatch;
   source: IocSource;
   url: string | null;
@@ -318,7 +377,7 @@ interface IocCandidate {
  * match wins (url > exact > ip > parent), then the lowest threat id.
  * Evidence names the matched URL / host, the threat and its source feed.
  */
-export function buildIocFindings(candidates: IocCandidate[], sourceFeeds: ReadonlyMap<string, string | null>): SiteScriptFinding[] {
+export function buildIocFindings(candidates: IocCandidate[]): SiteScriptFinding[] {
   const best = new Map<string, IocCandidate>();
   for (const c of candidates) {
     if (!c.match.host) continue;
@@ -339,7 +398,7 @@ export function buildIocFindings(candidates: IocCandidate[], sourceFeeds: Readon
       match_kind: c.match.match_kind,
       matched_on: c.source,
       threat_id: c.match.threat_id,
-      source_feed: sourceFeeds.get(c.match.threat_id) ?? null,
+      source_feed: c.match.source_feed ?? null,
     };
     if (c.initiator_url) evidence.initiator_url = c.initiator_url;
     out.push({
@@ -350,20 +409,6 @@ export function buildIocFindings(candidates: IocCandidate[], sourceFeeds: Readon
       threat_id: c.match.threat_id,
       evidence,
     });
-  }
-  return out;
-}
-
-async function readSourceFeeds(db: D1Database | D1DatabaseSession, ids: string[]): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
-  const uniq = [...new Set(ids)];
-  for (let i = 0; i < uniq.length; i += SITE_SCRIPT_MATCH_CHUNK) {
-    const chunk = uniq.slice(i, i + SITE_SCRIPT_MATCH_CHUNK);
-    const res = await db
-      .prepare(`SELECT id, source_feed FROM threats WHERE id IN (${chunk.map(() => "?").join(", ")})`)
-      .bind(...chunk)
-      .all<{ id: string; source_feed: string | null }>();
-    for (const r of res.results ?? []) out.set(r.id, r.source_feed ?? null);
   }
   return out;
 }
@@ -410,11 +455,16 @@ export const UPSERT_CONTACTED_SQL =
      initiator_host = COALESCE(site_contacted_hosts.initiator_host, excluded.initiator_host)`;
 
 /** Run statements in atomic batches (retry-safe: a failed batch rolled back). */
-async function runBatches(db: D1Database, stmts: D1PreparedStatement[], deadline: number): Promise<Array<{ meta?: { changes?: number } }>> {
+async function runBatches(
+  db: D1Database,
+  stmts: D1PreparedStatement[],
+  deadline: number,
+  retry: D1RetryOptions = WRITE_RETRY,
+): Promise<Array<{ meta?: { changes?: number } }>> {
   const out: Array<{ meta?: { changes?: number } }> = [];
   for (let i = 0; i < stmts.length; i += SITE_SCAN_WRITE_BATCH) {
     const chunk = stmts.slice(i, i + SITE_SCAN_WRITE_BATCH);
-    const res = await withD1Retry(() => db.batch(chunk), { ...WRITE_RETRY, deadline });
+    const res = await withD1Retry(() => db.batch(chunk), { ...retry, deadline });
     out.push(...(res as Array<{ meta?: { changes?: number } }>));
   }
   return out;
@@ -428,9 +478,11 @@ export interface SiteScriptSweepResult {
   contacted: number;
   findings: number;
   inventory: number;
+  /** Open findings older than SITE_FINDING_RETENTION_DAYS moved to `expired`. */
+  expired: number;
 }
 
-const emptySweep = (): SiteScriptSweepResult => ({ ran: false, scans: 0, contacted: 0, findings: 0, inventory: 0 });
+const emptySweep = (): SiteScriptSweepResult => ({ ran: false, scans: 0, contacted: 0, findings: 0, inventory: 0, expired: 0 });
 
 async function sweepRounds(db: D1Database, sql: string, cutoff: string): Promise<number> {
   let total = 0;
@@ -449,8 +501,20 @@ async function sweepRounds(db: D1Database, sql: string, cutoff: string): Promise
  *   site_scans            > 90 days, EXCEPT each brand's latest complete scan
  *                         (its loss would make the next scan a silent re-baseline)
  *   site_contacted_hosts  last_seen > 90 days
- *   site_script_findings  CLOSED and created > 180 days (open ones stay)
+ *   site_script_findings  CLOSED and created > 180 days. Then OPEN findings
+ *                         created > 180 days are set `expired` (age cap: an
+ *                         untriaged finding cannot live forever), so the next
+ *                         day's delete removes them. Moving a row OUT of
+ *                         'open' can never collide with the open-dedupe unique
+ *                         index (it covers status = 'open' only), and frees
+ *                         the key: a still-live condition opens a fresh row.
  *   site_script_inventory last_seen > 90 days (a returning script is new again)
+ *
+ * The inventory can age out while the brand's latest complete scan is kept
+ * (a brand whose scans were all failed / skipped for 90 days): the next
+ * complete scan is then NOT a baseline and diffs against a pruned inventory,
+ * so returning scripts / hosts are reported as new. That errs toward
+ * over-reporting, never toward silently trusting a compromised page.
  */
 export async function sweepSiteScriptData(db: D1Database, now: Date): Promise<SiteScriptSweepResult> {
   const days = (n: number): string => d1Ts(addMs(now, -n * 86_400_000));
@@ -482,7 +546,15 @@ export async function sweepSiteScriptData(db: D1Database, now: Date): Promise<Si
        SELECT rowid FROM site_script_inventory WHERE last_seen < ? LIMIT ?)`,
     days(SITE_INVENTORY_UNSEEN_DAYS),
   );
-  return { ran: true, scans, contacted, findings, inventory };
+  // After the delete, so an expired row stays visible for a day.
+  // idx_site_script_findings_open (partial on status = 'open') serves the scan.
+  const expired = await sweepRounds(
+    db,
+    `UPDATE site_script_findings SET status = 'expired' WHERE rowid IN (
+       SELECT rowid FROM site_script_findings WHERE status = 'open' AND created_at < ? LIMIT ?)`,
+    days(SITE_FINDING_RETENTION_DAYS),
+  );
+  return { ran: true, scans, contacted, findings, inventory, expired };
 }
 
 /** Once per UTC day on the first run in hour 0 (hour-only gate — cron-audit
@@ -522,8 +594,14 @@ export interface SiteScriptRunStats {
 }
 
 export interface SiteScriptRunOptions {
-  /** Wall time this run may use (cron: what page_capture left). */
-  budgetMs?: number;
+  /**
+   * Absolute wall-clock end of this run (epoch ms). Cron: the tick's
+   * siteScriptTickDeadlineMs(scheduledTime). Default: now +
+   * SITE_SCAN_MIN_BUDGET_MS (manual runs).
+   */
+  deadlineMs?: number;
+  /** Manual / in-request run: short D1 write retry instead of the overload backoff. */
+  manual?: boolean;
   /** Defaults to the puppeteer driver over env.BROWSER. */
   driver?: SiteScanDriver;
   /** Cron fire time (hour gate for the sweep). Defaults to now. */
@@ -544,11 +622,14 @@ function newStats(): SiteScriptRunStats {
   };
 }
 
+/** `skipped` value of a run whose browser session could not be opened (infra, nothing claimed). */
+export const SITE_SCAN_BROWSER_UNAVAILABLE = "browser_unavailable";
+
 export async function runSiteScriptWatch(env: Env, opts: SiteScriptRunOptions = {}): Promise<SiteScriptRunStats> {
   const clock = opts.now ?? (() => new Date());
   const startedAt = clock();
-  const startedMs = Date.now();
   const stats = newStats();
+  const retry = opts.manual ? WRITE_RETRY_SHORT : WRITE_RETRY;
 
   // Clean no-op without Browser Rendering (staging / dev / tests).
   if (!env.BROWSER && !opts.driver) {
@@ -556,12 +637,11 @@ export async function runSiteScriptWatch(env: Env, opts: SiteScriptRunOptions = 
     return stats;
   }
 
-  const budgetMs = opts.budgetMs ?? SITE_SCAN_MIN_BUDGET_MS;
-  if (budgetMs < SITE_SCAN_MIN_BUDGET_MS) {
+  const deadline = opts.deadlineMs ?? Date.now() + SITE_SCAN_MIN_BUDGET_MS;
+  if (deadline - Date.now() < SITE_SCAN_MIN_BUDGET_MS) {
     stats.skipped = "budget";
     return stats;
   }
-  const deadline = startedMs + budgetMs;
 
   // Housekeeping never blocks the scan.
   try {
@@ -575,12 +655,13 @@ export async function runSiteScriptWatch(env: Env, opts: SiteScriptRunOptions = 
     stats.reap_error = msg(err);
   }
 
-  // A slow sweep must not push the scan past the budget.
+  // A slow sweep must not push the scan past the deadline.
   if (deadline - Date.now() < SITE_SCAN_PAGE_TIMEOUT_MS + SITE_SCAN_WRITE_MARGIN_MS / 2) {
     stats.skipped = "budget";
     return stats;
   }
 
+  // ── 1. Due brand ──
   const readDb = opts.readDb ?? getReadSession(env, { bookmark: null });
   const brand = await pickDueBrand(readDb, startedAt);
   if (!brand) {
@@ -590,48 +671,117 @@ export async function runSiteScriptWatch(env: Env, opts: SiteScriptRunOptions = 
   stats.brand_id = brand.id;
   const targetUrl = `https://${brand.host}/`;
   const scanId = `ssc_${crypto.randomUUID()}`;
-  if (!(await claimScan(env.DB, scanId, brand.id, targetUrl, startedAt))) {
-    stats.skipped = "claimed_elsewhere";
-    return stats;
-  }
-  stats.scan_id = scanId;
 
-  // ── Render ──
-  let driver = opts.driver;
-  if (!driver) {
-    const { puppeteerSiteScanDriver } = await import("./site-script-browser");
-    driver = puppeteerSiteScanDriver(env.BROWSER!);
-  }
   const fail = async (error: string): Promise<SiteScriptRunStats> => {
     stats.scan_status = "failed";
     stats.scan_error = clip(error, MAX_ERROR);
-    await withD1Retry(() => finishScanStmt(env.DB, scanId, "failed", { error }).run(), WRITE_RETRY);
+    await withD1Retry(() => finishScanStmt(env.DB, scanId, "failed", { error }).run(), retry);
     return stats;
   };
+  const claim = async (): Promise<boolean> => {
+    if (!(await claimScan(env.DB, scanId, brand.id, targetUrl, startedAt, retry))) {
+      stats.skipped = "claimed_elsewhere";
+      return false;
+    }
+    stats.scan_id = scanId;
+    return true;
+  };
 
+  // ── 2. DNS / SSRF pre-check (a refusal is the SITE's: claim + fail) ──
+  const guard = makeNavigationGuard(opts.resolve);
+  const pre = await guard(targetUrl);
+  if (!pre.ok) {
+    if (!(await claim())) return stats;
+    return guarded(stats, fail, () => fail(`refused target: ${pre.reason}`));
+  }
+
+  // ── 3. Browser session BEFORE the claim (infra failure burns no slot) ──
   let session: SiteScanSession;
   try {
+    let driver = opts.driver;
+    if (!driver) {
+      const { puppeteerSiteScanDriver } = await import("./site-script-browser");
+      driver = puppeteerSiteScanDriver(env.BROWSER!);
+    }
     session = await driver.open();
   } catch (err) {
-    await fail(`browser session unavailable: ${msg(err)}`);
-    throw new Error(`browser session unavailable: ${msg(err)}`);
+    stats.skipped = SITE_SCAN_BROWSER_UNAVAILABLE;
+    stats.browser_error = clip(`browser session unavailable: ${msg(err)}`, MAX_ERROR);
+    return stats;
   }
+  let open = true;
+  const closeSession = async (): Promise<void> => {
+    if (!open) return;
+    open = false;
+    try {
+      await session.close();
+    } catch { /* already gone */ }
+  };
+
+  try {
+    // ── 4. Claim ──
+    if (!(await claim())) return stats;
+    // ── 5-9. Everything after the claim: any throw marks the scan failed. ──
+    return await guarded(stats, fail, () =>
+      scanAndPersist(env, { stats, brand, scanId, targetUrl, guard, session, closeSession, readDb, deadline, retry, clock, fail }),
+    );
+  } finally {
+    await closeSession();
+  }
+}
+
+/**
+ * Run `work` after a successful claim: a throw marks the scan `failed` with
+ * the real error (a no-op if it already finished — finishScanStmt only moves
+ * a `running` row) and is rethrown for agent_runs.error_message.
+ */
+async function guarded(
+  stats: SiteScriptRunStats,
+  fail: (error: string) => Promise<SiteScriptRunStats>,
+  work: () => Promise<SiteScriptRunStats>,
+): Promise<SiteScriptRunStats> {
+  try {
+    return await work();
+  } catch (err) {
+    try {
+      await fail(msg(err));
+    } catch (failErr) {
+      stats.fail_write_error = msg(failErr);
+    }
+    throw err;
+  }
+}
+
+interface ScanContext {
+  stats: SiteScriptRunStats;
+  brand: DueBrand & { host: string };
+  scanId: string;
+  targetUrl: string;
+  guard: NavigationGuard;
+  session: SiteScanSession;
+  closeSession: () => Promise<void>;
+  readDb: D1Database | D1DatabaseSession;
+  deadline: number;
+  retry: D1RetryOptions;
+  clock: () => Date;
+  fail: (error: string) => Promise<SiteScriptRunStats>;
+}
+
+async function scanAndPersist(env: Env, c: ScanContext): Promise<SiteScriptRunStats> {
+  const { stats, brand, scanId, readDb, retry, fail } = c;
+
+  // ── Render (site-level failures → failed scan, not a thrown run) ──
   let raw: RawSiteScan;
   try {
-    const guard = makeNavigationGuard(opts.resolve);
-    const pre = await guard(targetUrl);
-    if (!pre.ok) return await fail(`refused target: ${pre.reason}`);
     raw = await runWithHardTimeout(
-      (signal) => session.scan({ targetUrl, timeoutMs: SITE_SCAN_PAGE_TIMEOUT_MS, guard, signal }),
+      (signal) => c.session.scan({ targetUrl: c.targetUrl, timeoutMs: SITE_SCAN_PAGE_TIMEOUT_MS, guard: c.guard, signal }),
       SITE_SCAN_PAGE_TIMEOUT_MS,
       "site scan",
     );
   } catch (err) {
     return await fail(msg(err));
   } finally {
-    try {
-      await session.close();
-    } catch { /* already gone */ }
+    await c.closeSession();
   }
   if (raw.finalUrl === null) return await fail(`refused navigation: ${raw.blockedNavigation ?? "page did not load"}`);
 
@@ -657,58 +807,31 @@ export async function runSiteScriptWatch(env: Env, opts: SiteScriptRunOptions = 
   const scriptHosts = new Set(diff.observed.filter((o) => !o.is_inline && !o.is_first_party).map((o) => o.host));
   stats.scripts = diff.observed.length;
   stats.script_hosts = scriptHosts.size;
+  const contacted = diffContactedHosts(raw.requests, knownHosts, { canonicalDomain: brand.host, pageUrl, baseline });
+  stats.contacted_hosts = contacted.observed.length;
 
   const notes: string[] = [];
   if (raw.hostCapHit) notes.push("host cap reached: later new-host requests were blocked");
-  if (raw.requestsDropped > 0) notes.push(`${raw.requestsDropped} request URLs over the cap not recorded`);
+  if (raw.contactedHostsDropped > 0) notes.push(`${raw.contactedHostsDropped} contacted hosts over the cap not recorded`);
   if (raw.inlineCut > 0) notes.push(`${raw.inlineCut} inline scripts over the size cap not inventoried`);
   if (inventory.length >= SITE_SCAN_INVENTORY_READ_LIMIT) notes.push("inventory read truncated");
 
-  const plausible = assessScanPlausibility(diff.observed.length, history.previousCompleteScripts, history.consecutiveSkips);
-  if (plausible.status === "skipped") {
-    stats.scan_status = "skipped";
-    stats.skipped_reason = plausible.reason;
-    await withD1Retry(
-      () => finishScanStmt(env.DB, scanId, "skipped", { scripts: diff.observed.length, hosts: scriptHosts.size, error: plausible.reason }).run(),
-      WRITE_RETRY,
-    );
-    return stats;
-  }
+  // ── IOC match (read replica; values bound, ≤ 90 per statement). Runs on
+  // every scan that rendered — a skipped (implausibly small) scan included. ──
+  const iocFindings = await matchIocs(readDb, diff.observed, contacted.observed, scriptHosts, pageUrl);
+  stats.ioc_matches = iocFindings.length;
 
-  const contacted = diffContactedHosts(raw.requests, knownHosts, { canonicalDomain: brand.host, pageUrl, baseline });
-  stats.contacted_hosts = contacted.observed.length;
+  const plausible = assessScanPlausibility(diff.observed.length, history.previousCompleteScripts, history.consecutiveSkips);
+  const skipped = plausible.status === "skipped";
   // A new script host is already `new_host`; `new_contacted_host` is for the
   // endpoints a page talks to without loading code from them (exfil, beacons).
   const contactedFindings = contacted.findings.filter((f) => !scriptHosts.has(f.host));
-
-  // ── IOC match (read replica; values bound, ≤ 90 per statement) ──
-  const candidates: IocCandidate[] = [];
-  const externalScripts = diff.observed.filter((o) => !o.is_inline && o.url);
-  const urlMatches = await matchUrlsAgainstThreats(readDb, externalScripts.map((o) => o.url!));
-  for (const m of urlMatches) {
-    const o = externalScripts.find((s) => s.url === m.matched_value || s.url?.split("?")[0] === m.matched_value.split("?")[0]);
-    candidates.push({ match: m, source: "script_url", url: o?.url ?? m.matched_value, path_norm: o?.path_norm ?? normaliseScriptUrl(m.matched_value)?.path_norm ?? null, page_url: o?.page_url ?? pageUrl });
-  }
-  const contactedExternal = contacted.observed.filter((c) => !c.is_first_party);
-  const hostMatches = await matchHostsAgainstThreats(readDb, [...new Set([...scriptHosts, ...contactedExternal.map((c) => c.host)])]);
-  for (const m of hostMatches) {
-    const script = externalScripts.find((s) => s.host === m.host && !s.is_first_party);
-    if (script) {
-      candidates.push({ match: m, source: "script_host", url: script.url, path_norm: null, page_url: script.page_url ?? pageUrl });
-      continue;
-    }
-    const c = contactedExternal.find((x) => x.host === m.host);
-    candidates.push({ match: m, source: "contacted_host", url: c?.first_url ?? null, path_norm: null, page_url: c?.page_url ?? pageUrl, initiator_url: c?.initiator_url ?? null });
-  }
-  const sourceFeeds = candidates.length ? await readSourceFeeds(readDb, candidates.map((c) => c.match.threat_id)) : new Map<string, string | null>();
-  const iocFindings = buildIocFindings(candidates, sourceFeeds);
-  stats.ioc_matches = iocFindings.length;
-
-  const findings = [...diff.findings, ...contactedFindings, ...iocFindings];
+  // Skipped: only the IOC matches — no diff findings, no inventory writes.
+  const findings = skipped ? iocFindings : [...diff.findings, ...contactedFindings, ...iocFindings];
   stats.findings_found = findings.length;
 
-  // ── Persist (env.DB, atomic batches; the scan completes last) ──
-  const ts = d1Ts(clock());
+  // ── Persist (env.DB, atomic batches; findings first, the scan finishes last) ──
+  const ts = d1Ts(c.clock());
   const findingStmts = findings.map((f) =>
     env.DB.prepare(INSERT_FINDING_SQL).bind(
       `ssf_${crypto.randomUUID()}`,
@@ -717,37 +840,48 @@ export async function runSiteScriptWatch(env: Env, opts: SiteScriptRunOptions = 
       f.kind,
       f.host,
       f.path_norm,
-      clip(f.page_url, SITE_SCRIPT_EVIDENCE_URL_MAX),
+      redactEvidenceUrl(f.page_url),
       f.threat_id,
       findingDedupeKey(f),
-      clip(JSON.stringify(f.evidence), MAX_EVIDENCE_JSON),
+      clip(JSON.stringify(redactEvidence(f.evidence)), MAX_EVIDENCE_JSON),
       ts,
     ),
   );
-  const inventoryStmts = diff.observed.map((o) =>
-    env.DB.prepare(UPSERT_INVENTORY_SQL).bind(
-      brand.id,
-      o.host,
-      o.path_norm,
-      o.is_first_party ? 1 : 0,
-      o.is_inline ? 1 : 0,
-      ts,
-      ts,
-      clip(o.page_url, SITE_SCRIPT_EVIDENCE_URL_MAX),
-      o.sha256,
-      o.integrity ?? null,
-      o.integrity !== undefined ? 1 : 0,
-    ),
+  const inventoryStmts = skipped
+    ? []
+    : diff.observed.map((o) =>
+        env.DB.prepare(UPSERT_INVENTORY_SQL).bind(
+          brand.id,
+          o.host,
+          o.path_norm,
+          o.is_first_party ? 1 : 0,
+          o.is_inline ? 1 : 0,
+          ts,
+          ts,
+          redactEvidenceUrl(o.page_url),
+          o.sha256,
+          o.integrity ?? null,
+          o.integrity !== undefined ? 1 : 0,
+        ),
+      );
+  const contactedStmts = skipped
+    ? []
+    : contacted.observed.map((h) =>
+        env.DB.prepare(UPSERT_CONTACTED_SQL).bind(brand.id, h.host, ts, ts, h.request_count, h.initiator_host, h.initiator_path),
+      );
+  const finishStmt = skipped
+    ? finishScanStmt(env.DB, scanId, "skipped", { scripts: diff.observed.length, hosts: scriptHosts.size, error: plausible.reason })
+    : finishScanStmt(env.DB, scanId, "complete", {
+        scripts: diff.observed.length,
+        hosts: scriptHosts.size,
+        error: notes.length ? notes.join("; ") : null,
+      });
+  const results = await runBatches(
+    env.DB,
+    [...findingStmts, ...inventoryStmts, ...contactedStmts, finishStmt],
+    Math.max(c.deadline, Date.now() + 30_000),
+    retry,
   );
-  const contactedStmts = contacted.observed.map((c) =>
-    env.DB.prepare(UPSERT_CONTACTED_SQL).bind(brand.id, c.host, ts, ts, c.request_count, c.initiator_host, c.initiator_path),
-  );
-  const completeStmt = finishScanStmt(env.DB, scanId, "complete", {
-    scripts: diff.observed.length,
-    hosts: scriptHosts.size,
-    error: notes.length ? notes.join("; ") : null,
-  });
-  const results = await runBatches(env.DB, [...findingStmts, ...inventoryStmts, ...contactedStmts, completeStmt], Math.max(deadline, Date.now() + 30_000));
   for (let i = 0; i < findingStmts.length; i++) {
     if ((results[i]?.meta?.changes ?? 0) > 0) {
       stats.findings_inserted++;
@@ -755,12 +889,61 @@ export async function runSiteScriptWatch(env: Env, opts: SiteScriptRunOptions = 
       stats.by_kind[k] = (stats.by_kind[k] ?? 0) + 1;
     }
   }
-  stats.scan_status = "complete";
+  stats.scan_status = skipped ? "skipped" : "complete";
+  if (skipped) stats.skipped_reason = plausible.reason;
   stats.bodies_hashed = raw.bodiesHashed;
   stats.bodies_skipped = raw.bodiesSkipped;
   stats.data_blocks = diff.data_blocks;
   stats.rejected = diff.rejected + contacted.rejected;
   return stats;
+}
+
+/** Evidence with every stored URL redacted (redactEvidenceUrl). */
+export function redactEvidence(e: SiteScriptFindingEvidence): SiteScriptFindingEvidence {
+  const out: SiteScriptFindingEvidence = { ...e, url: redactEvidenceUrl(e.url) };
+  if (e.initiator_url !== undefined) out.initiator_url = redactEvidenceUrl(e.initiator_url);
+  return out;
+}
+
+async function matchIocs(
+  readDb: D1Database | D1DatabaseSession,
+  observed: readonly ObservedScript[],
+  contactedObserved: readonly ObservedContactedHost[],
+  scriptHosts: ReadonlySet<string>,
+  pageUrl: string,
+): Promise<SiteScriptFinding[]> {
+  const candidates: IocCandidate[] = [];
+  const externalScripts = observed.filter((o) => !o.is_inline && o.url);
+  const urlMatches = await matchUrlsAgainstThreats(readDb, externalScripts.map((o) => o.url!));
+  for (const m of urlMatches) {
+    const o = externalScripts.find((s) => s.url === m.matched_value || s.url?.split("?")[0] === m.matched_value.split("?")[0]);
+    candidates.push({
+      match: m,
+      source: "script_url",
+      url: o?.url ?? m.matched_value,
+      path_norm: o?.path_norm ?? normaliseScriptUrl(m.matched_value)?.path_norm ?? null,
+      page_url: o?.page_url ?? pageUrl,
+    });
+  }
+  const contactedExternal = contactedObserved.filter((h) => !h.is_first_party);
+  const hostMatches = await matchHostsAgainstThreats(readDb, [...new Set([...scriptHosts, ...contactedExternal.map((h) => h.host)])]);
+  for (const m of hostMatches) {
+    const script = externalScripts.find((s) => s.host === m.host && !s.is_first_party);
+    if (script) {
+      candidates.push({ match: m, source: "script_host", url: script.url, path_norm: null, page_url: script.page_url ?? pageUrl });
+      continue;
+    }
+    const h = contactedExternal.find((x) => x.host === m.host);
+    candidates.push({
+      match: m,
+      source: "contacted_host",
+      url: h?.first_url ?? null,
+      path_norm: null,
+      page_url: h?.page_url ?? pageUrl,
+      initiator_url: h?.initiator_url ?? null,
+    });
+  }
+  return buildIocFindings(candidates);
 }
 
 /** Telemetry-only completion event (target_agent NULL — no dispatch). */

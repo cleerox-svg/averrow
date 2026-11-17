@@ -16,8 +16,12 @@
  *
  * Dispatched from the `*\/10 * * * *` cron branch in cron/orchestrator.ts
  * AFTER page_capture, only when the invocation still has
- * SITE_SCAN_MIN_BUDGET_MS of its window left (input.budgetMs). Manual
- * trigger: POST /api/internal/agents/site_script_watch/run. Writes
+ * SITE_SCAN_MIN_BUDGET_MS of its window left; input.deadlineMs is the
+ * absolute end of that window (scheduledTime + SITE_SCRIPT_TICK_WINDOW_MS).
+ * Manual trigger: POST /api/internal/agents/site_script_watch/run (awaited
+ * in-request, input.trigger 'manual' → short D1 write retry). A browser
+ * session that cannot be opened claims nothing and ends the run degraded
+ * ('partial'). Writes
  * agent_runs via executeAgent plus a telemetry agent_events row
  * (`site_scripts_scanned`, target_agent NULL).
  *
@@ -53,15 +57,17 @@ export const siteScriptWatchAgent: AgentModule = {
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env, input, runId } = ctx;
-    const { runSiteScriptWatch, emitSiteScriptEvent } = await import("../lib/site-script-scan");
+    const { runSiteScriptWatch, emitSiteScriptEvent, SITE_SCAN_BROWSER_UNAVAILABLE } = await import("../lib/site-script-scan");
 
     const scheduledRaw = typeof input["scheduledTime"] === "string" ? Date.parse(input["scheduledTime"]) : NaN;
-    const budgetMs = typeof input["budgetMs"] === "number" && Number.isFinite(input["budgetMs"]) ? input["budgetMs"] : undefined;
+    const deadlineMs =
+      typeof input["deadlineMs"] === "number" && Number.isFinite(input["deadlineMs"]) ? input["deadlineMs"] : undefined;
     let stats;
     try {
       stats = await runSiteScriptWatch(env, {
         scheduledTime: Number.isFinite(scheduledRaw) ? new Date(scheduledRaw) : undefined,
-        budgetMs,
+        deadlineMs,
+        manual: input["trigger"] === "manual",
       });
     } catch (err) {
       // executeAgent records the failure in agent_runs.error_message; the
@@ -87,13 +93,21 @@ export const siteScriptWatchAgent: AgentModule = {
     }
 
     const scanned = stats.scan_status === null ? 0 : 1;
-    const swept = stats.sweep.scans + stats.sweep.contacted + stats.sweep.findings + stats.sweep.inventory;
-    return {
+    const swept =
+      stats.sweep.scans + stats.sweep.contacted + stats.sweep.findings + stats.sweep.inventory + stats.sweep.expired;
+    const result: AgentResult = {
       itemsProcessed: scanned,
       itemsCreated: stats.findings_inserted,
       itemsUpdated: swept + stats.reaped,
       output: stats,
       agentOutputs: outputs,
     };
+    // Browser Rendering could not open a session: infra, not the site. No
+    // scan was claimed (the brand keeps its slot); the run finishes
+    // degraded → agent_runs 'partial' with completed_at set.
+    if (stats.skipped === SITE_SCAN_BROWSER_UNAVAILABLE) {
+      result.degraded = { reason: typeof stats.browser_error === "string" ? stats.browser_error : "browser session unavailable" };
+    }
+    return result;
   },
 };
