@@ -2,5 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /api/
 Disallow: /admin/
-Disallow: /tenant/
 Sitemap: https://averrow.com/sitemap.xml

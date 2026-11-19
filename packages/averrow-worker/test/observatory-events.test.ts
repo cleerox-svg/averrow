@@ -501,7 +501,9 @@ describe.skipIf(!hasSqlite())("critical — capped read keeps the NEWEST groups"
 
 describe.skipIf(!hasSqlite())("critical", () => {
   let body: EventsEnvelope;
+  let acmeLastSeen = ""; // stamped once (see "fast")
   beforeAll(async () => {
+    acmeLastSeen = ts(4);
     const db = openMigratedDb();
     brand(db, "b_acme", "Acme Bank");
     brand(db, "b_cust", "Contoso", "customer");
@@ -512,7 +514,7 @@ describe.skipIf(!hasSqlite())("critical", () => {
     brandCube(db, hourBucket(0), "b_acme", "phishing", "high", 50); // not critical
     brandCube(db, hourBucket(5), "b_acme", "phishing", "critical", 99); // outside 1h
     arcsCube(db, hourBucket(1), "b_acme", "NL", "phishing", "critical", 5, 52.3, 4.9, ts(70));
-    arcsCube(db, hourBucket(0), "b_acme", "NL", "phishing", "critical", 4, 52.1, 5.1, ts(4));
+    arcsCube(db, hourBucket(0), "b_acme", "NL", "phishing", "critical", 4, 52.1, 5.1, acmeLastSeen);
     arcsCube(db, hourBucket(0), "b_acme", "DE", "phishing", "critical", 3, 51.0, 10.0, ts(20));
     // Contoso (customer tier): one critical of mixed type, no geo.
     brandCube(db, hourBucket(0), "b_cust", "c2", "critical", 1);
@@ -535,7 +537,7 @@ describe.skipIf(!hasSqlite())("critical", () => {
       title: "Acme Bank targeted by 12 new phishing pages · mostly Netherlands",
       entity: { type: "brand", id: "b_acme", name: "Acme Bank" },
       target: { lens: "threats", select: "country:NL" },
-      occurred_at: toIsoUtc(ts(4)),
+      occurred_at: toIsoUtc(acmeLastSeen),
     });
     expect(acme.place.country_code).toBe("NL");
     expect(acme.place.country_name).toBe("Netherlands");
@@ -554,14 +556,16 @@ describe.skipIf(!hasSqlite())("critical", () => {
 
 describe.skipIf(!hasSqlite())("operation", () => {
   let body: EventsEnvelope;
+  let pivotBAt = ""; // stamped once (see "fast")
   beforeAll(async () => {
+    pivotBAt = ts(10);
     const db = openMigratedDb();
     cluster(db, { id: "cluster_asn_as4837_malware", name: "AS4837 · malware distribution", countryCounts: '{"CN": 30, "HK": 2}' });
     cluster(db, { id: "cluster_ip_1", name: "Nightfall", countries: '["RU"]' });
     cluster(db, { id: "cluster_retired", name: "Legacy copy", retired: "superseded", countryCounts: '{"US": 9}' });
     // Two infra_movement bursts on one cluster → one grouped item.
     pivot(db, "ev_a", ts(50), { kind: "infra_movement", payload_v: 2, cluster_id: "cluster_asn_as4837_malware", new_ips: 4, new_asns: 0, new_serials: 0 });
-    pivot(db, "ev_b", ts(10), { kind: "infra_movement", payload_v: 2, cluster_id: "cluster_asn_as4837_malware", new_ips: 2, new_asns: 1, new_serials: 0 });
+    pivot(db, "ev_b", pivotBAt, { kind: "infra_movement", payload_v: 2, cluster_id: "cluster_asn_as4837_malware", new_ips: 2, new_asns: 1, new_serials: 0 });
     pivot(db, "ev_c", ts(30), { kind: "dormancy", payload_v: 2, cluster_id: "cluster_ip_1", asn: "AS9009" });
     pivot(db, "ev_ret", ts(5), { kind: "infra_movement", payload_v: 2, cluster_id: "cluster_retired", new_ips: 50 });
     pivot(db, "ev_gone", ts(5), { kind: "infra_movement", payload_v: 2, cluster_id: "cluster_missing", new_ips: 50 });
@@ -575,7 +579,7 @@ describe.skipIf(!hasSqlite())("operation", () => {
       kind: "operation", severity: "high", count: 2, source: "nexus",
       title: "Operation AS4837 · malware distribution moved to 6 new IPs and 1 new network",
       entity: { type: "operation", id: "cluster_asn_as4837_malware", name: "AS4837 · malware distribution" },
-      occurred_at: toIsoUtc(ts(10)),
+      occurred_at: toIsoUtc(pivotBAt),
       target: { lens: "movement", select: "move:ev_b" },
     });
     expect(mv.place).toMatchObject({ country_code: "CN", country_name: "China" });
@@ -600,13 +604,17 @@ describe.skipIf(!hasSqlite())("operation", () => {
 
 describe.skipIf(!hasSqlite())("fast", () => {
   let body: EventsEnvelope;
+  // Stamped once: ts() reads the clock, so calling it again in the assertion
+  // could land a second later and miss by 1 s.
+  let acmeNewest = "";
   beforeAll(async () => {
+    acmeNewest = ts(20);
     const db = openMigratedDb();
     brand(db, "b_north", "Northwind");
     brand(db, "b_acme", "Acme Bank");
     threat(db, { id: "t1", domain: "northwind-login.co", brand: "b_north", cc: "US", lat: 37.7, lng: -122.4, flag: "very_fast", hours: 3, created: ts(15) });
     threat(db, { id: "t2", domain: "acme-verify.top", brand: "b_acme", cc: "NL", flag: "very_fast", hours: 5, created: ts(40) });
-    threat(db, { id: "t3", domain: "acme-secure.top", brand: "b_acme", cc: "NL", flag: "very_fast", hours: 0, created: ts(20) });
+    threat(db, { id: "t3", domain: "acme-secure.top", brand: "b_acme", cc: "NL", flag: "very_fast", hours: 0, created: acmeNewest });
     threat(db, { id: "t4", domain: "fast-not-very.com", flag: "fast", hours: 30, created: ts(10) });
     threat(db, { id: "t5", domain: "inactive.com", flag: "very_fast", hours: 1, created: ts(10), status: "down" });
     threat(db, { id: "t6", domain: "old.com", flag: "very_fast", hours: 1, created: ts(400) });
@@ -632,7 +640,7 @@ describe.skipIf(!hasSqlite())("fast", () => {
   it("burst: who is affected first", () => {
     expect(body.data.find((e) => e.id === "fast:brand:b_acme")).toMatchObject({
       count: 2, title: "Acme Bank targeted by 2 domains that went live within 5 hours of registration",
-      entity: { type: "brand", id: "b_acme", name: "Acme Bank" }, occurred_at: toIsoUtc(ts(20)),
+      entity: { type: "brand", id: "b_acme", name: "Acme Bank" }, occurred_at: toIsoUtc(acmeNewest),
       place: { country_code: "NL" },
     });
   });
@@ -640,13 +648,15 @@ describe.skipIf(!hasSqlite())("fast", () => {
 
 describe.skipIf(!hasSqlite())("lookalike", () => {
   let body: EventsEnvelope;
+  let wooNewest = ""; // stamped once (see "fast")
   beforeAll(async () => {
+    wooNewest = ts(12);
     const db = openMigratedDb();
     brand(db, "b_fab", "Fabrikam");
     brand(db, "b_woo", "Woodgrove");
     lookalike(db, { id: "l1", brand: "b_fab", domain: "fabrikarn.com", firstSeen: ts(25), level: "high" });
     lookalike(db, { id: "l2", brand: "b_woo", domain: "woodgr0ve.com", firstSeen: ts(30), evidence: "nrd" });
-    lookalike(db, { id: "l3", brand: "b_woo", domain: "wood-grove.net", firstSeen: ts(12) });
+    lookalike(db, { id: "l3", brand: "b_woo", domain: "wood-grove.net", firstSeen: wooNewest });
     lookalike(db, { id: "l4", brand: "b_fab", domain: "benign-fab.com", firstSeen: ts(5), status: "benign" });
     lookalike(db, { id: "l5", brand: "b_fab", domain: "baseline-only.com", firstSeen: ts(5), evidence: null });
     lookalike(db, { id: "l6", brand: "b_fab", domain: "old-fab.com", firstSeen: ts(500) });
@@ -667,7 +677,7 @@ describe.skipIf(!hasSqlite())("lookalike", () => {
     });
     expect(body.data.find((e) => e.id === "lookalike:brand:b_woo")).toMatchObject({
       count: 2, severity: "medium", title: "Woodgrove has 2 new lookalikes registered, incl. wood-grove.net",
-      occurred_at: toIsoUtc(ts(12)),
+      occurred_at: toIsoUtc(wooNewest),
     });
   });
 });

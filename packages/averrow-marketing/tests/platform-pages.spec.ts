@@ -329,9 +329,10 @@ test.describe("redirects", () => {
       expect(html).not.toContain('rel="canonical"');
     }
     const map = await (await request.get("/sitemap.xml")).text();
-    expect(map).not.toContain("/platform/ai-agents<");
-    expect(map).not.toContain("/platform/social-monitoring<");
-    expect(map).not.toContain("https://averrow.com/abuse-mailbox<");
+    // Either form: sitemap pages carry their canonical trailing slash.
+    expect(map).not.toMatch(/\/platform\/ai-agents\/?</);
+    expect(map).not.toMatch(/\/platform\/social-monitoring\/?</);
+    expect(map).not.toMatch(/https:\/\/averrow\.com\/abuse-mailbox\/?</);
   });
 
   test("no internal link on the built pages points at a retired URL", async ({ page, request }) => {

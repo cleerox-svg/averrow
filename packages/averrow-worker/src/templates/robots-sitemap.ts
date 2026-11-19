@@ -9,13 +9,15 @@
  * the Worker-only routes in case ASSETS misses the static one.
  */
 
-import { OPS_BASE } from "../lib/app-paths";
 
 export function renderRobotsTxt(): string {
   // Shared disallow list — kept identical across the wildcard block and
   // every explicit AI-crawler block below.
+  // The /ops and /tenant app shells are deliberately NOT disallowed: they
+  // carry X-Robots-Tag noindex (public/_headers, routes/public.ts), and a
+  // disallowed URL is never fetched, so the crawler would never see it and
+  // could keep the URL listed. Same rule as the served public/robots.txt.
   const disallow = [
-    `${OPS_BASE}/`,
     "/api/",
     "/admin-portal/",
     "/internal-staff/",
@@ -63,7 +65,7 @@ Sitemap: https://averrow.com/sitemap.xml
  */
 export function renderSitemapXml(): string {
   const staticPages = [
-    "/scan",
+    "/scan/",
     "/status",
     // /team is a spam-trap honeypot (src/honeypot.ts, noindex): never list it.
     "/privacy",

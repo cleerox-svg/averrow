@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Router } from "itty-router";
 import type { IRequest, RouterType } from "itty-router";
-import { registerPublicRoutes } from "../src/routes/public";
+import { APP_SHELL_ROBOTS, registerPublicRoutes } from "../src/routes/public";
 import { OPS_BASE, OPS_HOME, RETIRED_OPS_BASE, opsUrl } from "../src/lib/app-paths";
 import type { Env } from "../src/types";
 
@@ -104,6 +104,64 @@ describe("redirects into the app point at /ops", () => {
   });
 });
 
+// Google had indexed /login (→ the staff sign-in page). The app shells are not
+// marketing pages: every route that serves one, or redirects into one, says
+// noindex, and public/_headers says it for the shells ASSETS serves directly.
+describe("app shells are kept out of search results", () => {
+  const read = (p: string) => readFileSync(p, "utf8");
+  it.each(["/ops/", "/ops/login", "/ops/deep/link"])("%s shell carries X-Robots-Tag noindex", async (p) => {
+    const { env } = makeEnv();
+    const res = await get(p, env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Robots-Tag")).toBe(APP_SHELL_ROBOTS);
+  });
+
+  it("/login redirect carries X-Robots-Tag noindex", async () => {
+    const { env } = makeEnv();
+    const res = await get("/login", env);
+    expect(res.headers.get("X-Robots-Tag")).toBe(APP_SHELL_ROBOTS);
+  });
+
+  it("tenant SPA fallback carries X-Robots-Tag noindex and keeps the shell", async () => {
+    const fetch = vi.fn(async (req: Request) => {
+      const p = new URL(req.url).pathname;
+      if (p === "/tenant/index.html") return new Response("tenant shell", { status: 200, headers: { "Content-Type": "text/html" } });
+      return new Response("nope", { status: 404 });
+    });
+    const res = await get("/tenant/alerts/abc", { ASSETS: { fetch } } as unknown as Env);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("tenant shell");
+    expect(res.headers.get("Content-Type")).toBe("text/html");
+    expect(res.headers.get("X-Robots-Tag")).toBe(APP_SHELL_ROBOTS);
+  });
+
+  it("a real asset under /ops is not rewritten by the Worker", async () => {
+    const { env } = makeEnv();
+    const js = await get("/ops/assets/index-ABC.js", env);
+    expect(js.headers.get("X-Robots-Tag")).toBeNull();
+  });
+
+  it("public/_headers sets noindex on /ops/* and /tenant/*, and the served robots.txt still lets crawlers see it", () => {
+    const headers = read(resolve(WORKER, "public/_headers"));
+    for (const prefix of ["/ops", "/tenant"]) {
+      expect(headers).toMatch(new RegExp(`^${prefix}/\\*\\n  X-Robots-Tag: noindex, nofollow$`, "m"));
+    }
+    const robots = read(resolve(WORKER, "public/robots.txt"));
+    for (const prefix of ["ops", "tenant"]) {
+      expect(robots).not.toMatch(new RegExp(`^Disallow: /${prefix}/?$`, "m"));
+    }
+  });
+
+  it("marketing pages are not marked noindex", () => {
+    const headers = read(resolve(WORKER, "public/_headers"));
+    const noindexRules = headers.split("\n\n").filter((b) => b.includes("X-Robots-Tag"));
+    for (const block of noindexRules) {
+      const path = block.split("\n").find((l) => l.startsWith("/"));
+      expect(path === "/ops/*" || path === "/tenant/*").toBe(true);
+    }
+  });
+});
+
 // The pre-React app was deleted on 2026-11-15 (owner decision; screenshots in
 // docs/history/legacy-app/). Its URLs are plain 404s now: no redirect table,
 // no /legacy page. /login stays (above); marketing pages are untouched.
@@ -170,10 +228,11 @@ describe("static files that can't import the constant are pinned to it", () => {
     expect(base).toContain("export const OPS_BASE_PATH = '/ops';");
   });
 
-  it("robots.txt disallows /ops/ and no longer mentions /v2", async () => {
+  it("fallback robots.txt leaves /ops/ and /tenant/ crawlable (noindex must be seen) and no longer mentions /v2", async () => {
     const { renderRobotsTxt } = await import("../src/templates/robots-sitemap");
     const txt = renderRobotsTxt();
-    expect(txt).toContain("Disallow: /ops/");
+    expect(txt).not.toMatch(/^Disallow: \/(ops|tenant)\/?$/m);
+    expect(txt).toContain("Disallow: /api/");
     expect(txt).not.toContain("/v2");
   });
 });

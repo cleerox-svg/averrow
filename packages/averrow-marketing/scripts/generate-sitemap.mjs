@@ -52,17 +52,22 @@ async function* walk(dir) {
 }
 
 /** Turn an absolute file path into a canonical URL under SITE.
+ *  Directory pages keep their trailing slash: that is the URL the
+ *  asset server answers with a 200 (the slash-less form is a 307 to it)
+ *  and the one each page's <link rel="canonical"> names, so the sitemap
+ *  must list it — a sitemap of redirects is reported by Search Console
+ *  as "Page with redirect" and stops being re-read.
  *  Examples:
  *   dist/index.html               -> https://averrow.com/
- *   dist/about/index.html         -> https://averrow.com/about
- *   dist/blog/<slug>/index.html   -> https://averrow.com/blog/<slug>
+ *   dist/about/index.html         -> https://averrow.com/about/
+ *   dist/blog/<slug>/index.html   -> https://averrow.com/blog/<slug>/
  *   dist/blog/feed.xml            -> https://averrow.com/blog/feed.xml
  */
 function urlFor(filePath) {
   const rel = relative(DIST, filePath).replace(/\\/g, "/");
   if (rel === "index.html") return `${SITE}/`;
   if (rel.endsWith("/index.html")) {
-    return `${SITE}/${rel.slice(0, -"/index.html".length)}`;
+    return `${SITE}/${rel.slice(0, -"index.html".length)}`;
   }
   // feed.xml lives at /<dir>/feed.xml — keep the filename in the URL.
   return `${SITE}/${rel}`;
