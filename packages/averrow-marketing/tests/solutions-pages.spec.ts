@@ -422,9 +422,14 @@ test.describe("redirects", () => {
       expect(html, from).not.toContain('rel="canonical"');
     }
     const map = await (await request.get("/sitemap.xml")).text();
-    for (const [from] of REDIRECTS) expect(map, `${from} in the sitemap`).not.toContain(`https://averrow.com${from}<`);
+    // Sitemap pages carry their canonical trailing slash; check a retired URL in either form.
+    for (const [from] of REDIRECTS) {
+      const bare = from.replace(/\/$/, "");
+      expect(map, `${from} in the sitemap`).not.toContain(`https://averrow.com${bare}<`);
+      expect(map, `${from} in the sitemap`).not.toContain(`https://averrow.com${bare}/<`);
+    }
     for (const p of ["/solutions", "/solutions/security-teams", "/solutions/brand-and-legal", "/solutions/fraud-and-customer-trust", "/solutions/teams-without-a-soc", "/solutions/mssp"]) {
-      expect(map, `${p} missing from the sitemap`).toContain(`https://averrow.com${p}<`);
+      expect(map, `${p}/ missing from the sitemap`).toContain(`https://averrow.com${p}/<`);
     }
   });
 
