@@ -147,7 +147,9 @@ describe("app shells are kept out of search results", () => {
       expect(headers).toMatch(new RegExp(`^${prefix}/\\*\\n  X-Robots-Tag: noindex, nofollow$`, "m"));
     }
     const robots = read(resolve(WORKER, "public/robots.txt"));
-    expect(robots).not.toMatch(/^Disallow: \/ops\/?$/m);
+    for (const prefix of ["ops", "tenant"]) {
+      expect(robots).not.toMatch(new RegExp(`^Disallow: /${prefix}/?$`, "m"));
+    }
   });
 
   it("marketing pages are not marked noindex", () => {
@@ -226,10 +228,11 @@ describe("static files that can't import the constant are pinned to it", () => {
     expect(base).toContain("export const OPS_BASE_PATH = '/ops';");
   });
 
-  it("robots.txt disallows /ops/ and no longer mentions /v2", async () => {
+  it("fallback robots.txt leaves /ops/ and /tenant/ crawlable (noindex must be seen) and no longer mentions /v2", async () => {
     const { renderRobotsTxt } = await import("../src/templates/robots-sitemap");
     const txt = renderRobotsTxt();
-    expect(txt).toContain("Disallow: /ops/");
+    expect(txt).not.toMatch(/^Disallow: \/(ops|tenant)\/?$/m);
+    expect(txt).toContain("Disallow: /api/");
     expect(txt).not.toContain("/v2");
   });
 });
