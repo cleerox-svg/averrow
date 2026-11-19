@@ -37,6 +37,17 @@ import { handlePublicEmailSecurity } from "../handlers/emailSecurity";
 import { EMAIL_LOGO_PATH, handleEmailLogo } from "../handlers/emailAssets";
 import { OPS_BASE, OPS_HOME, RETIRED_OPS_BASE } from "../lib/app-paths";
 
+// The /ops and /tenant app shells (and the /login redirect into them) are
+// sign-in surfaces, not marketing pages: keep them out of search results.
+// public/_headers carries the same rule for the shells ASSETS serves directly.
+export const APP_SHELL_ROBOTS = "noindex, nofollow";
+
+function withAppShellRobots(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("X-Robots-Tag", APP_SHELL_ROBOTS);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 // Public marketing HTML routes eligible for edge analytics logging.
 const MARKETING_PATHS = new Set([
   "/", "/platform", "/about", "/pricing", "/security",
@@ -82,7 +93,10 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // surfaces all three auth methods.
   router.get("/login", (request: Request) => {
     const url = new URL(request.url);
-    return Response.redirect(`${url.origin}${OPS_BASE}/login`, 302);
+    return new Response(null, {
+      status: 302,
+      headers: { Location: `${url.origin}${OPS_BASE}/login`, "X-Robots-Tag": APP_SHELL_ROBOTS },
+    });
   });
 
   // ─── Public Assessment ───────────────────────────────────────────
@@ -386,6 +400,7 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     headers.set('Pragma', 'no-cache');
     headers.set('Expires', '0');
+    headers.set('X-Robots-Tag', APP_SHELL_ROBOTS);
     return new Response(htmlResponse.body, { status: htmlResponse.status, headers });
   };
   router.get(`${OPS_BASE}/*`, serveOpsApp);
@@ -429,11 +444,11 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     // index.html so the client router decides what to render.
     if (url.pathname.startsWith(`${OPS_BASE}/`) || url.pathname === OPS_BASE) {
       const shell = await env.ASSETS.fetch(new Request(new URL(`${OPS_BASE}/index.html`, request.url).toString()));
-      if (shell.status !== 404) return shell;
+      if (shell.status !== 404) return withAppShellRobots(shell);
     }
     if (url.pathname.startsWith("/tenant/") || url.pathname === "/tenant") {
       const shell = await env.ASSETS.fetch(new Request(new URL("/tenant/index.html", request.url).toString()));
-      if (shell.status !== 404) return shell;
+      if (shell.status !== 404) return withAppShellRobots(shell);
     }
 
     // Last-ditch fallback: render the Worker's branded 404 page.

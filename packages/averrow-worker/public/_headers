@@ -46,3 +46,16 @@
 
 /tenant/assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Search indexing (owner-requested 2026-11-19): the two app shells are sign-in
+# surfaces, not marketing pages, so search engines must not list them
+# (Google had indexed /login → /ops/login). The served public/robots.txt does
+# not disallow /ops/ — keep it that way: a disallowed URL is never fetched, so
+# the crawler would never see this header and could keep the URL. The Worker
+# sets the same header on the shells it serves itself (routes/public.ts), since
+# those responses don't come straight from ASSETS.
+/ops/*
+  X-Robots-Tag: noindex, nofollow
+
+/tenant/*
+  X-Robots-Tag: noindex, nofollow
