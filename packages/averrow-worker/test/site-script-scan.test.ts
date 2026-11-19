@@ -5,7 +5,7 @@
  * FAKE scan driver (no browser is launched).
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Env } from "../src/types";
@@ -378,6 +378,22 @@ describe.skipIf(!hasSqlite())("site script watch pipeline (real SQLite)", () => 
     expect(s.skipped).toBe("budget");
     expect(fd.seen).toEqual([]);
     expect(rows(raw, "SELECT * FROM site_scans")).toEqual([]);
+  });
+
+  it("no deadline passed (manual run): a clock tick between reads never skips it as budget", async () => {
+    const { raw, env } = setup();
+    addBrand(raw, "b_acme", "acme.com");
+    const fd = fakeDriver(() => scan({ scripts: BASE_SCRIPTS, requests: BASE_REQUESTS }));
+    // Every Date.now() call advances 1 ms — the race that used to skip the run.
+    let t = Date.UTC(2026, 10, 19, 12);
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => (t += 1));
+    try {
+      const s = await runSiteScriptWatch(env, { driver: fd.driver, now: () => T0, resolve: resolveHost });
+      expect(s.skipped).not.toBe("budget");
+      expect(s.scan_status).toBe("complete");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("a throw after the claim marks the scan failed with the real error and is rethrown", async () => {

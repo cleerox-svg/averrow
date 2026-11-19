@@ -637,8 +637,12 @@ export async function runSiteScriptWatch(env: Env, opts: SiteScriptRunOptions = 
     return stats;
   }
 
-  const deadline = opts.deadlineMs ?? Date.now() + SITE_SCAN_MIN_BUDGET_MS;
-  if (deadline - Date.now() < SITE_SCAN_MIN_BUDGET_MS) {
+  // One clock read: with no deadline passed (manual runs) a second Date.now()
+  // a millisecond later made `deadline - now` fall just under the minimum and
+  // skipped the run as "budget" at random.
+  const nowMs = Date.now();
+  const deadline = opts.deadlineMs ?? nowMs + SITE_SCAN_MIN_BUDGET_MS;
+  if (deadline - nowMs < SITE_SCAN_MIN_BUDGET_MS) {
     stats.skipped = "budget";
     return stats;
   }
