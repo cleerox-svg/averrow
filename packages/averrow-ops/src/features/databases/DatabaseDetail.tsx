@@ -139,7 +139,7 @@ export function DatabaseDetail({ db, window: win = '24h', summary }: { db: Datab
       <section aria-label="Key figures" className="dbp-kpis-wrap">
         <StatGrid cols={4}>
           <StatTile label="Size" value={formatBytes(db.size_bytes)} sub={pct == null ? 'Not measured yet' : `${formatPct(pct, 0)} of ${formatBytes(db.cap_bytes)} limit`} />
-          <StatTile label="Time to full" value={over ? 'At cap' : db.days_to_cap != null && growth != null && growth > 0 ? formatTimeToFull(db).replace(' to full', '') : DASH} sub={over ? 'At or over the cap' : to80 != null ? `critical (${Math.round(th.critical * 100)}%) in ≈ ${to80} days` : formatTimeToFull(db)} />
+          <StatTile label="Time to full" value={over ? 'At cap' : db.days_to_cap != null && growth != null && growth > 0 ? formatTimeToFull(db).replace(' to full', '').replace(' months', ' mo').replace(' days', ' d').replace(' years', ' yr') : DASH} sub={over ? 'At or over the cap' : to80 != null ? `critical (${Math.round(th.critical * 100)}%) in ≈ ${to80} days` : formatTimeToFull(db)} />
           <StatTile label="Reads · cycle" value={formatCount(db.reads_cycle)} sub={`24h ${formatCount(db.reads_24h)}`} />
           <StatTile label="Writes · cycle" value={formatCount(db.writes_cycle)} sub={`24h ${formatCount(db.writes_24h)}`} />
           <StatTile

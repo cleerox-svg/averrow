@@ -152,7 +152,7 @@ export function DatabaseMap({
                   <text className="dim" x={DB_X + 14} y={top + 44}>
                     {s.status === 'overloaded' ? `Overloaded${s.overloads_24h != null ? ` · ${s.overloads_24h} rejections in 24 h` : ''}` : `${formatBytes(s.size_bytes)} · ${s.status === 'unknown' ? 'size unknown' : s.status}`}
                   </text>
-                  <text className="dim" x={DB_X + 14} y={top + 64}>{edges.filter((e) => e.store === s.store).length} jobs connected</text>
+                  <text className="dim" x={DB_X + 14} y={top + 64}>{(() => { const n = edges.filter((e) => e.store === s.store).length; return `${n} ${n === 1 ? 'job' : 'jobs'} connected`; })()}</text>
                 </g>
               );
             })}

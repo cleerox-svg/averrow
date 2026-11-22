@@ -279,4 +279,16 @@ describe('review fixes', () => {
     expect(screen.queryByText('Web & API', { selector: 'text' })).toBeNull();
     expect(screen.getByText(/Statements rejected \(overloaded\)/)).toBeInTheDocument();
   });
+
+  it('pluralizes jobs connected and keeps time to full short', async () => {
+    renderAt('/?view=map');
+    expect(await screen.findAllByText('1 job connected')).not.toHaveLength(0);
+    expect(screen.queryByText('1 jobs connected')).toBeNull();
+  });
+
+  it('shows a compact time-to-full value on the detail tile', async () => {
+    renderAt('/?db=core');
+    await screen.findByRole('heading', { name: 'trust-radar-v2' });
+    expect(screen.getByText('≈ 7 mo')).toBeInTheDocument();
+  });
 });
