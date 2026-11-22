@@ -181,3 +181,24 @@ export const emptyMeterFixture: DatabasesPayload = {
   databases: [{ ...auditDb }, { ...dnsqDb, hourly: [] }],
   edges: [],
 };
+
+export const telemetryDb: DatabaseEntry = {
+  ...dnsqDb,
+  store: 'telemetry',
+  name: 'averrow-telemetry',
+  binding: 'TELEMETRY_DB',
+  role: 'Agent runs, feed history, agent events, AI ledger',
+  label: 'TELEMETRY',
+  hourly: [],
+  top_tables: [],
+  note: 'Not yet in use — writes still go to core',
+  route: 'core',
+};
+
+/** Server shape once every planned database is live: no proposed entries. */
+export const noProposedFixture: DatabasesPayload = {
+  ...databasesFixture,
+  summary: { ...databasesFixture.summary, live: 5, proposed: 0 },
+  databases: [...databasesFixture.databases, telemetryDb],
+  proposed: [],
+};

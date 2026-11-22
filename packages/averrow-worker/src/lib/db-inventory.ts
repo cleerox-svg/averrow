@@ -224,7 +224,9 @@ export async function inventoryStore(
   size: DbSizeRow | undefined,
   nowMs: number,
 ): Promise<DbInventory> {
-  const binding = storeBinding(env, store);
+  // The store's OWN binding: a fallback (telemetry → core) would inventory
+  // core's tables under the telemetry label.
+  const binding = hasStore(env, store) ? storeBinding(env, store) : undefined;
   if (!binding) throw new Error(`store ${store} not bound`);
   const db = readDbFor(binding);
   const reader = safeReader(db);

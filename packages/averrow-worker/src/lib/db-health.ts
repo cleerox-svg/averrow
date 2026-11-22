@@ -42,6 +42,7 @@ import {
 } from "./db-registry";
 import { getDatabaseSizes, type DbSizeRow } from "./db-sizes";
 import { readInventory, readSizeHistory, type DbInventory, type SizePoint } from "./db-inventory";
+import { telemetryRouteState, type TelemetryRoute, type TelemetryRouteState } from "./db-route";
 
 // ─── Contract types (scratchpad CONTRACT.md v1) ──────────────────────
 
@@ -97,6 +98,11 @@ export interface DatabaseCard {
   top_tables: DbTopTable[];
   top_jobs: DbJob[];
   note: string | null;
+  /**
+   * telemetry store only: which DB serves the telemetry cluster right now
+   * (lib/db-route.ts). 'core' until the cut-over flag is flipped.
+   */
+  route?: TelemetryRoute;
 }
 
 export interface DbEdge {
@@ -148,6 +154,8 @@ export const STORE_LABELS: Record<StoreId, string> = {
   audit: "COMPLIANCE",
   geo: "REFERENCE",
   dnsq: "WORK QUEUE",
+  telemetry: "TELEMETRY",
+  archive: "ARCHIVE",
 };
 
 /**
@@ -156,23 +164,17 @@ export const STORE_LABELS: Record<StoreId, string> = {
  * audit is excluded: it is append-only and written only on rare staff
  * actions (logins, approvals, role changes) — prod had multi-day gaps with
  * a healthy writer (2026-11-10 → 11-17), so a quiet cycle start is normal.
+ * telemetry and archive are excluded until their writers exist (telemetry:
+ * add it when the route flag is flipped to 'telemetry').
  */
 export const STORES_EXPECTING_WRITES: ReadonlySet<StoreId> = new Set<StoreId>(["core", "dnsq"]);
 
-export const PROPOSED_DATABASES: DatabasesPayload["proposed"] = [
-  {
-    name: "averrow-telemetry",
-    role: "Operational telemetry",
-    description:
-      "Agent runs, feed pull history, agent events and the AI budget ledger — high-churn operational rows moved off the core database so telemetry writes never compete with threat data.",
-  },
-  {
-    name: "averrow-archive",
-    role: "Cold-threat index",
-    description:
-      "Index for threats archived to R2 after 180 days inactive, so the core threats table holds only the working set while archived evidence stays searchable.",
-  },
-];
+/**
+ * Databases planned but not yet created. Empty since averrow-telemetry and
+ * averrow-archive became live stores (the UI renders no proposed section
+ * for an empty list).
+ */
+export const PROPOSED_DATABASES: DatabasesPayload["proposed"] = [];
 
 // ─── Status / growth rules (pure, exported for tests) ───────────────
 
@@ -617,6 +619,25 @@ export function composePayload(base: DatabasesBase, window: DbWindow, edges: DbE
   return out;
 }
 
+export const TELEMETRY_NOT_IN_USE_NOTE = "Not yet in use — writes still go to core";
+
+/**
+ * Stamp the live telemetry route onto the telemetry card (applied after the
+ * 10-min base cache, so a flag flip shows within the route's 60 s cache).
+ * While bound but routed to core, the card says it is not in use yet.
+ */
+export function applyTelemetryRoute(payload: DatabasesPayload, state: TelemetryRouteState): DatabasesPayload {
+  return {
+    ...payload,
+    databases: payload.databases.map((d) => {
+      if (d.store !== "telemetry") return d;
+      // Never hide a real problem note (e.g. size not measured) behind the route note.
+      const note = d.note ?? (state.bound && state.route === "core" ? TELEMETRY_NOT_IN_USE_NOTE : null);
+      return { ...d, route: state.route, note };
+    }),
+  };
+}
+
 export const DATABASES_CACHE_TTL_S = 600;
 /** TTL for a base payload with any `<section>_error` (e.g. CF API blip). */
 export const DATABASES_DEGRADED_TTL_S = 60;
@@ -645,5 +666,6 @@ export async function getDatabasesPayload(env: Env, window: DbWindow): Promise<D
   } catch (e) {
     edgesError = classifySectionError("edges", e);
   }
-  return composePayload(base, window, edges, edgesError);
+  const payload = composePayload(base, window, edges, edgesError);
+  return applyTelemetryRoute(payload, await telemetryRouteState(env));
 }

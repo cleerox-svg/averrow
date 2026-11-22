@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 // number that depends on the per-store D1 meter may be null (not measured
 // yet); a section that errored server-side adds `<section>_error`.
 
-export type DbStore = 'core' | 'audit' | 'geo' | 'dnsq';
+export type DbStore = 'core' | 'audit' | 'geo' | 'dnsq' | 'telemetry' | 'archive';
 export type DbStatus = 'healthy' | 'warning' | 'overloaded' | 'unknown';
 export type DbEdgeKind = 'agent' | 'feed' | 'cron' | 'workflow' | 'http';
 export type DbWindow = '1h' | '24h' | 'cycle';
@@ -58,6 +58,8 @@ export interface DatabaseEntry {
   top_tables: DbTable[];
   top_jobs: DbJob[];
   note: string | null;
+  /** telemetry store only: which DB serves the telemetry tables right now. */
+  route?: 'core' | 'telemetry';
 }
 
 export interface DbProposed {

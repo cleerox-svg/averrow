@@ -1355,6 +1355,8 @@ as `averrow`) did rename — see §2.
 - Audit DB: `trust-radar-v2-audit`
 - GeoIP DB: `geoip-db` (D1, optional binding `GEOIP_DB`) — dedicated reference DB for the third-tier MaxMind GeoLite2 lookup. Migrations live in `migrations-geoip/`. Cartographer Phase 0.5 queries it; the `geoip_refresh` agent loads it. Isolated to keep range-scan reads off the main DB's budget — see `lib/geoip-mmdb.ts`.
 - DNS queue DB: `trust-radar-dns-queue` (D1, optional binding `DNS_QUEUE_DB`) — side DB holding the "needs DNS resolution" working set. After the PR-1 → PR-4 split (May 17–18), `dns_queue` is the **source of truth** for the cooldown + attempts state previously kept on `threats.attempted_resolve_at` + `threats.enrichment_attempts`. Navigator's dns-backfill drains it; `lib/dns-queue-reconciler.ts` enqueues new candidates from threats every tick using a **cursor-paginated** read (KV key `reconciler:dns_queue:cursor`, reads only rows added since the last cursor — PR-BI 2026-05-19). The cursor is a tie-safe `(created_at, rowid)` keyset (2026-10-12: a bare `created_at` cursor froze for ~6 days because bulk `db.batch()` inserts give ≥500 rows the same second); a no-progress page self-heals and flags `cursor_stuck` → FC `platform_dns_queue_stalled`. Manual catch-up: `POST /api/internal/dns-queue/reconcile?pages=1..20[&from=…]`. The companion `lib/dns-queue-reaper.ts` sweeps stale rows once per day at hour===0 (rows whose threats flipped to inactive after enqueue). Threats table still owns the `ip_address` deliverable but no longer carries the per-attempt state. Threats-side dns indexes (`idx_threats_dns_pending_strict`, `idx_threats_dns_backfill`, `idx_threats_dns_backfill_select`) were dropped in migration 0200. FC backlog (`backlog.domain_geo` / `domain_geo_drainable`), diagnostics (`enrichment_pipeline.domain_geo_drainable`, `dns_queue_parity.drainable_in_threats`), and the admin backfill endpoint all read from `dns_queue` now. The threats-side candidate count (`countDnsCandidatesInThreats`, a 1.5–2.7M-row scan) runs once a day in Navigator at UTC hour 3 (`runDnsDrainableRecount`, see §6 Navigator entry), no longer in Flight Control, which only peeks the cached value; diagnostics `dns_queue_parity` reports it with `drainable_computed_at` / `drainable_age_hours`. Health monitored by FC via `platform_dns_queue_drift` (acts only on a count ≤ 90 min old), `platform_dns_queue_stalled` (stays hourly; classified `cursor_stuck` / `falling_behind` — the latter needs a full reconciler page with enqueued > 0), and `platform_dns_queue_reaper_stalled` notifications. Read-budget: cursor + reaper architecture ≈ 94K reads/day on main DB (down from 15M/day pre-PR-BI, 99.4% reduction). See `lib/dns-backfill.ts` + `lib/dns-queue-reconciler.ts` + `lib/dns-queue-reaper.ts`.
+- Telemetry DB: `averrow-telemetry` (D1, optional binding `TELEMETRY_DB`, prod + staging; dev falls back to core) — Track B1 home of the self-contained bookkeeping cluster (`agent_runs`, `agent_configs`, `agent_events`, `agent_activity_log`, `agent_approvals`, `feed_configs`, `feed_status`, `feed_pull_history`, `budget_ledger`, `budget_config`, `agent_budget_rollups`; `agent_outputs` is wave 2) so run / pull finalizes never wait on core's overload window. **Pre-stage: nothing uses it yet — every reader and writer still goes to core.** The single switch is `lib/db-route.ts` `telemetryStore(env)` (KV flag `db_route:telemetry` ∈ `core`|`telemetry`, default `core`, 60 s in-isolate cache, a KV read failure keeps the last known route); caller families convert to it one PR at a time, then the cut-over is one KV write. Never read `env.TELEMETRY_DB` outside `lib/db-registry.ts` / `lib/db-route.ts`, and keep `env.DB` references from rising (`test/db-access-ratchet.test.ts`). **`migrations-telemetry/` must mirror core migrations for the wave-1 tables until cut-over** — a core migration touching one of them ships with a matching `migrations-telemetry/NNNN_*.sql` (`test/telemetry-schema-parity.test.ts`; the only allowed difference is the dropped `feed_configs.updated_by → users` FK).
+- Archive DB: `averrow-archive` (D1, optional binding `ARCHIVE_DB`, prod + staging, no fallback) — `threat_archive_index` for threats archived to the R2 bucket `THREAT_ARCHIVE` (`averrow-threat-archive` / `-staging`). Bound and schema-stamped only; nothing reads or writes either yet. Callers must handle both being absent.
 - **Never DROP or ALTER existing columns** without explicit instruction
 - New columns: `ALTER TABLE ... ADD COLUMN` only
 - New migrations: `migrations/NNNN_description.sql`
@@ -1780,6 +1782,21 @@ GEOIP_DB (geoip-db):
                             for stuck-workflow detection). `mode` records which
                             strategy each refresh used; `rows_deleted` tracks diff
                             deletions.
+
+TELEMETRY_DB (averrow-telemetry), migrations-telemetry/:
+  agent_runs, agent_configs, agent_events, agent_activity_log, agent_approvals,
+  feed_configs, feed_status, feed_pull_history, budget_ledger, budget_config,
+  agent_budget_rollups
+                          ← Schema-only copy of the core wave-1 tables (Track B1).
+                            Not in use until `db_route:telemetry` = 'telemetry';
+                            the live rows are still on core. migrations-telemetry/
+                            must mirror core migrations for wave-1 tables until
+                            cut-over (test/telemetry-schema-parity.test.ts).
+
+ARCHIVE_DB (averrow-archive), migrations-archive/:
+  threat_archive_index    ← One row per threat archived to R2 THREAT_ARCHIVE
+                            (id, shard_key, archived_at, last_status, created_at,
+                            last_seen). Unused yet.
 ```
 
 ---

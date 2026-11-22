@@ -18,7 +18,7 @@
 
 import type { Env } from "../types";
 
-export type StoreId = "core" | "audit" | "geo" | "dnsq";
+export type StoreId = "core" | "audit" | "geo" | "dnsq" | "telemetry" | "archive";
 export type DeployEnv = "prod" | "staging" | "dev";
 
 export interface DbSpec {
@@ -35,9 +35,13 @@ export interface DbSpec {
   required: boolean;
   role: string;
   /**
-   * Store to serve when this binding is absent. No store sets one today:
-   * the DNS queue's main-DB fallback was removed in PR-4 and an absent
-   * GEOIP_DB is a clean no-op for its callers, so `store()` throws instead.
+   * Store to serve when this binding is absent. Only `telemetry` sets one
+   * (core: until the cut-over the wave-1 tables live on core, and dev has
+   * no telemetry DB). The DNS queue's main-DB fallback was removed in PR-4,
+   * an absent GEOIP_DB is a clean no-op for its callers, and an absent
+   * ARCHIVE_DB must be handled by its callers, so `store()` throws instead.
+   * Note: which DB the telemetry *cluster* is served from is decided by
+   * lib/db-route.ts `telemetryStore()` (KV flag), not by this fallback.
    */
   fallback?: StoreId;
 }
@@ -97,6 +101,33 @@ export const DB_REGISTRY: readonly DbSpec[] = [
     migrationsDir: "migrations-dns-queue",
     required: false,
     role: "DNS resolution work queue",
+  },
+  {
+    id: "telemetry",
+    binding: "TELEMETRY_DB",
+    databaseName: { prod: "averrow-telemetry", staging: "averrow-telemetry-staging", dev: null },
+    databaseId: {
+      prod: "67ebf20d-6176-4a5a-8da2-338c1f9e9399",
+      staging: "beac6ee0-5c86-4aba-8218-788c2d0c0e35",
+      dev: null,
+    },
+    migrationsDir: "migrations-telemetry",
+    required: false,
+    role: "Agent runs, feed history, agent events, AI ledger",
+    fallback: "core",
+  },
+  {
+    id: "archive",
+    binding: "ARCHIVE_DB",
+    databaseName: { prod: "averrow-archive", staging: "averrow-archive-staging", dev: null },
+    databaseId: {
+      prod: "90c13d5a-182e-414d-9320-6241c9a62593",
+      staging: "9efead5b-89fc-49bc-88a9-c6c4cd744113",
+      dev: null,
+    },
+    migrationsDir: "migrations-archive",
+    required: false,
+    role: "Index of threats archived to R2",
   },
 ];
 

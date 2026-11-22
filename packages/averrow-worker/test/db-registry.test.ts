@@ -154,6 +154,29 @@ describe("KV_REGISTRY ↔ wrangler.toml [[kv_namespaces]]", () => {
   });
 });
 
+describe("THREAT_ARCHIVE R2 bucket (not in the registry, which tracks D1 + KV only)", () => {
+  const r2: Array<{ env: DeployEnv; binding?: string; bucket_name?: string }> = [];
+  let cur: { env: DeployEnv; binding?: string; bucket_name?: string } | null = null;
+  for (const raw of toml.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("[")) {
+      const m = /^\[\[(?:env\.(\w+)\.)?r2_buckets\]\]$/.exec(line);
+      cur = m ? { env: m[1] === "staging" ? "staging" : m[1] === "dev" ? "dev" : "prod" } : null;
+      if (cur) r2.push(cur);
+      continue;
+    }
+    const kv = cur ? /^(binding|bucket_name)\s*=\s*"([^"]+)"/.exec(line) : null;
+    if (cur && kv?.[1] && kv[2]) cur[kv[1] as "binding" | "bucket_name"] = kv[2];
+  }
+
+  it("is declared in prod and staging with the created bucket names, and not in dev", () => {
+    const of = (env: DeployEnv) => r2.filter((b) => b.env === env && b.binding === "THREAT_ARCHIVE").map((b) => b.bucket_name);
+    expect(of("prod")).toEqual(["averrow-threat-archive"]);
+    expect(of("staging")).toEqual(["averrow-threat-archive-staging"]);
+    expect(of("dev")).toEqual([]);
+  });
+});
+
 describe("store accessor", () => {
   const DB = { prepare: () => ({}), batch: async () => [] };
   const AUDIT_DB = { prepare: () => ({}), batch: async () => [] };
@@ -174,7 +197,25 @@ describe("store accessor", () => {
 
   it("METERED_D1_BINDINGS is derived from the registry", () => {
     expect([...METERED_D1_BINDINGS]).toEqual(DB_REGISTRY.map((s) => s.binding));
-    expect(METERED_D1_BINDINGS).toEqual(expect.arrayContaining(["DB", "AUDIT_DB", "GEOIP_DB", "DNS_QUEUE_DB"]));
+    expect(METERED_D1_BINDINGS).toEqual(expect.arrayContaining([
+      "DB", "AUDIT_DB", "GEOIP_DB", "DNS_QUEUE_DB", "TELEMETRY_DB", "ARCHIVE_DB",
+    ]));
+  });
+
+  it("telemetry falls back to core when unbound (dev); hasStore still reports it absent", () => {
+    expect(hasStore(env, "telemetry")).toBe(false);
+    expect(storeBinding(env, "telemetry")).toBe(DB);
+    expect(store(env, "telemetry")).toBe(DB);
+    const TELEMETRY_DB = { prepare: () => ({}), batch: async () => [] };
+    const bound = { DB, AUDIT_DB, TELEMETRY_DB } as unknown as Env;
+    expect(hasStore(bound, "telemetry")).toBe(true);
+    expect(store(bound, "telemetry")).toBe(TELEMETRY_DB);
+  });
+
+  it("archive has no fallback: an unbound archive throws (callers must handle absence)", () => {
+    expect(hasStore(env, "archive")).toBe(false);
+    expect(storeBinding(env, "archive")).toBeUndefined();
+    expect(() => store(env, "archive")).toThrow(StoreUnavailableError);
   });
 
   it("labels database ids", () => {

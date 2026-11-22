@@ -80,7 +80,7 @@ export const STATUS_LABEL: Record<DbStatus, string> = {
   unknown: 'Unknown',
 };
 
-export const STORE_ORDER: DbStore[] = ['core', 'geo', 'dnsq', 'audit'];
+export const STORE_ORDER: DbStore[] = ['core', 'telemetry', 'geo', 'dnsq', 'archive', 'audit'];
 
 export const KIND_LABEL: Record<DbEdgeKind, string> = {
   agent: 'Agents',
