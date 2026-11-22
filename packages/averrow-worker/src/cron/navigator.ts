@@ -32,6 +32,7 @@ import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-ba
 import { reconcileDnsQueue, backfillDnsQueueHistory, type ReconcileResult } from '../lib/dns-queue-reconciler';
 import { reapDnsQueue, type ReaperResult } from '../lib/dns-queue-reaper';
 import { countDnsCandidatesInThreats, isDnsDrainableRecountHour, runDnsDrainableRecount } from '../lib/dns-drainable';
+import { isDbInventoryHour, runDbInventory } from '../lib/db-inventory';
 import {
   purgeNrdDomains,
   parseNrdRetentionLastResult,
@@ -1117,6 +1118,25 @@ async function runNavigatorImpl(
           console.log(`[navigator] dns-drainable recount: drainable=${r.drainable} duration=${r.durationMs}ms`);
         } else if (r.reason === 'error' || r.reason === 'over_budget') {
           console.warn(`[navigator] dns-drainable recount skipped: ${r.reason}${r.error ? ` (${r.error})` : ''}`);
+        }
+      }),
+    );
+  }
+
+  // ── 4c. Daily database inventory + size samples (UTC hour 4) ──
+  // Per registry store: table list + bounded row estimates, dbstat bytes
+  // where allowed, one size sample (lib/db-inventory.ts → KV, read by the
+  // Databases page). Hour-only gate (cron-audit rule, no minute check), KV
+  // day stamp + claim so it runs once, skipped over the D1 read-budget
+  // soft-cap. Own agent_runs ('db_inventory') + telemetry agent_events.
+  // waitUntil tail; never throws.
+  if (isDbInventoryHour(scheduledTime.getTime())) {
+    _ctx.waitUntil(
+      runDbInventory({ env, nowMs: scheduledTime.getTime(), overBudget: skipNonEssential }).then((r) => {
+        if (r.ran) {
+          console.log(`[navigator] db-inventory: status=${r.status} stores=${r.stores.join(',')} failed=${r.failed.join(',')}`);
+        } else if (r.reason === 'error' || r.reason === 'over_budget') {
+          console.warn(`[navigator] db-inventory skipped: ${r.reason}${r.error ? ` (${r.error})` : ''}`);
         }
       }),
     );
