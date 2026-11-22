@@ -22,10 +22,12 @@ import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
  */
 const URLSCAN_API = "https://urlscan.io/api/v1/search/";
 const SIZE = 200;
-// Pull "recent + flagged malicious" — kind:phishing is conservative;
-// score>=70 catches things urlscan's own heuristics flag without
-// requiring a `verdicts.malicious=true` consensus (which is lagging).
-const QUERY = "(verdicts.overall.malicious:true OR verdicts.urlscan.score:>=70) AND date:>now-2h";
+// Pull "recent + flagged by urlscan's own heuristics" (score>=70).
+// `verdicts.overall.malicious` was dropped 2026-11-22: our urlscan.io plan
+// refuses searches on that field (HTTP 403 "Your current plan does not
+// allow you to search field 'verdicts.overall.malicious'"), which failed
+// every pull and auto-paused the feed.
+const QUERY = "verdicts.urlscan.score:>=70 AND date:>now-2h";
 
 interface UrlscanResult {
   task?: { url?: string; uuid?: string; visibility?: string; time?: string };
