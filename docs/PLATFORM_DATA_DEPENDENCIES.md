@@ -22,11 +22,13 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 > read telemetry ∪ core through `lib/telemetry-read.ts` (one core part while
 > the route is `core` — the old read), config tables read the routed store,
 > and the reaper / agent_events sweeps act on both DBs. `feed_*` and
-> `budget_*` still use core. Before the flip: `POST
-> /api/internal/telemetry/copy-config?dry_run=0`, then `GET
-> /api/internal/telemetry/preflight` must say `ok: true`; after it, `POST
-> /api/internal/telemetry/backfill` copies history so the union can later
-> drop core. The switch is
+> `budget_*` still use core. Runbook: `POST
+> /api/internal/telemetry/copy-config?dry_run=0` → `GET
+> /api/internal/telemetry/preflight` says `ok: true` → flip → wait 90 s →
+> `copy-config?mode=reconcile&dry_run=0` → `POST
+> /api/internal/telemetry/backfill` per history table. Once the route has
+> been `telemetry`, KV `db_route:telemetry_used` keeps history reads and the
+> agent_events consumer on both DBs even after a flip back to core. The switch is
 > `lib/db-route.ts` `telemetryStore(env)` (KV flag `db_route:telemetry`,
 > default `core`); caller families are converted to it one PR at a time, and
 > the cut-over is one KV write after every family is converted. Do not read

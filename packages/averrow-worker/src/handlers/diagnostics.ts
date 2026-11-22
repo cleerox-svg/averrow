@@ -1318,12 +1318,12 @@ export async function fetchPausedAgents(
   const rows = configs.results ?? [];
   if (rows.length === 0) return [];
 
-  type RecentRun = { error_message: string | null; started_at: string };
+  type RecentRun = { id: string; error_message: string | null; started_at: string };
   const parts = await historyParts(env, 'agent_runs', { core: db });
   const perPart = await Promise.all(parts.map((part) => {
     const partDb = part.writeDb ?? db;
     const stmt = partDb.prepare(`
-    SELECT error_message, started_at
+    SELECT id, error_message, started_at
       FROM agent_runs
      WHERE agent_id = ?
      ORDER BY started_at DESC
@@ -1341,7 +1341,7 @@ export async function fetchPausedAgents(
         const seen = new Set<string>();
         const merged = perPart.flatMap((b) => b[i]?.results ?? [])
           .filter((run) => {
-            const k = `${run.started_at}|${run.error_message ?? ''}`;
+            const k = run.id;
             if (seen.has(k)) return false;
             seen.add(k);
             return true;

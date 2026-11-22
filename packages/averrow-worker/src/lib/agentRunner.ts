@@ -12,6 +12,7 @@ import { createNotification } from "./notifications";
 import { withD1Retry, D1_OVERLOAD_RETRY_BASE_MS } from "./d1-retry";
 import { withD1Meter, isExecutionContextLike } from "./d1-meter";
 import { resolveTelemetry } from "./db-route";
+import { seedConfigRowFromCore } from "./telemetry-cutover";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -398,9 +399,18 @@ async function executeAgentMetered(
   // Telemetry route resolved ONCE for the whole run (Track B1c): the config
   // gate, the agent_runs insert, the finalize and the breaker bookkeeping all
   // hit the same DB, even if db_route:telemetry flips while the agent runs.
-  const { db: tdb } = await resolveTelemetry(env);
+  const { route: tRoute, db: tdb } = await resolveTelemetry(env);
 
   // ── Circuit breaker gate ────────────────────────────────────
+  // On telemetry, a missing config row is seeded from core's row first, so a
+  // flip made before copy-config can't reset a manual pause / tripped breaker
+  // to the default enabled=1 (best-effort; the default seed below follows).
+  if (tRoute === "telemetry") {
+    try {
+      const has = await tdb.prepare("SELECT 1 AS ok FROM agent_configs WHERE agent_id = ?").bind(agentId).first();
+      if (!has) await seedConfigRowFromCore(env, tdb, "agent_configs", agentId);
+    } catch { /* fall through to the default seed */ }
+  }
   // Ensure the config row exists (zero-ceremony for agents added after migration).
   await tdb.prepare(
     "INSERT OR IGNORE INTO agent_configs (agent_id) VALUES (?)"
@@ -445,6 +455,11 @@ async function executeAgentMetered(
   let approvalGateAvailable = true;
   try {
     approval = await getApprovalState(tdb, agentId);
+    // Same fallback for the approval row: a grandfathered / approved agent
+    // must not be blocked because copy-config has not run yet.
+    if (approval === null && tRoute === "telemetry" && (await seedConfigRowFromCore(env, tdb, "agent_approvals", agentId))) {
+      approval = await getApprovalState(tdb, agentId);
+    }
   } catch (err) {
     // Fail open: when agent_approvals isn't queryable (test fake
     // missing the table, transient D1 hiccup, migration not yet

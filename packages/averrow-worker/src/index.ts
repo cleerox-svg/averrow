@@ -532,8 +532,8 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
       }
 
       // Telemetry cut-over, agent-runs family (Track B1c; lib/telemetry-cutover.ts):
-      //   POST /api/internal/telemetry/copy-config[?dry_run=0]  (DRY RUN unless dry_run=0)
-      //        agent_configs + agent_approvals core → TELEMETRY_DB, ON CONFLICT DO NOTHING.
+      //   POST /api/internal/telemetry/copy-config[?mode=insert|reconcile][&direction=to_telemetry|to_core][&force=1][&dry_run=0]
+      //        agent_configs + agent_approvals; DRY RUN unless dry_run=0.
       //   POST /api/internal/telemetry/backfill?table=agent_runs|agent_events|agent_activity_log&days=30[&dry_run=0]
       //        one bounded, resumable history-copy batch (≤500 rows); DRY RUN unless dry_run=0.
       //   GET  /api/internal/telemetry/preflight — the flip gate (ok + blocking reasons).
@@ -554,8 +554,9 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
           }
           if (url.pathname === '/api/internal/telemetry/copy-config') {
             // Same convention as backfill / cluster-retirement: a DRY RUN unless dry_run=0.
-            const dryRun = url.searchParams.get('dry_run') !== '0';
-            return Response.json({ success: true, data: await cutover.copyTelemetryConfig(env, { dryRun }) });
+            const cp = cutover.parseCopyConfigParams(url.searchParams);
+            if (!cp.ok) return Response.json({ success: false, error: cp.error }, { status: 400 });
+            return Response.json({ success: true, data: await cutover.copyTelemetryConfig(env, cp.params) });
           }
           const parsed = cutover.parseBackfillParams(url.searchParams);
           if (!parsed.ok) return Response.json({ success: false, error: parsed.error }, { status: 400 });

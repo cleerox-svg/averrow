@@ -8,9 +8,11 @@
 // backfill (lib/telemetry-cutover.ts) has copied it. A history read
 // therefore has to look at BOTH databases while the route is 'telemetry':
 //
-//   route 'core'      → one part: the caller's core DB (or read session) —
-//                       exactly today's single read.
-//   route 'telemetry' → two parts: telemetry first, then core.
+//   route 'core', telemetry never used → one part: the caller's core DB (or
+//                       read session) — exactly today's single read.
+//   route 'telemetry', or 'core' after a flip back (durable KV marker
+//   db_route:telemetry_used, lib/db-route.ts) → two parts: telemetry first,
+//                       then core.
 //
 // Rows are disjoint across the two DBs except for rows the backfill copied.
 // The backfill (lib/telemetry-cutover.ts) copies core rows whose time column
@@ -35,7 +37,7 @@
 // and read through unionRows / unionFirst / unionGrouped.
 
 import type { Env } from "../types";
-import { telemetryRouteState, telemetryDbFor } from "./db-route";
+import { telemetryEverUsed, telemetryRouteState, telemetryDbFor } from "./db-route";
 
 export type ReadDb = Pick<D1Database, "prepare">;
 
@@ -148,8 +150,11 @@ export async function historyParts(
   const core = opts.core ?? env?.DB;
   if (!core) throw new Error("telemetry-read: no core database");
   if (!env) return [{ source: "core", db: core, split: "", splitBinds: [] }];
-  const { route } = await telemetryRouteState(env, nowMs);
-  if (route !== "telemetry") {
+  const { route, bound } = await telemetryRouteState(env, nowMs);
+  // Both DBs while the route is 'telemetry' AND after it ever was (rollback
+  // safety: a flip back to core must not hide the rows written on telemetry).
+  const readBoth = route === "telemetry" || (bound && (await telemetryEverUsed(env, nowMs)));
+  if (!readBoth) {
     return [{ source: "core", db: core, writeDb: env.DB, split: "", splitBinds: [] }];
   }
   const telemetry = telemetryDbFor(env, "telemetry");

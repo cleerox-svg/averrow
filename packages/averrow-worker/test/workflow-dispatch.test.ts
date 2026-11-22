@@ -88,6 +88,7 @@ describe("dispatchWorkflow", () => {
 
   it("dispatches successfully and stamps last-dispatch KV", async () => {
     const result = await dispatchWorkflow(envBundle.env, {
+      activityDb: envBundle.env.DB,
       workflow: new FakeWorkflowOK() as unknown as Workflow,
       workflowName: "nexus-run",
       agentId: "nexus",
@@ -109,6 +110,7 @@ describe("dispatchWorkflow", () => {
 
   it("sets cooldown on WorkflowInternalError", async () => {
     const result = await dispatchWorkflow(envBundle.env, {
+      activityDb: envBundle.env.DB,
       workflow: new FakeWorkflowPlatformError() as unknown as Workflow,
       workflowName: "nexus-run",
       agentId: "nexus",
@@ -131,6 +133,7 @@ describe("dispatchWorkflow", () => {
 
   it("does NOT set cooldown on generic errors", async () => {
     const result = await dispatchWorkflow(envBundle.env, {
+      activityDb: envBundle.env.DB,
       workflow: new FakeWorkflowGenericError() as unknown as Workflow,
       workflowName: "nexus-run",
       agentId: "nexus",
@@ -149,6 +152,7 @@ describe("dispatchWorkflow", () => {
   it("skips dispatch while cooldown is active", async () => {
     // First call sets cooldown via platform error.
     await dispatchWorkflow(envBundle.env, {
+      activityDb: envBundle.env.DB,
       workflow: new FakeWorkflowPlatformError() as unknown as Workflow,
       workflowName: "nexus-run",
       agentId: "nexus",
@@ -156,6 +160,7 @@ describe("dispatchWorkflow", () => {
 
     // Second call uses a healthy workflow but cooldown should block it.
     const result = await dispatchWorkflow(envBundle.env, {
+      activityDb: envBundle.env.DB,
       workflow: new FakeWorkflowOK() as unknown as Workflow,
       workflowName: "nexus-run",
       agentId: "nexus",
@@ -171,6 +176,7 @@ describe("dispatchWorkflow", () => {
 
   it("isolates cooldown per workflow name", async () => {
     await dispatchWorkflow(envBundle.env, {
+      activityDb: envBundle.env.DB,
       workflow: new FakeWorkflowPlatformError() as unknown as Workflow,
       workflowName: "nexus-run",
       agentId: "nexus",
@@ -178,6 +184,7 @@ describe("dispatchWorkflow", () => {
 
     // cartographer-backfill should still dispatch — different KV key.
     const result = await dispatchWorkflow(envBundle.env, {
+      activityDb: envBundle.env.DB,
       workflow: new FakeWorkflowOK() as unknown as Workflow,
       workflowName: "cartographer-backfill",
       agentId: "cartographer",
@@ -187,6 +194,7 @@ describe("dispatchWorkflow", () => {
 
   it("forwards explicit dispatch id when provided", async () => {
     const result = await dispatchWorkflow(envBundle.env, {
+      activityDb: envBundle.env.DB,
       workflow: new FakeWorkflowOK() as unknown as Workflow,
       workflowName: "nexus-run",
       agentId: "nexus",

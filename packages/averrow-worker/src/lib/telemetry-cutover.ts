@@ -2,15 +2,17 @@
 //
 // Three operator tools behind /api/internal/telemetry/* (index.ts):
 //
-//   copyTelemetryConfig  POST /api/internal/telemetry/copy-config[?dry_run=0]  (dry run unless dry_run=0)
-//       Copies agent_configs + agent_approvals core → TELEMETRY_DB with
-//       INSERT … ON CONFLICT DO NOTHING (idempotent; a row already on
-//       telemetry is never overwritten). Run before the route flip — after
-//       it, both tables are read from the routed store only, so a missing
-//       approval row would block that agent (approval gate) and a missing
-//       config row would reset its breaker.
+//   copyTelemetryConfig  POST /api/internal/telemetry/copy-config[?mode=insert|reconcile][&direction=to_telemetry|to_core][&force=1][&dry_run=0]
+//       A DRY RUN unless dry_run=0. mode=insert (default) copies
+//       agent_configs + agent_approvals rows missing on the target (ON
+//       CONFLICT DO NOTHING). mode=reconcile also overwrites a differing
+//       target row when the source's updated_at is the same or newer
+//       (force=1: always) and reports per-row diffs. direction=to_core is the
+//       reverse reconcile, before a flip back. After the flip both tables are
+//       read from the routed store only, so a missing / stale approval row
+//       would block that agent and a stale config row would lose a pause.
 //
-//   backfillTelemetryHistory  POST /api/internal/telemetry/backfill?table=…&days=30[&dry_run=1]
+//   backfillTelemetryHistory  POST /api/internal/telemetry/backfill?table=…&days=30[&dry_run=0]  (dry run unless dry_run=0)
 //       Copies recent history of agent_runs / agent_events /
 //       agent_activity_log core → telemetry so the union reads
 //       (lib/telemetry-read.ts) can later drop core. One bounded call:
@@ -24,8 +26,9 @@
 //   telemetryPreflight  GET /api/internal/telemetry/preflight
 //       The flip gate: ok:true only when TELEMETRY_DB is bound, every wave-1
 //       table exists there with core's columns and indexes, and every
-//       agent_configs / agent_approvals row on core is present on telemetry.
-//       Row counts and backfill cursors are reported, not blocking.
+//       agent_configs / agent_approvals row on core is present on telemetry
+//       with the same pause / breaker / approval content. Telemetry-side
+//       history row counts and backfill cursors are reported, not blocking.
 //
 // All reads of core here are deliberate one-off operator reads (bounded or
 // tiny tables). Core is never written.
@@ -110,51 +113,176 @@ function rowValues(table: keyof typeof COPY_COLUMNS, row: Record<string, unknown
 
 // ─── copy-config ─────────────────────────────────────────────────
 
+export type ConfigCopyMode = "insert" | "reconcile";
+export type ConfigCopyDirection = "to_telemetry" | "to_core";
+
+export interface ConfigRowDiff {
+  agent_id: string;
+  /** insert = missing on target; update = differs and source is as new or newer (or force);
+   *  skip_target_newer = differs but the target row's updated_at is newer. */
+  action: "insert" | "update" | "skip_target_newer";
+  /** Changed columns, target value → source value (empty for an insert). */
+  changed: Record<string, { target: unknown; source: unknown }>;
+}
+
 export interface ConfigCopyTableResult {
   table: ConfigTable;
-  core_rows: number;
-  telemetry_rows_before: number;
-  missing_on_telemetry: number;
+  source_rows: number;
+  target_rows_before: number;
+  missing_on_target: number;
+  /** Rows present on both whose content differs (reconcile mode). */
+  differing: number;
   /** Rows written (0 on a dry run). */
   inserted: number;
+  updated: number;
+  skipped_target_newer: number;
+  /** Per-row plan (≤ CONFIG_DIFF_REPORT_LIMIT rows), dry run or not. */
+  diffs: ConfigRowDiff[];
 }
 
 export interface ConfigCopyResult {
   dry_run: boolean;
+  mode: ConfigCopyMode;
+  direction: ConfigCopyDirection;
+  force: boolean;
   tables: ConfigCopyTableResult[];
 }
 
 /** Statements per D1 batch when copying (well inside D1's batch limits). */
 const COPY_BATCH = 50;
+export const CONFIG_DIFF_REPORT_LIMIT = 200;
 
-export async function copyTelemetryConfig(env: Env, opts: { dryRun: boolean }): Promise<ConfigCopyResult> {
+const sameValue = (a: unknown, b: unknown): boolean =>
+  (a ?? null) === (b ?? null) || (a != null && b != null && String(a) === String(b));
+
+/** Columns whose values differ between two rows of a config table. */
+export function configRowDiff(
+  table: ConfigTable,
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+  columns: readonly string[] = COPY_COLUMNS[table],
+): Record<string, { target: unknown; source: unknown }> {
+  const changed: Record<string, { target: unknown; source: unknown }> = {};
+  for (const c of columns) {
+    if (!sameValue(target[c], source[c])) changed[c] = { target: target[c] ?? null, source: source[c] ?? null };
+  }
+  return changed;
+}
+
+function upsertSql(table: ConfigTable): string {
+  const cols = COPY_COLUMNS[table];
+  const set = cols.filter((c) => c !== "agent_id").map((c) => `${c} = excluded.${c}`).join(", ");
+  return `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")}) ON CONFLICT(agent_id) DO UPDATE SET ${set}`;
+}
+
+export interface CopyConfigParams {
+  dryRun: boolean;
+  mode: ConfigCopyMode;
+  direction: ConfigCopyDirection;
+  force: boolean;
+}
+
+export function parseCopyConfigParams(sp: URLSearchParams): { ok: true; params: CopyConfigParams } | { ok: false; error: string } {
+  const mode = sp.get("mode") ?? "insert";
+  if (mode !== "insert" && mode !== "reconcile") return { ok: false, error: "mode must be insert or reconcile" };
+  const direction = sp.get("direction") ?? "to_telemetry";
+  if (direction !== "to_telemetry" && direction !== "to_core") return { ok: false, error: "direction must be to_telemetry or to_core" };
+  if (direction === "to_core" && mode !== "reconcile") return { ok: false, error: "direction=to_core requires mode=reconcile" };
+  const force = sp.get("force") === "1";
+  if (force && mode !== "reconcile") return { ok: false, error: "force=1 requires mode=reconcile" };
+  // A DRY RUN unless dry_run=0.
+  return { ok: true, params: { dryRun: sp.get("dry_run") !== "0", mode, direction, force } };
+}
+
+/**
+ * Copy agent_configs + agent_approvals between core and TELEMETRY_DB.
+ *
+ *  mode=insert (default): rows missing on the target only, ON CONFLICT DO
+ *    NOTHING — never touches an existing target row. The pre-flip seed.
+ *  mode=reconcile: also overwrites a target row whose content differs, when
+ *    the source row's updated_at is the same or newer (force=1: always). Run
+ *    again ~90 s after the flip: in-flight runs and isolates still holding a
+ *    cached 'core' route can trip a breaker / record an approval on core.
+ *  direction=to_core (reconcile only): the reverse, before flipping back —
+ *    config changes made while the route was 'telemetry' live only there.
+ */
+export async function copyTelemetryConfig(
+  env: Env,
+  opts: { dryRun: boolean; mode?: ConfigCopyMode; direction?: ConfigCopyDirection; force?: boolean },
+): Promise<ConfigCopyResult> {
   const telemetry = await telemetryOrThrow(env);
+  const mode = opts.mode ?? "insert";
+  const direction = opts.direction ?? "to_telemetry";
+  const force = opts.force === true;
+  const source = direction === "to_telemetry" ? env.DB : telemetry;
+  const target = direction === "to_telemetry" ? telemetry : env.DB;
   const tables: ConfigCopyTableResult[] = [];
   for (const table of CONFIG_TABLES) {
     const cols = COPY_COLUMNS[table].join(", ");
-    const core = (await env.DB.prepare(`SELECT ${cols} FROM ${table}`).all<Record<string, unknown>>()).results ?? [];
-    const have = new Set(
-      ((await telemetry.prepare(`SELECT agent_id FROM ${table}`).all<{ agent_id: string }>()).results ?? []).map((r) => r.agent_id),
-    );
-    const missing = core.filter((r) => !have.has(String(r.agent_id)));
+    const srcRows = (await source.prepare(`SELECT ${cols} FROM ${table}`).all<Record<string, unknown>>()).results ?? [];
+    const tgtRows = (await target.prepare(`SELECT ${cols} FROM ${table}`).all<Record<string, unknown>>()).results ?? [];
+    const tgtById = new Map(tgtRows.map((r) => [String(r.agent_id), r]));
+    const plan: Array<{ row: Record<string, unknown>; diff: ConfigRowDiff }> = [];
+    let differing = 0;
+    for (const row of srcRows) {
+      const id = String(row.agent_id);
+      const tgt = tgtById.get(id);
+      if (!tgt) {
+        plan.push({ row, diff: { agent_id: id, action: "insert", changed: {} } });
+        continue;
+      }
+      if (mode !== "reconcile") continue;
+      const changed = configRowDiff(table, tgt, row);
+      if (Object.keys(changed).length === 0) continue;
+      differing++;
+      const sourceNewer = String(row.updated_at ?? "") >= String(tgt.updated_at ?? "");
+      plan.push({ row, diff: { agent_id: id, action: force || sourceNewer ? "update" : "skip_target_newer", changed } });
+    }
     let inserted = 0;
-    if (!opts.dryRun && missing.length > 0) {
-      const sql = insertSql(table, "agent_id");
-      for (let i = 0; i < missing.length; i += COPY_BATCH) {
-        const chunk = missing.slice(i, i + COPY_BATCH);
-        const res = await telemetry.batch(chunk.map((r) => telemetry.prepare(sql).bind(...rowValues(table, r))));
-        inserted += res.reduce((n, r) => n + Number(r.meta?.changes ?? 0), 0);
+    let updated = 0;
+    if (!opts.dryRun) {
+      const writes = plan.filter((p) => p.diff.action !== "skip_target_newer");
+      const sql = mode === "reconcile" ? upsertSql(table) : insertSql(table, "agent_id");
+      for (let i = 0; i < writes.length; i += COPY_BATCH) {
+        const chunk = writes.slice(i, i + COPY_BATCH);
+        const res = await target.batch(chunk.map((p) => target.prepare(sql).bind(...rowValues(table, p.row))));
+        res.forEach((r, k) => {
+          if (Number(r.meta?.changes ?? 0) === 0) return;
+          if (chunk[k]!.diff.action === "insert") inserted++;
+          else updated++;
+        });
       }
     }
     tables.push({
       table,
-      core_rows: core.length,
-      telemetry_rows_before: have.size,
-      missing_on_telemetry: missing.length,
+      source_rows: srcRows.length,
+      target_rows_before: tgtRows.length,
+      missing_on_target: plan.filter((p) => p.diff.action === "insert").length,
+      differing,
       inserted,
+      updated,
+      skipped_target_newer: plan.filter((p) => p.diff.action === "skip_target_newer").length,
+      diffs: plan.slice(0, CONFIG_DIFF_REPORT_LIMIT).map((p) => p.diff),
     });
   }
-  return { dry_run: opts.dryRun, tables };
+  return { dry_run: opts.dryRun, mode, direction, force, tables };
+}
+
+/**
+ * Seed a missing config row on TELEMETRY_DB from core's row (Track B1c).
+ * executeAgent calls this when the route is 'telemetry' and telemetry has no
+ * row for the agent, so a flip made before copy-config can't reset a manual
+ * pause / breaker state (agent_configs) or block a grandfathered agent
+ * (agent_approvals). Without a core row it seeds nothing (the caller keeps
+ * its own default). Returns true when a core row was copied.
+ */
+export async function seedConfigRowFromCore(env: Env, telemetry: D1Database, table: ConfigTable, agentId: string): Promise<boolean> {
+  const cols = COPY_COLUMNS[table];
+  const row = await env.DB.prepare(`SELECT ${cols.join(", ")} FROM ${table} WHERE agent_id = ?`)
+    .bind(agentId).first<Record<string, unknown>>();
+  if (!row) return false;
+  await telemetry.prepare(insertSql(table, "agent_id")).bind(...rowValues(table, row)).run();
+  return true;
 }
 
 // ─── backfill ────────────────────────────────────────────────────
@@ -191,6 +319,21 @@ export function parseBackfillParams(sp: URLSearchParams): { ok: true; params: Ba
 /** SQLite `datetime()` text for `ms` (UTC, 'YYYY-MM-DD HH:MM:SS'). */
 export function sqliteTs(ms: number): string {
   return new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+}
+
+/**
+ * One backfill chunk: a rowid seek on the table's own B-tree. NOT INDEXED +
+ * the unary `+` on the time column keep the planner from range-scanning a
+ * time index and sorting the whole remaining window by rowid (a TEMP B-TREE
+ * per call); pinned by test/telemetry-agent-runs-cutover.test.ts with and
+ * without ANALYZE.
+ */
+export function backfillSelectSql(table: TelemetryHistoryTable): string {
+  const tc = HISTORY_TIME_COLUMN[table];
+  return `SELECT rowid AS _rowid, ${COPY_COLUMNS[table].join(", ")} FROM ${table} NOT INDEXED
+     WHERE rowid > ? AND +${tc} >= ? AND +${tc} < ?
+     ORDER BY rowid
+     LIMIT ?`;
 }
 
 export interface BackfillResult {
@@ -263,11 +406,7 @@ export async function backfillTelemetryHistory(
     after = first.r - 1;
   }
 
-  const cols = COPY_COLUMNS[table];
-  const select = `SELECT rowid AS _rowid, ${cols.join(", ")} FROM ${table}
-     WHERE rowid > ? AND ${tc} >= ? AND ${tc} < ?
-     ORDER BY rowid
-     LIMIT ?`;
+  const select = backfillSelectSql(table);
   const insert = insertSql(table, "id");
   let scanned = 0;
   let inserted = 0;
@@ -353,9 +492,26 @@ export interface TelemetryPreflight {
   warnings: string[];
   route: { route: string; requested: string | null; bound: boolean };
   tables: TablePreflight[];
-  config: Array<{ table: ConfigTable; core_rows: number; telemetry_rows: number; missing_on_telemetry: string[] }>;
-  history: Array<{ table: TelemetryHistoryTable; core_rows: number | null; telemetry_rows: number | null; backfill: BackfillCursor | null }>;
+  config: Array<{
+    table: ConfigTable;
+    core_rows: number;
+    telemetry_rows: number;
+    missing_on_telemetry: string[];
+    /** Rows whose flip-relevant content differs (≤ 50 reported). */
+    content_mismatch: Array<{ agent_id: string; changed: Record<string, { target: unknown; source: unknown }> }>;
+  }>;
+  /** Telemetry-side counts only: a COUNT(*) over core's history tables is a full scan. */
+  history: Array<{ table: TelemetryHistoryTable; telemetry_rows: number | null; backfill: BackfillCursor | null }>;
 }
+
+/**
+ * The columns that change what an agent DOES after the flip: a pause / breaker
+ * state or an approval decision. A mismatch on any of them blocks the flip.
+ */
+export const PREFLIGHT_CONTENT_COLUMNS: Record<ConfigTable, readonly string[]> = {
+  agent_configs: ["enabled", "paused_reason", "consecutive_failures", "consecutive_failure_threshold", "circuit_trip_rule"],
+  agent_approvals: ["state"],
+};
 
 const normSql = (sql: string | null): string =>
   (sql ?? "").replace(/--[^\n]*/g, " ").replace(/\s+/g, " ").replace(/\bIF NOT EXISTS\b/gi, "").replace(/\s*([(),])\s*/g, "$1").trim().toLowerCase();
@@ -431,24 +587,38 @@ export async function telemetryPreflight(env: Env): Promise<TelemetryPreflight> 
     if (extra.length > 0) warnings.push(`${table}: indexes only on TELEMETRY_DB: ${extra.join(", ")}`);
   }
 
-  // Config rows: every core row must already be on telemetry.
+  // Config rows: every core row must be on telemetry with the same
+  // flip-relevant content (pause / breaker state, approval decision).
   for (const table of CONFIG_TABLES) {
-    const tableOk = result.tables.find((t) => t.table === table)?.on_telemetry === true;
-    const core = ((await env.DB.prepare(`SELECT agent_id FROM ${table}`).all<{ agent_id: string }>()).results ?? []).map((r) => r.agent_id);
+    const tableOk = result.tables.find((t) => t.table === table)?.columns_match === true;
+    const cols = COPY_COLUMNS[table].join(", ");
+    const core = (await env.DB.prepare(`SELECT ${cols} FROM ${table}`).all<Record<string, unknown>>()).results ?? [];
     const tel = tableOk
-      ? new Set(((await telemetry.prepare(`SELECT agent_id FROM ${table}`).all<{ agent_id: string }>()).results ?? []).map((r) => r.agent_id))
-      : new Set<string>();
-    const missing = core.filter((id) => !tel.has(id));
-    result.config.push({ table, core_rows: core.length, telemetry_rows: tel.size, missing_on_telemetry: missing.slice(0, 50) });
+      ? new Map(((await telemetry.prepare(`SELECT ${cols} FROM ${table}`).all<Record<string, unknown>>()).results ?? []).map((r) => [String(r.agent_id), r]))
+      : new Map<string, Record<string, unknown>>();
+    const missing: string[] = [];
+    const mismatch: Array<{ agent_id: string; changed: Record<string, { target: unknown; source: unknown }> }> = [];
+    for (const row of core) {
+      const id = String(row.agent_id);
+      const t = tel.get(id);
+      if (!t) { missing.push(id); continue; }
+      const changed = configRowDiff(table, t, row, PREFLIGHT_CONTENT_COLUMNS[table]);
+      if (Object.keys(changed).length > 0) mismatch.push({ agent_id: id, changed });
+    }
+    result.config.push({
+      table, core_rows: core.length, telemetry_rows: tel.size,
+      missing_on_telemetry: missing.slice(0, 50), content_mismatch: mismatch.slice(0, 50),
+    });
     if (missing.length > 0) blocking.push(`${table}: ${missing.length} core row(s) not copied to TELEMETRY_DB (POST /api/internal/telemetry/copy-config?dry_run=0)`);
+    if (mismatch.length > 0) blocking.push(`${table}: ${mismatch.length} row(s) differ from core in ${PREFLIGHT_CONTENT_COLUMNS[table].join(" / ")} (POST /api/internal/telemetry/copy-config?mode=reconcile&dry_run=0)`);
   }
 
   // History: informational (the union reads cover anything not backfilled).
   for (const table of TELEMETRY_HISTORY_TABLES) {
     let backfill: BackfillCursor | null = null;
     try { backfill = parseBackfillCursor(await env.CACHE.get(backfillCursorKey(table))); } catch { backfill = null; }
-    const [coreRows, telRows] = await Promise.all([countRows(env.DB, table), countRows(telemetry, table)]);
-    result.history.push({ table, core_rows: coreRows, telemetry_rows: telRows, backfill });
+    const telRows = await countRows(telemetry, table);
+    result.history.push({ table, telemetry_rows: telRows, backfill });
   }
 
   result.ok = blocking.length === 0;

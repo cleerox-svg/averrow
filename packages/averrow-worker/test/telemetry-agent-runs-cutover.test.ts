@@ -24,7 +24,7 @@ import { hasSqlite, openMigratedDb, d1FromSqlite, fakeKv, sqliteTimestampHoursAg
 import { splitStatements } from "./migration-schema";
 import type { Env } from "../src/types";
 import type { AgentModule } from "../src/lib/agentRunner";
-import { resetTelemetryRouteCache, TELEMETRY_ROUTE_KV_KEY } from "../src/lib/db-route";
+import { resetTelemetryRouteCache, TELEMETRY_ROUTE_KV_KEY, TELEMETRY_USED_KV_KEY } from "../src/lib/db-route";
 import {
   historyParts,
   mergeGroupedRows,
@@ -44,6 +44,7 @@ import {
   copyTelemetryConfig,
   telemetryPreflight,
   COPY_COLUMNS,
+  backfillSelectSql,
 } from "../src/lib/telemetry-cutover";
 
 function openTelemetryDb(): SqliteDb {
@@ -296,7 +297,7 @@ describe.skipIf(!hasSqlite())("cut-over tools", () => {
     w.tel.prepare("INSERT INTO agent_configs (agent_id, enabled, consecutive_failures) VALUES ('b', 1, 2)").run();
 
     const dry = await copyTelemetryConfig(w.env, { dryRun: true });
-    expect(dry.tables.map((t) => [t.table, t.missing_on_telemetry, t.inserted])).toEqual([["agent_configs", 1, 0], ["agent_approvals", 2, 0]]);
+    expect(dry.tables.map((t) => [t.table, t.missing_on_target, t.inserted])).toEqual([["agent_configs", 1, 0], ["agent_approvals", 2, 0]]);
     expect(rowsOf(w.tel, "SELECT COUNT(*) AS n FROM agent_approvals")[0]!.n).toBe(0);
 
     const applied = await copyTelemetryConfig(w.env, { dryRun: false });
@@ -306,7 +307,7 @@ describe.skipIf(!hasSqlite())("cut-over tools", () => {
       { agent_id: "b", enabled: 1, consecutive_failures: 2 }, // telemetry's own row kept
     ]);
     const again = await copyTelemetryConfig(w.env, { dryRun: false });
-    expect(again.tables.every((t) => t.inserted === 0 && t.missing_on_telemetry === 0)).toBe(true);
+    expect(again.tables.every((t) => t.inserted === 0 && t.missing_on_target === 0)).toBe(true);
   });
 
   it("backfill: dry run writes nothing; apply is resumable and idempotent; recent rows are never copied", async () => {
@@ -357,5 +358,114 @@ describe.skipIf(!hasSqlite())("cut-over tools", () => {
       const actual = (tel.prepare(`SELECT name FROM pragma_table_info('${table}') ORDER BY cid`).all() as Array<{ name: string }>).map((c) => c.name);
       expect(actual, table).toEqual([...cols]);
     }
+  });
+});
+
+describe.skipIf(!hasSqlite())("review fixes (H1 / M1 / M2)", () => {
+  it("H1: the backfill chunk seeks by rowid on every history table, with and without ANALYZE", () => {
+    const db = openMigratedDb();
+    const seed: Record<string, string> = {
+      agent_runs: "INSERT INTO agent_runs (id, agent_id, started_at, status) VALUES (?, 'a', ?, 'success')",
+      agent_events: "INSERT INTO agent_events (id, event_type, source_agent, created_at) VALUES (?, 'pivot_detected', 'nexus', ?)",
+      agent_activity_log: "INSERT INTO agent_activity_log (id, agent_id, event_type, created_at) VALUES (?, 'nexus', 'started', ?)",
+    };
+    for (const [table, sql] of Object.entries(seed)) {
+      for (let i = 0; i < 300; i++) db.prepare(sql).run(`${table}-${i}`, sqliteTimestampHoursAgo(i));
+    }
+    const planFor = (table: "agent_runs" | "agent_events" | "agent_activity_log"): string =>
+      (db.prepare(`EXPLAIN QUERY PLAN ${backfillSelectSql(table)}`).all(10, "2000-01-01", "2100-01-01", 100) as Array<{ detail: string }>)
+        .map((r) => r.detail).join(" | ");
+    for (const analyzed of [false, true]) {
+      if (analyzed) db.exec("ANALYZE");
+      for (const table of ["agent_runs", "agent_events", "agent_activity_log"] as const) {
+        const plan = planFor(table);
+        expect(plan, `${table} analyzed=${analyzed}`).toMatch(/SEARCH \w+ USING INTEGER PRIMARY KEY \(rowid>\?\)/);
+        expect(plan, `${table} analyzed=${analyzed}`).not.toMatch(/TEMP B-TREE|USING (COVERING )?INDEX/);
+      }
+    }
+  });
+
+  it("M1: reconcile overwrites differing rows when the source is newer; force overrides; dry run reports diffs", async () => {
+    const w = world(null);
+    w.core.prepare("INSERT INTO agent_configs (agent_id, enabled, paused_reason, updated_at) VALUES ('p', 0, 'manual', '2026-11-22 10:00:00'), ('q', 0, 'manual', '2026-11-22 09:00:00')").run();
+    // p: telemetry stale (older); q: telemetry default seeded later (newer).
+    w.tel.prepare("INSERT INTO agent_configs (agent_id, enabled, updated_at) VALUES ('p', 1, '2026-11-22 08:00:00'), ('q', 1, '2026-11-22 11:00:00')").run();
+    const dry = await copyTelemetryConfig(w.env, { dryRun: true, mode: "reconcile" });
+    const cfg = dry.tables.find((t) => t.table === "agent_configs")!;
+    expect(cfg.differing).toBe(2);
+    expect(cfg.diffs.find((d) => d.agent_id === "p")).toMatchObject({ action: "update", changed: { enabled: { target: 1, source: 0 } } });
+    expect(cfg.diffs.find((d) => d.agent_id === "q")!.action).toBe("skip_target_newer");
+    expect(rowsOf(w.tel, "SELECT enabled FROM agent_configs WHERE agent_id = 'p'")[0]!.enabled).toBe(1);
+
+    const applied = await copyTelemetryConfig(w.env, { dryRun: false, mode: "reconcile" });
+    expect(applied.tables.find((t) => t.table === "agent_configs")).toMatchObject({ updated: 1, skipped_target_newer: 1 });
+    expect(rowsOf(w.tel, "SELECT agent_id, enabled FROM agent_configs ORDER BY agent_id")).toEqual([
+      { agent_id: "p", enabled: 0 }, { agent_id: "q", enabled: 1 },
+    ]);
+    await copyTelemetryConfig(w.env, { dryRun: false, mode: "reconcile", force: true });
+    expect(rowsOf(w.tel, "SELECT enabled, paused_reason FROM agent_configs WHERE agent_id = 'q'")[0]).toEqual({ enabled: 0, paused_reason: "manual" });
+  });
+
+  it("M1: direction=to_core reconciles telemetry's changes back to core", async () => {
+    const w = world(null);
+    w.core.prepare("INSERT INTO agent_approvals (agent_id, state, requested_at, updated_at) VALUES ('n', 'pending', '2026-01-01', '2026-11-01 00:00:00')").run();
+    w.tel.prepare("INSERT INTO agent_approvals (agent_id, state, requested_at, updated_at) VALUES ('n', 'approved', '2026-01-01', '2026-11-20 00:00:00')").run();
+    const r = await copyTelemetryConfig(w.env, { dryRun: false, mode: "reconcile", direction: "to_core" });
+    expect(r.tables.find((t) => t.table === "agent_approvals")!.updated).toBe(1);
+    expect(rowsOf(w.core, "SELECT state FROM agent_approvals WHERE agent_id = 'n'")[0]!.state).toBe("approved");
+  });
+
+  it("M1: preflight blocks on a content mismatch (pause state), not only on missing rows", async () => {
+    const w = world(null);
+    w.core.prepare("INSERT INTO agent_configs (agent_id, enabled, paused_reason) VALUES ('p', 0, 'manual')").run();
+    w.tel.prepare("INSERT INTO agent_configs (agent_id, enabled) VALUES ('p', 1)").run();
+    const r = await telemetryPreflight(w.env);
+    expect(r.ok).toBe(false);
+    expect(r.blocking.join(" ")).toMatch(/agent_configs: 1 row\(s\) differ from core/);
+    expect(r.config.find((c) => c.table === "agent_configs")!.content_mismatch[0]).toMatchObject({ agent_id: "p" });
+    await copyTelemetryConfig(w.env, { dryRun: false, mode: "reconcile", force: true });
+    expect((await telemetryPreflight(w.env)).ok).toBe(true);
+  });
+
+  it("M1: a flip before copy-config cannot reset a manual pause or block an approved agent", async () => {
+    const w = world("telemetry");
+    w.core.prepare("INSERT INTO agent_configs (agent_id, enabled, paused_reason) VALUES ('b1c_paused', 0, 'manual')").run();
+    w.core.prepare("INSERT INTO agent_approvals (agent_id, state, requested_at) VALUES ('b1c_paused', 'approved', '2026-01-01'), ('b1c_ok', 'approved', '2026-01-01')").run();
+    const mod = (name: string) => ({
+      name, displayName: name, description: "t", color: "#000", trigger: "manual", stallThresholdMinutes: 30,
+      async execute() { return { itemsProcessed: 1, itemsCreated: 0, itemsUpdated: 0, output: {} }; },
+    }) as unknown as AgentModule;
+    const paused = await executeAgent(w.env, mod("b1c_paused"), {}, null, "manual");
+    expect(paused.status).toBe("circuit_open");
+    expect(rowsOf(w.tel, "SELECT enabled, paused_reason FROM agent_configs WHERE agent_id = 'b1c_paused'")[0]).toEqual({ enabled: 0, paused_reason: "manual" });
+    const ok = await executeAgent(w.env, mod("b1c_ok"), {}, null, "manual");
+    expect(ok.status).toBe("success");
+    expect(rowsOf(w.tel, "SELECT state FROM agent_approvals WHERE agent_id = 'b1c_ok'")[0]!.state).toBe("approved");
+  });
+
+  it("M2: after the route was ever 'telemetry', a flip back to core still reads (and consumes from) both DBs", async () => {
+    const w = world("telemetry");
+    await historyParts(w.env, "agent_runs"); // resolves 'telemetry' → durable marker
+    expect(w.kv.store.has(TELEMETRY_USED_KV_KEY)).toBe(true);
+    insertRun(w.tel, "on-tel", "sentinel", 0.2);
+    insertRun(w.core, "on-core", "sentinel", 1);
+    w.tel.prepare("INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status, created_at) VALUES ('ev', 'feed_pulled', 'sentinel', NULL, '{}', 2, 'pending', ?)")
+      .run(sqliteTimestampHoursAgo(0.1));
+    w.route("core"); // flip back (also clears the in-isolate marker cache)
+    expect((await historyParts(w.env, "agent_runs")).map((p) => p.source)).toEqual(["telemetry", "core"]);
+    expect((await getLatestRun(w.env, "sentinel"))?.id).toBe("on-tel");
+    const waits: Promise<unknown>[] = [];
+    await processAgentEvents(w.env, { waitUntil: (p: Promise<unknown>) => { waits.push(p); }, passThroughOnException: () => {} } as unknown as ExecutionContext);
+    await Promise.all(waits);
+    expect(rowsOf(w.tel, "SELECT status FROM agent_events WHERE id = 'ev'")[0]!.status).toBe("done");
+    // New writes go to core again.
+    const run = await createAgentRun(w.env, "daily_snapshots");
+    expect(run.route).toBe("core");
+  });
+
+  it("M2: without the marker, route core stays a single core read", async () => {
+    const w = world(null);
+    expect(w.kv.store.has(TELEMETRY_USED_KV_KEY)).toBe(false);
+    expect(await historyParts(w.env, "agent_runs")).toHaveLength(1);
   });
 });
