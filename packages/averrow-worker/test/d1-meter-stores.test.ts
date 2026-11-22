@@ -85,13 +85,13 @@ describe("AE point shape v2", () => {
     expect([sum(0), sum(1), sum(2), sum(5)]).toEqual([13, 4, 5, 1]);
   });
 
-  it("a hand-built tally (no breakdown) keeps one store-less point; the remainder goes to ''", () => {
+  it("a hand-built tally (no breakdown) keeps one store-less point; a remainder after store points goes to '-'", () => {
     expect(d1AttributionPoints("observatory_nodes", { rowsRead: 7, rowsWritten: 0, queries: 2 }))
       .toEqual([{ blobs: ["observatory_nodes", ""], doubles: [7, 0, 2, 0, 0, 1], indexes: ["observatory_nodes"] }]);
     const pts = d1AttributionPoints("e", { rowsRead: 10, rowsWritten: 0, queries: 3 }, {
       core: { rowsRead: 4, rowsWritten: 0, queries: 1, overloads: 0, errors: 0 },
     });
-    expect(pts.map((p) => [p.blobs?.[1], p.doubles])).toEqual([["core", [4, 0, 1, 0, 0, 1]], ["", [6, 0, 2, 0, 0, 0]]]);
+    expect(pts.map((p) => [p.blobs?.[1], p.doubles])).toEqual([["core", [4, 0, 1, 0, 0, 1]], ["-", [6, 0, 2, 0, 0, 0]]]);
   });
 
   it("writeD1Attribution stays non-fatal", () => {

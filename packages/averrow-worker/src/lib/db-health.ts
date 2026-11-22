@@ -7,7 +7,9 @@
 //   - size history ..... KV `db_size_history:<store>` (lib/db-inventory.ts,
 //                        one point a day) → growth via least-squares fit
 //   - reads / writes ... CF GraphQL d1AnalyticsAdaptiveGroups (lib/d1-budget.ts
-//                        helpers), per database id → store (storeForDatabaseId)
+//                        helpers), per database id → store, resolved ONLY
+//                        against this deploy env's ids (CF usage is
+//                        account-wide: staging/dev databases share the account)
 //   - overloads, jobs .. Analytics Engine per-store meter points
 //                        (lib/analytics.ts point shape v2, lib/d1-meter.ts)
 //   - top tables ....... KV `db_inventory:<store>` (lib/db-inventory.ts)
@@ -35,7 +37,7 @@ import {
   D1_DB_CAP_BYTES,
   deployEnvOf,
   hasStore,
-  storeForDatabaseId,
+  type DeployEnv,
   type StoreId,
 } from "./db-registry";
 import { getDatabaseSizes, type DbSizeRow } from "./db-sizes";
@@ -111,6 +113,7 @@ export interface DatabasesPayload {
   generated_at: string;
   window: DbWindow;
   summary: {
+    /** Registry stores bound in this environment. */
     live: number;
     proposed: number;
     total_bytes: number | null;
@@ -118,6 +121,19 @@ export interface DatabasesPayload {
     cycle_rows_read: number | null;
     cycle_pct_of_plan: number | null;
     overloads_24h: number | null;
+    /**
+     * What overload counts cover: only statements issued through the D1
+     * meter (agent / cron / feed / workflow / job layers). HTTP handlers are
+     * not metered yet, so their rejections are not in any overload count.
+     */
+    overloads_scope: "metered_jobs";
+    /** The thresholds the server's status rules use — render the same lines. */
+    thresholds: {
+      warn_size_fraction: number;
+      critical_size_fraction: number;
+      warn_days_to_cap: number;
+      overloaded_min: number;
+    };
   };
   databases: DatabaseCard[];
   proposed: Array<{ name: string; role: string; description: string }>;
@@ -159,6 +175,8 @@ export const PROPOSED_DATABASES: DatabasesPayload["proposed"] = [
 
 export const OVERLOADED_MIN = 5;
 export const WARN_SIZE_FRACTION = 0.5;
+/** Size at which the status reason says "critical" (status stays `warning`). */
+export const CRITICAL_SIZE_FRACTION = 0.8;
 export const WARN_DAYS_TO_CAP = 180;
 export const GROWTH_FIT_POINTS = 14;
 export const GROWTH_MIN_POINTS = 3;
@@ -208,7 +226,9 @@ export function classifyStatus(input: {
     return { status: "overloaded", reasons: [`${o} overload rejections in the last 24 h`] };
   }
   if (input.size_bytes != null && input.size_bytes >= input.cap_bytes * WARN_SIZE_FRACTION) {
-    reasons.push(`Size is ${Math.round((input.size_bytes / input.cap_bytes) * 100)}% of the ${Math.round(input.cap_bytes / 1024 ** 3)} GB cap`);
+    const pct = Math.round((input.size_bytes / input.cap_bytes) * 100);
+    const critical = input.size_bytes >= input.cap_bytes * CRITICAL_SIZE_FRACTION;
+    reasons.push(`${critical ? "Critical: size" : "Size"} is ${pct}% of the ${Math.round(input.cap_bytes / 1024 ** 3)} GB cap`);
   }
   if (input.days_to_cap != null && input.days_to_cap < WARN_DAYS_TO_CAP) {
     reasons.push(`Reaches the cap in about ${input.days_to_cap} days at the current growth`);
@@ -236,11 +256,15 @@ export function noteFor(store: StoreId, card: { writes_cycle: number | null; siz
   return null;
 }
 
-/** `agent:navigator:bg` → { kind: 'agent', source: 'navigator' }. */
+/**
+ * `agent:navigator:bg` → { kind: 'agent', source: 'navigator' }.
+ * `job:<name>` (a handler-dispatched scheduled job metered on its own, e.g.
+ * job:db_inventory) maps to kind 'cron'.
+ */
 export function parseEndpointLabel(label: string): { kind: EdgeKind; source: string } {
-  const m = /^(agent|feed|cron|workflow|http):(.*)$/.exec(label);
+  const m = /^(agent|feed|cron|workflow|http|job):(.*)$/.exec(label);
   if (!m) return { kind: "http", source: label };
-  const kind = m[1] as EdgeKind;
+  const kind: EdgeKind = m[1] === "job" ? "cron" : (m[1] as EdgeKind);
   const source = (m[2] ?? "").replace(/:bg$/, "");
   return { kind, source };
 }
@@ -262,7 +286,7 @@ async function aeSql<T>(env: Env, sql: string): Promise<T[]> {
       signal: AbortSignal.timeout(AE_TIMEOUT_MS),
     },
   );
-  if (!res.ok) throw new Error(`AE SQL HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`ae_sql_http_${res.status}`);
   const body = (await res.json()) as { data?: T[] };
   return body.data ?? [];
 }
@@ -360,16 +384,51 @@ interface UsageByStore {
   writes: Map<StoreId, number>;
 }
 
-function usageByStore(rows: readonly D1DatabaseUsageRow[]): UsageByStore {
+/**
+ * Store for a D1 database id in THIS deploy env only. CF usage is
+ * account-wide, and the registry lists prod + staging + dev ids per store, so
+ * a cross-env lookup would add staging/dev traffic to the prod card. null env
+ * (unrecognised ENVIRONMENT) maps nothing.
+ */
+export function storeForEnvDatabaseId(deployEnv: DeployEnv | null, databaseId: string): StoreId | null {
+  if (!deployEnv) return null;
+  const needle = databaseId.toLowerCase();
+  const spec = DB_REGISTRY.find((s) => s.databaseId[deployEnv]?.toLowerCase() === needle);
+  return spec ? spec.id : null;
+}
+
+function usageByStore(deployEnv: DeployEnv | null, rows: readonly D1DatabaseUsageRow[]): UsageByStore {
   const out: UsageByStore = { reads: new Map(), writes: new Map() };
   for (const r of rows) {
-    const spec = storeForDatabaseId(r.database_id);
-    if (!spec) continue;
-    out.reads.set(spec.id, (out.reads.get(spec.id) ?? 0) + n(r.rows_read));
-    out.writes.set(spec.id, (out.writes.get(spec.id) ?? 0) + n(r.rows_written));
+    const store = storeForEnvDatabaseId(deployEnv, r.database_id);
+    if (!store) continue;
+    out.reads.set(store, (out.reads.get(store) ?? 0) + n(r.rows_read));
+    out.writes.set(store, (out.writes.get(store) ?? 0) + n(r.rows_written));
   }
   return out;
 }
+
+/**
+ * A section error safe to show every staff viewer: a fixed category, never
+ * upstream text (CF GraphQL bodies / error messages). The full text goes to
+ * the Worker log.
+ */
+export function classifySectionError(section: string, err: unknown): string {
+  const msg = errText(err);
+  const name = err instanceof Error ? err.name : "";
+  console.warn(`[db-health] section ${section} failed: ${msg}`);
+  if (/setup_required/.test(msg)) return "setup_required";
+  if (name === "TimeoutError" || name === "AbortError" || /timed? ?out|timeout/i.test(msg)) return "timeout";
+  const ae = /^ae_sql_http_(\d{3})$/.exec(msg);
+  if (ae) return `ae_sql_http_${ae[1]}`;
+  const gql = /CF GraphQL HTTP (\d{3})/.exec(msg);
+  if (gql) return `cf_graphql_http_${gql[1]}`;
+  if (CF_GRAPHQL_SECTIONS.has(section)) return "cf_graphql_error";
+  if (section === "overloads" || section === "edges") return "ae_sql_error";
+  return "internal_error";
+}
+
+const CF_GRAPHQL_SECTIONS: ReadonlySet<string> = new Set(["usage_6h", "usage_24h", "usage_cycle", "hourly"]);
 
 /** Window-independent payload; `top_jobs` / `edges` are filled per window. */
 export type DatabasesBase = Omit<DatabasesPayload, "window" | "edges">;
@@ -384,11 +443,12 @@ function usageOf(map: Map<StoreId, number> | null, store: StoreId): number | nul
 
 export async function buildDatabasesBase(env: Env, now: Date = new Date()): Promise<DatabasesBase> {
   const errors: Record<string, string> = {};
+  const deployEnv = deployEnvOf(env);
   const section = async <T>(name: string, fn: () => Promise<T>): Promise<T | null> => {
     try {
       return await fn();
     } catch (e) {
-      errors[`${name}_error`] = errText(e);
+      errors[`${name}_error`] = classifySectionError(name, e);
       return null;
     }
   };
@@ -413,7 +473,7 @@ export async function buildDatabasesBase(env: Env, now: Date = new Date()): Prom
       const r = await fetcher();
       if (r.setup_required) throw new Error("setup_required: CF_API_TOKEN + CF_ACCOUNT_ID");
       if (r.error) throw new Error(r.error);
-      return usageByStore(r.per_database);
+      return usageByStore(deployEnv, r.per_database);
     });
   const u6 = await usage("usage_6h", () => fetchRecentWindowMetrics(env, 6, now));
   const u24 = await usage("usage_24h", () => fetchRecentWindowMetrics(env, 24, now));
@@ -422,8 +482,9 @@ export async function buildDatabasesBase(env: Env, now: Date = new Date()): Prom
     const r = await fetchBillingCycleMetrics(env, now);
     if (r.setup_required) throw new Error("setup_required: CF_API_TOKEN + CF_ACCOUNT_ID");
     if (r.error) throw new Error(r.error);
+    // Account-wide on purpose: the plan ceiling is account-wide.
     cycleRowsRead = r.rows_read_cycle;
-    return usageByStore(r.per_database);
+    return usageByStore(deployEnv, r.per_database);
   });
 
   const hourlyUsage = await section("hourly", async () => {
@@ -434,12 +495,12 @@ export async function buildDatabasesBase(env: Env, now: Date = new Date()): Prom
     for (const h of r.hours) {
       const per = new Map<StoreId, { r: number; w: number }>();
       for (const d of h.per_database) {
-        const spec = storeForDatabaseId(d.database_id);
-        if (!spec) continue;
-        const cur = per.get(spec.id) ?? { r: 0, w: 0 };
+        const store = storeForEnvDatabaseId(deployEnv, d.database_id);
+        if (!store) continue;
+        const cur = per.get(store) ?? { r: 0, w: 0 };
         cur.r += n(d.rows_read);
         cur.w += n(d.rows_written);
-        per.set(spec.id, cur);
+        per.set(store, cur);
       }
       m.set(toHourLabel(h.hour), per);
     }
@@ -453,7 +514,6 @@ export async function buildDatabasesBase(env: Env, now: Date = new Date()): Prom
   const firstHour = hourlyWindowStart(24, now).getTime();
   const hourLabels = Array.from({ length: 24 }, (_, i) => toHourLabel(new Date(firstHour + i * 3_600_000).toISOString()));
 
-  const deployEnv = deployEnvOf(env);
   const databases: DatabaseCard[] = DB_REGISTRY.map((spec) => {
     const size: DbSizeRow | undefined = sizes?.find((r) => r.store === spec.id);
     const hist = history?.get(spec.id) ?? [];
@@ -519,13 +579,20 @@ export async function buildDatabasesBase(env: Env, now: Date = new Date()): Prom
   return {
     generated_at: now.toISOString(),
     summary: {
-      live: databases.length,
+      live: DB_REGISTRY.filter((s) => hasStore(env, s.id)).length,
       proposed: PROPOSED_DATABASES.length,
       total_bytes: totalBytes,
       largest_share_pct: totalBytes && largest != null ? Math.round((largest / totalBytes) * 1000) / 10 : null,
       cycle_rows_read: cycleRead,
       cycle_pct_of_plan: cycleRead != null ? Math.round((cycleRead / BILLING_CYCLE_PLAN_CEILING) * 1000) / 10 : null,
       overloads_24h: overloadsKnown ? databases.reduce((s, d) => s + (d.overloads_24h ?? 0), 0) : null,
+      overloads_scope: "metered_jobs",
+      thresholds: {
+        warn_size_fraction: WARN_SIZE_FRACTION,
+        critical_size_fraction: CRITICAL_SIZE_FRACTION,
+        warn_days_to_cap: WARN_DAYS_TO_CAP,
+        overloaded_min: OVERLOADED_MIN,
+      },
     },
     databases,
     proposed: PROPOSED_DATABASES,
@@ -575,7 +642,7 @@ export async function getDatabasesPayload(env: Env, window: DbWindow): Promise<D
     edges = await cachedValue<DbEdge[]>(env, databasesEdgesCacheKey(window), DATABASES_CACHE_TTL_S,
       () => fetchEdges(env, window), { singleFlight: SINGLE_FLIGHT });
   } catch (e) {
-    edgesError = errText(e);
+    edgesError = classifySectionError("edges", e);
   }
   return composePayload(base, window, edges, edgesError);
 }

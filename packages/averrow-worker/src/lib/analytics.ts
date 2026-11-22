@@ -86,6 +86,9 @@ export function recordD1Reads(env: Env, endpoint: string, tally: D1Tally, stores
  * Point shape (v2, 2026-11 — per-store split):
  *   blob1   endpoint label (unchanged; index1 too)
  *   blob2   store id (`core` / `audit` / `geo` / `dnsq`), '' = not attributed
+ *           (a record's ONLY point: handler tallies, or pre-v2 points), '-' =
+ *           the unattributed remainder written AFTER store points (weight 0,
+ *           so the '' → 1 reader rule can never count a record twice)
  *           to a store (handler tallies, or pre-v2 points)
  *   double1 rows_read, double2 rows_written, double3 queries (unchanged
  *           meaning — summed per endpoint over the store points they equal
@@ -98,7 +101,7 @@ export function recordD1Reads(env: Env, endpoint: string, tally: D1Tally, stores
  *           a run touching two stores writes two points.
  *
  * With a store breakdown, one point is written per store with queries > 0,
- * plus a '' point for any remainder of the total not covered by a store
+ * plus a '-' point for any remainder of the total not covered by a store
  * (only possible for a hand-built tally). With nothing to write (no
  * queries at all) a single '' point keeps the record count.
  */
@@ -115,6 +118,9 @@ export function writeD1Attribution(
     /* AE failures are non-fatal — the response is the priority */
   }
 }
+
+/** blob2 of an unattributed remainder point that follows store points. */
+export const D1_UNATTRIBUTED_REMAINDER = "-";
 
 /** The AE points writeD1Attribution writes (pure; exported for tests). */
 export function d1AttributionPoints(
@@ -140,7 +146,8 @@ export function d1AttributionPoints(
   }
   const unattributed = stores?.[""];
   if (rest.queries > 0 || points.length === 0) {
-    push("", {
+    // '' only when it is the record's sole point; otherwise the sentinel '-'.
+    push(points.length === 0 ? "" : D1_UNATTRIBUTED_REMAINDER, {
       rowsRead: Math.max(0, rest.rowsRead),
       rowsWritten: Math.max(0, rest.rowsWritten),
       queries: Math.max(0, rest.queries),

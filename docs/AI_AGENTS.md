@@ -595,7 +595,7 @@ and the event write retries with a fixed id (`INSERT OR IGNORE`).
 | Property | Value |
 |----------|-------|
 | **File** | `packages/averrow-worker/src/lib/db-inventory.ts` (`runDbInventory`) + `src/lib/table-estimates.ts` |
-| **Trigger** | Navigator (`*/5`) waitUntil tail, UTC hour 4 only (hour-only gate, no minute check); KV day stamp `db_inventory:<YYYY-MM-DD>` + 15-min claim `db_inventory:claim`; skipped while the D1 read budget is over its soft-cap |
+| **Trigger** | Navigator (`*/5`) waitUntil tail, UTC hour 4 only (hour-only gate, no minute check); KV day state `db_inventory:<YYYY-MM-DD>` (`{attempts, pending}`) + 15-min claim `db_inventory:claim`; skipped while the D1 read budget is over its soft-cap. D1-metered as its own layer `job:db_inventory` |
 | **Purpose** | Daily per-store (DB_REGISTRY) table list with bounded row estimates, `dbstat` bytes per table where D1 allows it (databases ≤ 2 GB; a refusal is remembered 7 days), and one size sample — read by the ops Databases page (`GET /api/databases`, `lib/db-health.ts`) |
 
 Handler-dispatched writer like `daily_snapshots`: `agent_runs` row
@@ -603,9 +603,11 @@ Handler-dispatched writer like `daily_snapshots`: `agent_runs` row
 `finalizeAgentRun` with a 3 s / 6 s / 12 s backoff (`success`; `partial` when a
 store failed; `failed` when none could be read; `records_processed` = tables
 inventoried), then a telemetry `agent_events` row (`db_inventory_complete`,
-`target_agent=NULL`, `ON CONFLICT DO NOTHING` on a fixed id). The day is
-stamped only when every bound store succeeded, so a failed store is retried on
-a later hour-4 tick. Row estimates never scan a large table (sqlite_stat1 /
+`target_agent=NULL`, `ON CONFLICT DO NOTHING` on a fixed id). The day state is
+written after every run: a later hour-4 tick re-runs only the stores still
+`pending` (the ones that failed), at most 2 runs per UTC day
+(`DB_INVENTORY_MAX_RUNS_PER_DAY`), so a persistently failing store never
+re-inventories the healthy ones. Row estimates never scan a large table (sqlite_stat1 /
 `MAX(rowid)`; exact `COUNT(*)` only under 100K rows, shared with
 `handlers/d1-health.ts`). No AI call.
 

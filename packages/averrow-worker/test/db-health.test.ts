@@ -191,7 +191,9 @@ describe("buildDatabasesBase — fail-soft", () => {
     expect(geo.status).toBe("unknown");
     expect(geo.note).toBe("Not bound in this environment");
 
-    expect(base.summary.live).toBe(4);
+    expect(base.summary.live).toBe(2); // only DB + AUDIT_DB are bound
+    expect(base.summary.overloads_scope).toBe("metered_jobs");
+    expect(base.summary.thresholds).toEqual({ warn_size_fraction: 0.5, critical_size_fraction: 0.8, warn_days_to_cap: 180, overloaded_min: 5 });
     expect(base.summary.proposed).toBe(2);
     expect(base.summary.total_bytes).toBe(4096 * 1010);
     expect(base.summary.overloads_24h).toBeNull();
@@ -203,6 +205,7 @@ describe("buildDatabasesBase — fail-soft", () => {
     const now = new Date("2026-11-22T10:30:00Z");
     const coreId = "a3776a5f-c07c-4e20-9f3b-8d7f8c7f90c6";
     const auditId = "55d58eff-47f3-4533-afa4-e52d494376e0";
+    const stagingCoreId = "7709322c-7020-41f9-ad96-aa797cf585de";
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const body = String(init?.body ?? "");
       if (String(url).includes("/d1/database")) {
@@ -219,8 +222,11 @@ describe("buildDatabasesBase — fail-soft", () => {
       }
       // GraphQL: hourly query groups by datetimeHour; the others by databaseId.
       const hourly = body.includes("datetimeHour databaseId");
-      const groups = [coreId, auditId].map((id) => ({
-        sum: { rowsRead: id === coreId ? 1000 : 0, rowsWritten: id === coreId ? 10 : 0, readQueries: 1, writeQueries: 1 },
+      // The staging core database shares the account: its usage must NOT
+      // land on the prod core card (M1), but stays in the account-wide cycle.
+      const rowsFor = (id: string) => (id === coreId ? [1000, 10] : id === stagingCoreId ? [5000, 50] : [0, 0]);
+      const groups = [coreId, auditId, stagingCoreId].map((id) => ({
+        sum: { rowsRead: rowsFor(id)[0], rowsWritten: rowsFor(id)[1], readQueries: 1, writeQueries: 1 },
         dimensions: hourly ? { datetimeHour: "2026-11-22T10:00:00Z", databaseId: id } : { databaseId: id },
       }));
       return new Response(JSON.stringify({ data: { viewer: { accounts: [{ d1AnalyticsAdaptiveGroups: groups }] } } }), { status: 200 });
@@ -245,7 +251,8 @@ describe("buildDatabasesBase — fail-soft", () => {
     expect(audit.note).toBe("No writes this billing cycle — check the audit writer");
     expect(base.summary.overloads_24h).toBe(6);
     expect(base.summary.largest_share_pct).toBeCloseTo(98.4, 1);
-    expect(base.summary.cycle_rows_read).toBe(1000);
+    expect(base.summary.cycle_rows_read).toBe(6000); // account-wide, staging included
+    expect(core.reads_cycle).toBe(1000);
   });
 });
 
@@ -269,5 +276,48 @@ describe("composePayload / getDatabasesPayload", () => {
     expect(core.top_jobs.map((j) => j.source)).toEqual(["s9", "s8", "s7", "s6", "s5", "s4", "s3", "s2"]);
     expect(composed.databases.find((d) => d.store === "audit")!.top_jobs).toEqual([]);
     expect(composed.edges).toHaveLength(10);
+  });
+});
+
+describe("section errors are classified, never upstream text (AppSec)", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it("GraphQL HTTP bodies and errors[].message never reach the payload", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/d1/database")) return new Response("{}", { status: 403 });
+      if (String(url).includes("analytics_engine")) return new Response("secret-ae-body", { status: 500 });
+      const body = String(init?.body ?? "");
+      if (body.includes("datetimeHour databaseId")) {
+        return new Response(JSON.stringify({ errors: [{ message: "internal: account acct-123 token scope leak" }] }), { status: 200 });
+      }
+      return new Response("upstream body with SECRET-ish detail", { status: 502 });
+    }));
+    const env = { DB: { prepare: () => ({ bind() { return this; }, first: async () => null, all: async () => ({ results: [] }) }) },
+      CACHE: new MockKV(), ENVIRONMENT: "production", CF_API_TOKEN: "t", CF_ACCOUNT_ID: "a" } as unknown as Env;
+    const base = await buildDatabasesBase(env, new Date("2026-11-22T10:30:00Z"));
+    expect(base.usage_6h_error).toBe("cf_graphql_http_502");
+    expect(base.usage_cycle_error).toBe("cf_graphql_http_502");
+    expect(base.hourly_error).toBe("cf_graphql_error");
+    expect(base.overloads_error).toBe("ae_sql_http_500");
+    const text = JSON.stringify(base);
+    expect(text).not.toContain("SECRET");
+    expect(text).not.toContain("acct-123");
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("the handler's 500 path returns a generic message", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.resetModules();
+    vi.doMock("../src/lib/db-health", async (orig) => ({
+      ...(await orig<typeof import("../src/lib/db-health")>()),
+      getDatabasesPayload: async () => { throw new Error("KV internal detail xyz"); },
+    }));
+    const { handleDatabases } = await import("../src/handlers/databases");
+    const res = await handleDatabases(new Request("https://averrow.com/api/databases"), {} as Env);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ success: false, error: "databases payload unavailable" });
+    vi.doUnmock("../src/lib/db-health");
+    vi.resetModules();
   });
 });

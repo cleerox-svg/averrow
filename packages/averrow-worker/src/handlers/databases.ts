@@ -22,7 +22,8 @@ export async function handleDatabases(request: Request, env: Env): Promise<Respo
     const data = await getDatabasesPayload(env, window);
     return json({ success: true, data }, 200, origin);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return json({ success: false, error: message }, 500, origin);
+    // Never echo internals to the (all-staff) caller; the full text is logged.
+    console.warn(`[databases] payload build failed: ${err instanceof Error ? err.message : String(err)}`);
+    return json({ success: false, error: "databases payload unavailable" }, 500, origin);
   }
 }

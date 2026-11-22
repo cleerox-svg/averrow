@@ -402,7 +402,7 @@ export async function fetchD1HourlyAttribution(
       SUM(_sample_interval * if(blob2 = '', 1, double6)) AS points
     FROM trust_radar_d1_reads
     WHERE timestamp >= toDateTime('${start}')
-      AND (startsWith(blob1, 'agent:') OR startsWith(blob1, 'cron:') OR startsWith(blob1, 'workflow:') OR startsWith(blob1, 'feed:'))
+      AND (startsWith(blob1, 'agent:') OR startsWith(blob1, 'cron:') OR startsWith(blob1, 'workflow:') OR startsWith(blob1, 'feed:') OR startsWith(blob1, 'job:'))
     GROUP BY hour, endpoint
     ORDER BY hour DESC, rows_read DESC
     LIMIT 5000

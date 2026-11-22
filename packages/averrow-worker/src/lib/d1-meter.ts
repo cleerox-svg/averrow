@@ -337,6 +337,9 @@ export function meterD1(db: D1Database, tally: D1Tally, storeId = ""): D1Databas
             return r;
           };
         case "withSession":
+          // Mirror the binding: no withSession (some doubles) → none here,
+          // so feature checks (`typeof db.withSession === 'function'`) agree.
+          if (typeof (target as { withSession?: unknown }).withSession !== "function") return undefined;
           return (...args: unknown[]): D1DatabaseSession => {
             const s = Reflect.apply(target.withSession, target, args) as D1DatabaseSession;
             return meterSessionInto(s, sink);

@@ -17,12 +17,18 @@
 //   `db_inventory:<store>`        latest DbInventory, 26 h TTL
 //   `db_size_history:<store>`     [{date, bytes}] oldest → newest, ≤ 90 points,
 //                                 one per UTC date (a re-run replaces that date)
-//   `db_inventory:<YYYY-MM-DD>`   day stamp — set once every bound store was
-//                                 inventoried, so later hour-4 ticks skip
+//   `db_inventory:<YYYY-MM-DD>`   day state {attempts, pending[]} — written
+//                                 after EVERY run. A later hour-4 tick runs
+//                                 again only for the stores still pending
+//                                 (failed), and at most DB_INVENTORY_MAX_RUNS_PER_DAY
+//                                 runs a day, so a persistently failing store
+//                                 never re-inventories the healthy ones
 //   `db_inventory:claim`          best-effort claim (15 min) so overlapping
 //                                 5-min ticks don't both run it
-// Skipped while the D1 read budget is over its soft-cap (no stamp → a later
-// hour-4 tick, or tomorrow, retries).
+// Skipped while the D1 read budget is over its soft-cap (no run → no state →
+// a later hour-4 tick, or tomorrow, retries). The run is D1-metered as its
+// own exclusive layer `job:db_inventory` (lib/d1-meter.ts), not inside
+// Navigator's agent row.
 //
 // Bookkeeping (CLAUDE.md §6): a handler-dispatched writer like
 // daily_snapshots — `agent_runs` row (agent_id 'db_inventory') created at
@@ -35,6 +41,7 @@ import { createAgentRun, finalizeAgentRun } from "../db/agent-runs";
 import { D1_OVERLOAD_RETRY_BASE_MS, withD1Retry } from "./d1-retry";
 import { DB_REGISTRY, hasStore, storeBinding, type StoreId } from "./db-registry";
 import { getDatabaseSizes, type DbSizeRow } from "./db-sizes";
+import { withD1Meter } from "./d1-meter";
 import { estimateTableRows, listUserTables, safeReader, type ReadDb } from "./table-estimates";
 
 export const DB_INVENTORY_AGENT_ID = "db_inventory";
@@ -46,6 +53,9 @@ export const DB_SIZE_HISTORY_TTL_S = 120 * 86400;
 export const DB_INVENTORY_CLAIM_KEY = "db_inventory:claim";
 export const DB_INVENTORY_CLAIM_TTL_S = 15 * 60;
 export const DB_INVENTORY_STAMP_TTL_S = 2 * 86400;
+/** Runs per UTC day, first run included (a failed store is retried once). */
+export const DB_INVENTORY_MAX_RUNS_PER_DAY = 2;
+export const DB_INVENTORY_METER_LABEL = "job:db_inventory";
 /** Tables kept per store in the stored inventory (largest by rows). */
 export const DB_INVENTORY_MAX_TABLES = 50;
 /** dbstat walks every page — only on databases at most this big. */
@@ -58,7 +68,13 @@ export const sizeHistoryKey = (store: StoreId): string => `db_size_history:${sto
 export const inventoryStampKey = (date: string): string => `db_inventory:${date}`;
 const dbstatDeniedKey = (store: StoreId): string => `db_inventory:dbstat_denied:${store}`;
 
-export type DbstatStatus = "ok" | "denied" | "skipped_large" | "skipped_denied_recently" | "error";
+export type DbstatStatus =
+  | "ok"
+  | "denied"
+  | "skipped_large"
+  | "skipped_unknown_size"
+  | "skipped_denied_recently"
+  | "error";
 
 export interface InventoryTable {
   name: string;
@@ -83,6 +99,27 @@ export interface DbInventory {
 export interface SizePoint {
   date: string;
   bytes: number;
+}
+
+export interface DbInventoryDayState {
+  /** Runs started today. */
+  attempts: number;
+  /** Stores not yet inventoried today (empty = done). */
+  pending: StoreId[];
+}
+
+/** Parse the day state; a legacy / unparseable value means "done". */
+export function parseDayState(raw: string | null): DbInventoryDayState | null {
+  if (raw == null) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<DbInventoryDayState>;
+    if (v && typeof v === "object" && typeof v.attempts === "number" && Array.isArray(v.pending)) {
+      return { attempts: v.attempts, pending: v.pending.filter((x): x is StoreId => DB_REGISTRY.some((s) => s.id === x)) };
+    }
+  } catch {
+    /* fall through */
+  }
+  return { attempts: DB_INVENTORY_MAX_RUNS_PER_DAY, pending: [] };
 }
 
 export type DbInventoryRunResult =
@@ -147,7 +184,9 @@ async function dbstatBytes(
   sizeBytes: number | null,
 ): Promise<{ status: DbstatStatus; bytes: Map<string, number> }> {
   const bytes = new Map<string, number>();
-  if (sizeBytes == null || sizeBytes > DBSTAT_MAX_DB_BYTES) return { status: "skipped_large", bytes };
+  // Unknown size: can't prove dbstat's full page walk is affordable.
+  if (sizeBytes == null) return { status: "skipped_unknown_size", bytes };
+  if (sizeBytes > DBSTAT_MAX_DB_BYTES) return { status: "skipped_large", bytes };
   if (await env.CACHE.get(dbstatDeniedKey(store))) return { status: "skipped_denied_recently", bytes };
   try {
     await db.prepare("SELECT name FROM dbstat LIMIT 1").all();
@@ -247,8 +286,12 @@ export async function runDbInventory(opts: DbInventoryOptions): Promise<DbInvent
   if (opts.overBudget) return { ran: false, reason: "over_budget" };
   if (!env.CACHE) return { ran: false, reason: "no_cache" };
   const date = utcDate(nowMs);
+  let state: DbInventoryDayState | null;
   try {
-    if (await env.CACHE.get(inventoryStampKey(date))) return { ran: false, reason: "done_today" };
+    state = parseDayState(await env.CACHE.get(inventoryStampKey(date)));
+    if (state && (state.pending.length === 0 || state.attempts >= DB_INVENTORY_MAX_RUNS_PER_DAY)) {
+      return { ran: false, reason: "done_today" };
+    }
     if (await env.CACHE.get(DB_INVENTORY_CLAIM_KEY)) return { ran: false, reason: "claimed" };
     await env.CACHE.put(DB_INVENTORY_CLAIM_KEY, new Date(nowMs).toISOString(), {
       expirationTtl: DB_INVENTORY_CLAIM_TTL_S,
@@ -256,7 +299,20 @@ export async function runDbInventory(opts: DbInventoryOptions): Promise<DbInvent
   } catch (e) {
     return { ran: false, reason: "error", error: errMsg(e) };
   }
+  const targets = state?.pending ?? null; // null = every bound store
+  const attempts = (state?.attempts ?? 0) + 1;
+  return withD1Meter(env, DB_INVENTORY_METER_LABEL, (meteredEnv) =>
+    inventoryRun(meteredEnv, opts, date, targets, attempts));
+}
 
+async function inventoryRun(
+  env: Env,
+  opts: DbInventoryOptions,
+  date: string,
+  targets: StoreId[] | null,
+  attempts: number,
+): Promise<DbInventoryRunResult> {
+  const { nowMs } = opts;
   let runId: string | null = null;
   const done: StoreId[] = [];
   const failed: StoreId[] = [];
@@ -277,6 +333,7 @@ export async function runDbInventory(opts: DbInventoryOptions): Promise<DbInvent
     }
     for (const spec of DB_REGISTRY) {
       if (!hasStore(env, spec.id)) continue;
+      if (targets && !targets.includes(spec.id)) continue; // retry: failed stores only
       try {
         const inv = await inventoryStore(env, spec.id, sizes.find((s) => s.store === spec.id), nowMs);
         await writeInventory(env, inv);
@@ -288,15 +345,18 @@ export async function runDbInventory(opts: DbInventoryOptions): Promise<DbInvent
       }
     }
     status = failed.length === 0 ? "success" : done.length > 0 ? "partial" : "failed";
-    if (failed.length === 0) {
-      await env.CACHE.put(inventoryStampKey(date), new Date().toISOString(), {
-        expirationTtl: DB_INVENTORY_STAMP_TTL_S,
-      });
-    }
   } catch (e) {
     status = "failed";
     errors.push(errMsg(e));
   } finally {
+    // Day state after EVERY run: only `failed` stays pending, and the
+    // attempt count caps the day (DB_INVENTORY_MAX_RUNS_PER_DAY).
+    try {
+      const state: DbInventoryDayState = { attempts, pending: failed };
+      await env.CACHE.put(inventoryStampKey(date), JSON.stringify(state), { expirationTtl: DB_INVENTORY_STAMP_TTL_S });
+    } catch (e) {
+      errors.push(`day state: ${errMsg(e)}`);
+    }
     const errorMessage = errors.length > 0 ? errors.join("; ").slice(0, 1000) : null;
     if (runId) {
       const backoff = opts.finalizeBackoffMs ?? DB_INVENTORY_FINALIZE_BACKOFF_MS;

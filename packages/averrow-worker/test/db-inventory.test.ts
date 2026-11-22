@@ -140,20 +140,78 @@ describe("run", () => {
     expect(JSON.parse(kv.store.get(inventoryKey("core"))!).dbstat).toBe("skipped_denied_recently");
   });
 
-  it("a store whose table list is unreadable fails the run partially and leaves the day unstamped", async () => {
+  it("a persistently failing store: day state after every run, the retry touches only it, capped at 2 runs/day", async () => {
     const kv = new MockKV();
     const good = fakeDb();
+    let brokenCalls = 0;
     const broken = {
       prepare: () => {
-        const s = { bind: () => s, first: async () => { throw new Error("overloaded"); }, all: async () => { throw new Error("overloaded"); }, run: async () => ({}) };
+        const s = {
+          bind: () => s,
+          first: async () => { brokenCalls += 1; throw new Error("overloaded"); },
+          all: async () => { brokenCalls += 1; throw new Error("overloaded"); },
+          run: async () => ({}),
+        };
         return s;
       },
     };
-    const r = await runDbInventory({ env: envOf(good.db, kv, { AUDIT_DB: broken }), nowMs: HOUR4, finalizeBackoffMs: [0], overloadBaseMs: 0 });
-    expect(r).toMatchObject({ ran: true, status: "partial", stores: ["core"], failed: ["audit"] });
-    expect(kv.store.get(inventoryStampKey("2026-11-22"))).toBeUndefined();
+    const env = envOf(good.db, kv, { AUDIT_DB: broken });
+    const opts = { finalizeBackoffMs: [0], overloadBaseMs: 0 };
+    const inventoryReads = () =>
+      good.log.filter((l) => l.sql.includes("sqlite_master") || l.sql.includes("MAX(rowid)") || l.sql.includes('COUNT(*) AS n FROM "')).length;
+
+    const r1 = await runDbInventory({ env, nowMs: HOUR4, ...opts });
+    expect(r1).toMatchObject({ ran: true, status: "partial", stores: ["core"], failed: ["audit"] });
+    expect(JSON.parse(kv.store.get(inventoryStampKey("2026-11-22"))!)).toEqual({ attempts: 1, pending: ["audit"] });
     const fin = good.log.find((l) => /UPDATE agent_runs SET\s+status = \?/.test(l.sql))!;
     expect(fin.binds[0]).toBe("partial");
+
+    // Retry (claim expired): only the failed store is read — no core inventory reads.
+    kv.store.delete(DB_INVENTORY_CLAIM_KEY);
+    const before = inventoryReads();
+    const r2 = await runDbInventory({ env, nowMs: HOUR4 + 15 * 60_000, ...opts });
+    expect(r2).toMatchObject({ ran: true, status: "failed", stores: [], failed: ["audit"] });
+    expect(inventoryReads()).toBe(before);
+    expect(JSON.parse(kv.store.get(inventoryStampKey("2026-11-22"))!)).toEqual({ attempts: 2, pending: ["audit"] });
+
+    // Cap reached: later hour-4 ticks don't run (no D1, no new agent_runs).
+    kv.store.delete(DB_INVENTORY_CLAIM_KEY);
+    const logLen = good.log.length;
+    const calls = brokenCalls;
+    expect(await runDbInventory({ env, nowMs: HOUR4 + 30 * 60_000, ...opts })).toEqual({ ran: false, reason: "done_today" });
+    expect(good.log.length).toBe(logLen);
+    expect(brokenCalls).toBe(calls);
+    expect(good.log.filter((l) => l.sql.startsWith("INSERT INTO agent_runs"))).toHaveLength(2);
+  });
+
+  it("a fully successful run marks the day done; a legacy stamp string counts as done", async () => {
+    const kv = new MockKV();
+    const { db } = fakeDb();
+    await runDbInventory({ env: envOf(db, kv), nowMs: HOUR4, finalizeBackoffMs: [0], overloadBaseMs: 0 });
+    expect(JSON.parse(kv.store.get(inventoryStampKey("2026-11-22"))!)).toEqual({ attempts: 1, pending: [] });
+    kv.store.delete(DB_INVENTORY_CLAIM_KEY);
+    expect(await runDbInventory({ env: envOf(db, kv), nowMs: HOUR4 + 600_000 })).toEqual({ ran: false, reason: "done_today" });
+    kv.store.set(inventoryStampKey("2026-11-23"), "2026-11-23T04:00:00.000Z");
+    expect(await runDbInventory({ env: envOf(db, kv), nowMs: HOUR4 + 86_400_000 })).toEqual({ ran: false, reason: "done_today" });
+  });
+
+  it("an unmeasured size skips dbstat (skipped_unknown_size) and the run is metered as job:db_inventory", async () => {
+    const kv = new MockKV();
+    const points: Array<{ blobs?: unknown[] }> = [];
+    const ae = { writeDataPoint: (p: { blobs?: unknown[] }) => { points.push(p); } };
+    const noSize = fakeDb();
+    const db = {
+      prepare: (sql: string) => (sql.startsWith("PRAGMA page_")
+        ? { bind() { return this; }, first: async () => null, all: async () => ({ results: [] }) }
+        : noSize.db.prepare(sql)),
+    };
+    const rr = await runDbInventory({ env: envOf(db, kv, { AE: ae }), nowMs: HOUR4, finalizeBackoffMs: [0], overloadBaseMs: 0 });
+    expect(rr).toMatchObject({ ran: true, status: "success" });
+    const inv = JSON.parse(kv.store.get(inventoryKey("core"))!);
+    expect(inv.size_bytes).toBeNull();
+    expect(inv.dbstat).toBe("skipped_unknown_size");
+    expect(noSize.log.some((l) => l.sql.includes("dbstat"))).toBe(false);
+    expect(points.map((p) => p.blobs?.[0])).toContain("job:db_inventory");
   });
 });
 
