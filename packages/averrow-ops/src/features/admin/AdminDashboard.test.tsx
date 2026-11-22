@@ -41,13 +41,14 @@ const mockSystemHealthData = {
     { day: '2026-03-17', count: 3405 },
   ],
   infrastructure: {
-    mainDb: { name: 'trust-radar-v2', sizeMb: 79.5, tables: 57, region: 'ENAM' },
+    mainDb: { name: 'trust-radar-v2', sizeMb: 5550, tables: 57, region: 'ENAM' },
     auditDb: { name: 'trust-radar-v2-audit', sizeKb: 180, tables: 2, region: 'ENAM' },
     worker: { name: 'averrow-worker', platform: 'Cloudflare Workers' },
-    kvNamespaces: [
-      { name: 'averrow-cache' },
-      { name: 'SESSIONS' },
-      { name: 'CACHE' },
+    kvNamespaces: [{ name: 'CACHE' }],
+    databases: [
+      { store: 'core', name: 'trust-radar-v2', sizeBytes: 5.42 * 1024 ** 3, tables: 57, source: 'cf_api', capBytes: 10 * 1024 ** 3 },
+      { store: 'audit', name: 'trust-radar-v2-audit', sizeBytes: 180 * 1024, tables: 2, source: 'pragma', capBytes: 10 * 1024 ** 3 },
+      { store: 'geo', name: 'geoip-db', sizeBytes: null, tables: null, source: null, capBytes: 10 * 1024 ** 3 },
     ],
   },
 };
@@ -343,9 +344,41 @@ describe('AdminDashboard', () => {
   it('renders KV namespaces on the System tab', async () => {
     renderWithProviders(<AdminDashboard />);
     await switchTab('System');
-    expect(screen.getByText(/averrow-cache/)).toBeInTheDocument();
-    expect(screen.getByText(/SESSIONS/)).toBeInTheDocument();
     expect(screen.getByText(/CACHE/)).toBeInTheDocument();
+    expect(screen.queryByText(/averrow-cache/)).not.toBeInTheDocument();
+  });
+
+  it('renders one tile per databases[] entry with measured sizes and "—" for nulls', async () => {
+    renderWithProviders(<AdminDashboard />);
+    await switchTab('System');
+    expect(screen.getByText('5.42 GB · 57 tables')).toBeInTheDocument();
+    expect(screen.getByText('180.00 KB · 2 tables')).toBeInTheDocument();
+    expect(screen.getByText('geoip-db')).toBeInTheDocument();
+    expect(screen.getByText('— · — tables')).toBeInTheDocument();
+    expect(screen.getByText('source: Cloudflare')).toBeInTheDocument();
+    expect(screen.getByText('source: estimate')).toBeInTheDocument();
+    expect(screen.queryByText(/79\.5 MB/)).not.toBeInTheDocument();
+  });
+
+  it('falls back to mainDb/auditDb tiles with "—" for null sizes when databases is absent', async () => {
+    (useSystemHealth as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        ...mockSystemHealthData,
+        infrastructure: {
+          ...mockSystemHealthData.infrastructure,
+          mainDb: { name: null, sizeMb: null, tables: null, region: 'ENAM' },
+          auditDb: { name: null, sizeKb: null, tables: null, region: 'ENAM' },
+          databases: undefined,
+        },
+      },
+      isLoading: false,
+      isError: false,
+    });
+    renderWithProviders(<AdminDashboard />);
+    await switchTab('System');
+    expect(screen.getAllByText('— · — tables')).toHaveLength(2);
+    expect(screen.getByText('PRIMARY')).toBeInTheDocument();
+    expect(screen.getByText('AUDIT')).toBeInTheDocument();
   });
 
   it('renders the compliance checklist on the System tab', async () => {

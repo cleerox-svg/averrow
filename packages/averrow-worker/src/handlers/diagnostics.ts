@@ -24,6 +24,7 @@ import { notRetiredClusterSql, retiredClusterSql } from "../lib/cluster-status";
 import { SHADOW_SIGNAL_WEIGHTS, shadowScoreDelta } from "../lib/page-phishing-scorer";
 import { NRD_RETENTION_LAST_RESULT_KEY, parseNrdRetentionLastResult } from "../lib/nrd-retention";
 import type { Env } from "../types";
+import { labelPerDatabase } from "../lib/db-registry";
 
 // ─── Diagnostics caching (D1 overload 2026-11-08) ─────────────────
 /** KV key + TTL for the enrichment_pipeline whole-threats-table pass. */
@@ -3010,14 +3011,20 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // this is the cycle-to-date view. Drives the "Billing-cycle
         // projection" meter on /admin/metrics and gives operators an
         // honest "X of N days elapsed, on pace for Y% of the 25B ceiling".
-        d1_billing_cycle: d1BillingCycle,
+        // per_database rows carry additive `name` / `store` labels
+        // (lib/db-registry.ts storeForDatabaseId; null = not a bound DB).
+        d1_billing_cycle: d1BillingCycle
+          ? { ...d1BillingCycle, per_database: labelPerDatabase(d1BillingCycle.per_database) }
+          : d1BillingCycle,
 
         // PR-AM: per-database read/write activity over the requested
         // window (defaults to 6h, capped at 168h via `hours` query
         // param). Lets the operator see whether a recent fix to a
         // specific worker has actually reduced its load, without
         // waiting for the cycle aggregate to update.
-        d1_recent_window: d1Recent,
+        d1_recent_window: d1Recent
+          ? { ...d1Recent, per_database: labelPerDatabase(d1Recent.per_database) }
+          : d1Recent,
 
         // Per-endpoint D1 read attribution from Workers Analytics Engine.
         // Reads from the trust_radar_d1_reads dataset that opt-in handlers
@@ -3028,7 +3035,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // d1AnalyticsAdaptiveGroups, summed across every database, with a
         // per_database split), oldest hour first, current partial hour
         // included. Window = the `hours` param, capped at 48.
-        d1_hourly: d1Hourly.hours,
+        d1_hourly: d1Hourly.hours.map((h) => ({ ...h, per_database: labelPerDatabase(h.per_database) })),
         d1_hourly_error: d1Hourly.error ?? (d1Hourly.setup_required ? "CF_API_TOKEN / CF_ACCOUNT_ID not set" : null),
 
         // Same hours (same labels, same buckets), top per-job AE endpoints

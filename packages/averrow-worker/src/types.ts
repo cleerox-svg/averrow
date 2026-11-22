@@ -67,6 +67,8 @@ export interface Env {
   // Cloudflare Radar
   CF_ACCOUNT_ID?: string;
   CF_API_TOKEN?: string;
+  // Ops token (Account › D1 › Read) for D1 size lookups; falls back to CF_API_TOKEN.
+  CF_OPS_API_TOKEN?: string;
   // Dedicated read-only Radar token for the cf_radar_bots feed; falls back to CF_API_TOKEN.
   CF_RADAR_API_TOKEN?: string;
   // Dedicated ops token (Account > URL Scanner > Edit + Account > D1 > Read) for the

@@ -179,31 +179,40 @@ function makeEnvWithCounts(
   log: QueryLog[],
   counts: { total: number; today: number; week: number },
 ): Env {
-  const session = makeSessionWithCounts(log, counts);
+  return envFor(kv, log, makeSessionWithCounts(log, counts));
+}
+
+/** PRAGMA / sqlite_master answers for lib/db-sizes.ts's fallback path (no
+ *  CF credentials in these envs). Sizes are fixtures, deliberately NOT the
+ *  old 79.5 MB / 180 KB literals. */
+function pragmaFirst(sql: string, pageCount: number, tables: number): unknown {
+  if (sql === "PRAGMA page_size") return { page_size: 4096 };
+  if (sql === "PRAGMA page_count") return { page_count: pageCount };
+  if (sql.includes("FROM sqlite_master")) return { n: tables };
+  return undefined;
+}
+
+function envFor(kv: MockKV, log: QueryLog[], session: ReturnType<typeof makeSession>): Env {
   return {
-    DB: { withSession: () => session },
+    ENVIRONMENT: "production",
+    DB: {
+      withSession: () => session,
+      prepare(sql: string) {
+        return { async first() { return pragmaFirst(sql, 1_323_894, 262) ?? null; } };
+      },
+    },
     CACHE: kv,
     AUDIT_DB: {
       prepare(sql: string) {
         log.push({ sql });
-        return { async first() { return { count: 283 }; } };
+        return { async first() { return pragmaFirst(sql, 60, 2) ?? { count: 283 }; } };
       },
     },
   } as unknown as Env;
 }
 
 function makeEnv(kv: MockKV, log: QueryLog[]): Env {
-  const session = makeSession(log);
-  return {
-    DB: { withSession: () => session },
-    CACHE: kv,
-    AUDIT_DB: {
-      prepare(sql: string) {
-        log.push({ sql });
-        return { async first() { return { count: 283 }; } };
-      },
-    },
-  } as unknown as Env;
+  return envFor(kv, log, makeSession(log));
 }
 
 function req(): Request {
@@ -258,17 +267,50 @@ describe("handleSystemHealth — cached read path preserves the frozen response 
           { day: "2026-06-28", count: 150 },
         ],
         infrastructure: {
-          mainDb: { name: "trust-radar-v2", sizeMb: 79.5, tables: 57, region: "ENAM" },
-          auditDb: { name: "trust-radar-v2-audit", sizeKb: 180, tables: 2, region: "ENAM" },
+          // Measured (PRAGMA fallback here), never the old literals.
+          mainDb: { name: "trust-radar-v2", sizeMb: 5171.5, tables: 262, region: "ENAM" },
+          auditDb: { name: "trust-radar-v2-audit", sizeKb: 240, tables: 2, region: "ENAM" },
           worker: { name: "averrow-worker", platform: "Cloudflare Workers" },
-          kvNamespaces: [
-            { name: "averrow-cache" },
-            { name: "SESSIONS" },
-            { name: "CACHE" },
+          // KV_REGISTRY bindings present on env (lib/db-registry.ts).
+          kvNamespaces: [{ name: "CACHE" }],
+          databases: [
+            { store: "core", name: "trust-radar-v2", sizeBytes: 4096 * 1_323_894, tables: 262, source: "pragma", capBytes: 10 * 1024 ** 3 },
+            { store: "audit", name: "trust-radar-v2-audit", sizeBytes: 4096 * 60, tables: 2, source: "pragma", capBytes: 10 * 1024 ** 3 },
+            { store: "geo", name: "geoip-db", sizeBytes: null, tables: null, source: null, capBytes: 10 * 1024 ** 3 },
+            { store: "dnsq", name: "trust-radar-dns-queue", sizeBytes: null, tables: null, source: null, capBytes: 10 * 1024 ** 3 },
           ],
+          cf_api_status: "no_credentials",
         },
       },
     });
+  });
+
+  it("reports null — not a literal — when the size cannot be measured", async () => {
+    const kv = new MockKV();
+    const log: QueryLog[] = [];
+    const session = makeSession(log);
+    const env = {
+      DB: {
+        withSession: () => session,
+        prepare() { return { async first(): Promise<never> { throw new Error("SQLITE_AUTH"); } }; },
+      },
+      CACHE: kv,
+      AUDIT_DB: {
+        prepare(sql: string) {
+          return {
+            async first() {
+              if (sql.includes("audit_log")) return { count: 283 };
+              throw new Error("SQLITE_AUTH");
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+    const body = await bodyOf(await handleSystemHealth(req(), env));
+    const infra = body.data.infrastructure as { mainDb: unknown; auditDb: unknown };
+    // No ENVIRONMENT → name unknown too.
+    expect(infra.mainDb).toEqual({ name: null, sizeMb: null, tables: null, region: "ENAM" });
+    expect(infra.auditDb).toEqual({ name: null, sizeKb: null, tables: null, region: "ENAM" });
   });
 
   it("writes the outer system_health KV entry with a 120s TTL on a cold cache", async () => {

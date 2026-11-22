@@ -15,6 +15,7 @@ import { fuzzyMatchBrand } from "../../lib/brandDetect";
 import { cachedCount, THREATS_TOTAL_TTL_S } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
+import { systemHealthInfrastructure } from "../../lib/db-sizes";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import type { AuthContext } from "../../middleware/auth";
 import { classifySaasTechnique } from "../../lib/saas-classifier";
@@ -458,16 +459,8 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
       migrations: migrationInfo,
       audit: auditCount,
       trend: threatTrend,
-      infrastructure: {
-        mainDb: { name: 'trust-radar-v2', sizeMb: 79.5, tables: 57, region: 'ENAM' },
-        auditDb: { name: 'trust-radar-v2-audit', sizeKb: 180, tables: 2, region: 'ENAM' },
-        worker: { name: 'averrow-worker', platform: 'Cloudflare Workers' },
-        kvNamespaces: [
-          { name: 'averrow-cache' },
-          { name: 'SESSIONS' },
-          { name: 'CACHE' },
-        ],
-      },
+      // Measured, not literal — lib/db-sizes.ts (own 1h KV block, never throws).
+      infrastructure: await systemHealthInfrastructure(env),
     },
   };
 
