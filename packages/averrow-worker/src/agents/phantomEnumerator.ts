@@ -48,6 +48,7 @@ import {
   type RawPhantomCandidate,
   type PhantomCandidate,
 } from "../lib/phantom-domains";
+import { telemetryStore } from "../lib/db-route";
 
 // ─── Bounds (spec §2) ────────────────────────────────────────────
 const MAX_BRANDS_PER_RUN = 500;
@@ -340,7 +341,7 @@ export const phantomEnumeratorAgent: AgentModule = {
     // ── Telemetry event (spec §8) — target_agent=NULL, no downstream ──
     // dispatch. Best-effort; never block the run on the emit.
     try {
-      await env.DB.prepare(
+      await (await telemetryStore(env)).prepare(
         `INSERT INTO agent_events (id, event_type, source_agent, payload_json)
          VALUES (?, 'phantoms_enumerated', 'phantom_enumerator', ?)`,
       )

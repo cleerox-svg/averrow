@@ -18,7 +18,9 @@ class CountingKV {
   gets = 0;
   fail = false;
   async get(key: string): Promise<string | null> {
-    this.gets++;
+    // Route-flag reads only: resolving 'telemetry' also reads the durable
+    // db_route:telemetry_used marker (B1c rollback safety), once per isolate.
+    if (key === TELEMETRY_ROUTE_KV_KEY) this.gets++;
     if (this.fail) throw new Error("kv down");
     return this.store.get(key) ?? null;
   }

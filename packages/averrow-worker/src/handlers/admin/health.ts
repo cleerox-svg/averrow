@@ -32,6 +32,7 @@ import {
   countStatusCubeForHour,
   countArcsCubeForHour,
 } from "../../lib/cube-builder";
+import { historyParts, unionAggregateFirst } from "../../lib/telemetry-read";
 
 /**
  * TTL for the system-health 14-day daily threat trend (cachedValue). A
@@ -400,13 +401,17 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
         .first<{ n: number }>();
       return r?.n ?? 0;
     }),
-    session.prepare(`
+    // Track B1c: agent_runs spans telemetry ∪ core during the cut-over.
+    historyParts(env, "agent_runs", { core: session }).then((parts) => unionAggregateFirst<{ total: number; successes: number; errors: number }>(parts, (p) => ({
+      sql: `
       SELECT COUNT(*) as total,
         SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as successes,
         SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as errors
       FROM agent_runs
-      WHERE started_at >= datetime('now','-1 day')
-    `).first<{ total: number; successes: number; errors: number }>(),
+      WHERE started_at >= datetime('now','-1 day')/*split*/
+    `,
+      binds: [],
+    }), { sum: ["total", "successes", "errors"] })),
     session.prepare(`
       SELECT COUNT(*) as pulls,
         COALESCE(SUM(records_ingested),0) as ingested

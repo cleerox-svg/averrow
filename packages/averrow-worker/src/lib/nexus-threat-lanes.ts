@@ -968,7 +968,8 @@ export interface AsnLaneResult extends LaneResult {
   clusters: AsnLaneCluster[];
 }
 
-export async function runAsnLane(db: D1Database): Promise<AsnLaneResult> {
+/** `eventsDb`: where pivot_detected events are written (routed agent-runs store, Track B1c). */
+export async function runAsnLane(db: D1Database, eventsDb: D1Database = db): Promise<AsnLaneResult> {
   const rows = (await withIndexHintFallback(ASN_LANE_SQL, (sql) => db.prepare(sql).bind(ASN_MAX_BRAND_FANOUT).all<{
     asn: string;
     threat_type: string;
@@ -1049,7 +1050,7 @@ export async function runAsnLane(db: D1Database): Promise<AsnLaneResult> {
     if (isPivoting && confidence >= ASN_PIVOT_MIN_CONFIDENCE) {
       out.pivotsDetected++;
       try {
-        await db.prepare(`
+        await eventsDb.prepare(`
           INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority)
           VALUES (?, 'pivot_detected', 'nexus', 'observer', ?, 1)
         `).bind(

@@ -112,6 +112,7 @@ import {
 } from "./observatoryLenses";
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
+import { byDesc, historyParts, unionRowsResult } from "../lib/telemetry-read";
 
 type ReadSession = ReturnType<typeof getReadSession>;
 
@@ -663,7 +664,14 @@ export function buildOperationEvents(pivots: readonly PivotInput[], clusters: Re
 }
 
 async function operationSource(ctx: SourceCtx): Promise<SourceResult> {
-  const pivots = await all<PivotInput>(ctx, PIVOTS_SQL, [ctx.windowStart, EVENTS_SOURCE_ROW_CAP]);
+  // Track B1c: agent_events spans telemetry ∪ core during the cut-over.
+  const pivotRead = await unionRowsResult<PivotInput>(
+    await historyParts(ctx.env, "agent_events", { core: ctx.session }),
+    (p) => ({ sql: PIVOTS_SQL, binds: [ctx.windowStart, p.limit] }),
+    { key: (r) => r.id, sort: byDesc<PivotInput>("created_at"), limit: EVENTS_SOURCE_ROW_CAP },
+  );
+  addToTally(ctx.tally, pivotRead.meta);
+  const pivots = pivotRead.results;
   const ids = pivots.map((p) => parsePivotRow(p).cluster_id).filter((x): x is string => !!x);
   const clusters = await liveClusters(ctx, ids);
   const events = buildOperationEvents(pivots, clusters);

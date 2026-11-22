@@ -17,6 +17,7 @@
 // notification path. Wrapped + swallowed at the call site.
 
 import type { Env } from "../types";
+import { byDesc, historyParts, unionRows } from "./telemetry-read";
 
 // ─── Public types ────────────────────────────────────────────────
 
@@ -491,17 +492,17 @@ export async function loadTelemetryEvents(
   // Per-agent failed/partial runs
   for (const agentId of agentIds) {
     if (events.length >= TELEMETRY_LIMIT) break;
-    const rows = await env.DB.prepare(
-      `SELECT id, agent_id, status, records_processed, error_message, started_at
+    const rows = await unionRows<AgentRunEvent>(await historyParts(env, "agent_runs"), (p) => ({
+      sql: `SELECT id, agent_id, status, records_processed, error_message, started_at
          FROM agent_runs
         WHERE agent_id = ?
           AND status IN ('failed', 'partial', 'killed')
-          AND started_at BETWEEN ? AND ?
+          AND started_at BETWEEN ? AND ?/*split*/
         ORDER BY started_at DESC
         LIMIT ?`,
-    ).bind(agentId, windowStart, windowEnd, TELEMETRY_LIMIT - events.length)
-      .all<AgentRunEvent>();
-    for (const r of rows.results) {
+      binds: [agentId, windowStart, windowEnd, p.limit],
+    }), { key: (r) => r.id, sort: byDesc<AgentRunEvent>("started_at"), limit: TELEMETRY_LIMIT - events.length });
+    for (const r of rows) {
       const eventRef = `agent_run:${r.id}`;
       if (existingEventRefs.has(eventRef)) continue;
       const errSnippet = truncateMessage(r.error_message, 140);

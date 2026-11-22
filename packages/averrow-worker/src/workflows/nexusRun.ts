@@ -16,6 +16,7 @@ import {
   retireNonOperationalLaneClusters,
 } from '../lib/nexus-threat-lanes';
 import { runWithWorkflowMeter } from '../lib/d1-meter';
+import { telemetryStore } from "../lib/db-route";
 
 type NexusWorkflowParams = {
   forceRefresh?: boolean;
@@ -60,7 +61,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       try {
-        await this.env.DB.prepare(`
+        await (await telemetryStore(this.env)).prepare(`
           INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
           VALUES (?, 'nexus', 'workflow_failed', ?, ?, 'critical')
         `).bind(
@@ -85,7 +86,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
     });
 
     await step.do('log-start', async () => {
-      await this.env.DB.prepare(`
+      await (await telemetryStore(this.env)).prepare(`
         INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
         VALUES (?, 'nexus', 'started', ?, ?, 'info')
       `).bind(
@@ -132,7 +133,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
     // agent path turns into outputs is dropped here: step results are
     // persisted and must stay small.
     const correlation = await step.do('asn-correlation', laneRetries, async () => {
-      const r = await runAsnLane(this.env.DB);
+      const r = await runAsnLane(this.env.DB, await telemetryStore(this.env));
       return {
         clustersWritten: r.clustersWritten,
         pivotsDetected: r.pivotsDetected,
@@ -179,7 +180,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
     // identically in both paths so movement never diverges by dispatch
     // source. Idempotent diff, no AI.
     const movement = await step.do('infra-movement', { retries: { limit: 2, delay: '5 seconds' } }, async () => {
-      return await detectClusterInfraMovement(this.env.DB);
+      return await detectClusterInfraMovement(this.env.DB, Date.now(), {}, await telemetryStore(this.env));
     });
 
     // Step 3: Update hosting provider trends
@@ -248,7 +249,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
 
     // Step 4: Log completion
     await step.do('log-complete', async () => {
-      await this.env.DB.prepare(`
+      await (await telemetryStore(this.env)).prepare(`
         INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
         VALUES (?, 'nexus', 'batch_complete', ?, ?, 'info')
       `).bind(
@@ -257,7 +258,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
         JSON.stringify({ ...correlation, ...laneMeta, ...providers })
       ).run();
 
-      await this.env.DB.prepare(`
+      await (await telemetryStore(this.env)).prepare(`
         INSERT INTO agent_events (id, event_type, source_agent, payload_json, priority, status)
         VALUES (?, 'nexus_complete', 'nexus', ?, 2, 'pending')
       `).bind(

@@ -1,7 +1,7 @@
 // Comprehensive Platform Operations Briefing — 12-section intelligence report
 import { json } from "../lib/cors";
 import { sendBriefingEmail } from "../lib/briefing-email";
-import { createAgentRun, finalizeAgentRun, type AgentRunFinalOutcome } from "../db/agent-runs";
+import { createAgentRun, finalizeAgentRun, type AgentRunFinalOutcome, type AgentRunHandle, telemetryDbForRun } from "../db/agent-runs";
 import { logger } from "../lib/logger";
 import { fetchMarketingVisibility } from "../lib/marketing-analytics";
 import type { MarketingVisibility } from "../lib/marketing-analytics";
@@ -15,6 +15,7 @@ import {
 import { isTransientD1Error, withD1Retry } from "../lib/d1-retry";
 import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 import type { Env } from "../types";
+import { historyParts, unionGrouped } from "../lib/telemetry-read";
 
 // ─── Agent-run contract wrapper ─────────────────────────────────
 // The daily briefing is dispatched by the orchestrator's dedicated
@@ -156,7 +157,7 @@ async function withBriefingRun<T>(
   // turn a successfully generated + emailed briefing into a failure. If
   // createAgentRun throws (or hangs past the write ceiling) we proceed with
   // generation anyway and skip the later completion/fail writes.
-  let runId: string | null = null;
+  let runId: AgentRunHandle | null = null;
   try {
     runId = await withTimeout(
       () => createAgentRun(env, BRIEFING_AGENT_ID),
@@ -219,7 +220,7 @@ async function withBriefingRun<T>(
       issues: output.issues ?? [],
     });
     await withTimeout(
-      () => env.DB.prepare(
+      async () => (await telemetryDbForRun(env, runId)).prepare(
         `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
          VALUES (?, 'briefing_generated', ?, NULL, ?, 3, 'pending')`,
       )
@@ -504,6 +505,8 @@ export interface ComprehensiveBriefing {
 
 interface ReadCtx {
   db: Env["DB"];
+  /** For agent-runs family reads across telemetry ∪ core (Track B1c). */
+  env?: Env;
   /** Epoch ms after which remaining reads are skipped. */
   deadline: number;
   errors: SectionErrors;
@@ -638,6 +641,7 @@ export async function fetchComprehensiveBriefing(
   const now = new Date().toISOString();
   const rc: ReadCtx = {
     db,
+    env,
     deadline: Date.now() + BRIEFING_TIMING.readBudgetMs,
     errors: sectionErrors,
   };
@@ -778,12 +782,18 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // F) Agent Activity (12h)
-    () => safeQuery<Array<{ agent_id: string; runs: number; last_run: string }>>(
-      rc, "agent_activity",
-      `SELECT agent_id, COUNT(*) as runs, MAX(started_at) as last_run
-       FROM agent_runs WHERE started_at >= datetime('now', '-12 hours')
+    () => guardedRead<Array<{ agent_id: string; runs: number; last_run: string }>>(
+      rc, "agent_activity", [],
+      async () => unionGrouped<{ agent_id: string; runs: number; last_run: string }>(
+        await historyParts(rc.env, "agent_runs", { core: rc.db }),
+        (p) => ({
+          sql: `SELECT agent_id, COUNT(*) as runs, MAX(started_at) as last_run
+       FROM agent_runs WHERE started_at >= datetime('now', '-12 hours')/*split*/
        GROUP BY agent_id ORDER BY runs DESC`,
-      [],
+          binds: [],
+        }),
+        { groupBy: ["agent_id"], sum: ["runs"], max: ["last_run"], sort: (a, b) => b.runs - a.runs },
+      ),
     ),
 
     // G) New Capabilities — legacy counts stay in their own query so a missing

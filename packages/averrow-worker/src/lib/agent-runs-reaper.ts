@@ -49,6 +49,7 @@
 //
 // Tested via `test/agent-runs-reaper.test.ts`.
 
+import { telemetryFamilyDbs } from "./db-route";
 import type { Env } from "../types";
 
 /** Default reap age when an agent isn't in the module registry. */
@@ -123,17 +124,27 @@ function reapAgeFor(agentId: string, thresholds: Record<string, number>): number
   return DEFAULT_REAP_AGE_MINUTES;
 }
 
-/** Returns the number of rows reaped. Never throws. */
+/**
+ * Returns the number of rows reaped. Never throws. Sweeps every DB that can
+ * hold agent_runs (core, and TELEMETRY_DB when bound — Track B1c): a run is
+ * finalized on the DB it was inserted into, so its orphan is reaped there.
+ */
 export async function reapOrphanAgentRuns(env: Env): Promise<number> {
+  const thresholds = await loadAgentThresholds();
+  let total = 0;
+  for (const { db } of telemetryFamilyDbs(env)) total += await reapOrphansOn(db, thresholds);
+  return total;
+}
+
+async function reapOrphansOn(db: D1Database, thresholds: Record<string, number>): Promise<number> {
   try {
-    const thresholds = await loadAgentThresholds();
 
     // Pre-filter in SQL — anything younger than 15 min is alive by
     // definition (see the pre-filter note above). The plain started_at
     // range seeks idx_agent_runs_open; the datetime() term keeps the exact
     // ISO-vs-sqlite-safe semantics (see feed-pull-reaper.ts for the bug
     // receipts).
-    const candidates = await env.DB.prepare(
+    const candidates = await db.prepare(
       `SELECT id, agent_id, started_at,
               CAST((julianday('now') - julianday(started_at)) * 1440 AS INTEGER) AS age_minutes
          FROM agent_runs INDEXED BY idx_agent_runs_open
@@ -155,7 +166,7 @@ export async function reapOrphanAgentRuns(env: Env): Promise<number> {
         // (avg_duration_ms in the diagnostic) don't keep treating
         // this row as still-running. julianday() returns days since
         // the Julian epoch as a REAL; ×86400000 converts to ms.
-        const result = await env.DB.prepare(
+        const result = await db.prepare(
           `UPDATE agent_runs
               SET status = 'failed',
                   completed_at = datetime('now'),

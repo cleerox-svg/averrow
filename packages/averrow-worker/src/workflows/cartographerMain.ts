@@ -44,6 +44,7 @@
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
 import type { Env } from '../types';
 import { runWithWorkflowMeter } from '../lib/d1-meter';
+import { telemetryStore } from "../lib/db-route";
 
 interface CartographerMainParams {
   // Reserved for future per-phase parameterization (e.g. skip specific
@@ -71,7 +72,7 @@ export class CartographerMainWorkflow extends WorkflowEntrypoint<Env, Cartograph
     // (PR-J) sees this as a fresh dispatch. Matches the nexus workflow
     // pattern (workflows/nexusRun.ts).
     await step.do('log-start', async () => {
-      await this.env.DB.prepare(`
+      await (await telemetryStore(this.env)).prepare(`
         INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
         VALUES (?, 'cartographer', 'started', ?, ?, 'info')
       `).bind(
@@ -119,7 +120,7 @@ export class CartographerMainWorkflow extends WorkflowEntrypoint<Env, Cartograph
     // diagnostics rollup understands. Mirrors workflows/nexusRun.ts
     // batch_complete pattern, but with cart-specific payload.
     await step.do('log-complete', async () => {
-      await this.env.DB.prepare(`
+      await (await telemetryStore(this.env)).prepare(`
         INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
         VALUES (?, 'cartographer', 'batch_complete', ?, ?, 'info')
       `).bind(

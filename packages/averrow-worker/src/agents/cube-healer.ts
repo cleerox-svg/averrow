@@ -76,6 +76,7 @@
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
 import { cubeStaleSweepSQL, VELOCITY_SOURCE_FILTER, type CubeName } from '../lib/cube-builder';
 import { getReadSession } from '../lib/db';
+import { telemetryStore } from "../lib/db-route";
 
 /**
  * The weekly statistics refresh. A table-scoped `ANALYZE threats` is
@@ -649,7 +650,7 @@ export const cubeHealerAgent: AgentModule = {
     // Telemetry only — no dispatch. Best-effort: a failed insert never fails
     // the heal that already committed.
     try {
-      await env.DB.prepare(
+      await (await telemetryStore(env)).prepare(
         `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
          VALUES (?, 'cubes_healed', 'cube_healer', NULL, ?, 3, 'pending')`,
       ).bind(
