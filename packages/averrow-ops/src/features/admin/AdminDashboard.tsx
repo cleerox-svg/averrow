@@ -1113,11 +1113,12 @@ export function AdminDashboard() {
                           badge={<Badge status={db.store === 'core' ? 'active' : 'inactive'} label={dbStoreLabel(db.store)} size="xs" />}
                           progress={pct}
                           progressColor={dbBarColor(pct)}
+                          progressText={pct != null ? `${pct.toFixed(1)}% of ${formatBytes(db.capBytes)} cap${capStateSuffix(pct)}` : undefined}
                           lines={[
-                            `${formatBytes(db.sizeBytes)} · ${db.tables ?? '—'} tables`,
-                            pct != null ? `${pct.toFixed(1)}% of ${formatBytes(db.capBytes)} cap` : `Cap ${formatBytes(db.capBytes)}`,
+                            `${formatBytes(db.sizeBytes)} · ${tablesLabel(db.tables)}`,
+                            pct != null ? `${pct.toFixed(1)}% of ${formatBytes(db.capBytes)} cap${capStateSuffix(pct)}` : `Cap ${formatBytes(db.capBytes)}`,
                             db.store === 'core' ? `${migrations.total} migrations · ${infra.mainDb.region}` : null,
-                            `source: ${db.source === 'cf_api' ? 'Cloudflare' : db.source === 'pragma' ? 'estimate' : '—'}`,
+                            db.source === 'cf_api' ? 'source: Cloudflare' : db.source === 'pragma' ? 'source: estimate' : null,
                           ]}
                         />
                       );
@@ -1130,8 +1131,9 @@ export function AdminDashboard() {
                         badge={<Badge status="active" label="PRIMARY" size="xs" />}
                         progress={dbSizePercent}
                         progressColor={dbBarColor(dbSizePercent)}
+                        progressText={dbSizePercent != null ? `${dbSizePercent.toFixed(1)}% of cap${capStateSuffix(dbSizePercent)}` : undefined}
                         lines={[
-                          `${infra.mainDb.sizeMb != null ? `${infra.mainDb.sizeMb} MB` : '—'} · ${infra.mainDb.tables ?? '—'} tables`,
+                          `${infra.mainDb.sizeMb != null ? `${infra.mainDb.sizeMb} MB` : '—'} · ${tablesLabel(infra.mainDb.tables)}`,
                           `${migrations.total} migrations · ${infra.mainDb.region}`,
                           migrations.last_run
                             ? `Last migration: ${shortDate(migrations.last_run)}`
@@ -1143,7 +1145,7 @@ export function AdminDashboard() {
                         title={infra.auditDb.name ?? '—'}
                         badge={<Badge status="inactive" label="AUDIT" size="xs" />}
                         lines={[
-                          `${infra.auditDb.sizeKb != null ? `${infra.auditDb.sizeKb} KB` : '—'} · ${infra.auditDb.tables ?? '—'} tables`,
+                          `${infra.auditDb.sizeKb != null ? `${infra.auditDb.sizeKb} KB` : '—'} · ${tablesLabel(infra.auditDb.tables)}`,
                           `Region: ${infra.auditDb.region}`,
                         ]}
                       />
@@ -1159,9 +1161,11 @@ export function AdminDashboard() {
                   <InfraTile
                     icon={Activity}
                     title={`KV · ${infra.kvNamespaces.length} ${infra.kvNamespaces.length === 1 ? 'namespace' : 'namespaces'}`}
-                    badge={<Badge status="active" label="ACTIVE" size="xs" />}
+                    badge={infra.kvNamespaces.length > 0
+                      ? <Badge status="active" label="ACTIVE" size="xs" />
+                      : <Badge status="inactive" label="UNKNOWN" size="xs" />}
                     lines={[
-                      infra.kvNamespaces.map(k => k.name).join(', '),
+                      infra.kvNamespaces.length > 0 ? infra.kvNamespaces.map(k => k.name).join(', ') : 'No namespaces reported',
                       `${fmt(sessions.count)} active sessions`,
                     ]}
                   />
@@ -1299,14 +1303,28 @@ function dbBarColor(pct: number | undefined): string {
   return 'var(--blue)';
 }
 
+function tablesLabel(n: number | null | undefined): string {
+  if (n == null) return '— tables';
+  return `${n} ${n === 1 ? 'table' : 'tables'}`;
+}
+
+/** Text cue for the cap thresholds, so the bar's state isn't conveyed by colour alone. */
+function capStateSuffix(pct: number | undefined): string {
+  if (pct == null) return '';
+  if (pct >= 80) return ' · critical';
+  if (pct >= 50) return ' · high';
+  return '';
+}
+
 function InfraTile({
-  icon: Icon, title, badge, progress, progressColor, lines, pulseColor,
+  icon: Icon, title, badge, progress, progressColor, progressText, lines, pulseColor,
 }: {
   icon: LucideIcon;
   title: string;
   badge?: React.ReactNode;
   progress?: number;
   progressColor?: string;
+  progressText?: string;
   lines: (string | null)[];
   pulseColor?: string;
 }) {
@@ -1325,7 +1343,7 @@ function InfraTile({
           ) : (
             <Icon size={13} style={{ color: 'var(--primary-text)' }} />
           )}
-          <span style={{
+          <span title={title} style={{
             ...mono, fontSize: 12, fontWeight: 700, ...textPrimary,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
@@ -1335,10 +1353,21 @@ function InfraTile({
         {badge}
       </div>
       {progress != null && (
-        <div style={{ height: 4, borderRadius: 999, background: 'rgba(255,255,255,0.05)', overflow: 'hidden', marginBottom: 8 }}>
+        <div
+          role="progressbar"
+          aria-label={`${title} storage used`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progress)}
+          aria-valuetext={progressText}
+          style={{ height: 4, borderRadius: 999, background: 'var(--border-base)', overflow: 'hidden', marginBottom: 8 }}
+        >
           <div style={{
-            height: '100%', width: `${progress}%`,
-            background: `linear-gradient(90deg, ${progressColor}55, ${progressColor})`,
+            height: '100%', width: `${progress}%`, minWidth: progress > 0 ? 2 : 0,
+            // progressColor is a var(--…) token, so a hex-alpha suffix would be invalid CSS.
+            background: progressColor
+              ? `linear-gradient(90deg, color-mix(in srgb, ${progressColor} 33%, transparent), ${progressColor})`
+              : 'var(--primary)',
             transition: 'width 300ms',
           }} />
         </div>

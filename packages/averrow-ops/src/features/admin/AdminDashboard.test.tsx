@@ -358,6 +358,25 @@ describe('AdminDashboard', () => {
     expect(screen.getByText('source: Cloudflare')).toBeInTheDocument();
     expect(screen.getByText('source: estimate')).toBeInTheDocument();
     expect(screen.queryByText(/79\.5 MB/)).not.toBeInTheDocument();
+    // No "source: —" noise for an unmeasured database.
+    expect(screen.queryByText('source: —')).not.toBeInTheDocument();
+  });
+
+  it('exposes each measured size bar as a labelled progressbar with a valid fill', async () => {
+    renderWithProviders(<AdminDashboard />);
+    await switchTab('System');
+    const bars = screen.getAllByRole('progressbar');
+    // core + audit are measured; geo (null size) has no bar.
+    expect(bars).toHaveLength(2);
+    for (const bar of bars) {
+      expect(bar).toHaveAttribute('aria-valuemin', '0');
+      expect(bar).toHaveAttribute('aria-valuemax', '100');
+      expect(bar.getAttribute('aria-valuetext')).toMatch(/% of .+ cap/);
+      expect(bar.getAttribute('aria-label')).toMatch(/storage used$/);
+      const fill = bar.firstElementChild as HTMLElement;
+      // A var(--…) colour plus a hex-alpha suffix ("var(--blue)55") is invalid CSS.
+      expect(fill.style.background).not.toMatch(/\)\d\d/);
+    }
   });
 
   it('falls back to mainDb/auditDb tiles with "—" for null sizes when databases is absent', async () => {
