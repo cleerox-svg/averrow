@@ -53,6 +53,8 @@ describe('standalone list paths redirect to workspace tabs', () => {
     ['/admin/audit?window=7d', 'governance|/admin/governance?tab=audit&window=7d'],
     ['/admin/platform-users', 'governance|/admin/governance?tab=users'],
     ['/admin/feeds', 'operations|/admin/operations?tab=feeds'],
+    ['/admin/databases', 'operations|/admin/operations?tab=databases'],
+    ['/databases?view=map', 'operations|/admin/operations?tab=databases&view=map'],
     ['/admin/agents', 'operations|/admin/operations?tab=agents'],
   ])('%s -> %s', async (from, expected) => {
     expect(await landing(from)).toBe(expected);

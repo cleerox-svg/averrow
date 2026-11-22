@@ -13,7 +13,7 @@ export type WorkspaceTabKey =
   | 'alerts' | 'threats' | 'incidents' | 'takedowns'
   | 'brands' | 'actors' | 'campaigns' | 'providers'
   | 'apps' | 'dark-web' | 'trademarks' | 'trends' | 'bot-traffic'
-  | 'agents' | 'feeds' | 'takedown-integrations' | 'attribution'
+  | 'agents' | 'feeds' | 'databases' | 'takedown-integrations' | 'attribution'
   | 'audit' | 'users' | 'pricing' | 'notifications';
 
 export interface WorkspaceTarget {
@@ -39,6 +39,7 @@ export const WORKSPACE_TABS: Readonly<Record<WorkspaceTabKey, WorkspaceTarget>> 
   'bot-traffic': { path: '/coverage', tab: 'bot-traffic' },
   agents: { path: '/admin/operations', tab: 'agents' },
   feeds: { path: '/admin/operations', tab: 'feeds' },
+  databases: { path: '/admin/operations', tab: 'databases' },
   'takedown-integrations': { path: '/admin/operations', tab: 'takedown-integrations' },
   attribution: { path: '/admin/operations', tab: 'attribution' },
   audit: { path: '/admin/governance', tab: 'audit' },
@@ -69,6 +70,8 @@ export const LEGACY_TAB_PATHS: Readonly<Record<string, WorkspaceTabKey>> = {
   '/agents': 'agents',
   '/feeds': 'feeds',
   '/admin/feeds': 'feeds',
+  '/admin/databases': 'databases',
+  '/databases': 'databases',
   '/admin/agents': 'agents',
   '/admin/integrations': 'takedown-integrations',
   '/admin/agents/attribution-backlog': 'attribution',

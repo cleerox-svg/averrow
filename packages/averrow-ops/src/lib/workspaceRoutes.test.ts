@@ -20,6 +20,16 @@ describe('buildTabUrl / tabUrl', () => {
   });
 });
 
+describe('databases tab', () => {
+  it('builds list and detail URLs inside the Operations workspace', () => {
+    expect(tabUrl('databases')).toBe('/admin/operations?tab=databases');
+    expect(tabUrl('databases', { db: 'core', view: 'map' })).toBe('/admin/operations?tab=databases&db=core&view=map');
+  });
+  it('aliases /admin/databases', () => {
+    expect(LEGACY_TAB_PATHS['/admin/databases']).toBe('databases');
+  });
+});
+
 describe('LEGACY_TAB_PATHS', () => {
   it('maps every legacy path to a defined workspace tab', () => {
     for (const key of Object.values(LEGACY_TAB_PATHS)) expect(WORKSPACE_TABS[key]).toBeDefined();
