@@ -25,7 +25,7 @@ export function SummaryStrip({ data }: { data: DatabasesPayload }) {
   return (
     <section aria-label="Fleet summary">
       <StatGrid cols={4}>
-        <StatTile label="Databases" value={String(s.live)} sub={`live · ${s.proposed} proposed`} />
+        <StatTile label="Databases" value={String(s.live)} sub={s.proposed > 0 ? `live · ${s.proposed} proposed` : 'live'} />
         <StatTile
           label="Total stored"
           value={formatBytes(s.total_bytes)}

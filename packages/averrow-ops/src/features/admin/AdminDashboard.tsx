@@ -1295,6 +1295,8 @@ function dbStoreLabel(store: string): string {
     case 'audit': return 'AUDIT';
     case 'geo': return 'GEO';
     case 'dnsq': return 'DNS QUEUE';
+    case 'telemetry': return 'TELEMETRY';
+    case 'archive': return 'ARCHIVE';
     default: return store.toUpperCase();
   }
 }

@@ -25,6 +25,16 @@ export interface Env {
   // typing means downstream callers must null-check, which forces the
   // cutover diff to land in one explicit place per call site.
   DNS_QUEUE_DB?: D1Database;
+  // Operational telemetry side DB (`averrow-telemetry`, Track B1). Prod +
+  // staging only. Never read directly: go through lib/db-route.ts
+  // `telemetryStore()` (test/db-access-ratchet.test.ts enforces this).
+  TELEMETRY_DB?: D1Database;
+  // Threat archive index (`averrow-archive`), prod + staging only. Unused
+  // yet; future callers must handle it being absent.
+  ARCHIVE_DB?: D1Database;
+  // Threat archive R2 bucket (`averrow-threat-archive`), prod + staging
+  // only. Unused yet.
+  THREAT_ARCHIVE?: R2Bucket;
   CACHE: KVNamespace;
   ASSETS: Fetcher;
   THREAT_PUSH_HUB: DurableObjectNamespace;

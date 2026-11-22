@@ -308,6 +308,33 @@ database_name = "trust-radar-dns-queue"
 database_id = "b2c6dae6-26d4-4d03-b3ff-08709bcf04c9"
 migrations_dir = "migrations-dns-queue"
 
+# ─── Operational telemetry (Track B1) ───────────────────────
+# Side D1 for the self-contained bookkeeping cluster: agent_runs,
+# agent_configs, agent_events, agent_activity_log, agent_approvals,
+# feed_configs, feed_status, feed_pull_history, budget_ledger,
+# budget_config, agent_budget_rollups. Moving them off the core DB means
+# run / pull finalizes never wait on core's overload window.
+# Pre-stage (B1a/B1b): bound + schema stamped, but NOTHING uses it yet.
+# lib/db-route.ts `telemetryStore()` picks core vs this DB from the KV flag
+# `db_route:telemetry` (default core); no caller is converted yet.
+# migrations-telemetry/ must mirror core migrations for these tables until
+# cut-over (test/telemetry-schema-parity.test.ts).
+[[d1_databases]]
+binding = "TELEMETRY_DB"
+database_name = "averrow-telemetry"
+database_id = "67ebf20d-6176-4a5a-8da2-338c1f9e9399"
+migrations_dir = "migrations-telemetry"
+
+# ─── Threat archive index (unused yet) ──────────────────────
+# Index of threats archived to the THREAT_ARCHIVE R2 bucket. Bound and
+# schema stamped only; nothing reads or writes it yet. Optional: callers
+# must handle the binding being absent (dev binds neither).
+[[d1_databases]]
+binding = "ARCHIVE_DB"
+database_name = "averrow-archive"
+database_id = "90c13d5a-182e-414d-9320-6241c9a62593"
+migrations_dir = "migrations-archive"
+
 # ─── KV Namespace (cache) ────────────────────────────────────
 [[kv_namespaces]]
 binding = "CACHE"
@@ -382,6 +409,14 @@ bucket_name = "averrow-nrd-archive"
 [[r2_buckets]]
 binding = "PHISH_CAPTURES"
 bucket_name = "averrow-phish-captures"
+
+# ─── R2 Storage (threat archive, unused yet) ─────────────────
+# Cold tier for archived threats; indexed by ARCHIVE_DB
+# (threat_archive_index). Nothing reads or writes it yet. Prod here,
+# staging below, dev none.
+[[r2_buckets]]
+binding = "THREAT_ARCHIVE"
+bucket_name = "averrow-threat-archive"
 
 # ─── Durable Objects (WebSocket push hub + CertStream monitor) ──
 [[durable_objects.bindings]]
@@ -557,6 +592,22 @@ binding = "AUDIT_DB"
 database_name = "trust-radar-v2-audit-staging"
 database_id = "45539971-b965-4bfb-a1d3-93a03771b1c4"
 migrations_dir = "migrations-audit"
+
+[[env.staging.d1_databases]]
+binding = "TELEMETRY_DB"
+database_name = "averrow-telemetry-staging"
+database_id = "beac6ee0-5c86-4aba-8218-788c2d0c0e35"
+migrations_dir = "migrations-telemetry"
+
+[[env.staging.d1_databases]]
+binding = "ARCHIVE_DB"
+database_name = "averrow-archive-staging"
+database_id = "9efead5b-89fc-49bc-88a9-c6c4cd744113"
+migrations_dir = "migrations-archive"
+
+[[env.staging.r2_buckets]]
+binding = "THREAT_ARCHIVE"
+bucket_name = "averrow-threat-archive-staging"
 
 # ─── Local dev overrides ─────────────────────────────────────
 [env.dev]
