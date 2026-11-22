@@ -113,7 +113,11 @@ function exec(state: State, sql: string, args: unknown[]): { changes: number } {
       state.pulls.set(id, { id, feed_name: feed, status: "failed", completed_at: "now", error_message: err, duration_ms: duration });
       return { changes: 1 };
     }
-    if (row.status === "partial" && row.completed_at === null) {
+    if (
+      (row.status === "partial" && row.completed_at === null)
+      // Re-send of an upsert that already applied (same error + duration).
+      || (row.status === "failed" && row.error_message === err && row.duration_ms === duration)
+    ) {
       Object.assign(row, { status: "failed", completed_at: "now", error_message: err, duration_ms: duration });
       return { changes: 1 };
     }
@@ -127,9 +131,10 @@ function exec(state: State, sql: string, args: unknown[]): { changes: number } {
     return { changes: 1 };
   }
   if (s.startsWith("UPDATE feed_pull_history SET status = 'failed'")) {
-    expect(s).toContain("AND status = 'partial'");
+    expect(s).toContain("AND (status = 'partial' OR (status = 'failed' AND error_message = ?1 AND duration_ms = ?2))");
     const row = state.pulls.get(String(args[2]));
-    if (!row || row.status !== "partial") return { changes: 0 };
+    const resend = row?.status === "failed" && row.error_message === String(args[0]) && row.duration_ms === args[1];
+    if (!row || (row.status !== "partial" && !resend)) return { changes: 0 };
     Object.assign(row, { status: "failed", completed_at: "now", error_message: String(args[0]), duration_ms: args[1] as number });
     return { changes: 1 };
   }

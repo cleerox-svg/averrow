@@ -157,8 +157,10 @@ export async function handleTriggerFeed(request: Request, env: Env, feedName: st
     const config = await env.DB.prepare("SELECT * FROM feed_configs WHERE feed_name = ?").bind(feedName).first<FeedConfigRow>();
     if (!config) return json({ success: false, error: "Feed not found" }, 404, origin);
 
-    // Use runFeed() so feed_status and feed_pull_history are properly updated
-    const result = await runFeed(env, config, mod);
+    // Use runFeed() so feed_status and feed_pull_history are properly updated.
+    // Awaited inside this request, so its finalize keeps the short D1 retry
+    // backoff instead of waiting out an overload window (RunFeedOptions).
+    const result = await runFeed(env, config, mod, { overloadBackoff: false });
 
     // Bust the feeds_overview cache so the UI sees the new pull
     // immediately (was stale up to 5 min after PR #1178 added KV).

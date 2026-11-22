@@ -39,6 +39,87 @@ import {
  */
 export const THREAT_TREND_14D_TTL_S = 3600;
 
+/**
+ * TTL of the CLOSED-days part of the 14-day trend (25h; the key embeds the
+ * UTC date, so it rolls over daily anyway and the TTL only bounds KV GC).
+ */
+export const THREAT_TREND_CLOSED_TTL_S = 90_000;
+
+type TrendRow = { day: string | null; count: number };
+
+/** `YYYY-MM-DD HH:MM:SS` UTC — the format `datetime('now', …)` produces. */
+function sqliteUtc(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+}
+
+/**
+ * The bounds the 14-day trend is split on, for `nowMs`. `edge` is the
+ * original rolling window start (`datetime('now','-14 days')`); the days
+ * strictly between edge's day and today are complete UTC days.
+ */
+export function threatTrendBounds(nowMs: number): { edge: string; firstFullDay: string; today: string } {
+  const edge = sqliteUtc(nowMs - 14 * 86_400_000);
+  const edgeDayMs = Date.parse(`${edge.slice(0, 10)}T00:00:00Z`);
+  return {
+    edge,
+    firstFullDay: sqliteUtc(edgeDayMs + 86_400_000).slice(0, 10),
+    today: sqliteUtc(nowMs).slice(0, 10),
+  };
+}
+
+const TREND_CLOSED_SQL = `
+  SELECT date(created_at) AS day, COUNT(*) AS count
+    FROM threats
+   WHERE created_at >= ? AND created_at < ?
+   GROUP BY date(created_at)`;
+const TREND_EDGE_DAY_SQL = TREND_CLOSED_SQL;
+const TREND_TODAY_SQL = `
+  SELECT date(created_at) AS day, COUNT(*) AS count
+    FROM threats
+   WHERE created_at >= ?
+   GROUP BY date(created_at)`;
+
+/**
+ * 14-day daily threat-creation series, same rows as
+ *   SELECT date(created_at) AS day, COUNT(*) AS count FROM threats
+ *    WHERE created_at >= datetime('now','-14 days')
+ *    GROUP BY date(created_at) ORDER BY day ASC
+ * (2026-11-22: that query read ~200K rows on every refill, ~64×/24h), but
+ * split into three disjoint created_at ranges, each an index range scan:
+ *   - the partial edge day [edge, firstFullDay)        — ≤ 1 day of rows
+ *   - the 13 complete days  [firstFullDay, today)      — cached per UTC date
+ *   - today and anything later [today, ∞)              — ≤ 1 day of rows
+ * Threats are never deleted and created_at is the insert time, so a
+ * complete day's count cannot change; caching it for the day is exact. The
+ * day bounds are date-only strings ('YYYY-MM-DD'), which sort before every
+ * time of that day in both stored formats ('YYYY-MM-DD HH:MM:SS' and ISO
+ * 'YYYY-MM-DDTHH:MM:SSZ'), so each row lands in exactly one range; `edge`
+ * is the same string the old `datetime('now','-14 days')` produced. Per
+ * refill: ~2 days of rows instead of 14, plus the 13-day read once a day.
+ */
+export async function threatTrend14d(
+  env: Env,
+  db: Pick<D1Database, "prepare">,
+  nowMs: number = Date.now(),
+): Promise<TrendRow[]> {
+  const { edge, firstFullDay, today } = threatTrendBounds(nowMs);
+  const closed = await cachedValue<TrendRow[]>(
+    env, `threats.trend_14d.closed:${firstFullDay}:${today}`, THREAT_TREND_CLOSED_TTL_S,
+    async () => (await db.prepare(TREND_CLOSED_SQL).bind(firstFullDay, today).all<TrendRow>()).results,
+  );
+  const edgeDay = (await db.prepare(TREND_EDGE_DAY_SQL).bind(edge, firstFullDay).all<TrendRow>()).results;
+  const recent = (await db.prepare(TREND_TODAY_SQL).bind(today).all<TrendRow>()).results;
+
+  const byDay = new Map<string | null, number>();
+  for (const r of [...edgeDay, ...closed, ...recent]) {
+    byDay.set(r.day, (byDay.get(r.day) ?? 0) + r.count);
+  }
+  // SQLite's ORDER BY day ASC: NULL first, then lexical.
+  return [...byDay]
+    .map(([day, count]) => ({ day, count }))
+    .sort((a, b) => (a.day === b.day ? 0 : a.day === null ? -1 : b.day === null ? 1 : a.day < b.day ? -1 : 1));
+}
+
 // Every agentId the canonical Anthropic wrapper is supposed to attribute
 // to. Used by handleBudgetLedgerHealth to surface "this call site has
 // not landed a ledger row in the last N hours" gaps. Add new entries
@@ -345,25 +426,13 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
     env.AUDIT_DB.prepare(
       `SELECT COUNT(*) as count FROM audit_log`
     ).first<{ count: number }>(),
-    // 14-day daily trend. Kept as the EXACT original GROUP BY over raw
-    // threats but wrapped in cachedValue (THREAT_TREND_14D_TTL_S) instead
-    // of sourced from threat_cube_status. The cube is hour-bucketed, so it cannot
-    // reproduce the rolling `datetime('now','-14 days')` sub-hour window
-    // edge: summing per-hour cube rows for the boundary day would either
-    // over- or under-count the earliest partial day vs the raw series.
-    // The response is a frozen contract requiring byte-identical values,
-    // so cachedValue (exact SQL, exact window + timezone semantics, zero
-    // per-poll recompute) is the correct swap here — not the cube.
-    cachedValue<Array<{ day: string; count: number }>>(env, "threats.trend_14d", THREAT_TREND_14D_TTL_S, async () => {
-      const r = await session.prepare(`
-        SELECT date(created_at) as day, COUNT(*) as count
-        FROM threats
-        WHERE created_at >= datetime('now','-14 days')
-        GROUP BY date(created_at)
-        ORDER BY day ASC
-      `).all<{ day: string; count: number }>();
-      return r.results;
-    }),
+    // 14-day daily trend. Same rows as the original GROUP BY over raw
+    // threats (not threat_cube_status: the cube is hour-bucketed, so it
+    // cannot reproduce the rolling `datetime('now','-14 days')` sub-hour
+    // window edge, and the response is a frozen contract), wrapped in
+    // cachedValue (THREAT_TREND_14D_TTL_S). threatTrend14d splits the
+    // window so a refill reads ~2 days of rows, not 14.
+    cachedValue<TrendRow[]>(env, "threats.trend_14d", THREAT_TREND_14D_TTL_S, () => threatTrend14d(env, session)),
   ]);
 
   // Monotonicity guard for the three independently-cached counts. Each
