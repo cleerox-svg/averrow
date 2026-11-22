@@ -34,10 +34,12 @@ function envWith(kv: CountingKV, bound = true): Env {
 beforeEach(() => resetTelemetryRouteCache());
 
 describe("parseTelemetryRoute", () => {
-  it("accepts exactly 'core' and 'telemetry'", () => {
+  it("accepts 'core' and 'telemetry', tolerating case and surrounding whitespace", () => {
     expect(parseTelemetryRoute("core")).toBe("core");
     expect(parseTelemetryRoute("telemetry")).toBe("telemetry");
-    for (const v of [null, undefined, "", "TELEMETRY", " telemetry", "1", 1]) expect(parseTelemetryRoute(v)).toBeNull();
+    expect(parseTelemetryRoute("TELEMETRY")).toBe("telemetry");
+    expect(parseTelemetryRoute(" telemetry\n")).toBe("telemetry");
+    for (const v of [null, undefined, "", "1", 1, "tele"]) expect(parseTelemetryRoute(v)).toBeNull();
   });
 });
 
@@ -48,10 +50,19 @@ describe("telemetryStore", () => {
     expect(await telemetryRouteState(envWith(kv), 0)).toEqual({ route: "core", requested: null, bound: true });
   });
 
-  it("defaults to core on an invalid flag", async () => {
+  it("defaults to core on an invalid flag with no prior route", async () => {
     const kv = new CountingKV();
     kv.store.set(TELEMETRY_ROUTE_KV_KEY, "yes please");
     expect(await telemetryStore(envWith(kv), 0)).toBe(DB);
+  });
+
+  it("keeps the last known route when the flag becomes invalid (typo after cut-over)", async () => {
+    const kv = new CountingKV();
+    const env = envWith(kv);
+    kv.store.set(TELEMETRY_ROUTE_KV_KEY, "telemetry");
+    expect(await telemetryStore(env, 0)).toBe(TELEMETRY_DB);
+    kv.store.set(TELEMETRY_ROUTE_KV_KEY, "telemetr");
+    expect(await telemetryStore(env, 61_000)).toBe(TELEMETRY_DB);
   });
 
   it("serves TELEMETRY_DB when the flag is 'telemetry' and it is bound", async () => {

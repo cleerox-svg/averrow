@@ -11,9 +11,15 @@
 // Route flag: KV `db_route:telemetry` ∈ {'core', 'telemetry'}.
 //   - unset / any other value → core (default: nothing moves by accident)
 //   - 'telemetry' but TELEMETRY_DB unbound (dev) → core
-//   - read failure → the last value this isolate read, else core. Falling
-//     back to core after a cut-over would split writes across two DBs, so a
-//     KV blip keeps the known route instead.
+//   - read failure or a present-but-invalid value → the last value this
+//     isolate read, else core. Falling back to core after a cut-over would
+//     split writes across two DBs, so a KV blip keeps the known route instead.
+//     LIMIT: a COLD isolate has no last value and serves core on a KV failure;
+//     once the cluster is cut over, change the in-code default to 'telemetry'
+//     (a follow-up of the cut-over) so cold isolates default to telemetry.
+//   - callers must resolve the store ONCE per run/invocation and carry it
+//     (e.g. on the agent_runs handle): a flip mid-run must not send the
+//     finalize UPDATE to a different DB than the INSERT.
 // The flag is cached in-isolate for 60 s, so a flip takes effect within a
 // minute on every isolate (≤ 1 KV read per isolate per minute).
 //
@@ -53,15 +59,21 @@ export function resetTelemetryRouteCache(): void {
   cachedFlag = null;
 }
 
+/** Tolerant parse: trims and lowercases, so 'Telemetry\n' still routes. */
 export function parseTelemetryRoute(raw: unknown): TelemetryRoute | null {
-  return raw === "core" || raw === "telemetry" ? raw : null;
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  return v === "core" || v === "telemetry" ? v : null;
 }
 
 async function readRequested(env: Env, nowMs: number): Promise<TelemetryRoute | null> {
   if (cachedFlag && nowMs < cachedFlag.expiresAt) return cachedFlag.requested;
   try {
     const raw = await env.CACHE.get(TELEMETRY_ROUTE_KV_KEY);
-    const requested = parseTelemetryRoute(raw);
+    const parsed = parseTelemetryRoute(raw);
+    // A present-but-invalid value (typo) keeps the last known route rather
+    // than silently reverting to core — same rule as a read failure.
+    const requested = raw != null && parsed == null ? (cachedFlag?.requested ?? null) : parsed;
     cachedFlag = { requested, expiresAt: nowMs + TELEMETRY_ROUTE_CACHE_MS };
     return requested;
   } catch {

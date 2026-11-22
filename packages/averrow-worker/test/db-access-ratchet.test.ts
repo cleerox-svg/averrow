@@ -54,4 +54,14 @@ describe("DB access ratchet", () => {
     const offenders = files.filter((f) => !TELEMETRY_BINDING_ALLOWED.has(f.rel) && access.test(f.text)).map((f) => f.rel);
     expect(offenders, "use lib/db-route.ts telemetryStore(env), which honours the db_route:telemetry flag").toEqual([]);
   });
+
+  it("the telemetry store is not fetched through the registry accessors outside db-route/db-registry/db-health/db-sizes/db-inventory", () => {
+    // store(env, "telemetry") / storeBinding(env, "telemetry") bypass the
+    // route flag the same way env.TELEMETRY_DB does. The health/size/inventory
+    // tooling legitimately inspects the binding itself; nothing else may.
+    const allowed = new Set([...TELEMETRY_BINDING_ALLOWED, "lib/db-health.ts", "lib/db-sizes.ts", "lib/db-inventory.ts"]);
+    const viaAccessor = /\b(?:store|storeBinding|hasStore)\(\s*[A-Za-z_.]+\s*,\s*["'`]telemetry["'`]\s*\)/;
+    const offenders = files.filter((f) => !allowed.has(f.rel) && viaAccessor.test(f.text)).map((f) => f.rel);
+    expect(offenders, "use lib/db-route.ts telemetryStore(env), which honours the db_route:telemetry flag").toEqual([]);
+  });
 });
