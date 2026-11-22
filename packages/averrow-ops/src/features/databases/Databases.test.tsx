@@ -12,7 +12,7 @@ vi.mock('@/lib/api', () => ({
 import { api } from '@/lib/api';
 import { Databases } from './Databases';
 import { OperationsWorkspace } from '@/features/operations/OperationsWorkspace';
-import { auditDb, databasesFixture, emptyMeterFixture } from './fixtures';
+import { auditDb, databasesFixture, emptyMeterFixture, noProposedFixture } from './fixtures';
 import { formatBytes, formatCount, formatTimeToFull, sourceNodes } from './format';
 import { projectionPoints } from './DatabaseDetail';
 
@@ -162,6 +162,35 @@ describe('Databases — map view', () => {
     get.mockResolvedValue({ success: true, data: { ...databasesFixture, edges: [] } });
     renderAt('/?view=map');
     expect(await screen.findByText(/No per-job reads recorded/)).toBeInTheDocument();
+  });
+});
+
+describe('Databases — no proposed databases', () => {
+  beforeEach(() => {
+    get.mockResolvedValue({ success: true, data: noProposedFixture });
+  });
+
+  it('cards: no proposed cards, no "0 proposed", the telemetry card shows its not-in-use note', async () => {
+    renderAt('/');
+    const strip = await screen.findByRole('region', { name: 'Fleet summary' });
+    expect(within(strip).queryByText(/proposed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: /\(proposed\)/ })).not.toBeInTheDocument();
+    const card = screen.getByRole('article', { name: 'averrow-telemetry database' });
+    expect(within(card).getByText('TELEMETRY')).toBeInTheDocument();
+    expect(within(card).getByText('Not yet in use — writes still go to core')).toBeInTheDocument();
+  });
+
+  it('map: no "After the split" section or heading', async () => {
+    renderAt('/?view=map');
+    await screen.findByRole('region', { name: 'Legend' });
+    expect(screen.queryByRole('region', { name: 'After the split (proposed)' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/After the split/)).not.toBeInTheDocument();
+  });
+
+  it('table: no proposed rows', async () => {
+    renderAt('/?view=table');
+    expect(await screen.findByText('averrow-telemetry')).toBeInTheDocument();
+    expect(screen.queryByText(/^Proposed ·/)).not.toBeInTheDocument();
   });
 });
 

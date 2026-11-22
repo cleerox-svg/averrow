@@ -278,6 +278,8 @@ describe("handleSystemHealth — cached read path preserves the frozen response 
             { store: "audit", name: "trust-radar-v2-audit", sizeBytes: 4096 * 60, tables: 2, source: "pragma", capBytes: 10 * 1024 ** 3 },
             { store: "geo", name: "geoip-db", sizeBytes: null, tables: null, source: null, capBytes: 10 * 1024 ** 3 },
             { store: "dnsq", name: "trust-radar-dns-queue", sizeBytes: null, tables: null, source: null, capBytes: 10 * 1024 ** 3 },
+            { store: "telemetry", name: "averrow-telemetry", sizeBytes: null, tables: null, source: null, capBytes: 10 * 1024 ** 3 },
+            { store: "archive", name: "averrow-archive", sizeBytes: null, tables: null, source: null, capBytes: 10 * 1024 ** 3 },
           ],
           cf_api_status: "no_credentials",
         },

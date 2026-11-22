@@ -118,6 +118,10 @@ jobs:
           # these applies are no-ops until a NEW migration lands.
           migrate_with_retry "pnpm run db:migrate:geoip:prod" "GeoIP migration"
           migrate_with_retry "pnpm run db:migrate:dnsq:prod" "DNS-queue migration"
+          # Track B1 side DBs, tracked by d1_migrations from their first
+          # migration (no hand-applied history to seed).
+          migrate_with_retry "pnpm run db:migrate:telemetry:prod" "Telemetry migration"
+          migrate_with_retry "pnpm run db:migrate:archive:prod" "Archive migration"
 
       # PR-AI: post-migration seed verification. wrangler reports
       # `migrations apply` as successful when statements don't error,

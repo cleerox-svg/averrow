@@ -15,6 +15,10 @@ import {
   parseDbWindow,
   parseEndpointLabel,
   getDatabasesPayload,
+  applyTelemetryRoute,
+  TELEMETRY_NOT_IN_USE_NOTE,
+  type DatabaseCard,
+  type DatabasesPayload,
 } from "../src/lib/db-health";
 import { inventoryKey, sizeHistoryKey, type DbInventory } from "../src/lib/db-inventory";
 import { D1_DB_CAP_BYTES } from "../src/lib/db-registry";
@@ -194,11 +198,15 @@ describe("buildDatabasesBase — fail-soft", () => {
     expect(base.summary.live).toBe(2); // only DB + AUDIT_DB are bound
     expect(base.summary.overloads_scope).toBe("metered_jobs");
     expect(base.summary.thresholds).toEqual({ warn_size_fraction: 0.5, critical_size_fraction: 0.8, warn_days_to_cap: 180, overloaded_min: 5 });
-    expect(base.summary.proposed).toBe(2);
+    expect(base.summary.proposed).toBe(0);
     expect(base.summary.total_bytes).toBe(4096 * 1010);
     expect(base.summary.overloads_24h).toBeNull();
     expect(base.summary.cycle_rows_read).toBeNull();
-    expect(base.proposed.map((p) => p.name)).toEqual(["averrow-telemetry", "averrow-archive"]);
+    expect(base.proposed).toEqual([]); // telemetry + archive are live stores now
+    const telemetry = base.databases.find((d) => d.store === "telemetry")!;
+    expect(telemetry.label).toBe("TELEMETRY");
+    expect(telemetry.note).toBe("Not bound in this environment");
+    expect(base.databases.find((d) => d.store === "archive")!.label).toBe("ARCHIVE");
   });
 
   it("with CF data: per-database usage maps to stores, overloads drive status", async () => {
@@ -266,7 +274,11 @@ describe("composePayload / getDatabasesPayload", () => {
     expect(p.window).toBe("1h");
     expect(p.edges).toEqual([]);
     expect(p.edges_error).toMatch(/setup_required/);
-    expect(p.databases).toHaveLength(4);
+    expect(p.databases).toHaveLength(6);
+    // Telemetry card carries the live route; unbound here, so route core and the unbound note.
+    const tel = p.databases.find((d) => d.store === "telemetry")!;
+    expect(tel.route).toBe("core");
+    expect(tel.note).toBe("Not bound in this environment");
 
     const edges = Array.from({ length: 10 }, (_, i) => ({
       source: `s${i}`, kind: "agent" as const, store: "core" as const, rows_read: i, rows_written: 0, queries: 1, overloads: 0,
@@ -276,6 +288,30 @@ describe("composePayload / getDatabasesPayload", () => {
     expect(core.top_jobs.map((j) => j.source)).toEqual(["s9", "s8", "s7", "s6", "s5", "s4", "s3", "s2"]);
     expect(composed.databases.find((d) => d.store === "audit")!.top_jobs).toEqual([]);
     expect(composed.edges).toHaveLength(10);
+  });
+});
+
+describe("applyTelemetryRoute", () => {
+  const card = (store: "telemetry" | "core", note: string | null) => ({ store, note }) as unknown as DatabaseCard;
+  const payload = (note: string | null) =>
+    ({ databases: [card("core", null), card("telemetry", note)] }) as unknown as DatabasesPayload;
+
+  it("bound + routed to core: says it is not in use yet", () => {
+    const out = applyTelemetryRoute(payload(null), { route: "core", requested: null, bound: true });
+    const tel = out.databases.find((d) => d.store === "telemetry")!;
+    expect(tel.route).toBe("core");
+    expect(tel.note).toBe(TELEMETRY_NOT_IN_USE_NOTE);
+    expect(out.databases.find((d) => d.store === "core")!.route).toBeUndefined();
+  });
+
+  it("routed to telemetry: keeps the computed note", () => {
+    const out = applyTelemetryRoute(payload(null), { route: "telemetry", requested: "telemetry", bound: true });
+    expect(out.databases.find((d) => d.store === "telemetry")).toMatchObject({ route: "telemetry", note: null });
+  });
+
+  it("unbound: keeps the unbound note", () => {
+    const out = applyTelemetryRoute(payload("Not bound in this environment"), { route: "core", requested: "telemetry", bound: false });
+    expect(out.databases.find((d) => d.store === "telemetry")!.note).toBe("Not bound in this environment");
   });
 });
 
