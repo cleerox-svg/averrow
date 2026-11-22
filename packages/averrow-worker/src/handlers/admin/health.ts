@@ -32,7 +32,7 @@ import {
   countStatusCubeForHour,
   countArcsCubeForHour,
 } from "../../lib/cube-builder";
-import { historyParts, unionAggregateFirst } from "../../lib/telemetry-read";
+import { historyParts, unionAggregateFirst, unionGrouped } from "../../lib/telemetry-read";
 
 /**
  * TTL for the system-health 14-day daily threat trend (cachedValue). A
@@ -168,7 +168,13 @@ export async function handleBudgetLedgerHealth(request: Request, env: Env): Prom
   const origin = request.headers.get("Origin");
 
   try {
-    const budget = new BudgetManager(env.DB);
+    // Budget family (Track B1d): config on the routed store, history read
+    // as telemetry ∪ core.
+    const budget = await BudgetManager.forEnv(env);
+    const [ledgerParts, rollupParts] = await Promise.all([
+      historyParts(env, "budget_ledger"),
+      historyParts(env, "agent_budget_rollups"),
+    ]);
     // Phase 4.2: read per-agent monthlyTokenCap declarations from
     // each AgentModule and surface them alongside actual 30-day spend.
     const { agentModules } = await import("../../agents");
@@ -181,7 +187,14 @@ export async function handleBudgetLedgerHealth(request: Request, env: Env): Prom
     }
     const [status, byAgent24h, byAgent30d, totals24h] = await Promise.all([
       budget.getStatus(),
-      env.DB.prepare(`
+      unionGrouped<{
+        agent_id: string;
+        calls: number;
+        input_tokens: number;
+        output_tokens: number;
+        cost_usd: number;
+        last_call_at: string;
+      }>(ledgerParts, () => ({ sql: `
         SELECT agent_id,
                COUNT(*)             as calls,
                SUM(input_tokens)    as input_tokens,
@@ -189,38 +202,32 @@ export async function handleBudgetLedgerHealth(request: Request, env: Env): Prom
                SUM(cost_usd)        as cost_usd,
                MAX(created_at)      as last_call_at
         FROM budget_ledger
-        WHERE created_at >= datetime('now', '-1 day')
+        WHERE created_at >= datetime('now', '-1 day')/*split*/
         GROUP BY agent_id
-      `).all<{
-        agent_id: string;
-        calls: number;
-        input_tokens: number;
-        output_tokens: number;
-        cost_usd: number;
-        last_call_at: string;
-      }>(),
+      `, binds: [] }), { groupBy: ["agent_id"], sum: ["calls", "input_tokens", "output_tokens", "cost_usd"], max: ["last_call_at"] }),
       // Phase 5.1: read the current-month token totals from the
       // agent_budget_rollups materialised view instead of SUM-ing a
       // 30-day window on budget_ledger. Single index scan vs. a
       // ~32M-rows-read full sum (the #5 D1 reader before this PR).
-      env.DB.prepare(`
+      // Keyed counters: a month's row can exist on both DBs → SUM per agent.
+      unionGrouped<{ agent_id: string; tokens_month: number; cost_month: number; calls_month: number }>(rollupParts, () => ({ sql: `
         SELECT agent_id,
                total_input_tokens + total_output_tokens AS tokens_month,
                total_cost_usd                          AS cost_month,
                call_count                              AS calls_month
         FROM agent_budget_rollups
-        WHERE year_month = strftime('%Y-%m', 'now')
-      `).all<{ agent_id: string; tokens_month: number; cost_month: number; calls_month: number }>(),
-      env.DB.prepare(`
+        WHERE year_month = strftime('%Y-%m', 'now')/*split*/
+      `, binds: [] }), { groupBy: ["agent_id"], sum: ["tokens_month", "cost_month", "calls_month"] }),
+      unionAggregateFirst<{ calls: number; cost_usd: number }>(ledgerParts, () => ({ sql: `
         SELECT COUNT(*) as calls,
                COALESCE(SUM(cost_usd), 0) as cost_usd
         FROM budget_ledger
-        WHERE created_at >= datetime('now', '-1 day')
-      `).first<{ calls: number; cost_usd: number }>(),
+        WHERE created_at >= datetime('now', '-1 day')/*split*/
+      `, binds: [] }), { sum: ["calls", "cost_usd"] }),
     ]);
 
-    const byAgentMap = new Map(byAgent24h.results.map(r => [r.agent_id, r]));
-    const rollupMap = new Map(byAgent30d.results.map(r => [r.agent_id, r]));
+    const byAgentMap = new Map(byAgent24h.map(r => [r.agent_id, r]));
+    const rollupMap = new Map(byAgent30d.map(r => [r.agent_id, r]));
 
     const expected_agents = EXPECTED_LEDGER_AGENT_IDS.map(agentId => {
       const row = byAgentMap.get(agentId);
@@ -250,7 +257,7 @@ export async function handleBudgetLedgerHealth(request: Request, env: Env): Prom
       };
     });
 
-    const unexpected_agents = byAgent24h.results
+    const unexpected_agents = byAgent24h
       .filter(r => !(EXPECTED_LEDGER_AGENT_IDS as readonly string[]).includes(r.agent_id))
       .map(r => ({
         agent_id: r.agent_id,
@@ -412,12 +419,15 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
     `,
       binds: [],
     }), { sum: ["total", "successes", "errors"] })),
-    session.prepare(`
+    historyParts(env, "feed_pull_history", { core: session }).then((parts) => unionAggregateFirst<{ pulls: number; ingested: number }>(parts, () => ({
+      sql: `
       SELECT COUNT(*) as pulls,
         COALESCE(SUM(records_ingested),0) as ingested
       FROM feed_pull_history
-      WHERE started_at >= datetime('now','-1 day')
-    `).first<{ pulls: number; ingested: number }>(),
+      WHERE started_at >= datetime('now','-1 day')/*split*/
+    `,
+      binds: [],
+    }), { sum: ["pulls", "ingested"] })),
     session.prepare(`
       SELECT COUNT(*) as count FROM sessions
       WHERE expires_at > datetime('now') AND revoked_at IS NULL

@@ -19,6 +19,7 @@
  */
 
 import type { Env } from "../../../types";
+import { historyParts, unionGrouped } from "../../../lib/telemetry-read";
 import type {
   DataLayerInventory,
   FeedRuntimeRow,
@@ -296,8 +297,14 @@ export async function collectFeedRuntime(
   // that subquery has been removed and we simply COALESCE the
   // column, since the feedRunner is now the single writer that
   // increments on failure and resets to 0 on success.
+  //
+  // Track B1d: every table here is in the feeds family, so each part of
+  // the telemetry ∪ core union runs the whole statement on its own DB;
+  // per-feed rows merge (counts summed, last attempt maxed), config /
+  // status columns from the routed store's part.
   try {
-    const rows = await env.DB.prepare(
+    const parts = await historyParts(env, "feed_pull_history", { routedFirst: true });
+    const rows = { results: await unionGrouped<FeedRuntimeQueryRow>(parts, () => ({ sql:
       `SELECT
          fc.feed_name,
          fc.enabled,
@@ -307,20 +314,24 @@ export async function collectFeedRuntime(
          COALESCE(fs.consecutive_failures, 0) AS consecutive_failures,
          (SELECT MAX(started_at)
             FROM feed_pull_history
-            WHERE feed_name = fc.feed_name) AS last_attempted_pull,
+            WHERE feed_name = fc.feed_name/*split*/) AS last_attempted_pull,
          (SELECT COUNT(*)
             FROM feed_pull_history
             WHERE feed_name = fc.feed_name
-              AND started_at > datetime('now','-7 days')) AS pulls_7d,
+              AND started_at > datetime('now','-7 days')/*split*/) AS pulls_7d,
          (SELECT COUNT(*)
             FROM feed_pull_history
             WHERE feed_name = fc.feed_name
               AND started_at > datetime('now','-7 days')
-              AND status = 'success') AS successes_7d
+              AND status = 'success'/*split*/) AS successes_7d
        FROM feed_configs fc
        LEFT JOIN feed_status fs ON fc.feed_name = fs.feed_name
-       ORDER BY fc.feed_name`,
-    ).all<FeedRuntimeQueryRow>();
+       ORDER BY fc.feed_name`, binds: [] }), {
+      groupBy: ["feed_name"],
+      sum: ["pulls_7d", "successes_7d"],
+      max: ["last_attempted_pull"],
+      sort: (a, b) => (a.feed_name < b.feed_name ? -1 : a.feed_name > b.feed_name ? 1 : 0),
+    }) };
 
     return (rows.results ?? []).map((r) => ({
       feed_name: r.feed_name,

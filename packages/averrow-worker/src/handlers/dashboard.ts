@@ -4,6 +4,7 @@
 
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
+import { familyReadDb } from '../lib/db-route';
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 import { scopeCacheSegment } from "../lib/scope-cache-key";
@@ -167,11 +168,12 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
                SUM(CASE WHEN first_seen >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS new_7d
         FROM campaigns
       `).first<{ active: number; new_7d: number }>().catch(() => ({ active: 0, new_7d: 0 })),
-      session.prepare(`
+      // feeds family (Track B1d): the core session while feeds are on core.
+      familyReadDb(env, 'feeds', session).then((fdb) => fdb.prepare(`
         SELECT COUNT(*) AS total,
                SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS active
         FROM feed_configs
-      `).first<{ total: number; active: number }>().catch(() => ({ total: 0, active: 0 })),
+      `).first<{ total: number; active: number }>()).catch(() => ({ total: 0, active: 0 })),
     ]);
 
     // Use active count if available, otherwise total count (threats may not have status='active')

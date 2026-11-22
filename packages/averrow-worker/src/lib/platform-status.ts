@@ -107,7 +107,10 @@ async function computeFeedsDaily(env: Env, days: string[]): Promise<DailyPoint[]
   // blackout, so including them would have masked the outage entirely.
   const earliest = days[0]!;
 
-  const rows = await env.DB.prepare(`
+  // Track B1d: feed_pull_history ⋈ feed_configs are both feeds-family
+  // tables, so each part runs the JOIN on its own DB; days merge by sum.
+  const rowList = await unionGrouped<FeedDayRow>(
+    await historyParts(env, "feed_pull_history", { alias: "fph", routedFirst: true }), () => ({ sql: `
     SELECT date(fph.started_at) AS day,
            SUM(CASE WHEN fph.status = 'success' THEN 1 ELSE 0 END) AS success_pulls,
            COUNT(*) AS total_pulls,
@@ -115,9 +118,10 @@ async function computeFeedsDaily(env: Env, days: string[]): Promise<DailyPoint[]
       FROM feed_pull_history fph
       LEFT JOIN feed_configs fc ON fc.feed_name = fph.feed_name
      WHERE fph.started_at >= ? || 'T00:00:00Z'
-       AND COALESCE(fc.feed_type, 'ingest') = 'ingest'
+       AND COALESCE(fc.feed_type, 'ingest') = 'ingest'/*split*/
      GROUP BY day
-  `).bind(earliest).all<FeedDayRow>();
+  `, binds: [earliest] }), { groupBy: ["day"], sum: ["success_pulls", "total_pulls", "records"] });
+  const rows = { results: rowList };
 
   const byDay = new Map<string, FeedDayRow>();
   for (const r of rows.results) byDay.set(r.day, r);
@@ -282,14 +286,16 @@ const FEEDS_REALTIME_DEGRADED_PULLS = 5;
 interface RealtimeFeedsRow { success_pulls: number; records: number }
 
 async function computeFeedsRealtime(env: Env): Promise<{ status: CategoryStatus; note: string }> {
-  const row = await env.DB.prepare(`
+  // Summed across telemetry ∪ core during the feeds cut-over (Track B1d).
+  const row = await unionAggregateFirst<RealtimeFeedsRow>(
+    await historyParts(env, "feed_pull_history", { alias: "fph" }), () => ({ sql: `
     SELECT SUM(CASE WHEN fph.status = 'success' THEN 1 ELSE 0 END) AS success_pulls,
            COALESCE(SUM(CASE WHEN fph.status = 'success' THEN fph.records_ingested END), 0) AS records
       FROM feed_pull_history fph
       LEFT JOIN feed_configs fc ON fc.feed_name = fph.feed_name
      WHERE fph.started_at >= datetime('now', '-6 hours')
-       AND COALESCE(fc.feed_type, 'ingest') = 'ingest'
-  `).first<RealtimeFeedsRow>();
+       AND COALESCE(fc.feed_type, 'ingest') = 'ingest'/*split*/
+  `, binds: [] }), { sum: ["success_pulls", "records"] });
 
   const successPulls = row?.success_pulls ?? 0;
   if (successPulls === 0) {

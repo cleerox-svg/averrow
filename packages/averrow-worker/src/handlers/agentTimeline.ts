@@ -683,10 +683,12 @@ export async function computeAgentTimeline(
   const windowStartMs = nowMs - cfg.windowMs;
   // agent_runs / agent_activity_log / agent_events span telemetry ∪ core
   // during the cut-over; feed_pull_history stays on `db` (its own family).
-  const [runParts, activityParts, eventParts] = await Promise.all([
+  const [runParts, activityParts, eventParts, pullParts] = await Promise.all([
     historyParts(env, "agent_runs", { core: db }),
     historyParts(env, "agent_activity_log", { core: db }),
     historyParts(env, "agent_events", { core: db }),
+    // feeds family (Track B1d): its own route + marker.
+    historyParts(env, "feed_pull_history", { core: db }),
   ]);
 
   const [windowRunRows, openRunRows, pullRows, activityRows, eventRows] = await Promise.all([
@@ -712,13 +714,13 @@ export async function computeAgentTimeline(
       [toSqliteTs(nowMs - cfg.openRunLookbackMs)], tally),
 
     // 3. Feed pulls started near/in the window (idx_feed_pulls_started).
-    readAll<PullRow>(db.prepare(
+    readUnion<PullRow>(pullParts,
       `SELECT id, feed_name, started_at, completed_at, duration_ms, status,
               records_ingested, records_rejected, error_message
          FROM feed_pull_history
         WHERE (started_at >= ? AND started_at < ?) OR started_at >= ?
         LIMIT ?`,
-    ).bind(...sinceRangeBinds(windowStartMs - cfg.pullLookbackMs), cfg.pullSqlLimit), tally),
+      [...sinceRangeBinds(windowStartMs - cfg.pullLookbackMs), cfg.pullSqlLimit], tally),
 
     // 4. NEXUS workflow lifecycle. agent_activity_log also holds per-message
     //    abuse-mailbox rows etc., so it is read ONLY through

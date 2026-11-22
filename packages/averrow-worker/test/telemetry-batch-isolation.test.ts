@@ -1,13 +1,17 @@
 /**
- * No D1 batch mixes an agent-runs family table with any other table
- * (Track B1c).
+ * No D1 batch mixes tables of two different route families (Track B1c/B1d).
  *
- * agent_runs / agent_configs / agent_events / agent_activity_log /
- * agent_approvals are served from TELEMETRY_DB once `db_route:telemetry`
- * flips; every other table stays on core (feed_* and budget_* move in a
- * later family). A D1 batch runs on ONE database, so a batch holding both
- * would send one half to the wrong DB — after the flip it fails ("no such
- * table") or writes a row the reads never see.
+ * Each family moves to TELEMETRY_DB on its own flag (lib/db-route.ts
+ * FAMILY_TABLES): agents (agent_runs, agent_configs, agent_events,
+ * agent_activity_log, agent_approvals — `db_route:telemetry`), feeds
+ * (feed_configs, feed_status, feed_pull_history —
+ * `db_route:telemetry:feeds`) and budget (budget_ledger, budget_config,
+ * agent_budget_rollups — `db_route:telemetry:budget`); every other table
+ * stays on core. A D1 batch runs on ONE database, so a batch holding two
+ * families (or a family and a core table) would send part of it to the wrong
+ * DB once one of them flips — it fails ("no such table") or writes a row the
+ * reads never see. Tables of the SAME family may share a batch (the budget
+ * ledger + rollup write, the feeds unpause).
  *
  * Static and heuristic, by design: for every `.batch(` call in src/ it
  * collects the SQL the batch can contain — the call's own argument text,
@@ -22,7 +26,11 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
-const FAMILY = new Set(["agent_runs", "agent_configs", "agent_events", "agent_activity_log", "agent_approvals"]);
+import { FAMILY_TABLES, TELEMETRY_FAMILIES } from "../src/lib/db-route";
+
+/** table → its route family; tables not listed are core. */
+const FAMILY_OF = new Map<string, string>(TELEMETRY_FAMILIES.flatMap((f) => FAMILY_TABLES[f].map((t) => [t, f] as [string, string])));
+const groupOf = (t: string): string => FAMILY_OF.get(t) ?? "core";
 const SRC = resolve(__dirname, "..", "src");
 
 function sourceFiles(dir: string): string[] {
@@ -88,37 +96,48 @@ function buildersOf(file: string, ident: string): string {
   return parts.join("\n");
 }
 
-function scanBatches(list: Array<{ rel: string; text: string }>): { offenders: string[]; familyBatches: string[] } {
+function scanBatches(list: Array<{ rel: string; text: string }>): { offenders: string[]; familyBatches: string[]; byFamily: Map<string, string[]> } {
   const offenders: string[] = [];
   const familyBatches: string[] = [];
+  const byFamily = new Map<string, string[]>();
   for (const f of list) {
     for (const m of f.text.matchAll(/\.batch(?:<[^>]*>)?\(/g)) {
       const arg = balanced(f.text, m.index! + m[0].length - 1);
       let snippet = arg;
       const ident = arg.trim().match(/^([a-zA-Z_][\w.]*)$/)?.[1];
       if (ident) snippet += "\n" + buildersOf(f.text, ident.split(".").pop()!);
-      const tables = tablesIn(withLocalHelpers(f.text, snippet));
-      const fam = [...tables].filter((t) => FAMILY.has(t));
-      if (fam.length === 0) continue;
+      const tables = [...tablesIn(withLocalHelpers(f.text, snippet))];
+      const fams = [...new Set(tables.map(groupOf))].filter((g) => g !== "core");
+      if (fams.length === 0) continue;
       const line = f.text.slice(0, m.index!).split("\n").length;
       familyBatches.push(`${f.rel}:${line}`);
-      const other = [...tables].filter((t) => !FAMILY.has(t));
-      if (other.length > 0) offenders.push(`${f.rel}:${line} batches ${fam.join(", ")} with ${other.join(", ")}`);
+      for (const g of fams) byFamily.set(g, [...(byFamily.get(g) ?? []), `${f.rel}:${line}`]);
+      const groups = new Set(tables.map(groupOf));
+      if (groups.size > 1) {
+        const first = fams[0]!;
+        const fam = tables.filter((t) => groupOf(t) === first);
+        const other = tables.filter((t) => groupOf(t) !== first);
+        offenders.push(`${f.rel}:${line} batches ${fam.join(", ")} with ${other.join(", ")}`);
+      }
     }
   }
-  return { offenders, familyBatches };
+  return { offenders, familyBatches, byFamily };
 }
 
 const files = sourceFiles(SRC).map((p) => ({ rel: relative(SRC, p).split("\\").join("/"), text: readFileSync(p, "utf8") }));
 
 describe("telemetry batch isolation", () => {
-  it("no .batch( mixes an agent-runs family table with another table", () => {
-    const { offenders, familyBatches } = scanBatches(files);
-    expect(offenders, "split the batch per database: agent-runs family tables go to the routed telemetry store (lib/db-route.ts)").toEqual([]);
+  it("no .batch( mixes two route families (or a family with a core table)", () => {
+    const { offenders, familyBatches, byFamily } = scanBatches(files);
+    expect(offenders, "split the batch per database: each family's tables go to that family's routed store (lib/db-route.ts)").toEqual([]);
     // The scan must actually see family batches: FC's activity-log flush and
     // the agent_configs reset are written so the heuristic can trace them.
     expect(familyBatches.some((l) => l.startsWith("agents/flightControl.ts:"))).toBe(true);
     expect(familyBatches.some((l) => l.startsWith("handlers/agents.ts:"))).toBe(true);
+    // Feeds: the auto-recover + unpause batches; budget: the ledger + rollup write.
+    expect(byFamily.get("feeds")?.some((l) => l.startsWith("lib/feedRunner.ts:"))).toBe(true);
+    expect(byFamily.get("feeds")?.some((l) => l.startsWith("handlers/feeds.ts:"))).toBe(true);
+    expect(byFamily.get("budget")?.some((l) => l.startsWith("lib/budgetManager.ts:"))).toBe(true);
   });
 
   it("flags a batch that mixes the two (self-test of the heuristic)", () => {
@@ -136,5 +155,22 @@ describe("telemetry batch isolation", () => {
     expect(offenders).toHaveLength(2);
     expect(offenders[0]).toMatch(/agent_runs with brands/);
     expect(offenders[1]).toMatch(/agent_events with threats/);
+  });
+
+  it("flags a batch that mixes two families, not one that stays inside a family (self-test)", () => {
+    const text = [
+      "async function g(db: D1Database) {",
+      "  await db.batch([db.prepare(`INSERT INTO budget_ledger (id) VALUES (?)`), db.prepare(`INSERT INTO agent_budget_rollups (agent_id) VALUES (?)`)]);",
+      "  await db.batch([db.prepare(`UPDATE feed_configs SET enabled = 1`), db.prepare(`UPDATE feed_status SET consecutive_failures = 0`)]);",
+      "  await db.batch([db.prepare(`UPDATE feed_status SET x = 1`), db.prepare(`INSERT INTO budget_ledger (id) VALUES (?)`)]);",
+      "  await db.batch([db.prepare(`INSERT INTO agent_activity_log (id) VALUES (?)`), db.prepare(`UPDATE feed_configs SET enabled = 0`)]);",
+      "  await db.batch([db.prepare(`UPDATE feed_pull_history SET status = 'failed'`), db.prepare(`UPDATE threats SET x = 1`)]);",
+      "}",
+    ].join("\n");
+    const { offenders } = scanBatches([{ rel: "y.ts", text }]);
+    expect(offenders).toHaveLength(3);
+    expect(offenders[0]).toMatch(/feed_status with budget_ledger/);
+    expect(offenders[1]).toMatch(/agent_activity_log with feed_configs/);
+    expect(offenders[2]).toMatch(/feed_pull_history with threats/);
   });
 });

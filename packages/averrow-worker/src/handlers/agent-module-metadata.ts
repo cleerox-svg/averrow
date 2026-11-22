@@ -22,6 +22,7 @@
  */
 
 import { json } from "../lib/cors";
+import { historyParts, unionAggregateFirst } from "../lib/telemetry-read";
 import type { Env } from "../types";
 
 export async function handleAgentModuleMetadata(
@@ -39,17 +40,19 @@ export async function handleAgentModuleMetadata(
 
     // Pull the current-month rollup for spend-vs-cap. Phase 5.1's
     // agent_budget_rollups gives us a single-row PK lookup.
-    const rollup = await env.DB.prepare(`
-      SELECT total_input_tokens, total_output_tokens, total_cost_usd, call_count, updated_at
-      FROM agent_budget_rollups
-      WHERE agent_id = ? AND year_month = strftime('%Y-%m', 'now')
-    `).bind(agentId).first<{
+    // Keyed counter: during the budget cut-over the month's row can exist on
+    // both DBs (Track B1d) — summed, newest updated_at.
+    const rollup = await unionAggregateFirst<{
       total_input_tokens: number;
       total_output_tokens: number;
       total_cost_usd: number;
       call_count: number;
       updated_at: string;
-    }>();
+    }>(await historyParts(env, "agent_budget_rollups"), () => ({ sql: `
+      SELECT total_input_tokens, total_output_tokens, total_cost_usd, call_count, updated_at
+      FROM agent_budget_rollups
+      WHERE agent_id = ? AND year_month = strftime('%Y-%m', 'now')/*split*/
+    `, binds: [agentId] }), { sum: ["total_input_tokens", "total_output_tokens", "total_cost_usd", "call_count"], max: ["updated_at"] });
 
     const monthTokens = (rollup?.total_input_tokens ?? 0) + (rollup?.total_output_tokens ?? 0);
     const cap = mod.budget.monthlyTokenCap;

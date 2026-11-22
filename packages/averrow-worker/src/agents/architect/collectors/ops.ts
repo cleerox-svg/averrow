@@ -14,7 +14,7 @@ import type {
   CronTelemetry,
   OpsTelemetry,
 } from "../types";
-import { applySplit, byDesc, historyParts, unionGrouped, unionRows } from "../../../lib/telemetry-read";
+import { applySplit, byDesc, historyParts, unionAggregateFirst, unionFirst, unionGrouped, unionRows } from "../../../lib/telemetry-read";
 
 // ─── Query row shapes ─────────────────────────────────────────────
 
@@ -116,9 +116,11 @@ export async function collectOpsTelemetry(env: Env): Promise<OpsTelemetry> {
 
 async function ledgerHasRows(env: Env): Promise<boolean> {
   try {
-    const row = await env.DB.prepare(
-      `SELECT 1 AS present FROM budget_ledger LIMIT 1`,
-    ).first<{ present: number }>();
+    // Either DB of the budget union (Track B1d).
+    const row = await unionFirst<{ present: number }>(await historyParts(env, "budget_ledger"), () => ({
+      sql: `SELECT 1 AS present FROM budget_ledger LIMIT 1`,
+      binds: [],
+    }));
     return row !== null;
   } catch {
     // If the table doesn't exist at all, treat that as "no rows" so
@@ -159,15 +161,15 @@ async function collectAgentTelemetry(
     drop: ["n_dur"],
   }) };
 
-  // Per-agent 7-day AI cost from budget_ledger.
-  const costRows = await env.DB.prepare(
-    `SELECT agent_id, SUM(cost_usd) AS total_cost
+  // Per-agent 7-day AI cost from budget_ledger (telemetry ∪ core, Track B1d).
+  const ledgerParts = await historyParts(env, "budget_ledger");
+  const costRows = { results: await unionGrouped<CostRow>(ledgerParts, () => ({
+    sql: `SELECT agent_id, SUM(cost_usd) AS total_cost
        FROM budget_ledger
-      WHERE created_at >= ?
+      WHERE created_at >= ?/*split*/
       GROUP BY agent_id`,
-  )
-    .bind(sinceIso)
-    .all<CostRow>();
+    binds: [sinceIso],
+  }), { groupBy: ["agent_id"], sum: ["total_cost"] }) };
 
   const costByAgent = new Map<string, number>();
   for (const r of costRows.results ?? []) {
@@ -294,22 +296,22 @@ async function collectAiGatewayStats(
   env: Env,
   sinceIso: string,
 ): Promise<OpsTelemetry["ai_gateway"]> {
-  // Total 7-day AI spend and per-model mix come from budget_ledger.
-  const totalRow = await env.DB.prepare(
-    `SELECT COALESCE(SUM(cost_usd), 0) AS total_cost FROM budget_ledger
-      WHERE created_at >= ?`,
-  )
-    .bind(sinceIso)
-    .first<{ total_cost: number }>();
+  // Total 7-day AI spend and per-model mix come from budget_ledger
+  // (telemetry ∪ core during the budget cut-over, Track B1d).
+  const ledgerParts = await historyParts(env, "budget_ledger");
+  const totalRow = await unionAggregateFirst<{ total_cost: number }>(ledgerParts, () => ({
+    sql: `SELECT COALESCE(SUM(cost_usd), 0) AS total_cost FROM budget_ledger
+      WHERE created_at >= ?/*split*/`,
+    binds: [sinceIso],
+  }), { sum: ["total_cost"] });
 
-  const modelRows = await env.DB.prepare(
-    `SELECT model, SUM(cost_usd) AS total_cost
+  const modelRows = { results: await unionGrouped<ModelCostRow>(ledgerParts, () => ({
+    sql: `SELECT model, SUM(cost_usd) AS total_cost
        FROM budget_ledger
-      WHERE created_at >= ?
+      WHERE created_at >= ?/*split*/
       GROUP BY model`,
-  )
-    .bind(sinceIso)
-    .all<ModelCostRow>();
+    binds: [sinceIso],
+  }), { groupBy: ["model"], sum: ["total_cost"] }) };
 
   const modelMix: Record<string, number> = {};
   for (const r of modelRows.results ?? []) {

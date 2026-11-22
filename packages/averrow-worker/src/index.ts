@@ -272,7 +272,8 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         // Check feed_configs state for diagnostics
         let feedConfigRows: { feed_name: string; feed_type: string; enabled: number }[] = [];
         try {
-          const fc = await env.DB.prepare(
+          const { familyStore } = await import('./lib/db-route');
+          const fc = await (await familyStore(env, 'feeds')).prepare(
             "SELECT feed_name, feed_type, enabled FROM feed_configs WHERE feed_type IN ('enrichment', 'social')"
           ).all<{ feed_name: string; feed_type: string; enabled: number }>();
           feedConfigRows = fc.results;

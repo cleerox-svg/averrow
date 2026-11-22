@@ -31,7 +31,7 @@ import {
   countStatusCubeForHour,
   countArcsCubeForHour,
 } from "../../lib/cube-builder";
-import { byDesc, historyParts, preferFinalizedRun, unionFirst, unionRows } from '../../lib/telemetry-read';
+import { byDesc, historyParts, preferFinalizedRun, unionAggregateFirst, unionFirst, unionRows } from '../../lib/telemetry-read';
 
 
 // ─── Pipeline Status (reads pre-computed data only — no COUNT queries) ───
@@ -562,8 +562,14 @@ export async function handlePipelineDetail(
     // pipelines mapped to a feed_name — agent-driven enrichment
     // pipelines (cartographer, analyst, brand_enrich, domain_geo)
     // have no feed_pull_history rows.
+    // Summed across telemetry ∪ core during the feeds cut-over (Track B1d).
     meta.feed_name
-      ? env.DB.prepare(`
+      ? historyParts(env, 'feed_pull_history').then((parts) => unionAggregateFirst<{
+          success: number;
+          failed: number;
+          partial: number;
+          total: number;
+        }>(parts, () => ({ sql: `
           SELECT
             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,
             SUM(CASE WHEN status = 'failed'  THEN 1 ELSE 0 END) AS failed,
@@ -571,13 +577,8 @@ export async function handlePipelineDetail(
             COUNT(*) AS total
           FROM feed_pull_history
           WHERE feed_name = ?
-            AND started_at >= datetime('now', '-1 day')
-        `).bind(meta.feed_name).first<{
-          success: number;
-          failed: number;
-          partial: number;
-          total: number;
-        }>()
+            AND started_at >= datetime('now', '-1 day')/*split*/
+        `, binds: [meta.feed_name!] }), { sum: ['success', 'failed', 'partial', 'total'] }))
       : Promise.resolve(null),
   ]);
 

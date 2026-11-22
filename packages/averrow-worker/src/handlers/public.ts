@@ -5,6 +5,7 @@
  */
 
 import { json } from "../lib/cors";
+import { familyStore } from "../lib/db-route";
 import { runSyncAgent } from "../lib/agentRunner";
 import { publicTrustCheckAgent } from "../agents/public-trust-check";
 import type { PublicTrustCheckOutput } from "../agents/public-trust-check";
@@ -59,11 +60,12 @@ async function computePublicStatsBase(env: Env): Promise<PublicStatsBase> {
   ] = await Promise.all([
     env.DB.prepare("SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE status IN ('active', 'unknown')").first<{ n: number }>(),
     env.DB.prepare("SELECT COUNT(*) as n FROM monitored_brands WHERE status = 'active'").first<{ n: number }>(),
-    env.DB.prepare(
+    // feeds family (Track B1d): the routed feeds store.
+    familyStore(env, "feeds").then((fdb) => fdb.prepare(
       `SELECT COUNT(*) as n FROM feed_status
        WHERE health_status IN ('healthy', 'degraded')
        AND feed_name NOT IN (SELECT feed_name FROM feed_configs WHERE enabled = 0)`
-    ).first<{ n: number }>(),
+    ).first<{ n: number }>()),
     env.DB.prepare("SELECT COUNT(*) as n FROM campaigns").first<{ n: number }>(),
     env.DB.prepare("SELECT COUNT(DISTINCT country_code) AS n FROM threat_cube_geo WHERE country_code != 'XX'").first<{ n: number }>(),
     env.DB.prepare("SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= ?").bind(todayBucketStr).first<{ n: number }>(),

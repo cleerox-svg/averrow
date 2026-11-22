@@ -81,12 +81,14 @@ interface CachedFlag {
 
 interface FamilyCache {
   flag: CachedFlag | null;
+  /** The KV read in progress, shared by concurrent resolutions. */
+  inflight: Promise<TelemetryRoute | null> | null;
   usedKnown: boolean;
   usedNegativeUntil: number;
   usedRetryAfter: number;
 }
 
-const freshCache = (): FamilyCache => ({ flag: null, usedKnown: false, usedNegativeUntil: 0, usedRetryAfter: 0 });
+const freshCache = (): FamilyCache => ({ flag: null, inflight: null, usedKnown: false, usedNegativeUntil: 0, usedRetryAfter: 0 });
 const caches: Record<TelemetryFamily, FamilyCache> = { agents: freshCache(), feeds: freshCache(), budget: freshCache() };
 
 /** Test hook: forget every family's in-isolate flag cache (and telemetry-used marker cache). */
@@ -170,6 +172,20 @@ export function parseTelemetryRoute(raw: unknown): TelemetryRoute | null {
 async function readRequested(env: Env, family: TelemetryFamily, nowMs: number): Promise<TelemetryRoute | null> {
   const c = caches[family];
   if (c.flag && nowMs < c.flag.expiresAt) return c.flag.requested;
+  // Concurrent resolutions in one isolate (e.g. a handler's Promise.all)
+  // share one KV read instead of each missing the cold cache.
+  if (c.inflight) return c.inflight;
+  const p = fetchRequested(env, family, nowMs);
+  c.inflight = p;
+  try {
+    return await p;
+  } finally {
+    if (c.inflight === p) c.inflight = null;
+  }
+}
+
+async function fetchRequested(env: Env, family: TelemetryFamily, nowMs: number): Promise<TelemetryRoute | null> {
+  const c = caches[family];
   try {
     const raw = await env.CACHE.get(FAMILY_ROUTE_KV_KEYS[family]);
     const parsed = parseTelemetryRoute(raw);

@@ -172,7 +172,8 @@ describe("handleBotTraffic", () => {
     const h = makeHarness();
     const res = await call(h.env, qs);
     expect(res.status).toBe(200);
-    expect(h.cacheGets).toEqual([botTrafficCacheKey(days)]);
+    // db_route:* reads are the telemetry route flag (lib/db-route.ts, cached per isolate).
+    expect(h.cacheGets.filter((k) => !k.startsWith("db_route:"))).toEqual([botTrafficCacheKey(days)]);
     expect(h.seriesBinds).toEqual([[`-${days} days`]]);
     expect(h.cachePuts[0]!.key).toBe(botTrafficCacheKey(days));
   });

@@ -12,6 +12,7 @@
 import type { Env } from "../types";
 import { cachedCount, THREATS_TOTAL_TTL_S } from "./cached-count";
 import { agentModules } from "../agents";
+import { familyStore } from "./db-route";
 
 export interface PublicStats {
   agents_deployed: string;     // e.g. "42"
@@ -109,7 +110,8 @@ export async function getPublicStats(env: Env): Promise<PublicStats> {
     // threats fast (15 min), feed_configs + brands slow (1 hour).
     const [feeds, threats, brands] = await Promise.all([
       cachedCount(env, 'count.feed_configs.enabled', 3600, async () => {
-        const r = await env.DB.prepare(
+        // feeds family (Track B1d): the routed feeds store.
+        const r = await (await familyStore(env, "feeds")).prepare(
           "SELECT COUNT(*) AS n FROM feed_configs WHERE enabled = 1",
         ).first<{ n: number }>();
         return r?.n ?? 0;
