@@ -16,6 +16,7 @@ import { isTransientD1Error, withD1Retry } from "../lib/d1-retry";
 import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 import type { Env } from "../types";
 import { historyParts, unionGrouped } from "../lib/telemetry-read";
+import { familyStore } from "../lib/db-route";
 
 // ─── Agent-run contract wrapper ─────────────────────────────────
 // The daily briefing is dispatched by the orchestrator's dedicated
@@ -556,6 +557,15 @@ function safeQuery<T>(rc: ReadCtx, section: string, sql: string, fallback: T): P
   });
 }
 
+/** safeQuery on the routed feeds store (feed_configs / feed_status, Track B1d). */
+function safeFeedsQuery<T>(rc: ReadCtx, section: string, sql: string, fallback: T): Promise<T> {
+  return guardedRead(rc, section, fallback, async () => {
+    const db = rc.env ? await familyStore(rc.env, "feeds") : rc.db;
+    const result = await db.prepare(sql).all();
+    return result.results as T;
+  });
+}
+
 function safeFirst<T>(rc: ReadCtx, section: string, sql: string, fallback: T): Promise<T> {
   return guardedRead(rc, section, fallback, async () => {
     const result = await rc.db.prepare(sql).first();
@@ -737,17 +747,23 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // B) Feed Production (12h)
-    () => safeQuery<Array<{ feed_name: string; runs: number; ingested: number }>>(
-      rc, "feed_production",
-      `SELECT feed_name, COUNT(*) as runs, SUM(records_ingested) as ingested
+    () => guardedRead<Array<{ feed_name: string; runs: number; ingested: number }>>(
+      rc, "feed_production", [],
+      async () => unionGrouped<{ feed_name: string; runs: number; ingested: number }>(
+        await historyParts(rc.env, "feed_pull_history", { core: rc.db }),
+        () => ({
+          sql: `SELECT feed_name, COUNT(*) as runs, SUM(records_ingested) as ingested
        FROM feed_pull_history
-       WHERE started_at >= datetime('now', '-12 hours')
+       WHERE started_at >= datetime('now', '-12 hours')/*split*/
        GROUP BY feed_name ORDER BY ingested DESC`,
-      [],
+          binds: [],
+        }),
+        { groupBy: ["feed_name"], sum: ["runs", "ingested"], sort: (a, b) => Number(b.ingested ?? 0) - Number(a.ingested ?? 0) },
+      ),
     ),
 
     // C) Feed Health
-    () => safeQuery<
+    () => safeFeedsQuery<
       Array<{
         feed_name: string;
         health_status: string;
@@ -761,7 +777,7 @@ export async function fetchComprehensiveBriefing(
        ORDER BY health_status DESC, feed_name`,
       [],
     ),
-    () => safeQuery<Array<{ health_status: string; count: number }>>(
+    () => safeFeedsQuery<Array<{ health_status: string; count: number }>>(
       rc, "feed_health_summary",
       `SELECT health_status, COUNT(*) as count FROM feed_status
        WHERE health_status != 'disabled' GROUP BY health_status`,
@@ -1017,7 +1033,7 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // L) Anomalies
-    () => safeQuery<
+    () => safeFeedsQuery<
       Array<{ feed_name: string; last_successful_pull: string | null }>
     >(
       rc, "stale_feeds",
@@ -1026,7 +1042,7 @@ export async function fetchComprehensiveBriefing(
        AND (last_successful_pull IS NULL OR last_successful_pull < datetime('now', '-6 hours'))`,
       [],
     ),
-    () => safeQuery<Array<{ feed_name: string; last_error: string | null }>>(
+    () => safeFeedsQuery<Array<{ feed_name: string; last_error: string | null }>>(
       rc, "degraded_feeds",
       `SELECT feed_name, last_error FROM feed_status
        WHERE health_status IN ('degraded', 'failed') AND last_error IS NOT NULL`,

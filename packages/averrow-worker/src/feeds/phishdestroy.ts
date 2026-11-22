@@ -1,4 +1,5 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
+import { feedStoreOf } from "./types";
 import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "../lib/threatScoring";
 import { tagThreat, isIdpFamilyTag } from "../lib/idp-tagging";
 import { enqueueAutoCaptures, type AutoCaptureItem } from "../lib/page-capture";
@@ -106,9 +107,10 @@ async function fetchList(configuredUrl: string): Promise<FetchedList> {
  * `feed_status.last_error` is no use here: the success path clears it.
  * Best-effort.
  */
-async function notePullHistory(env: Env, feedName: string, note: string): Promise<void> {
+async function notePullHistory(feedsDb: D1Database, feedName: string, note: string): Promise<void> {
   try {
-    await env.DB.prepare(
+    // The pull's feeds store (Track B1d): this run's pull row lives there.
+    await feedsDb.prepare(
       `UPDATE feed_pull_history SET error_message = ?
         WHERE id = (SELECT id FROM feed_pull_history
                      WHERE feed_name = ? AND completed_at IS NULL
@@ -204,7 +206,7 @@ export const phishdestroy: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const { body, fallbackNote } = await fetchList(ctx.feedUrl);
     if (!Array.isArray(body)) throw new Error("PhishDestroy: expected JSON array");
-    if (fallbackNote) await notePullHistory(ctx.env, ctx.feedName, fallbackNote);
+    if (fallbackNote) await notePullHistory(feedStoreOf(ctx), ctx.feedName, fallbackNote);
     const empty: FeedResult = { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
 
     // Normalise + dedupe the full list in memory, hashing as we go.
@@ -320,7 +322,7 @@ export const phishdestroy: FeedModule = {
       // The inserts above landed, so don't fail the pull. The next run
       // re-diffs against the old snapshot, and the existence lookup
       // skips this run's rows.
-      await notePullHistory(ctx.env, ctx.feedName,
+      await notePullHistory(feedStoreOf(ctx), ctx.feedName,
         `WARNING: snapshot write failed (${err instanceof Error ? err.message : String(err)}); next run re-diffs.`);
     }
 

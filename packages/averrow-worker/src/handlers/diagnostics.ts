@@ -27,8 +27,33 @@ import type { Env } from "../types";
 import { labelPerDatabase } from "../lib/db-registry";
 import { getDatabasesPayload, type DatabasesPayload } from "../lib/db-health";
 import { getWorkflowAgentStats } from "../lib/workflow-agent-stats";
-import { telemetryStore } from "../lib/db-route";
-import { historyParts, unionGroupedResult, unionRowsResult } from "../lib/telemetry-read";
+import { familyStore, telemetryStore } from "../lib/db-route";
+import { byDesc, byId, historyParts, unionAggregateFirst, unionGroupedResult, unionRowsResult } from "../lib/telemetry-read";
+
+/**
+ * Track B1d: on the feeds union path, the per-feed rollup's config columns
+ * (display_name, enabled, paused_reason) come from the ROUTED store's
+ * feed_configs — not the per-part LEFT JOIN, which for a feed whose in-window
+ * pulls all sit on core would show core's stale pause state. One part (feeds
+ * never on telemetry): the rows are returned untouched.
+ */
+export async function withRoutedFeedConfig<T extends { feed_name: string; display_name: string | null; enabled: number | null; paused_reason: string | null }>(
+  env: Env,
+  result: { results: T[]; meta: { rows_read: number; rows_written: number } },
+): Promise<{ results: T[]; meta: { rows_read: number; rows_written: number } }> {
+  if ((await historyParts(env, 'feed_pull_history')).length === 1) return result;
+  const cfg = await (await familyStore(env, 'feeds')).prepare(
+    `SELECT feed_name, display_name, enabled, paused_reason FROM feed_configs`,
+  ).all<{ feed_name: string; display_name: string | null; enabled: number | null; paused_reason: string | null }>();
+  const byName = new Map((cfg.results ?? []).map((c) => [c.feed_name, c]));
+  return {
+    ...result,
+    results: result.results.map((r) => {
+      const c = byName.get(r.feed_name);
+      return { ...r, display_name: c?.display_name ?? null, enabled: c?.enabled ?? null, paused_reason: c?.paused_reason ?? null };
+    }),
+  };
+}
 
 // ─── Diagnostics caching (D1 overload 2026-11-08) ─────────────────
 /** KV key + TTL for the enrichment_pipeline whole-threats-table pass. */
@@ -1865,7 +1890,25 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       total_rejected: number;
       last_success_at: string | null;
       last_failure_at: string | null;
-    }>, async () => rows(await env.DB.prepare(`
+    }>, async () => rows(await withRoutedFeedConfig(env, await unionGroupedResult<{
+      feed_name: string;
+      display_name: string | null;
+      enabled: number | null;
+      paused_reason: string | null;
+      total_pulls: number;
+      success: number;
+      partial: number;
+      failed: number;
+      total_ingested: number;
+      total_rejected: number;
+      last_success_at: string | null;
+      last_failure_at: string | null;
+    }>(
+      // Track B1d: history ⋈ config, both feeds-family tables, so each part
+      // runs the JOIN on its own DB; groups merge per feed, config columns
+      // from the routed store's part.
+      await historyParts(env, 'feed_pull_history', { alias: 'fph', routedFirst: true }),
+      () => ({ sql: `
       SELECT
         fph.feed_name,
         fc.display_name,
@@ -1882,23 +1925,15 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       FROM feed_pull_history fph
       LEFT JOIN feed_configs fc ON fc.feed_name = fph.feed_name
       WHERE fph.started_at >= datetime('now', '-' || ? || ' hours')
-        AND datetime(fph.started_at) >= datetime('now', '-' || ? || ' hours')
+        AND datetime(fph.started_at) >= datetime('now', '-' || ? || ' hours')/*split*/
       GROUP BY +fph.feed_name
       ORDER BY failed DESC, fph.feed_name ASC
-    `).bind(hoursBack, hoursBack).all<{
-      feed_name: string;
-      display_name: string | null;
-      enabled: number | null;
-      paused_reason: string | null;
-      total_pulls: number;
-      success: number;
-      partial: number;
-      failed: number;
-      total_ingested: number;
-      total_rejected: number;
-      last_success_at: string | null;
-      last_failure_at: string | null;
-    }>()));
+    `, binds: [hoursBack, hoursBack] }), {
+        groupBy: ['feed_name'],
+        sum: ['total_pulls', 'success', 'partial', 'failed', 'total_ingested', 'total_rejected'],
+        max: ['last_success_at', 'last_failure_at'],
+        sort: (a, b) => (b.failed - a.failed) || (a.feed_name < b.feed_name ? -1 : a.feed_name > b.feed_name ? 1 : 0),
+      }))));
 
     // Consecutive failures + auto-pause risk from feed_status
     const feedStatusT = soft("feeds", noRows<{
@@ -1907,7 +1942,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       health_status: string;
       last_error: string | null;
       threshold: number;
-    }>, async () => rows(await env.DB.prepare(`
+    }>, async () => rows(await (await familyStore(env, 'feeds')).prepare(`
       SELECT fs.feed_name,
              fs.consecutive_failures,
              fs.health_status,
@@ -1933,19 +1968,20 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       feed_name: string;
       started_at: string;
       error_message: string;
-    }>, async () => rows(await env.DB.prepare(`
-      SELECT feed_name, started_at, error_message
-      FROM feed_pull_history
-      WHERE +status = 'failed' AND error_message IS NOT NULL
-        AND started_at >= datetime('now', '-' || ? || ' hours')
-        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')
-      ORDER BY started_at DESC
-      LIMIT 20
-    `).bind(hoursBack, hoursBack).all<{
+    }>, async () => rows(await unionRowsResult<{
+      id: string;
       feed_name: string;
       started_at: string;
       error_message: string;
-    }>()));
+    }>(await historyParts(env, 'feed_pull_history'), (p) => ({ sql: `
+      SELECT id, feed_name, started_at, error_message
+      FROM feed_pull_history
+      WHERE +status = 'failed' AND error_message IS NOT NULL
+        AND started_at >= datetime('now', '-' || ? || ' hours')
+        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')/*split*/
+      ORDER BY started_at DESC
+      LIMIT ?
+    `, binds: [hoursBack, hoursBack, p.limit] }), { key: byId, sort: byDesc('started_at'), limit: 20, drop: ['id'] })));
 
     // ─── 4. Agent mesh ──────────────────────────────────────────────
     // killed_runs = status='partial' AND completed_at IS NULL. The agentRunner
@@ -2143,7 +2179,13 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       input_tokens: number;
       output_tokens: number;
       cost_usd: number;
-    }>, async () => rows(await env.DB.prepare(`
+    }>, async () => rows(await unionGroupedResult<{
+      agent_id: string;
+      calls: number;
+      input_tokens: number;
+      output_tokens: number;
+      cost_usd: number;
+    }>(await historyParts(env, 'budget_ledger'), () => ({ sql: `
       SELECT
         agent_id,
         COUNT(*) AS calls,
@@ -2151,16 +2193,15 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         SUM(output_tokens) AS output_tokens,
         ROUND(SUM(cost_usd), 4) AS cost_usd
       FROM budget_ledger
-      WHERE created_at >= datetime('now', '-1 day')
+      WHERE created_at >= datetime('now', '-1 day')/*split*/
       GROUP BY +agent_id
       ORDER BY cost_usd DESC
-    `).all<{
-      agent_id: string;
-      calls: number;
-      input_tokens: number;
-      output_tokens: number;
-      cost_usd: number;
-    }>()));
+    `, binds: [] }), {
+      // Track B1d: per agent across telemetry ∪ core.
+      groupBy: ['agent_id'],
+      sum: ['calls', 'input_tokens', 'output_tokens', 'cost_usd'],
+      sort: (a, b) => b.cost_usd - a.cost_usd,
+    })));
 
     // ─── 6b. AI health (silent-AI-failure surface) ──────────────────
     // ai_spend_24h above answers "what did AI cost". It CANNOT answer
@@ -2176,9 +2217,12 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // disambiguator: attempted = 0 means a quiet platform, attempted > 0
     // with succeeded = 0 means an outage. Same pair Flight Control's
     // platform_ai_calls_failing check alerts on.
-    const aiLedgerLastT = soft<{ last_at: string | null } | null>("ai_health", null, () => env.DB.prepare(`
+    // The newest row on EITHER DB during the budget cut-over (Track B1d);
+    // no split — a backfilled duplicate cannot change a MAX.
+    const aiLedgerLastT = soft<{ last_at: string | null } | null>("ai_health", null, async () => unionAggregateFirst<{ last_at: string | null }>(
+      await historyParts(env, 'budget_ledger'), () => ({ sql: `
       SELECT MAX(created_at) AS last_at FROM budget_ledger
-    `).first<{ last_at: string | null }>());
+    `, binds: [] }), { max: ['last_at'] }));
 
     // Strictly-API counters, written into agent_outputs.details by the
     // instrumented agents. Agent-agnostic — any agent that starts
@@ -2275,26 +2319,32 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // Eight whole-table counts (brands ~114K, lookalike_domains, two
     // passes over infrastructure_clusters …) for numbers that move slowly
     // — cached 15 min with single-flight refill.
-    const totalsT = soft("platform_totals", null, () => cachedValue(env, 'diag.platform_totals.v1', DIAG_SLOW_SECTION_TTL_S, () => env.DB.prepare(`
+    // feed_configs is in the feeds family (Track B1d): its two counts are
+    // read from the routed feeds store, the rest from core, then merged.
+    const totalsT = soft("platform_totals", null, () => cachedValue(env, 'diag.platform_totals.v1', DIAG_SLOW_SECTION_TTL_S, async () => {
+      const core = await env.DB.prepare(`
       SELECT
         (SELECT COUNT(*) FROM brands) AS brands,
         (SELECT COUNT(*) FROM hosting_providers) AS providers,
         (SELECT COUNT(*) FROM campaigns) AS campaigns,
         (SELECT COUNT(*) FROM infrastructure_clusters WHERE ${notRetiredClusterSql()}) AS clusters,
         (SELECT COUNT(*) FROM infrastructure_clusters WHERE ${retiredClusterSql()}) AS clusters_retired,
-        (SELECT COUNT(*) FROM lookalike_domains) AS lookalike_domains,
+        (SELECT COUNT(*) FROM lookalike_domains) AS lookalike_domains
+    `).first<{
+        brands: number;
+        providers: number;
+        campaigns: number;
+        clusters: number;
+        clusters_retired: number;
+        lookalike_domains: number;
+      }>();
+      const feeds = await (await familyStore(env, 'feeds')).prepare(`
+      SELECT
         (SELECT COUNT(*) FROM feed_configs WHERE enabled = 1) AS feeds_enabled,
         (SELECT COUNT(*) FROM feed_configs WHERE enabled = 0) AS feeds_disabled
-    `).first<{
-      brands: number;
-      providers: number;
-      campaigns: number;
-      clusters: number;
-      clusters_retired: number;
-      lookalike_domains: number;
-      feeds_enabled: number;
-      feeds_disabled: number;
-    }>(), { singleFlight: DIAG_SINGLE_FLIGHT }));
+    `).first<{ feeds_enabled: number; feeds_disabled: number }>();
+      return core ? { ...core, feeds_enabled: feeds?.feeds_enabled ?? 0, feeds_disabled: feeds?.feeds_disabled ?? 0 } : null;
+    }, { singleFlight: DIAG_SINGLE_FLIGHT }));
 
     // ─── Off-main-DB work (CF GraphQL / Analytics Engine / KV / side DBs)
     // None of these read the main D1, so they start now and run alongside

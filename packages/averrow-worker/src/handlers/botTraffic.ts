@@ -13,6 +13,8 @@ import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { botTrafficCacheKey, type BotDensityBound } from "../feeds/cf_radar_bots";
 import type { Env } from "../types";
+import { familyReadDb } from "../lib/db-route";
+import { byDesc, historyParts, unionFirst } from "../lib/telemetry-read";
 
 const ALLOWED_DAYS = new Set([7, 30, 90]);
 const DEFAULT_DAYS = 30;
@@ -150,7 +152,7 @@ function toCountryShare(rows: CountryRow[]): Array<{ code: string; name: string;
   }));
 }
 
-async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise<BotTrafficData> {
+async function loadBotTraffic(env: Env, session: D1DatabaseSession, days: number): Promise<BotTrafficData> {
   const [
     seriesRes, latestRes, locRes, asnRes, catRes, statusRow, pullRow,
     originRes, targetRes, densityRes, densityShareRes,
@@ -173,16 +175,24 @@ async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise
     session.prepare(RANKED_SQL).bind("top_location").all<RankedRow>(),
     session.prepare(RANKED_SQL).bind("top_asn").all<RankedRow>(),
     session.prepare(RANKED_SQL).bind("bot_category").all<RankedRow>(),
-    session.prepare(
+    // feed_status: the routed feeds store (the core read session while the
+    // feeds family is on core — Track B1d).
+    familyReadDb(env, "feeds", session).then((fdb) => fdb.prepare(
       "SELECT last_successful_pull, last_error FROM feed_status WHERE feed_name = ?",
-    ).bind(FEED_NAME).first<{ last_successful_pull: string | null; last_error: string | null }>(),
+    ).bind(FEED_NAME).first<{ last_successful_pull: string | null; last_error: string | null }>()),
     // Latest FINISHED pull — an in-flight row sits at status='partial'
-    // with completed_at NULL (runFeed seeds it that way).
-    session.prepare(
-      `SELECT status FROM feed_pull_history
+    // with completed_at NULL (runFeed seeds it that way). Newest across
+    // telemetry ∪ core during the feeds cut-over.
+    historyParts(env, "feed_pull_history", { core: session }).then((parts) => unionFirst<{ status: string; started_at?: string }>(parts, () => ({
+      sql: parts.length === 1
+        ? `SELECT status FROM feed_pull_history
         WHERE feed_name = ? AND completed_at IS NOT NULL
+        ORDER BY started_at DESC LIMIT 1`
+        : `SELECT status, started_at FROM feed_pull_history
+        WHERE feed_name = ? AND completed_at IS NOT NULL/*split*/
         ORDER BY started_at DESC LIMIT 1`,
-    ).bind(FEED_NAME).first<{ status: string }>(),
+      binds: [FEED_NAME],
+    }), { sort: byDesc("started_at") })),
     session.prepare(COUNTRY_SQL).bind("attack_origin").all<CountryRow>(),
     session.prepare(COUNTRY_SQL).bind("attack_target").all<CountryRow>(),
     session.prepare(COUNTRY_SQL).bind("bot_density").all<CountryRow>(),
@@ -282,7 +292,7 @@ export async function handleBotTraffic(request: Request, env: Env): Promise<Resp
 
   const session = getReadSession(env, getDbContext(request));
   try {
-    const data = await loadBotTraffic(session, days);
+    const data = await loadBotTraffic(env, session, days);
     try {
       await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: CACHE_TTL_S });
     } catch {

@@ -457,17 +457,18 @@ export async function loadTelemetryEvents(
   // Per-feed failed/partial pulls
   for (const feedName of feedNames) {
     if (events.length >= TELEMETRY_LIMIT) break;
-    const rows = await env.DB.prepare(
-      `SELECT id, feed_name, status, records_ingested, error_message, started_at
+    // Track B1d: newest across the feeds union (telemetry ∪ core).
+    const rows = await unionRows<FeedPullEvent>(await historyParts(env, "feed_pull_history"), (p) => ({
+      sql: `SELECT id, feed_name, status, records_ingested, error_message, started_at
          FROM feed_pull_history
         WHERE feed_name = ?
           AND status IN ('failed', 'partial')
-          AND started_at BETWEEN ? AND ?
+          AND started_at BETWEEN ? AND ?/*split*/
         ORDER BY started_at DESC
         LIMIT ?`,
-    ).bind(feedName, windowStart, windowEnd, TELEMETRY_LIMIT - events.length)
-      .all<FeedPullEvent>();
-    for (const r of rows.results) {
+      binds: [feedName, windowStart, windowEnd, p.limit],
+    }), { key: (r) => r.id, sort: byDesc("started_at"), limit: TELEMETRY_LIMIT - events.length });
+    for (const r of rows) {
       const eventRef = `feed_pull:${r.id}`;
       if (existingEventRefs.has(eventRef)) continue;
       const errSnippet = truncateMessage(r.error_message, 140);

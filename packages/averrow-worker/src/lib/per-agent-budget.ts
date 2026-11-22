@@ -36,7 +36,7 @@ import { BudgetManager } from "./budgetManager";
  *  inside the AI wrapper don't have to widen their env shape.
  *  CACHE is optional — the gate falls through to the slow D1 path
  *  every call when KV isn't bound (test fixtures, retired modules). */
-export type BudgetGateEnv = Pick<Env, "DB"> & { CACHE?: KVNamespace };
+export type BudgetGateEnv = Pick<Env, "DB"> & { CACHE?: KVNamespace; TELEMETRY_DB?: D1Database };
 
 /** KV key for per-agent throttle decision. Mirrors the
  *  `ai:throttle_reason` 60s cache pattern used by the global
@@ -120,6 +120,32 @@ async function getDeclaredCap(agentId: string): Promise<{ cap: number; alertAt: 
   };
 }
 
+/** Last decision computed from a successful rollup read, kept 6h so a D1
+ *  outage (either DB of the budget union during the telemetry cut-over)
+ *  re-uses it instead of failing open. "" = pass, else the reason. */
+export const AGENT_BUDGET_LAST_GOOD_PREFIX = "agent_budget_last_good:";
+export const AGENT_BUDGET_LAST_GOOD_TTL_SECONDS = 6 * 3600;
+
+async function readLastGood(env: BudgetGateEnv, agentId: string): Promise<AgentBudgetDecision | null> {
+  if (!env.CACHE) return null;
+  try {
+    const v = await env.CACHE.get(`${AGENT_BUDGET_LAST_GOOD_PREFIX}${agentId}`);
+    if (v === null) return null;
+    return v === "" ? { ok: true } : { ok: false, reason: v };
+  } catch {
+    return null;
+  }
+}
+
+async function writeLastGood(env: BudgetGateEnv, agentId: string, value: string): Promise<void> {
+  if (!env.CACHE) return;
+  try {
+    await env.CACHE.put(`${AGENT_BUDGET_LAST_GOOD_PREFIX}${agentId}`, value, { expirationTtl: AGENT_BUDGET_LAST_GOOD_TTL_SECONDS });
+  } catch {
+    // non-fatal
+  }
+}
+
 /** Pre-flight enforcement check. Called from lib/anthropic.ts before
  *  every Anthropic dispatch. Returns the decision; the caller throws
  *  AnthropicError on `{ ok: false }`. */
@@ -168,26 +194,48 @@ export async function checkAgentBudget(env: BudgetGateEnv, agentId: string): Pro
   // Read current rollup state. Single primary-key lookup on
   // agent_budget_rollups — O(log n).
   let currentTokens = 0;
+  let partial = false;
   try {
     if (env.DB) {
-      const budget = new BudgetManager(env.DB);
+      // Budget family resolved for this check; the rollup is summed across
+      // telemetry ∪ core during the cut-over (BudgetManager.forEnv).
+      const budget = await BudgetManager.forEnv(env);
       currentTokens = await budget.getAgentMonthlyTokens(agentId);
+      partial = budget.lastReadPartial;
     }
   } catch (err) {
     console.warn(`[per-agent-budget] getAgentMonthlyTokens failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
-    // Fail open on D1 hiccup — better to over-spend by one minute
-    // than crash a customer-facing call. Don't cache; retry next call.
+    // Both DBs failed (BudgetManager already falls back to the routed DB
+    // alone). Re-use the last good decision (≤ 6h old) before failing open;
+    // don't cache either way, retry next call.
+    const lastGood = await readLastGood(env, agentId);
+    if (lastGood) return lastGood;
+    // No history: fail open — better to over-spend by one minute
+    // than crash a customer-facing call.
     return { ok: true };
+  }
+
+  if (partial) {
+    // The union failed and only the routed DB answered: `currentTokens` is a
+    // LOWER bound. Its rejection is trusted; its pass is not — a last good
+    // rejection still wins. Never cached (60 s key or last-good).
+    if (currentTokens >= declared.cap) {
+      return { ok: false, reason: `agent ${agentId} over monthly token cap: ${currentTokens.toLocaleString()} / ${declared.cap.toLocaleString()} tokens used (partial read)` };
+    }
+    const lastGood = await readLastGood(env, agentId);
+    return lastGood && !lastGood.ok ? lastGood : { ok: true };
   }
 
   if (currentTokens >= declared.cap) {
     const reason = `agent ${agentId} over monthly token cap: ${currentTokens.toLocaleString()} / ${declared.cap.toLocaleString()} tokens used`;
     await safeCachePut(env, cacheKey, reason);
+    await writeLastGood(env, agentId, reason);
     return { ok: false, reason };
   }
 
   // Pass. Cache the decision.
   await safeCachePut(env, cacheKey, "");
+  await writeLastGood(env, agentId, "");
   return { ok: true };
 }
 
@@ -198,7 +246,7 @@ export async function getAgentBudgetSnapshot(env: BudgetGateEnv, agentId: string
 
   let currentTokens = 0;
   if (env.DB) {
-    const budget = new BudgetManager(env.DB);
+    const budget = await BudgetManager.forEnv(env);
     currentTokens = await budget.getAgentMonthlyTokens(agentId);
   }
   const pct = declared.cap > 0 ? (currentTokens / declared.cap) * 100 : 0;

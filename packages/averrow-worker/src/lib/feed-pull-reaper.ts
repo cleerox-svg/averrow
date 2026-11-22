@@ -20,10 +20,18 @@
 // longest legitimate ingest path (cartographer email-security RDAP
 // loops can run ~2-3 min worst-case).
 //
+// Telemetry cut-over (Track B1d): feed_pull_history is in the FEEDS family.
+// A pull's row lives on the DB its pull resolved at start, so the sweep runs
+// on EVERY bound DB (core, and TELEMETRY_DB whenever bound — whatever the
+// route: a flip back must not strand orphans there), and each reaped feed's
+// breaker penalty goes to the DB its row was reaped on — where that pull's
+// own finalize + penalty would have gone.
+//
 // Tested via `test/feed-pull-reaper.test.ts`.
 
 import type { Env } from "../types";
 import { applyReapPenalty } from "./feedRunner";
+import { telemetryFamilyDbs } from "./db-route";
 
 /** Minimum age for a partial row to be considered orphaned. */
 export const REAP_AGE_MINUTES = 15;
@@ -31,8 +39,14 @@ export const REAP_AGE_MINUTES = 15;
 const REAP_ERROR =
   `reaped by navigator: pull row stuck partial > ${REAP_AGE_MINUTES}min — worker likely terminated mid-run`;
 
-/** Returns the number of rows reaped. Never throws. */
+/** Returns the number of rows reaped across every bound DB. Never throws. */
 export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
+  let total = 0;
+  for (const { db } of telemetryFamilyDbs(env)) total += await reapOn(env, db);
+  return total;
+}
+
+async function reapOn(env: Env, db: D1Database): Promise<number> {
   try {
     // Both sides of the comparison MUST go through `datetime()` so the
     // engine compares parsed timestamps, not raw strings. feedRunner
@@ -52,7 +66,7 @@ export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
     // overlapping Navigator tick between the scan and the UPDATE, and we'd
     // then wrongly penalize / auto-pause a feed that didn't actually get
     // reaped here. Penalizing only the returned rows closes that window.
-    const result = await env.DB.prepare(
+    const result = await db.prepare(
       `UPDATE feed_pull_history
           SET status = 'failed',
               completed_at = datetime('now'),
@@ -73,7 +87,7 @@ export async function reapOrphanFeedPullHistory(env: Env): Promise<number> {
     // auto-pause instead of staying silently overdue. Best-effort per
     // feed; never blocks the reap.
     for (const feedName of new Set(reapedRows.map((r) => r.feed_name))) {
-      await applyReapPenalty(env, feedName, REAP_ERROR);
+      await applyReapPenalty(env, feedName, REAP_ERROR, db);
     }
 
     return reapedRows.length;

@@ -32,6 +32,7 @@
 import type { Env } from '../types';
 import { cachedCount, THREATS_TOTAL_TTL_S } from './cached-count';
 import { notRetiredClusterSql } from './cluster-status';
+import { historyParts, unionAggregateFirst } from './telemetry-read';
 
 /** Freshness budget of the lifetime-ingest milestone counter (6h). */
 export const TOTAL_INGESTED_TTL_S = 21_600;
@@ -120,11 +121,17 @@ const METRICS: readonly MetricDef[] = [
     // same lag threats_ingested already has.
     count: (env) =>
       cachedCount(env, "count.feed_pulls.total_ingested", TOTAL_INGESTED_TTL_S, async () => {
-        const row = await env.DB
-          .prepare(
-            `SELECT COALESCE(SUM(records_ingested), 0) AS n FROM feed_pull_history`,
-          )
-          .first<{ n: number }>();
+        // Summed across telemetry ∪ core during the feeds cut-over (Track B1d).
+        const row = await unionAggregateFirst<{ n: number }>(
+          await historyParts(env, "feed_pull_history"),
+          (p) => ({
+            sql: p.split
+              ? `SELECT COALESCE(SUM(records_ingested), 0) AS n FROM feed_pull_history WHERE 1 = 1/*split*/`
+              : `SELECT COALESCE(SUM(records_ingested), 0) AS n FROM feed_pull_history`,
+            binds: [],
+          }),
+          { sum: ["n"] },
+        );
         return row?.n ?? 0;
       }),
   },

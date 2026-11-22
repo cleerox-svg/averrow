@@ -26,6 +26,30 @@ import { computeFeedSeverity } from "../../lib/feed-severity";
 import type { AuthContext } from "../../middleware/auth";
 import { classifySaasTechnique } from "../../lib/saas-classifier";
 import { BudgetManager, type BudgetStatus } from "../../lib/budgetManager";
+import { familyStore } from "../../lib/db-route";
+import { byDesc, byId, historyParts, unionAggregateFirst, unionGrouped, unionRows, type ReadPart } from "../../lib/telemetry-read";
+
+// Track B1d: budget_ledger / feed_pull_history are read as telemetry ∪ core
+// (lib/telemetry-read.ts); feed_configs / feed_status from the routed feeds
+// store. One part (family never on telemetry) = the pre-cut-over statement.
+
+/** Per-part LIMIT: the caller's limit on a single part, unlimited (-1) on a union (re-limited after the merge). */
+const partLimit = (parts: ReadPart[], limit: number): number => (parts.length > 1 ? -1 : limit);
+
+/** Daily ledger series, merged per day across parts. */
+function ledgerDaily(parts: ReadPart[], sql: string): Promise<AiSpendDailyRow[]> {
+  return unionGrouped<AiSpendDailyRow>(parts, () => ({ sql, binds: [] }), {
+    groupBy: ["day"],
+    sum: ["calls", "input_tokens", "output_tokens", "cost_usd"],
+    sort: (a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0),
+  });
+}
+
+const WINDOWED_SUM_COLUMNS = [
+  "calls_24h", "input_24h", "output_24h", "cost_24h",
+  "calls_7d", "input_7d", "output_7d", "cost_7d",
+  "calls_30d", "input_30d", "output_30d", "cost_30d",
+] as const;
 import {
   buildGeoCubeForHour,
   buildProviderCubeForHour,
@@ -173,7 +197,7 @@ export async function handleMetricsAiSpend(
         COALESCE(SUM(output_tokens), 0) AS output_30d,
         COALESCE(SUM(cost_usd),      0) AS cost_30d
       FROM budget_ledger
-     WHERE created_at >= datetime('now', '-30 days')`;
+     WHERE created_at >= datetime('now', '-30 days')/*split*/`;
 
   const PER_AGENT_SQL = `
       SELECT agent_id,
@@ -190,15 +214,32 @@ export async function handleMetricsAiSpend(
         COALESCE(SUM(output_tokens), 0) AS output_30d,
         COALESCE(SUM(cost_usd),      0) AS cost_30d
       FROM budget_ledger
-     WHERE created_at >= datetime('now', '-30 days')
+     WHERE created_at >= datetime('now', '-30 days')/*split*/
      GROUP BY agent_id
      ORDER BY cost_30d DESC
-     LIMIT 20`;
+     LIMIT ?`;
 
-  const [totalsRow, perAgentRows, daily30d, cartDaily30d] = await Promise.all([
-    env.DB.prepare(WINDOW_TOTALS_SQL).first<AiSpendWindowedTotalsRow>(),
-    env.DB.prepare(PER_AGENT_SQL).all<AiSpendWindowedAgentRow>(),
-    env.DB.prepare(`
+  const ledgerParts = await historyParts(env, "budget_ledger");
+  const [totalsRow, perAgentList, daily30dList, cartDaily30dList] = await Promise.all([
+    unionAggregateFirst<AiSpendWindowedTotalsRow>(ledgerParts, () => ({ sql: WINDOW_TOTALS_SQL, binds: [] }), { sum: [...WINDOWED_SUM_COLUMNS] }),
+    unionGrouped<AiSpendWindowedAgentRow>(ledgerParts, () => ({ sql: PER_AGENT_SQL, binds: [partLimit(ledgerParts, 20)] }), {
+      groupBy: ["agent_id"],
+      sum: [...WINDOWED_SUM_COLUMNS],
+      sort: (a, b) => b.cost_30d - a.cost_30d,
+      limit: 20,
+    }),
+    ledgerDaily(ledgerParts, `
+      SELECT date(created_at) AS day,
+             COUNT(*) AS calls,
+             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens,
+             COALESCE(SUM(cost_usd), 0)      AS cost_usd
+        FROM budget_ledger
+       WHERE created_at >= datetime('now', '-30 days')/*split*/
+       GROUP BY day
+       ORDER BY day ASC
+    `),
+    ledgerDaily(ledgerParts, `
       SELECT date(created_at) AS day,
              COUNT(*) AS calls,
              COALESCE(SUM(input_tokens), 0)  AS input_tokens,
@@ -206,22 +247,14 @@ export async function handleMetricsAiSpend(
              COALESCE(SUM(cost_usd), 0)      AS cost_usd
         FROM budget_ledger
        WHERE created_at >= datetime('now', '-30 days')
+         AND agent_id = 'cartographer'/*split*/
        GROUP BY day
        ORDER BY day ASC
-    `).all<AiSpendDailyRow>(),
-    env.DB.prepare(`
-      SELECT date(created_at) AS day,
-             COUNT(*) AS calls,
-             COALESCE(SUM(input_tokens), 0)  AS input_tokens,
-             COALESCE(SUM(output_tokens), 0) AS output_tokens,
-             COALESCE(SUM(cost_usd), 0)      AS cost_usd
-        FROM budget_ledger
-       WHERE created_at >= datetime('now', '-30 days')
-         AND agent_id = 'cartographer'
-       GROUP BY day
-       ORDER BY day ASC
-    `).all<AiSpendDailyRow>(),
+    `),
   ]);
+  const perAgentRows = { results: perAgentList };
+  const daily30d = { results: daily30dList };
+  const cartDaily30d = { results: cartDaily30dList };
 
   const t = totalsRow ?? {
     calls_24h: 0, input_24h: 0, output_24h: 0, cost_24h: 0,
@@ -362,7 +395,9 @@ export async function handleMetricsAiCostOptimization(
   // Per-agent windowed metrics. Each row carries enough to compute
   // cost-per-call + out:in ratio on the frontend without a second
   // round-trip.
-  const perAgentQuery = (windowDays: number) => env.DB.prepare(`
+  const ledgerParts = await historyParts(env, "budget_ledger");
+  const perAgentQuery = (windowDays: number): Promise<{ results: PerAgentRow[] }> =>
+    unionGrouped<PerAgentRow>(ledgerParts, () => ({ sql: `
     SELECT agent_id,
            COUNT(*)                          AS calls,
            COALESCE(SUM(input_tokens),  0)   AS input_tokens,
@@ -370,9 +405,12 @@ export async function handleMetricsAiCostOptimization(
            COALESCE(SUM(cost_usd),      0)   AS cost_usd
       FROM budget_ledger
      WHERE created_at >= datetime('now', ?)
-       AND agent_id IN (?, ?, ?)
+       AND agent_id IN (?, ?, ?)/*split*/
      GROUP BY agent_id
-  `).bind(`-${windowDays} days`, FOCUS_AGENTS[0], FOCUS_AGENTS[1], FOCUS_AGENTS[2]);
+  `, binds: [`-${windowDays} days`, FOCUS_AGENTS[0], FOCUS_AGENTS[1], FOCUS_AGENTS[2]] }), {
+      groupBy: ["agent_id"],
+      sum: ["calls", "input_tokens", "output_tokens", "cost_usd"],
+    }).then((results) => ({ results }));
 
   // Cartographer-specific daily series for the trend chart. The key
   // indicator for Lever #1 (output-schema tightening) is the
@@ -380,7 +418,7 @@ export async function handleMetricsAiCostOptimization(
   // batching) shows up as call-count dropping while record volume
   // stays constant. Lever #6 (Message Batches API) would land as a
   // cost-per-call drop (~50%) on the cartographer line.
-  const cartDailyQuery = env.DB.prepare(`
+  const cartDailyQuery = (): Promise<{ results: AiSpendDailyRow[] }> => ledgerDaily(ledgerParts, `
     SELECT date(created_at)              AS day,
            COUNT(*)                      AS calls,
            COALESCE(SUM(input_tokens),  0) AS input_tokens,
@@ -388,22 +426,16 @@ export async function handleMetricsAiCostOptimization(
            COALESCE(SUM(cost_usd),      0) AS cost_usd
       FROM budget_ledger
      WHERE created_at >= datetime('now', '-30 days')
-       AND agent_id = 'cartographer'
+       AND agent_id = 'cartographer'/*split*/
      GROUP BY day
      ORDER BY day ASC
-  `);
+  `).then((results) => ({ results }));
 
   const [w24h, w7d, w30d, cartDaily] = await Promise.all([
-    perAgentQuery(1).all<PerAgentRow>(),
-    perAgentQuery(7).all<PerAgentRow>(),
-    perAgentQuery(30).all<PerAgentRow>(),
-    cartDailyQuery.all<{
-      day: string;
-      calls: number;
-      input_tokens: number;
-      output_tokens: number;
-      cost_usd: number;
-    }>(),
+    perAgentQuery(1),
+    perAgentQuery(7),
+    perAgentQuery(30),
+    cartDailyQuery(),
   ]);
 
   // Reshape windowed rows into a per-agent map keyed by agent_id, so
@@ -731,8 +763,18 @@ export async function handleMetricsFeedFailures(
   const cached = await env.CACHE.get(cacheKey);
   if (cached) return json(JSON.parse(cached), 200, origin);
 
+  const [pullParts, feedsDb] = await Promise.all([historyParts(env, "feed_pull_history"), familyStore(env, "feeds")]);
   const [perFeedRows, statusRows, configRows, recentErrors] = await Promise.all([
-    env.DB.prepare(`
+    unionGrouped<{
+      feed_name: string;
+      pulls: number;
+      success: number;
+      failed: number;
+      partial: number;
+      records: number;
+      last_success_at: string | null;
+      last_failure_at: string | null;
+    }>(pullParts, () => ({ sql: `
       SELECT feed_name,
              COUNT(*) AS pulls,
              SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,
@@ -742,20 +784,15 @@ export async function handleMetricsFeedFailures(
              MAX(CASE WHEN status = 'success' THEN started_at END) AS last_success_at,
              MAX(CASE WHEN status = 'failed'  THEN started_at END) AS last_failure_at
         FROM feed_pull_history
-       WHERE started_at >= datetime('now', '-1 day')
+       WHERE started_at >= datetime('now', '-1 day')/*split*/
        GROUP BY feed_name
-    `).all<{
-      feed_name: string;
-      pulls: number;
-      success: number;
-      failed: number;
-      partial: number;
-      records: number;
-      last_success_at: string | null;
-      last_failure_at: string | null;
-    }>(),
+    `, binds: [] }), {
+      groupBy: ["feed_name"],
+      sum: ["pulls", "success", "failed", "partial", "records"],
+      max: ["last_success_at", "last_failure_at"],
+    }).then((results) => ({ results })),
 
-    env.DB.prepare(`
+    feedsDb.prepare(`
       SELECT feed_name, consecutive_failures, health_status, last_error
         FROM feed_status
     `).all<{
@@ -765,7 +802,7 @@ export async function handleMetricsFeedFailures(
       last_error: string | null;
     }>(),
 
-    env.DB.prepare(`
+    feedsDb.prepare(`
       SELECT feed_name, display_name, enabled, paused_reason,
              COALESCE(consecutive_failure_threshold, 5) AS threshold
         FROM feed_configs
@@ -777,19 +814,21 @@ export async function handleMetricsFeedFailures(
       threshold: number;
     }>(),
 
-    env.DB.prepare(`
-      SELECT feed_name, started_at, error_message
-        FROM feed_pull_history
-       WHERE status = 'failed'
-         AND started_at >= datetime('now', '-1 day')
-         AND error_message IS NOT NULL
-       ORDER BY started_at DESC
-       LIMIT 10
-    `).all<{
+    unionRows<{
+      id: string;
       feed_name: string;
       started_at: string;
       error_message: string;
-    }>(),
+    }>(pullParts, (p) => ({ sql: `
+      SELECT id, feed_name, started_at, error_message
+        FROM feed_pull_history
+       WHERE status = 'failed'
+         AND started_at >= datetime('now', '-1 day')
+         AND error_message IS NOT NULL/*split*/
+       ORDER BY started_at DESC
+       LIMIT ?
+    `, binds: [p.limit] }), { key: byId, sort: byDesc("started_at"), limit: 10, drop: ["id"] })
+      .then((results) => ({ results: results as Array<{ feed_name: string; started_at: string; error_message: string }> })),
   ]);
 
   const statusByName = new Map(statusRows.results.map((r) => [r.feed_name, r]));

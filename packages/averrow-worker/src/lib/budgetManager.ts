@@ -17,9 +17,21 @@
  *   SOFT  (80%+)  — reduced batch sizes
  *   HARD  (95%+)  — minimal AI, skip observer/curator
  *   EMERGENCY (99%+) — ALL AI paused, only sentinel + nexus run
+ *
+ * Telemetry cut-over (Track B1d): budget_ledger / budget_config /
+ * agent_budget_rollups are the BUDGET family, routed by
+ * `db_route:telemetry:budget` (lib/db-route.ts). Build the manager with
+ * `BudgetManager.forEnv(env)`: it resolves the family ONCE, so recordCost's
+ * ledger + rollup batch lands on one DB, budget_config is read / written on
+ * the routed store, and the rollup reads SUM per (agent_id, year_month)
+ * across telemetry ∪ core (a month's spend is split across the two DBs after
+ * a flip). system_config (the last throttle level) stays on core.
+ * `new BudgetManager(db)` keeps the single-DB behaviour (tests, tooling).
  */
 
 import type { Env } from "../types";
+import { resolveFamily } from "./db-route";
+import { historyParts, unionAggregateFirst, unionGrouped, type ReadPart } from "./telemetry-read";
 
 // ─── Cost Model ─────────────────────────────────────────────────
 
@@ -152,6 +164,13 @@ export interface BudgetStatus {
   daily_burn_rate: number;
   projected_monthly: number;
   anthropic_reported: number;
+  /**
+   * Present (true) only when the month's spend came from the routed DB alone
+   * because the telemetry ∪ core union read failed: `spent_this_month` is a
+   * LOWER bound, so a non-throttling level from it must not lift a throttle
+   * (lib/ai-throttle.ts). Absent on a normal read.
+   */
+  partial_spend?: true;
 }
 
 export interface AgentBudgetLimits {
@@ -163,11 +182,65 @@ export interface AgentBudgetLimits {
 
 // ─── BudgetManager ──────────────────────────────────────────────
 
-export class BudgetManager {
-  private db: D1Database;
+/** What BudgetManager.forEnv needs: core + (optionally) KV and TELEMETRY_DB for routing. */
+export type BudgetEnv = Pick<Env, "DB"> & { CACHE?: KVNamespace; TELEMETRY_DB?: D1Database };
 
-  constructor(db: D1Database) {
+export class BudgetManager {
+  /** The budget family's store: budget_config, and every write. */
+  private db: D1Database;
+  /** Core (system_config). */
+  private core: D1Database;
+  /** Set when built from an env: rollup reads are a telemetry ∪ core union. */
+  private env: Env | null;
+
+  constructor(db: D1Database, opts: { core?: D1Database; env?: Env } = {}) {
     this.db = db;
+    this.core = opts.core ?? db;
+    this.env = opts.env ?? null;
+  }
+
+  /**
+   * The manager for one unit of work (an AI call, a throttle check, a
+   * page): the budget family resolved once (lib/db-route.ts). Never throws
+   * on routing — a missing KV / TELEMETRY_DB means core, as before.
+   */
+  static async forEnv(env: BudgetEnv): Promise<BudgetManager> {
+    const full = env as Env;
+    const { db } = await resolveFamily(full, "budget");
+    return new BudgetManager(db, { core: env.DB, env: full });
+  }
+
+  /** Read plan for agent_budget_rollups: one part (this.db) unless built from an env. */
+  private async rollupParts(): Promise<ReadPart[]> {
+    if (!this.env) return [{ source: "core", db: this.db, split: "", splitBinds: [] }];
+    return historyParts(this.env, "agent_budget_rollups");
+  }
+
+  /**
+   * True when the last rollup read fell back to the routed DB alone (the
+   * other DB of the union failed): the spend it returned is a LOWER bound.
+   */
+  lastReadPartial = false;
+
+  /**
+   * Run a rollup read over the union; if it fails (either DB erroring) but
+   * the routed DB alone answers, use that partial spend rather than letting
+   * the AI spend gates fail open on the other DB's outage. Only when the
+   * routed DB fails too does the error propagate (callers then fall back to
+   * their last good decision, lib/ai-throttle.ts / lib/per-agent-budget.ts).
+   */
+  private async readRollups<T>(read: (parts: ReadPart[]) => Promise<T>): Promise<T> {
+    const parts = await this.rollupParts();
+    this.lastReadPartial = false;
+    try {
+      return await read(parts);
+    } catch (err) {
+      const routed = parts.length > 1 ? parts.find((p) => p.db === this.db) : undefined;
+      if (!routed) throw err;
+      console.warn(`[budgetManager] rollup union read failed, using the routed DB only: ${err instanceof Error ? err.message : String(err)}`);
+      this.lastReadPartial = true;
+      return read([{ ...routed, split: "", splitBinds: [] }]);
+    }
   }
 
   /** Get budget config (singleton row). */
@@ -224,7 +297,8 @@ export class BudgetManager {
     // D1 doesn't support multi-statement transactions in a single
     // .prepare() call, but .batch() runs the statements atomically
     // within the same writer round-trip. Either both writes land or
-    // neither does (D1 batch semantics).
+    // neither does (D1 batch semantics). Both tables are in the budget
+    // family, so the batch always runs on ONE DB (this.db, resolved once).
     await this.db.batch([
       this.db.prepare(`
         INSERT INTO budget_ledger (id, agent_id, run_id, model, input_tokens, output_tokens, cost_usd)
@@ -261,11 +335,16 @@ export class BudgetManager {
    *  in the diagnostic).
    */
   async getMonthlySpend(): Promise<number> {
-    const result = await this.db.prepare(`
+    // Summed across telemetry ∪ core: after a budget flip the month's
+    // pre-flip increments are on core, the later ones on telemetry.
+    const result = await this.readRollups((parts) => unionAggregateFirst<{ total: number }>(parts, () => ({
+      sql: `
       SELECT COALESCE(SUM(total_cost_usd), 0) AS total
       FROM agent_budget_rollups
-      WHERE year_month = strftime('%Y-%m', 'now')
-    `).first<{ total: number }>();
+      WHERE year_month = strftime('%Y-%m', 'now')/*split*/
+    `,
+      binds: [],
+    }), { sum: ["total"] }));
     return result?.total ?? 0;
   }
 
@@ -275,12 +354,16 @@ export class BudgetManager {
    *  even at 100K+ ledger rows. Returns 0 if the agent hasn't recorded
    *  any spend this month. */
   async getAgentMonthlyTokens(agentId: string): Promise<number> {
-    const row = await this.db.prepare(`
+    // One PK row per DB; summed across telemetry ∪ core (see getMonthlySpend).
+    const row = await this.readRollups((parts) => unionAggregateFirst<{ tokens: number }>(parts, () => ({
+      sql: `
       SELECT total_input_tokens + total_output_tokens AS tokens
       FROM agent_budget_rollups
       WHERE agent_id = ?
-        AND year_month = strftime('%Y-%m', 'now')
-    `).bind(agentId).first<{ tokens: number }>();
+        AND year_month = strftime('%Y-%m', 'now')/*split*/
+    `,
+      binds: [agentId],
+    }), { sum: ["tokens"] }));
     return row?.tokens ?? 0;
   }
 
@@ -290,15 +373,22 @@ export class BudgetManager {
    *  above — one row per agent makes this an index scan, not a
    *  budget_ledger GROUP BY scan. */
   async getSpendByAgent(): Promise<{ agent_id: string; cost_usd: number; calls: number }[]> {
-    const result = await this.db.prepare(`
+    // Per agent, summed across telemetry ∪ core (see getMonthlySpend).
+    return this.readRollups((parts) => unionGrouped<{ agent_id: string; cost_usd: number; calls: number }>(parts, () => ({
+      sql: `
       SELECT agent_id,
              total_cost_usd AS cost_usd,
              call_count     AS calls
       FROM agent_budget_rollups
-      WHERE year_month = strftime('%Y-%m', 'now')
+      WHERE year_month = strftime('%Y-%m', 'now')/*split*/
       ORDER BY total_cost_usd DESC
-    `).all<{ agent_id: string; cost_usd: number; calls: number }>();
-    return result.results;
+    `,
+      binds: [],
+    }), {
+      groupBy: ["agent_id"],
+      sum: ["cost_usd", "calls"],
+      sort: (a, b) => Number(b.cost_usd ?? 0) - Number(a.cost_usd ?? 0),
+    }));
   }
 
   /** Full budget status check — used by Flight Control and dashboard. */
@@ -333,6 +423,7 @@ export class BudgetManager {
       daily_burn_rate: Math.round(dailyBurn * 100) / 100,
       projected_monthly: Math.round(projected * 100) / 100,
       anthropic_reported: Math.round(anthropicReported * 100) / 100,
+      ...(this.lastReadPartial ? { partial_spend: true as const } : {}),
     };
   }
 
@@ -344,7 +435,7 @@ export class BudgetManager {
    * been written yet (first run after deploy).
    */
   async getLastThrottleLevel(): Promise<ThrottleLevel | null> {
-    const row = await this.db.prepare(
+    const row = await this.core.prepare(
       `SELECT value FROM system_config WHERE key = 'budget.last_throttle_level'`
     ).first<{ value: string }>();
     if (!row) return null;
@@ -355,7 +446,7 @@ export class BudgetManager {
 
   /** Persist the current throttle level so the next tick can diff against it. */
   async setLastThrottleLevel(level: ThrottleLevel): Promise<void> {
-    await this.db.prepare(`
+    await this.core.prepare(`
       INSERT INTO system_config (key, value, updated_at)
       VALUES ('budget.last_throttle_level', ?, datetime('now'))
       ON CONFLICT(key) DO UPDATE SET

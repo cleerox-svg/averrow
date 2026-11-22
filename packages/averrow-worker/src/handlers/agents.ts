@@ -973,18 +973,22 @@ export async function handleTrustBotChat(
 // haiku_usage_* keys are gone, so this endpoint windows the ledger
 // directly via SQL aggregates.
 export const handleAgentApiUsage = handler(async (_request, env, ctx) => {
+  // budget family (Track B1d): ledger summed across telemetry ∪ core;
+  // BudgetManager.forEnv resolves the family once for both reads below.
+  const [ledgerParts, budget] = await Promise.all([historyParts(env, "budget_ledger"), BudgetManager.forEnv(env)]);
   const window = async (days: number) => {
-    const row = await env.DB.prepare(
-      `SELECT
+    const row = await unionAggregateFirst<{
+      calls: number; input_tokens: number; output_tokens: number; cost_usd: number;
+    }>(ledgerParts, () => ({
+      sql: `SELECT
          COUNT(*)             as calls,
          COALESCE(SUM(input_tokens), 0)  as input_tokens,
          COALESCE(SUM(output_tokens), 0) as output_tokens,
          COALESCE(SUM(cost_usd), 0)      as cost_usd
        FROM budget_ledger
-       WHERE created_at >= datetime('now', '-' || ? || ' days')`
-    ).bind(days).first<{
-      calls: number; input_tokens: number; output_tokens: number; cost_usd: number;
-    }>();
+       WHERE created_at >= datetime('now', '-' || ? || ' days')/*split*/`,
+      binds: [days],
+    }), { sum: ["calls", "input_tokens", "output_tokens", "cost_usd"] });
     return row ?? { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 };
   };
 
@@ -992,8 +996,8 @@ export const handleAgentApiUsage = handler(async (_request, env, ctx) => {
     window(1),
     window(7),
     window(30),
-    new BudgetManager(env.DB).getSpendByAgent(),
-    new BudgetManager(env.DB).getStatus(),
+    budget.getSpendByAgent(),
+    budget.getStatus(),
   ]);
 
   return success({

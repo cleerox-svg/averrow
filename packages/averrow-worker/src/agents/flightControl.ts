@@ -10,7 +10,7 @@
  * - Log all decisions to agent_activity_log
  */
 
-import { resolveTelemetry, telemetryDbFor, telemetryStore } from "../lib/db-route";
+import { familyStore, resolveTelemetry, telemetryDbFor, telemetryStore } from "../lib/db-route";
 import { byDesc, historyParts, unionAggregateFirst, unionFirst, unionGrouped } from "../lib/telemetry-read";
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
@@ -492,8 +492,13 @@ export const flightControlAgent: AgentModule = {
     // Agent-runs family DB, resolved once for this FC run (Track B1c):
     // activity-log writes and agent_configs reads go to the routed store.
     const { db: tdb } = await resolveTelemetry(env);
+    // Feeds family DB (Track B1d): feed_configs / feed_status reads are on
+    // the routed feeds store, resolved once for this run. Budget: the
+    // budget family is resolved once by BudgetManager.forEnv (config on
+    // the routed store, the month's spend summed across both DBs).
+    const fdb = await familyStore(env, "feeds");
     const outputs: AgentOutputEntry[] = [];
-    const budgetMgr = new BudgetManager(db);
+    const budgetMgr = await BudgetManager.forEnv(env);
 
     // ── Phase timing instrumentation (P2 / FC duration debug) ─────
     // Wraps each major phase so we can see in agent_outputs.details
@@ -522,7 +527,7 @@ export const flightControlAgent: AgentModule = {
 
     // Run all reads in parallel — single round trip to D1
     const [backlogs, health, navigatorHealth, budgetStatus, agentLimits, lastCuratorRun, curatorHealth, unscannedEmails, degradedFeeds, autoPausedFeeds, silentFeedCandidates, trippedAgents] = await Promise.all([
-      measureBacklogs(env, db, tdb),
+      measureBacklogs(env, db, tdb, fdb),
       getAgentHealth(db, env.CACHE, env),
       getNavigatorHealth(db, env),
       budgetMgr.getStatus(anthropicReported),
@@ -558,7 +563,7 @@ export const flightControlAgent: AgentModule = {
       // Degraded feeds are still enabled & running — they're just returning
       // errors. Intentionally excludes auto-paused feeds via the enabled=1
       // join so the two counts don't double-report the same feed.
-      db.prepare(`
+      fdb.prepare(`
         SELECT feed_name, last_failure, health_status FROM feed_status
         WHERE health_status IN ('degraded', 'down')
           AND feed_name IN (SELECT feed_name FROM feed_configs WHERE enabled = 1)
@@ -567,7 +572,7 @@ export const flightControlAgent: AgentModule = {
       // guard. Operationally distinct from degraded — they will NOT run
       // again until an admin unpauses them, so the dashboard surfaces
       // them as a separate category.
-      db.prepare(`
+      fdb.prepare(`
         SELECT fc.feed_name,
                fc.display_name,
                COALESCE(fs.consecutive_failures, 0) AS consecutive_failures,
@@ -590,7 +595,7 @@ export const flightControlAgent: AgentModule = {
       // `last_failure` comes back with the row so computeSilentFeedRatio
       // can exclude feeds that are being dispatched and failing (loud, not
       // silent) — see that helper for the 2026-09-11 nrd_hagezi receipts.
-      db.prepare(`
+      fdb.prepare(`
         SELECT fc.feed_name,
                fc.display_name,
                fc.schedule_cron,
@@ -738,7 +743,7 @@ export const flightControlAgent: AgentModule = {
     // operators a heads-up before the circuit breaker trips. Dedup is
     // (feed_name, today) via group_key in the template.
     try {
-      const atRiskRows = await db.prepare(`
+      const atRiskRows = await fdb.prepare(`
         SELECT
           fs.feed_name,
           fc.display_name,
@@ -1134,11 +1139,13 @@ export const flightControlAgent: AgentModule = {
         // Only alert when the oldest pending row is old enough that
         // we KNOW a cron tick should have processed it.
         if (oldestHours > SILENCE_THRESHOLD_HOURS) {
-          const lastRow = await db.prepare(`
+          // budget_ledger spans telemetry ∪ core during the budget cut-over.
+          const lastRow = await unionAggregateFirst<{ last_at: string | null }>(
+            await historyParts(env, 'budget_ledger'), () => ({ sql: `
             SELECT MAX(created_at) AS last_at
             FROM budget_ledger
             WHERE agent_id = 'abuse_mailbox_classifier'
-          `).first<{ last_at: string | null }>();
+          `, binds: [] }), { max: ['last_at'] });
           const lastAt = lastRow?.last_at;
           const hoursSilent = lastAt
             ? (Date.now() - Date.parse(lastAt + 'Z')) / 3_600_000
@@ -1207,9 +1214,13 @@ export const flightControlAgent: AgentModule = {
       // Equal to the threshold by design — see the latency note above.
       const AI_ATTEMPT_WINDOW_HOURS = AI_SILENCE_THRESHOLD_HOURS;
 
-      const ledgerRow = await db.prepare(`
+      // The newest successful call on EITHER DB during the budget cut-over
+      // (a flip must not read as an AI outage). No split: a backfilled
+      // duplicate cannot change a MAX.
+      const ledgerRow = await unionAggregateFirst<{ last_at: string | null }>(
+        await historyParts(env, 'budget_ledger'), () => ({ sql: `
         SELECT MAX(created_at) AS last_at FROM budget_ledger
-      `).first<{ last_at: string | null }>();
+      `, binds: [] }), { max: ['last_at'] });
 
       const lastAt = ledgerRow?.last_at ?? null;
       // null = the ledger has never recorded a call. Treated as silent
@@ -1484,11 +1495,12 @@ export const flightControlAgent: AgentModule = {
         try {
           // Fetch last failure error message — best-effort, the
           // notification is useful even without it.
-          const lastErr = await db.prepare(
-            `SELECT error_message FROM feed_pull_history
-              WHERE feed_name = ? AND status = 'failed'
-              ORDER BY started_at DESC LIMIT 1`
-          ).bind(feed.feed_name).first<{ error_message: string | null }>();
+          const lastErr = await unionFirst<{ error_message: string | null; started_at: string }>(
+            await historyParts(env, 'feed_pull_history'), () => ({ sql:
+            `SELECT error_message, started_at FROM feed_pull_history
+              WHERE feed_name = ? AND status = 'failed'/*split*/
+              ORDER BY started_at DESC LIMIT 1`, binds: [feed.feed_name] }),
+            { sort: byDesc('started_at') });
           await emitPlatformNotification(env, 'platform_feed_auto_paused',
             renderPlatformFeedAutoPaused({
               feed_id: feed.feed_name,
@@ -2202,7 +2214,7 @@ export async function loadManuallyDisabledFeeds(db: D1Database): Promise<Set<str
   }
 }
 
-async function measureBacklogs(env: Env, db: D1Database, tdb: D1Database = db): Promise<Backlog> {
+async function measureBacklogs(env: Env, db: D1Database, tdb: D1Database = db, fdb: D1Database = db): Promise<Backlog> {
   // Each backlog is cached through KV via `cachedCount`. The TTL picks
   // whether this is a "live" counter (short TTL, ~every tick) or a
   // "monitoring" counter (long TTL, ~every 4th tick). The stall-
@@ -2255,7 +2267,7 @@ async function measureBacklogs(env: Env, db: D1Database, tdb: D1Database = db): 
   // backlog_history sample, no stall check and no warning. Auto-paused
   // feeds (`auto:consecutive_failures`) are still counted: their backlog
   // growing is the symptom an operator needs to see.
-  const retiredFeeds = await loadManuallyDisabledFeeds(db);
+  const retiredFeeds = await loadManuallyDisabledFeeds(fdb);
   const gated = (
     feedName: string,
     count: () => Promise<{ value: number; wasCached: boolean }>,

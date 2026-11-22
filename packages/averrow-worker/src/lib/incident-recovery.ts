@@ -169,13 +169,15 @@ function parseComponents(raw: string | null): string[] {
 }
 
 async function feedRecovered(env: Env, feedName: string): Promise<boolean> {
-  const row = await env.DB.prepare(
-    `SELECT 1 AS ok FROM feed_pull_history
+  // Track B1d: a success on either DB of the feeds union counts.
+  const row = await unionFirst<{ ok: number }>(await historyParts(env, "feed_pull_history"), () => ({
+    sql: `SELECT 1 AS ok FROM feed_pull_history
       WHERE feed_name = ?
         AND status = 'success'
-        AND started_at >= datetime('now', '-' || ? || ' minutes')
+        AND started_at >= datetime('now', '-' || ? || ' minutes')/*split*/
       LIMIT 1`,
-  ).bind(feedName, RECOVERY_WINDOW_MINUTES).first<{ ok: number }>();
+    binds: [feedName, RECOVERY_WINDOW_MINUTES],
+  }));
   return !!row;
 }
 

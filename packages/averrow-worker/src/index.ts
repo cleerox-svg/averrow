@@ -272,7 +272,8 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         // Check feed_configs state for diagnostics
         let feedConfigRows: { feed_name: string; feed_type: string; enabled: number }[] = [];
         try {
-          const fc = await env.DB.prepare(
+          const { familyStore } = await import('./lib/db-route');
+          const fc = await (await familyStore(env, 'feeds')).prepare(
             "SELECT feed_name, feed_type, enabled FROM feed_configs WHERE feed_type IN ('enrichment', 'social')"
           ).all<{ feed_name: string; feed_type: string; enabled: number }>();
           feedConfigRows = fc.results;
@@ -531,42 +532,32 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         return Response.json({ success: true, data: { ...result, seeded } });
       }
 
-      // Telemetry cut-over, agent-runs family (Track B1c; lib/telemetry-cutover.ts):
-      //   POST /api/internal/telemetry/copy-config[?mode=insert|reconcile][&direction=to_telemetry|to_core][&force=1][&dry_run=0]
-      //        agent_configs + agent_approvals; DRY RUN unless dry_run=0.
-      //   POST /api/internal/telemetry/backfill?table=agent_runs|agent_events|agent_activity_log&days=30[&dry_run=0]
+      // Telemetry cut-over, per family (Track B1c agents, B1d feeds + budget;
+      // lib/telemetry-cutover.ts). family=agents|feeds|budget, default agents:
+      //   POST /api/internal/telemetry/copy-config[?family=…][&mode=insert|reconcile][&direction=to_telemetry|to_core][&force=1][&dry_run=0]
+      //        the family's config tables; DRY RUN unless dry_run=0.
+      //   POST /api/internal/telemetry/backfill?table=<history table>&days=30[&dry_run=0]
       //        one bounded, resumable history-copy batch (≤500 rows); DRY RUN unless dry_run=0.
-      //   GET  /api/internal/telemetry/preflight — the flip gate (ok + blocking reasons).
+      //   GET  /api/internal/telemetry/preflight[?family=…] — the flip gate (ok + blocking reasons).
+      //   GET  /api/internal/telemetry/route — every family's flag / route / used marker.
+      //   POST /api/internal/telemetry/route?family=…&to=core|telemetry[&expect_from=core|telemetry|unset][&force=1][&dry_run=0]
+      //        the flip (one KV write); refused unless preflight ok (to=telemetry)
+      //        or core's config matches telemetry's (to=core, force=1 overrides); DRY RUN unless dry_run=0.
       if (
         (url.pathname === '/api/internal/telemetry/copy-config' && request.method === 'POST') ||
         (url.pathname === '/api/internal/telemetry/backfill' && request.method === 'POST') ||
-        (url.pathname === '/api/internal/telemetry/preflight' && request.method === 'GET')
+        (url.pathname === '/api/internal/telemetry/preflight' && request.method === 'GET') ||
+        (url.pathname === '/api/internal/telemetry/route' && (request.method === 'GET' || request.method === 'POST'))
       ) {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
         if (!timingSafeBearerEq(authHeader, internalSecret)) {
           return new Response('Unauthorized', { status: 401 });
         }
-        const cutover = await import('./lib/telemetry-cutover');
-        try {
-          if (url.pathname === '/api/internal/telemetry/preflight') {
-            return Response.json({ success: true, data: await cutover.telemetryPreflight(env) });
-          }
-          if (url.pathname === '/api/internal/telemetry/copy-config') {
-            // Same convention as backfill / cluster-retirement: a DRY RUN unless dry_run=0.
-            const cp = cutover.parseCopyConfigParams(url.searchParams);
-            if (!cp.ok) return Response.json({ success: false, error: cp.error }, { status: 400 });
-            return Response.json({ success: true, data: await cutover.copyTelemetryConfig(env, cp.params) });
-          }
-          const parsed = cutover.parseBackfillParams(url.searchParams);
-          if (!parsed.ok) return Response.json({ success: false, error: parsed.error }, { status: 400 });
-          return Response.json({ success: true, data: await cutover.backfillTelemetryHistory(env, parsed.params) });
-        } catch (err) {
-          if (err instanceof cutover.TelemetryUnboundError) {
-            return Response.json({ success: false, error: err.message }, { status: 409 });
-          }
-          throw err;
-        }
+        // Dispatch + one audit_log row per authorized non-dry-run mutation
+        // (handlers/telemetryCutover.ts).
+        const { handleTelemetryCutover } = await import('./handlers/telemetryCutover');
+        return await handleTelemetryCutover(request, env, url);
       }
 
       // GET  /api/internal/nexus/cluster-retirement            — dry-run report

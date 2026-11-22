@@ -5,6 +5,21 @@ export interface FeedContext {
   env: Env;
   feedName: string;
   feedUrl: string;
+  /**
+   * The feeds-family store this pull was resolved under (Track B1d: the
+   * routed feed_configs / feed_status / feed_pull_history DB). runFeed always
+   * sets it; a module that reads or writes a feeds-family table (its own
+   * pull row, its feed_status / feed_configs row) must use it — via
+   * feedStoreOf(ctx) — never ctx.env.DB, or a pull that straddles a flip
+   * writes half its bookkeeping to the other DB. Optional only so unit tests
+   * can build a bare context (they get core).
+   */
+  feedsDb?: D1Database;
+}
+
+/** The pull's feeds-family store (core for a hand-built test context). */
+export function feedStoreOf(ctx: FeedContext): D1Database {
+  return ctx.feedsDb ?? ctx.env.DB;
 }
 
 /** Result returned by every feed module */

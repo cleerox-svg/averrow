@@ -9,7 +9,8 @@ import { dashboardSnapshotCacheKeys } from "./admin";
 
 /** GET /api/admin/budget/status */
 export async function handleBudgetStatus(_request: Request, env: Env): Promise<Response> {
-  const mgr = new BudgetManager(env.DB);
+  // Budget family resolved once (Track B1d, lib/db-route.ts).
+  const mgr = await BudgetManager.forEnv(env);
   const anthropicKey = (env as unknown as Record<string, string | undefined>).ANTHROPIC_ADMIN_KEY;
   const anthropicReported = await fetchAnthropicUsageReport(anthropicKey, env);
   const status = await mgr.getStatus(anthropicReported);
@@ -18,7 +19,7 @@ export async function handleBudgetStatus(_request: Request, env: Env): Promise<R
 
 /** GET /api/admin/budget/breakdown */
 export async function handleBudgetBreakdown(_request: Request, env: Env): Promise<Response> {
-  const mgr = new BudgetManager(env.DB);
+  const mgr = await BudgetManager.forEnv(env);
   const byAgent = await mgr.getSpendByAgent();
   return json({ data: byAgent });
 }
@@ -50,7 +51,8 @@ export async function handleBudgetConfigPatch(request: Request, env: Env): Promi
     return json({ error: "emergency_pct must be between 0 and 100" }, 400);
   }
 
-  const mgr = new BudgetManager(env.DB);
+  // budget_config lives on the routed budget store.
+  const mgr = await BudgetManager.forEnv(env);
   const updated = await mgr.updateConfig(body);
 
   // Bust BOTH role-scoped admin-dashboard snapshot entries. The composite's
