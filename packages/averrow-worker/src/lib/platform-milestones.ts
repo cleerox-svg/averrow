@@ -33,6 +33,9 @@ import type { Env } from '../types';
 import { cachedCount, THREATS_TOTAL_TTL_S } from './cached-count';
 import { notRetiredClusterSql } from './cluster-status';
 
+/** Freshness budget of the lifetime-ingest milestone counter (6h). */
+export const TOTAL_INGESTED_TTL_S = 21_600;
+
 // High-volume counters: threats, lifetime ingest, brand catalog.
 const LARGE_LADDER = [
   100_000,
@@ -110,8 +113,13 @@ const METRICS: readonly MetricDef[] = [
     metric: "total_ingested",
     label: "total ingested",
     ladder: LARGE_LADDER,
+    // TOTAL_INGESTED_TTL_S (6h, was 1800s): the SUM is a full scan of
+    // feed_pull_history (~100K rows, never pruned) and Navigator evaluates
+    // milestones every 5 min, so the 30-min TTL re-ran it ~48-57×/day. Its
+    // only consumer is this ladder; a crossing is announced ≤ 6h late, the
+    // same lag threats_ingested already has.
     count: (env) =>
-      cachedCount(env, "count.feed_pulls.total_ingested", 1800, async () => {
+      cachedCount(env, "count.feed_pulls.total_ingested", TOTAL_INGESTED_TTL_S, async () => {
         const row = await env.DB
           .prepare(
             `SELECT COALESCE(SUM(records_ingested), 0) AS n FROM feed_pull_history`,

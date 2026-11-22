@@ -40,6 +40,18 @@ export interface EnrichmentResult {
 export const ENRICH_DIAG_COUNT_TTL_S = 21600;
 
 /**
+ * TTL for the `needs_brand` diagnostic counter (24h, 2026-11-22).
+ * `target_brand_id IS NULL AND malicious_domain IS NOT NULL` matches ~1.3M
+ * of ~1.65M threats, so no index narrows it: every recompute is a full scan
+ * (~1.3M rows read) and was the platform's worst recurring full scan. Its
+ * only consumer is the summary/details of the 'enrichment' diagnostic
+ * agent_outputs row written below — nothing gates on it, and a backlog of
+ * that size moves a few percent a day — so a day-old value is fine. A
+ * failed recompute logs null instead of rejecting the whole pipeline.
+ */
+export const ENRICH_NEEDS_BRAND_TTL_S = 86_400;
+
+/**
  * Run the full enrichment pipeline on unenriched threats.
  */
 export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult> {
@@ -85,12 +97,12 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
       ).first<{ n: number }>();
       return r?.n ?? 0;
     }),
-    cachedCount(env, 'count.enrich.needs_brand', ENRICH_DIAG_COUNT_TTL_S, async () => {
+    cachedCount(env, 'count.enrich.needs_brand', ENRICH_NEEDS_BRAND_TTL_S, async () => {
       const r = await env.DB.prepare(
         `SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND malicious_domain IS NOT NULL`,
       ).first<{ n: number }>();
       return r?.n ?? 0;
-    }),
+    }).catch((): number | null => null),
     cachedCount(env, 'count.threats.total', THREATS_TOTAL_TTL_S, async () => {
       const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM threats`).first<{ n: number }>();
       return r?.n ?? 0;

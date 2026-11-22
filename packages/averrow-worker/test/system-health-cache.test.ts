@@ -39,6 +39,10 @@ interface QueryLog {
   sql: string;
 }
 
+/** The trend's complete-days read binds two date-only bounds. */
+const isClosedDaysRead = (binds: unknown[]): boolean =>
+  binds.length === 2 && binds.every((b) => typeof b === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b));
+
 /** Routes .prepare(sql).first()/.all() by distinctive SQL substring so the
  *  five session.prepare() calls in handleSystemHealth (+ trend + audit)
  *  each get the row shape they expect. */
@@ -46,7 +50,12 @@ function makeSession(log: QueryLog[]) {
   return {
     prepare(sql: string) {
       log.push({ sql });
-      return {
+      let binds: unknown[] = [];
+      const stmt = {
+        bind(...args: unknown[]) {
+          binds = args;
+          return stmt;
+        },
         async first<T>(): Promise<T> {
           if (sql.includes("-7 days")) {
             return { n: 900 } as unknown as T; // threats.week
@@ -77,6 +86,11 @@ function makeSession(log: QueryLog[]) {
         },
         async all<T>(): Promise<{ results: T[] }> {
           if (sql.includes("GROUP BY date(created_at)")) {
+            // threatTrend14d splits the window into three reads; only the
+            // complete-days read ([firstFullDay, today), two date-only
+            // binds) carries the fixture rows, so the merged series equals
+            // the fixture.
+            if (!isClosedDaysRead(binds)) return { results: [] };
             return {
               results: [
                 { day: "2026-06-27", count: 100 },
@@ -87,6 +101,7 @@ function makeSession(log: QueryLog[]) {
           throw new Error(`makeSession: unexpected .all() query: ${sql}`);
         },
       };
+      return stmt;
     },
   };
 }
@@ -103,7 +118,12 @@ function makeSessionWithCounts(
   return {
     prepare(sql: string) {
       log.push({ sql });
-      return {
+      let binds: unknown[] = [];
+      const stmt = {
+        bind(...args: unknown[]) {
+          binds = args;
+          return stmt;
+        },
         async first<T>(): Promise<T> {
           if (sql.includes("-7 days")) {
             return { n: counts.week } as unknown as T;
@@ -134,6 +154,11 @@ function makeSessionWithCounts(
         },
         async all<T>(): Promise<{ results: T[] }> {
           if (sql.includes("GROUP BY date(created_at)")) {
+            // threatTrend14d splits the window into three reads; only the
+            // complete-days read ([firstFullDay, today), two date-only
+            // binds) carries the fixture rows, so the merged series equals
+            // the fixture.
+            if (!isClosedDaysRead(binds)) return { results: [] };
             return {
               results: [
                 { day: "2026-06-27", count: 100 },
@@ -144,6 +169,7 @@ function makeSessionWithCounts(
           throw new Error(`makeSessionWithCounts: unexpected .all() query: ${sql}`);
         },
       };
+      return stmt;
     },
   };
 }

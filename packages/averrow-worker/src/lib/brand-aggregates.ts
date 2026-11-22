@@ -53,6 +53,45 @@ export const BRAND_AGGREGATE_TTL_S = 3600;
  */
 export const BRAND_SLOW_AGGREGATE_TTL_S = 7200;
 
+/**
+ * TTL of the top-typosquatted-brands slice of the pressure aggregate (6h,
+ * 2026-11-22). That one GROUP BY reads every `threat_type = 'typosquatting'`
+ * threat (~430K rows via idx_threats_type, then a row lookup each for status
+ * + target_brand_id) — at the pressure aggregate's 1h TTL refreshed on every
+ * 30-min Phase D warm it ran ~36-48×/day. It is now its own cachedValue:
+ * the Phase D warm (refresh-ahead) recomputes it once the entry is
+ * refreshAfterSeconds(6h) ≈ 5.5h old, so ~4-5 scans/day and the key never
+ * lapses. Same SQL and semantics (all-time ACTIVE typosquats per brand,
+ * which threat_cube_brand cannot reproduce: it is bucketed by creation hour
+ * and only re-healed for the last 2-14 days, so threats that went inactive
+ * later would still be counted); the ranking may lag ≤ 6h. The cheap
+ * social / app / dark-web slices keep the 1h cycle.
+ */
+export const BRAND_TYPOSQUAT_PRESSURE_TTL_S = 21_600;
+
+type PressureRow = { brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number };
+
+/** Top 8 brands by active typosquatting threats (the Lookalikes pressure card). */
+export const TOP_TYPOSQUAT_BRANDS_SQL = `
+        SELECT b.id AS brand_id, b.name AS brand_name, b.canonical_domain, b.logo_url, COUNT(*) AS count
+        FROM threats t
+        JOIN brands b ON b.id = t.target_brand_id
+        WHERE t.threat_type = 'typosquatting'
+          AND t.target_brand_id IS NOT NULL
+          AND t.status = 'active'
+        GROUP BY b.id, b.name, b.canonical_domain, b.logo_url
+        ORDER BY count DESC
+        LIMIT 8
+      `;
+
+async function topTyposquatBrands(env: Env, opts: AggregateOpts): Promise<PressureRow[]> {
+  return cachedValue<PressureRow[]>(
+    env, 'brand-aggregate.pressure.lookalikes', BRAND_TYPOSQUAT_PRESSURE_TTL_S,
+    async () => (await env.DB.prepare(TOP_TYPOSQUAT_BRANDS_SQL).all<PressureRow>()).results,
+    { refresh: opts.refresh },
+  );
+}
+
 // ── Email Security ─────────────────────────────────────────────
 
 export interface EmailSecurityAggregate {
@@ -148,21 +187,9 @@ export async function pressureAggregate(env: Env, opts: AggregateOpts = {}): Pro
       // status='monitoring' filter). Same root cause + pattern as
       // PR-H fixed for the tenant Domain Findings page. Aliasing
       // target_brand_id as brand_id so it shapes-matches baseSelect.
-      const lookalikesSql = `
-        SELECT b.id AS brand_id, b.name AS brand_name, b.canonical_domain, b.logo_url, COUNT(*) AS count
-        FROM threats t
-        JOIN brands b ON b.id = t.target_brand_id
-        WHERE t.threat_type = 'typosquatting'
-          AND t.target_brand_id IS NOT NULL
-          AND t.status = 'active'
-        GROUP BY b.id, b.name, b.canonical_domain, b.logo_url
-        ORDER BY count DESC
-        LIMIT 8
-      `;
-
+      // Cached on its own, longer TTL (BRAND_TYPOSQUAT_PRESSURE_TTL_S).
       const [lookalikes, social, apps, dark] = await runSequential([
-        () => env.DB.prepare(lookalikesSql)
-          .all<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>(),
+        async () => ({ results: await topTyposquatBrands(env, opts) }),
         () => env.DB.prepare(baseSelect('social_profiles',
           "WHERE t.classification IN ('impersonation','suspicious') AND COALESCE(t.status,'active') = 'active'"))
           .all<{ brand_id: string; brand_name: string; canonical_domain: string; logo_url: string | null; count: number }>(),

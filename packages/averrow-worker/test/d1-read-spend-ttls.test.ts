@@ -21,6 +21,9 @@ import {
 } from "../src/lib/dns-drainable";
 import { countDnsCandidatesInThreats as diagCount } from "../src/handlers/diagnostics";
 import { THREAT_TREND_14D_TTL_S } from "../src/handlers/admin/health";
+import { ENRICH_NEEDS_BRAND_TTL_S } from "../src/lib/enrichment";
+import { TOTAL_INGESTED_TTL_S } from "../src/lib/platform-milestones";
+import { BRAND_TYPOSQUAT_PRESSURE_TTL_S, BRAND_AGGREGATE_TTL_S } from "../src/lib/brand-aggregates";
 
 const SRC = resolve(__dirname, "..", "src");
 const read = (f: string) => readFileSync(resolve(SRC, f), "utf8");
@@ -86,6 +89,29 @@ describe("fix 13 — health 14-day trend TTL", () => {
   it("is 3600s and is what the cachedValue call uses", () => {
     expect(THREAT_TREND_14D_TTL_S).toBe(3600);
     expect(read("handlers/admin/health.ts"))
-      .toMatch(/cachedValue<[^>]*>>\(env, "threats\.trend_14d", THREAT_TREND_14D_TTL_S,/);
+      .toMatch(/cachedValue<[^(]*>\(env, "threats\.trend_14d", THREAT_TREND_14D_TTL_S,/);
+  });
+});
+
+// D1 step 1 (2026-11-22): the recurring full scans that stay full scans
+// but run less often. Consumers and staleness are documented on each
+// constant; the call sites are pinned on source text.
+describe("D1 step 1 — full-scan cadences", () => {
+  it("needs_brand (~1.3M-row scan) is a 24h diagnostic that never fails the pipeline", () => {
+    expect(ENRICH_NEEDS_BRAND_TTL_S).toBe(86_400);
+    expect(read("lib/enrichment.ts")).toMatch(
+      /cachedCount\(env, 'count\.enrich\.needs_brand', ENRICH_NEEDS_BRAND_TTL_S,[\s\S]*?\}\)\.catch\(\(\): number \| null => null\),/,
+    );
+  });
+
+  it("lifetime-ingest milestone SUM over feed_pull_history is on a 6h TTL", () => {
+    expect(TOTAL_INGESTED_TTL_S).toBe(21_600);
+    expect(read("lib/platform-milestones.ts")).toMatch(/"count\.feed_pulls\.total_ingested", TOTAL_INGESTED_TTL_S,/);
+  });
+
+  it("top-typosquatted-brands GROUP BY has its own 6h cache, longer than the pressure aggregate's", () => {
+    expect(BRAND_TYPOSQUAT_PRESSURE_TTL_S).toBe(21_600);
+    expect(BRAND_TYPOSQUAT_PRESSURE_TTL_S).toBeGreaterThan(BRAND_AGGREGATE_TTL_S);
+    expect(read("lib/brand-aggregates.ts")).toMatch(/'brand-aggregate\.pressure\.lookalikes', BRAND_TYPOSQUAT_PRESSURE_TTL_S,/);
   });
 });
