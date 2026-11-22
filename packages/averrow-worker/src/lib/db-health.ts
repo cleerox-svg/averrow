@@ -631,7 +631,8 @@ export function applyTelemetryRoute(payload: DatabasesPayload, state: TelemetryR
     ...payload,
     databases: payload.databases.map((d) => {
       if (d.store !== "telemetry") return d;
-      const note = state.bound && state.route === "core" ? TELEMETRY_NOT_IN_USE_NOTE : d.note;
+      // Never hide a real problem note (e.g. size not measured) behind the route note.
+      const note = d.note ?? (state.bound && state.route === "core" ? TELEMETRY_NOT_IN_USE_NOTE : null);
       return { ...d, route: state.route, note };
     }),
   };
