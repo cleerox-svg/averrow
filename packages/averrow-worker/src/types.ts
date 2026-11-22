@@ -70,7 +70,7 @@ export interface Env {
   // Dedicated read-only Radar token for the cf_radar_bots feed; falls back to CF_API_TOKEN.
   CF_RADAR_API_TOKEN?: string;
   // Dedicated ops token (Account > URL Scanner > Edit + Account > D1 > Read) for the
-  // cloudflare_scanner feed; falls back to CF_API_TOKEN.
+  // cloudflare_scanner feed and D1 size lookups (lib/db-sizes.ts); falls back to CF_API_TOKEN.
   CF_OPS_API_TOKEN?: string;
   // GeoIP
   IPINFO_TOKEN?: string;

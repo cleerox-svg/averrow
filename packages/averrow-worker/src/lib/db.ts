@@ -10,6 +10,14 @@
  */
 
 import type { Env } from '../types';
+import { storeBinding, StoreUnavailableError } from './db-registry';
+
+/** The core store's raw D1 binding (`env.DB`), via the DB registry. */
+function coreD1(env: Env): D1Database {
+  const db = storeBinding(env, 'core');
+  if (!db) throw new StoreUnavailableError('core');
+  return db;
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -76,7 +84,7 @@ export function getDbContext(request: Request, orgId?: string): DbContext {
 export function getReadSession(env: Env, ctx: DbContext): D1DatabaseSession {
   // Sharding integration point — Phase 0.7+:
   // const db = ctx.orgId ? env[shardForOrg(ctx.orgId)] : env.DB;
-  return env.DB.withSession(ctx.bookmark ?? 'first-unconstrained');
+  return coreD1(env).withSession(ctx.bookmark ?? 'first-unconstrained');
 }
 
 // ─── Write access ─────────────────────────────────────────────────────────────
@@ -99,7 +107,7 @@ export function getWriteDb(env: Env, ctx: DbContext): D1Database {
   // Sharding integration point — Phase 0.7+:
   // return ctx.orgId ? env[shardForOrg(ctx.orgId)] : env.DB;
   void ctx; // ctx is unused today; retained for the future signature
-  return env.DB;
+  return coreD1(env);
 }
 
 // ─── Agent access ─────────────────────────────────────────────────────────────
@@ -118,7 +126,7 @@ export function getWriteDb(env: Env, ctx: DbContext): D1Database {
  * @param env - Worker environment bindings
  */
 export function getAgentDb(env: Env): D1Database {
-  return env.DB;
+  return coreD1(env);
 }
 
 // ─── Bookmark propagation ─────────────────────────────────────────────────────

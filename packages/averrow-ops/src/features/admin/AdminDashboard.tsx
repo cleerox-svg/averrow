@@ -792,18 +792,22 @@ export function AdminDashboard() {
   const audit = systemHealth?.audit ?? { count: 0 };
   const sessions = systemHealth?.sessions ?? { count: 0 };
   const infra = systemHealth?.infrastructure ?? {
-    mainDb: { name: 'trust-radar-v2', sizeMb: 79.5, tables: 57, region: 'ENAM' },
-    auditDb: { name: 'trust-radar-v2-audit', sizeKb: 180, tables: 2, region: 'ENAM' },
+    mainDb: { name: null, sizeMb: null, tables: null, region: 'ENAM' },
+    auditDb: { name: null, sizeKb: null, tables: null, region: 'ENAM' },
     worker: { name: 'averrow-worker', platform: 'Cloudflare Workers' },
-    kvNamespaces: [{ name: 'averrow-cache' }, { name: 'SESSIONS' }, { name: 'CACHE' }],
+    kvNamespaces: [],
+    databases: undefined,
   };
+  const databases = infra.databases;
 
   const successRate = agents.total > 0 ? Math.round((agents.successes / agents.total) * 100) : 100;
   const trendTotal = trend.reduce((s, t) => s + t.count, 0);
   const trendAvg = trend.length > 0 ? Math.round(trendTotal / trend.length) : 0;
   const trendPeak = trend.reduce((max, t) => (t.count > max.count ? t : max), { day: '', count: 0 });
   const chartData = trend.map((t) => ({ date: shortDate(t.day), threats: t.count }));
-  const dbSizePercent = Math.min((infra.mainDb.sizeMb / 500) * 100, 100);
+  const dbSizePercent = infra.mainDb.sizeMb != null
+    ? Math.min((infra.mainDb.sizeMb / D1_CAP_FALLBACK_MB) * 100, 100)
+    : undefined;
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
@@ -1096,29 +1100,60 @@ export function AdminDashboard() {
                     gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
                   }}
                 >
-                  <InfraTile
-                    icon={Database}
-                    title={infra.mainDb.name}
-                    badge={<Badge status="active" label="PRIMARY" size="xs" />}
-                    progress={dbSizePercent}
-                    progressColor="var(--blue)"
-                    lines={[
-                      `${infra.mainDb.sizeMb} MB · ${infra.mainDb.tables} tables`,
-                      `${migrations.total} migrations · ${infra.mainDb.region}`,
-                      migrations.last_run
-                        ? `Last migration: ${shortDate(migrations.last_run)}`
-                        : 'Never migrated',
-                    ]}
-                  />
-                  <InfraTile
-                    icon={Database}
-                    title={infra.auditDb.name}
-                    badge={<Badge status="inactive" label="AUDIT" size="xs" />}
-                    lines={[
-                      `${infra.auditDb.sizeKb} KB · ${infra.auditDb.tables} tables`,
-                      `Region: ${infra.auditDb.region}`,
-                    ]}
-                  />
+                  {databases && databases.length > 0 ? (
+                    databases.map((db) => {
+                      const pct = db.sizeBytes != null && db.capBytes > 0
+                        ? Math.min((db.sizeBytes / db.capBytes) * 100, 100)
+                        : undefined;
+                      return (
+                        <InfraTile
+                          key={db.store}
+                          icon={Database}
+                          title={db.name ?? db.store}
+                          badge={<Badge status={db.store === 'core' ? 'active' : 'inactive'} label={dbStoreLabel(db.store)} size="xs" />}
+                          progress={pct}
+                          progressColor={dbBarColor(pct)}
+                          progressText={pct != null ? `${pct.toFixed(1)}% of ${formatBytes(db.capBytes)} cap${capStateSuffix(pct)}` : undefined}
+                          lines={[
+                            `${formatBytes(db.sizeBytes)} · ${tablesLabel(db.tables)}`,
+                            pct != null ? `${pct.toFixed(1)}% of ${formatBytes(db.capBytes)} cap${capStateSuffix(pct)}` : `Cap ${formatBytes(db.capBytes)}`,
+                            db.store === 'core' ? `${migrations.total} migrations · ${infra.mainDb.region}` : null,
+                            db.store === 'core'
+                              ? (migrations.last_run ? `Last migration: ${shortDate(migrations.last_run)}` : 'Never migrated')
+                              : null,
+                            db.source === 'cf_api' ? 'source: Cloudflare' : db.source === 'pragma' ? 'source: estimate' : null,
+                          ]}
+                        />
+                      );
+                    })
+                  ) : (
+                    <>
+                      <InfraTile
+                        icon={Database}
+                        title={infra.mainDb.name ?? '—'}
+                        badge={<Badge status="active" label="PRIMARY" size="xs" />}
+                        progress={dbSizePercent}
+                        progressColor={dbBarColor(dbSizePercent)}
+                        progressText={dbSizePercent != null ? `${dbSizePercent.toFixed(1)}% of cap${capStateSuffix(dbSizePercent)}` : undefined}
+                        lines={[
+                          `${infra.mainDb.sizeMb != null ? `${infra.mainDb.sizeMb} MB` : '—'} · ${tablesLabel(infra.mainDb.tables)}`,
+                          `${migrations.total} migrations · ${infra.mainDb.region}`,
+                          migrations.last_run
+                            ? `Last migration: ${shortDate(migrations.last_run)}`
+                            : 'Never migrated',
+                        ]}
+                      />
+                      <InfraTile
+                        icon={Database}
+                        title={infra.auditDb.name ?? '—'}
+                        badge={<Badge status="inactive" label="AUDIT" size="xs" />}
+                        lines={[
+                          `${infra.auditDb.sizeKb != null ? `${infra.auditDb.sizeKb} KB` : '—'} · ${tablesLabel(infra.auditDb.tables)}`,
+                          `Region: ${infra.auditDb.region}`,
+                        ]}
+                      />
+                    </>
+                  )}
                   <InfraTile
                     icon={Cpu}
                     title={infra.worker.name}
@@ -1128,10 +1163,12 @@ export function AdminDashboard() {
                   />
                   <InfraTile
                     icon={Activity}
-                    title={`KV · ${infra.kvNamespaces.length} namespaces`}
-                    badge={<Badge status="active" label="ACTIVE" size="xs" />}
+                    title={`KV · ${infra.kvNamespaces.length} ${infra.kvNamespaces.length === 1 ? 'namespace' : 'namespaces'}`}
+                    badge={infra.kvNamespaces.length > 0
+                      ? <Badge status="active" label="ACTIVE" size="xs" />
+                      : <Badge status="inactive" label="UNKNOWN" size="xs" />}
                     lines={[
-                      infra.kvNamespaces.map(k => k.name).join(', '),
+                      infra.kvNamespaces.length > 0 ? infra.kvNamespaces.map(k => k.name).join(', ') : 'No namespaces reported',
                       `${fmt(sessions.count)} active sessions`,
                     ]}
                   />
@@ -1241,14 +1278,56 @@ function BigStat({ value, label, tone }: { value: string; label: string; tone?: 
   );
 }
 
+const D1_CAP_FALLBACK_MB = 10 * 1024;
+
+function formatBytes(n: number | null): string {
+  if (n == null) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${i === 0 ? v : v.toFixed(2)} ${units[i]}`;
+}
+
+function dbStoreLabel(store: string): string {
+  switch (store) {
+    case 'core': return 'PRIMARY';
+    case 'audit': return 'AUDIT';
+    case 'geo': return 'GEO';
+    case 'dnsq': return 'DNS QUEUE';
+    default: return store.toUpperCase();
+  }
+}
+
+function dbBarColor(pct: number | undefined): string {
+  if (pct == null) return 'var(--blue)';
+  if (pct >= 80) return 'var(--sev-critical)';
+  if (pct >= 50) return 'var(--sev-medium)';
+  return 'var(--blue)';
+}
+
+function tablesLabel(n: number | null | undefined): string {
+  if (n == null) return '— tables';
+  return `${n} ${n === 1 ? 'table' : 'tables'}`;
+}
+
+/** Text cue for the cap thresholds, so the bar's state isn't conveyed by colour alone. */
+function capStateSuffix(pct: number | undefined): string {
+  if (pct == null) return '';
+  if (pct >= 80) return ' · critical';
+  if (pct >= 50) return ' · high';
+  return '';
+}
+
 function InfraTile({
-  icon: Icon, title, badge, progress, progressColor, lines, pulseColor,
+  icon: Icon, title, badge, progress, progressColor, progressText, lines, pulseColor,
 }: {
   icon: LucideIcon;
   title: string;
   badge?: React.ReactNode;
   progress?: number;
   progressColor?: string;
+  progressText?: string;
   lines: (string | null)[];
   pulseColor?: string;
 }) {
@@ -1267,7 +1346,7 @@ function InfraTile({
           ) : (
             <Icon size={13} style={{ color: 'var(--primary-text)' }} />
           )}
-          <span style={{
+          <span title={title} style={{
             ...mono, fontSize: 12, fontWeight: 700, ...textPrimary,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
@@ -1277,10 +1356,21 @@ function InfraTile({
         {badge}
       </div>
       {progress != null && (
-        <div style={{ height: 4, borderRadius: 999, background: 'rgba(255,255,255,0.05)', overflow: 'hidden', marginBottom: 8 }}>
+        <div
+          role="progressbar"
+          aria-label={`${title} storage used`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progress)}
+          aria-valuetext={progressText}
+          style={{ height: 4, borderRadius: 999, background: 'var(--border-base)', overflow: 'hidden', marginBottom: 8 }}
+        >
           <div style={{
-            height: '100%', width: `${progress}%`,
-            background: `linear-gradient(90deg, ${progressColor}55, ${progressColor})`,
+            height: '100%', width: `${progress}%`, minWidth: progress > 0 ? 2 : 0,
+            // progressColor is a var(--…) token, so a hex-alpha suffix would be invalid CSS.
+            background: progressColor
+              ? `linear-gradient(90deg, color-mix(in srgb, ${progressColor} 33%, transparent), ${progressColor})`
+              : 'var(--primary)',
             transition: 'width 300ms',
           }} />
         </div>
