@@ -133,7 +133,8 @@ describe("Radar-derived data: source graph stays staff-only", () => {
       expect(guard, `${path} must import requireStaff`).not.toBeNull();
       const alias = guard![1]!;
       const call = branch.search(new RegExp(`await ${alias}\\(request, env\\)`));
-      const query = branch.search(/env\.DB\.prepare/);
+      // The activity feed reads through the telemetry union (Track B1c).
+      const query = branch.search(/env\.DB\.prepare|historyParts\(/);
       expect(call).toBeGreaterThan(-1);
       expect(query).toBeGreaterThan(call);
       expect(branch.slice(0, query)).not.toMatch(/\brequireAuth\b/);

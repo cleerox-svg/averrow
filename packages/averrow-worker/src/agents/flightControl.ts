@@ -10,6 +10,8 @@
  * - Log all decisions to agent_activity_log
  */
 
+import { resolveTelemetry, telemetryDbFor, telemetryStore } from "../lib/db-route";
+import { byDesc, historyParts, unionAggregateFirst, unionFirst, unionGrouped } from "../lib/telemetry-read";
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import type { Env } from "../types";
 import { BudgetManager, fetchAnthropicUsageReport } from "../lib/budgetManager";
@@ -148,6 +150,9 @@ export interface AgentHealth {
   // Absent/null → last_run_at (every other agent; Observer before its first
   // scheduled success after deploy).
   stall_reference_at?: string | null;
+  // Which DB holds the latest agent_runs row (Track B1c) — the orphan
+  // force-fail UPDATE is sent there. Absent = the caller's core DB.
+  last_run_route?: 'telemetry' | 'core';
   circuit_state: 'closed' | 'tripped';
   // agent_configs.enabled !== 0 (no config row = enabled). Unlike
   // circuit_state, false for ANY pause — auto trip or manual. executeAgent
@@ -484,6 +489,9 @@ export const flightControlAgent: AgentModule = {
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env } = ctx;
     const db = env.DB;
+    // Agent-runs family DB, resolved once for this FC run (Track B1c):
+    // activity-log writes and agent_configs reads go to the routed store.
+    const { db: tdb } = await resolveTelemetry(env);
     const outputs: AgentOutputEntry[] = [];
     const budgetMgr = new BudgetManager(db);
 
@@ -514,9 +522,9 @@ export const flightControlAgent: AgentModule = {
 
     // Run all reads in parallel — single round trip to D1
     const [backlogs, health, navigatorHealth, budgetStatus, agentLimits, lastCuratorRun, curatorHealth, unscannedEmails, degradedFeeds, autoPausedFeeds, silentFeedCandidates, trippedAgents] = await Promise.all([
-      measureBacklogs(env, db),
-      getAgentHealth(db, env.CACHE),
-      getNavigatorHealth(db),
+      measureBacklogs(env, db, tdb),
+      getAgentHealth(db, env.CACHE, env),
+      getNavigatorHealth(db, env),
       budgetMgr.getStatus(anthropicReported),
       budgetMgr.getAgentLimits(),
       db.prepare(`
@@ -532,7 +540,8 @@ export const flightControlAgent: AgentModule = {
       // curator every hour, producing zero work and filling
       // agent_runs with reaped rows. See the curator deep-dive
       // 2026-05-10 for the receipts.
-      db.prepare(`
+      historyParts(env, 'agent_runs', { core: db }).then((parts) => unionAggregateFirst<{ recent_failures: number; last_success_at: string | null }>(parts, (p) => ({
+        sql: `
         SELECT
           COUNT(CASE WHEN status = 'failed'
                        AND started_at > datetime('now', '-3 hours')
@@ -540,8 +549,8 @@ export const flightControlAgent: AgentModule = {
           MAX(CASE WHEN status = 'success' THEN started_at END) AS last_success_at
         FROM agent_runs
         WHERE agent_id = 'curator'
-          AND started_at > datetime('now', '-6 hours')
-      `).first<{ recent_failures: number; last_success_at: string | null }>().catch(() => ({ recent_failures: 0, last_success_at: null })),
+          AND started_at > datetime('now', '-6 hours')/*split*/
+      `, binds: [] }), { sum: ['recent_failures'], max: ['last_success_at'] })).catch(() => ({ recent_failures: 0, last_success_at: null })),
       db.prepare(`
         SELECT COUNT(*) as count FROM brands
         WHERE email_security_grade IS NULL
@@ -596,7 +605,7 @@ export const flightControlAgent: AgentModule = {
       // Auto-tripped agents — circuit breaker has flipped them to
       // enabled=0 with paused_reason='auto:consecutive_failures'.
       // Distinct from degraded (still running but failing).
-      db.prepare(`
+      tdb.prepare(`
         SELECT agent_id,
                consecutive_failures,
                paused_at,
@@ -611,17 +620,17 @@ export const flightControlAgent: AgentModule = {
 
     // Log budget state every tick for the activity log (diagnostic trail).
     if (budgetStatus.throttle_level === 'emergency') {
-      await logActivity(db, 'flight_control', 'critical', 'budget_emergency',
+      await logActivity(tdb, 'flight_control', 'critical', 'budget_emergency',
         `EMERGENCY: Budget exhausted — AI agents paused ($${budgetStatus.spent_this_month}/$${budgetStatus.config.monthly_limit_usd})`,
         { budget: budgetStatus }
       );
     } else if (budgetStatus.throttle_level === 'hard') {
-      await logActivity(db, 'flight_control', 'warning', 'budget_hard',
+      await logActivity(tdb, 'flight_control', 'warning', 'budget_hard',
         `Budget hard limit — minimal AI processing ($${budgetStatus.spent_this_month}/$${budgetStatus.config.monthly_limit_usd})`,
         { budget: budgetStatus }
       );
     } else if (budgetStatus.throttle_level === 'soft') {
-      await logActivity(db, 'flight_control', 'info', 'budget_soft',
+      await logActivity(tdb, 'flight_control', 'info', 'budget_soft',
         `Budget soft limit — reduced batch sizes ($${budgetStatus.spent_this_month}/$${budgetStatus.config.monthly_limit_usd})`,
         { budget: budgetStatus }
       );
@@ -648,7 +657,7 @@ export const flightControlAgent: AgentModule = {
     } catch (err) {
       // Never let a notification failure break Flight Control — the
       // activity log above already captured the state for diagnostics.
-      await logActivity(db, 'flight_control', 'warning', 'budget_notification_error',
+      await logActivity(tdb, 'flight_control', 'warning', 'budget_notification_error',
         `Failed to emit budget transition notification: ${err instanceof Error ? err.message : String(err)}`,
         { throttle_level: budgetStatus.throttle_level }
       );
@@ -666,13 +675,19 @@ export const flightControlAgent: AgentModule = {
         : 0;
       if (overshootRatio >= 1.5) {
         // Find the top-cost agent in the last 24h for the message body.
-        const topAgent = await db.prepare(
-          `SELECT agent_id, SUM(cost_usd) AS cost FROM agent_runs
+        const costParts = await historyParts(env, 'agent_runs', { core: db });
+        const topAgent = (await unionGrouped<{ agent_id: string; cost: number }>(
+          costParts,
+          (p) => ({
+            sql: `SELECT agent_id, SUM(cost_usd) AS cost FROM agent_runs
             WHERE started_at >= datetime('now', '-24 hours')
-              AND cost_usd > 0
+              AND cost_usd > 0/*split*/
             GROUP BY agent_id
-            ORDER BY cost DESC LIMIT 1`
-        ).first<{ agent_id: string; cost: number }>();
+            ORDER BY cost DESC`,
+            binds: [],
+          }),
+          { groupBy: ['agent_id'], sum: ['cost'], sort: (a, b) => b.cost - a.cost, limit: 1 },
+        ))[0] ?? null;
         await emitPlatformNotification(env, 'platform_ai_spend_burst',
           renderPlatformAiSpendBurst({
             spent_24h_usd: budgetStatus.daily_burn_rate,
@@ -857,10 +872,12 @@ export const flightControlAgent: AgentModule = {
     // navigator (every 5 min) — and warn if it's silent for >15 min.
     // Also surface orchestrator gaps detected via agent_runs scan.
     try {
-      const navLast = await db.prepare(
-        `SELECT MAX(started_at) AS last_at FROM agent_runs
-          WHERE agent_id IN ('navigator','fast_tick')`
-      ).first<{ last_at: string | null }>();
+      const runParts = await historyParts(env, 'agent_runs', { core: db });
+      const navLast = await unionAggregateFirst<{ last_at: string | null }>(runParts, (p) => ({
+        sql: `SELECT MAX(started_at) AS last_at FROM agent_runs
+          WHERE agent_id IN ('navigator','fast_tick')/*split*/`,
+        binds: [],
+      }), { max: ['last_at'] });
       const navMinutes = navLast?.last_at
         ? Math.round((Date.now() - Date.parse(navLast.last_at)) / 60_000)
         : 999;
@@ -879,10 +896,11 @@ export const flightControlAgent: AgentModule = {
       // proxy. Earlier code queried WHERE agent_id='orchestrator'
       // which always returned NULL → fired a false 999-min alert
       // every FC tick (operator screenshot 2026-04-30).
-      const orchLast = await db.prepare(
-        `SELECT MAX(started_at) AS last_at FROM agent_runs
-          WHERE agent_id = 'flight_control'`
-      ).first<{ last_at: string | null }>();
+      const orchLast = await unionAggregateFirst<{ last_at: string | null }>(runParts, (p) => ({
+        sql: `SELECT MAX(started_at) AS last_at FROM agent_runs
+          WHERE agent_id = 'flight_control'/*split*/`,
+        binds: [],
+      }), { max: ['last_at'] });
       const orchMinutes = orchLast?.last_at
         ? Math.round((Date.now() - Date.parse(orchLast.last_at)) / 60_000)
         : 999;
@@ -901,7 +919,7 @@ export const flightControlAgent: AgentModule = {
 
     // ── Enrichment backlog warnings ──────────────────────────────
     if (backlogs.surblUnchecked > 1000) {
-      await logActivity(db, 'flight_control', 'warning', 'enrichment_backlog',
+      await logActivity(tdb, 'flight_control', 'warning', 'enrichment_backlog',
         `SURBL enrichment backlog: ${backlogs.surblUnchecked} threat rows unchecked`,
         { backlog: 'surbl', count: backlogs.surblUnchecked }
       );
@@ -1356,49 +1374,49 @@ export const flightControlAgent: AgentModule = {
     // drops to ~50-200ms.
     const enrichmentLogStmts: D1PreparedStatement[] = [];
     if (backlogs.vtUnchecked > 500) {
-      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(tdb, 'flight_control', 'warning', 'enrichment_backlog',
         `VT enrichment backlog: ${backlogs.vtUnchecked} high-severity threats unchecked`,
         { backlog: 'virustotal', count: backlogs.vtUnchecked }));
     }
     if (backlogs.gsbUnchecked > 1000) {
-      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(tdb, 'flight_control', 'warning', 'enrichment_backlog',
         `GSB enrichment backlog: ${backlogs.gsbUnchecked} URLs/domains unchecked`,
         { backlog: 'google_safe_browsing', count: backlogs.gsbUnchecked }));
     }
     if (backlogs.dblUnchecked > 1000) {
-      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(tdb, 'flight_control', 'warning', 'enrichment_backlog',
         `DBL enrichment backlog: ${backlogs.dblUnchecked} domains unchecked`,
         { backlog: 'spamhaus_dbl', count: backlogs.dblUnchecked }));
     }
     if (backlogs.abuseipdbUnchecked > 500) {
-      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(tdb, 'flight_control', 'warning', 'enrichment_backlog',
         `AbuseIPDB enrichment backlog: ${backlogs.abuseipdbUnchecked} IPs unchecked`,
         { backlog: 'abuseipdb', count: backlogs.abuseipdbUnchecked }));
     }
     if (backlogs.pdnsUnchecked > 200) {
-      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(tdb, 'flight_control', 'warning', 'enrichment_backlog',
         `PDNS enrichment backlog: ${backlogs.pdnsUnchecked} domains unchecked`,
         { backlog: 'circl_pdns', count: backlogs.pdnsUnchecked }));
     }
     if (backlogs.greynoiseUnchecked > 100) {
-      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(tdb, 'flight_control', 'warning', 'enrichment_backlog',
         `GreyNoise enrichment backlog: ${backlogs.greynoiseUnchecked} high-severity IPs unchecked`,
         { backlog: 'greynoise', count: backlogs.greynoiseUnchecked }));
     }
     if (backlogs.seclookupUnchecked > 1000) {
-      enrichmentLogStmts.push(logActivityStmt(db, 'flight_control', 'warning', 'enrichment_backlog',
+      enrichmentLogStmts.push(logActivityStmt(tdb, 'flight_control', 'warning', 'enrichment_backlog',
         `SecLookup enrichment backlog: ${backlogs.seclookupUnchecked} threats unchecked`,
         { backlog: 'seclookup', count: backlogs.seclookupUnchecked }));
     }
     if (enrichmentLogStmts.length > 0) {
-      try { await db.batch(enrichmentLogStmts); } catch { /* never break FC */ }
+      try { await tdb.batch(enrichmentLogStmts); } catch { /* never break FC */ }
     }
 
     mark('enrichment_warnings');
 
     // ── Watchdog social mention backlog ─────────────────────────────
     if (backlogs.watchdog > 100) {
-      await logActivity(db, 'flight_control', 'warning', 'social_backlog',
+      await logActivity(tdb, 'flight_control', 'warning', 'social_backlog',
         `Watchdog backlog: ${backlogs.watchdog} unclassified social mentions`,
         { backlog: 'watchdog', count: backlogs.watchdog }
       );
@@ -1413,7 +1431,7 @@ export const flightControlAgent: AgentModule = {
         try {
           await executeAgent(env, watchdogMod, { trigger: 'flight_control_backlog', backlog: backlogs.watchdog }, 'flight_control', 'event');
         } catch { /* logged by agentRunner */ }
-        await logActivity(db, 'flight_control', 'info', 'scaling',
+        await logActivity(tdb, 'flight_control', 'info', 'scaling',
           `Triggered extra Watchdog run — backlog: ${backlogs.watchdog} unclassified social mentions`,
           { agent: 'watchdog', backlog: backlogs.watchdog }
         );
@@ -1423,7 +1441,7 @@ export const flightControlAgent: AgentModule = {
     // ── Degraded feed health monitoring ───────────────────────────
     if (degradedFeeds.results.length > 0) {
       for (const feed of degradedFeeds.results) {
-        await logActivity(db, 'flight_control', 'warning', 'feed_degraded',
+        await logActivity(tdb, 'flight_control', 'warning', 'feed_degraded',
           `Feed ${feed.feed_name} is ${feed.health_status}${feed.last_failure ? ` (last failure: ${feed.last_failure})` : ''}`,
           { feed_name: feed.feed_name, health_status: feed.health_status, last_failure: feed.last_failure }
         );
@@ -1453,7 +1471,7 @@ export const flightControlAgent: AgentModule = {
     // per-feed critical entry here. Just log a single roll-up so the
     // FC dashboard timeline shows the current count without spamming.
     if (autoPausedFeeds.results.length > 0) {
-      await logActivity(db, 'flight_control', 'warning', 'feeds_auto_paused',
+      await logActivity(tdb, 'flight_control', 'warning', 'feeds_auto_paused',
         `${autoPausedFeeds.results.length} feed${autoPausedFeeds.results.length === 1 ? '' : 's'} currently auto-paused: ${autoPausedFeeds.results.map(f => f.feed_name).join(', ')}`,
         { count: autoPausedFeeds.results.length, feeds: autoPausedFeeds.results.map(f => ({ feed_name: f.feed_name, consecutive_failures: f.consecutive_failures })) }
       );
@@ -1535,7 +1553,7 @@ export const flightControlAgent: AgentModule = {
         overdue.sort((a, b) => b.ratio - a.ratio);
         const worst = overdue[0]!;
 
-        await logActivity(db, 'flight_control', 'critical', 'feeds_silent',
+        await logActivity(tdb, 'flight_control', 'critical', 'feeds_silent',
           `${overdue.length} enabled feed${overdue.length === 1 ? ' has' : 's have'} not pulled in 3×+ their schedule_cron interval: ${overdue.map(o => `${o.feed_name} (${o.ratio.toFixed(1)}×)`).join(', ')}`,
           { count: overdue.length, feeds: overdue }
         );
@@ -1717,7 +1735,7 @@ export const flightControlAgent: AgentModule = {
     // The critical notification was already fired by executeAgent()
     // at the moment of the transition.
     if (trippedAgents.results.length > 0) {
-      await logActivity(db, 'flight_control', 'warning', 'agents_tripped',
+      await logActivity(tdb, 'flight_control', 'warning', 'agents_tripped',
         `${trippedAgents.results.length} agent${trippedAgents.results.length === 1 ? '' : 's'} circuit-tripped: ${trippedAgents.results.map(a => a.agent_id).join(', ')}`,
         { count: trippedAgents.results.length, agents: trippedAgents.results.map(a => ({ agent_id: a.agent_id, consecutive_failures: a.consecutive_failures })) }
       );
@@ -1957,7 +1975,7 @@ export const flightControlAgent: AgentModule = {
       if (!csStats.status || csStats.status !== 'connected') {
         console.log('[flight-control] CertStream disconnected — attempting restart');
         await csStub.fetch(new Request('https://internal/start'));
-        await logActivity(db, 'flight_control', 'warning', 'certstream_reconnect',
+        await logActivity(tdb, 'flight_control', 'warning', 'certstream_reconnect',
           'CertStream disconnected — triggered restart', { csStats });
       }
 
@@ -1967,9 +1985,9 @@ export const flightControlAgent: AgentModule = {
     }
 
     // Fire-and-forget scaling (no await — don't block on spawning agents)
-    const scalingActions = await scaleAgents(db, env, ctx, backlogs, budgetStatus, agentLimits);
+    const scalingActions = await scaleAgents(db, env, ctx, backlogs, budgetStatus, agentLimits, tdb);
     mark('scale_agents');
-    const recoveryActions = await recoverStalledAgents(db, env, ctx, health);
+    const recoveryActions = await recoverStalledAgents(db, env, ctx, health, tdb);
     mark('recover_stalled');
 
     mark('certstream_check');
@@ -2001,7 +2019,7 @@ export const flightControlAgent: AgentModule = {
       const curatorRecentlyBroken = recentFailures >= 3 && !lastSuccessRecent;
 
       if (curatorRecentlyBroken) {
-        await logActivity(db, 'flight_control', 'critical', 'curator_backoff',
+        await logActivity(tdb, 'flight_control', 'critical', 'curator_backoff',
           `Skipping Curator dispatch — ${recentFailures} failures in last 3h with no successful completion. Investigate before next attempt.`,
           {
             recent_failures: recentFailures,
@@ -2023,7 +2041,7 @@ export const flightControlAgent: AgentModule = {
           try { await curatorPromise; } catch { /* logged by agentRunner */ }
         }
 
-        await logActivity(db, 'flight_control', 'info', 'scheduling',
+        await logActivity(tdb, 'flight_control', 'info', 'scheduling',
           'Triggered Curator weekly hygiene run', {
             days_since_last: Math.round(daysSinceCuratorRun),
             unscanned_emails: unscannedEmails?.count ?? 0,
@@ -2080,7 +2098,7 @@ export const flightControlAgent: AgentModule = {
     const navigatorDegraded = navigatorHealth.status === 'stale' || navigatorHealth.status === 'dead';
     if (navigatorDegraded) {
       await logActivity(
-        db,
+        tdb,
         'flight_control',
         navigatorHealth.status === 'dead' ? 'critical' : 'warning',
         'navigator_health',
@@ -2089,7 +2107,7 @@ export const flightControlAgent: AgentModule = {
       );
     } else if (navigatorHealth.status === 'degraded') {
       await logActivity(
-        db,
+        tdb,
         'flight_control',
         'warning',
         'navigator_health',
@@ -2134,7 +2152,7 @@ export const flightControlAgent: AgentModule = {
 
     // Single write at the end — log only, no snapshot to agent_outputs
     await logActivity(
-      db,
+      tdb,
       'flight_control',
       'info',
       'batch_complete',
@@ -2184,7 +2202,7 @@ export async function loadManuallyDisabledFeeds(db: D1Database): Promise<Set<str
   }
 }
 
-async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
+async function measureBacklogs(env: Env, db: D1Database, tdb: D1Database = db): Promise<Backlog> {
   // Each backlog is cached through KV via `cachedCount`. The TTL picks
   // whether this is a "live" counter (short TTL, ~every tick) or a
   // "monitoring" counter (long TTL, ~every 4th tick). The stall-
@@ -2582,7 +2600,7 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
       const trend   = current - fourAgo; // negative = draining, positive/0 = stalled
 
       if (trend >= 0) {
-        await db.prepare(`
+        await tdb.prepare(`
           INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity, created_at)
           VALUES (?, 'flight_control', 'backlog_stalled', ?, ?, 'critical', datetime('now'))
         `).bind(
@@ -2634,7 +2652,7 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
       const samples = (history.results ?? []).map((r) => r.count);
       if (lookalikeDrainFallingBehind({ samples, drainPerTick: LOOKALIKE_BATCH_LIMIT })) {
         const atCeiling = backlog.lookalikeDnsDue >= LOOKALIKE_DUE_GAUGE_CEILING;
-        await logActivity(db, 'flight_control', 'warning', 'lookalike_backlog',
+        await logActivity(tdb, 'flight_control', 'warning', 'lookalike_backlog',
           `Lookalike DNS-check backlog not draining while the drain is saturated: ` +
           `${backlog.lookalikeDnsDue}${atCeiling ? '+' : ''} due ` +
           `(bounded probe, ceiling ${LOOKALIKE_DUE_GAUGE_CEILING}), ` +
@@ -2673,7 +2691,7 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
         threshold: LOOKALIKE_PARKED_WARN_THRESHOLD,
       })) {
     try {
-      await logActivity(db, 'flight_control', 'warning', 'lookalike_parked',
+      await logActivity(tdb, 'flight_control', 'warning', 'lookalike_parked',
         `Lookalike parked set above threshold: ${backlog.lookalikeParked} rows ` +
         `parked by the backoff ladder (threshold ${LOOKALIKE_PARKED_WARN_THRESHOLD}). ` +
         `The un-park sweep re-admits the oldest rows on each checker tick; a set ` +
@@ -2844,28 +2862,46 @@ async function readScheduledStallReferences(
   return refs;
 }
 
-export async function getAgentHealth(db: D1Database, cache?: KVNamespace): Promise<AgentHealth[]> {
+/**
+ * `db` is the core DB. With `env` (production), agent_runs / agent_activity_log
+ * are read across telemetry ∪ core and agent_configs from the routed store
+ * (Track B1c), so a run is seen in whichever DB it lives in. Without `env`
+ * (unit tests) everything reads `db`.
+ */
+export async function getAgentHealth(db: D1Database, cache?: KVNamespace, env?: Env): Promise<AgentHealth[]> {
   const agentIds = await getAgentsToMonitor();
   // Build a placeholder list for the IN clause
   const placeholders = agentIds.map(() => '?').join(',');
   const stallThresholds = await getStallThresholdMap();
 
-  const [results, avgResults, configResults, workflowAgentStats, scheduledRefs] = await Promise.all([
-    db.prepare(LATEST_RUN_PER_AGENT_SQL)
-      .bind(JSON.stringify(agentIds))
-      .all<{ agent_id: string; last_run_status: string; last_run_at: string; last_completed_at: string | null; duration_ms: number | null }>(),
+  type LatestRow = { agent_id: string; last_run_status: string; last_run_at: string; last_completed_at: string | null; duration_ms: number | null };
+  const runParts = await historyParts(env, 'agent_runs', { core: db });
+  const configDb = env ? await telemetryStore(env) : db;
+  const [latestPerPart, avgRows, configResults, workflowAgentStats, scheduledRefs] = await Promise.all([
+    // Latest row per agent on EACH part (a duplicate backfilled copy is the
+    // same row); merged below to the newest per agent, tagged with its DB.
+    Promise.all(runParts.map(async (part) => {
+      const db = part.db;
+      const r = await db.prepare(LATEST_RUN_PER_AGENT_SQL)
+        .bind(JSON.stringify(agentIds))
+        .all<LatestRow>();
+      return (r.results ?? []).map((row) => ({ row, source: part.source }));
+    })),
 
-    db.prepare(`
-      SELECT agent_id, AVG(duration_ms) as avg_ms
+    unionGrouped<{ agent_id: string; avg_ms: number | null; n?: number }>(runParts, (p) => ({
+      sql: `
+      SELECT agent_id, AVG(duration_ms) as avg_ms, COUNT(duration_ms) AS n
       FROM agent_runs
       WHERE started_at >= datetime('now', '-24 hours')
         AND duration_ms IS NOT NULL
-        AND agent_id IN (${placeholders})
+        AND agent_id IN (${placeholders})/*split*/
       GROUP BY agent_id
-    `).bind(...agentIds).all<{ agent_id: string; avg_ms: number | null }>(),
+    `,
+      binds: [...agentIds],
+    }), { groupBy: ['agent_id'], sum: ['n'], avg: [{ col: 'avg_ms', weight: 'n' }], drop: ['n'] }),
 
     // LEFT JOIN agent_configs for circuit breaker state
-    db.prepare(`
+    configDb.prepare(`
       SELECT agent_id, enabled, paused_reason, consecutive_failures,
              paused_at, paused_after_n_failures
       FROM agent_configs
@@ -2880,14 +2916,30 @@ export async function getAgentHealth(db: D1Database, cache?: KVNamespace): Promi
     // write to agent_activity_log not agent_runs. Without this,
     // is_stalled comes back true for healthy workflow agents → false
     // platform_agent_stalled notifications fire every FC tick.
-    getWorkflowAgentStats(db),
+    getWorkflowAgentStats(db, 24, env),
 
     // Observer's scheduled-briefing marker (one KV read, no D1).
     readScheduledStallReferences(agentIds, cache),
   ]);
 
-  const avgMap = new Map(avgResults.results.map(r => [r.agent_id, r.avg_ms]));
+  const avgMap = new Map(avgRows.map(r => [r.agent_id, r.avg_ms]));
   const configMap = new Map(configResults.results.map(r => [r.agent_id, r]));
+  // Newest run per agent across parts; on a started_at tie keep the first
+  // (telemetry part first, then the SQL's own order — as before on one DB).
+  const results = { results: [] as Array<LatestRow & { route: 'telemetry' | 'core' }> };
+  {
+    const best = new Map<string, LatestRow & { route: 'telemetry' | 'core' }>();
+    for (const list of latestPerPart) {
+      for (const { row, source } of list) {
+        const cur = best.get(row.agent_id);
+        if (!cur || row.last_run_at > cur.last_run_at
+          || (row.last_run_at === cur.last_run_at && cur.last_completed_at === null && row.last_completed_at !== null)) {
+          best.set(row.agent_id, { ...row, route: source });
+        }
+      }
+    }
+    results.results = [...best.values()];
+  }
 
   return agentIds.map(agentId => {
     const latest = results.results.find(r => r.agent_id === agentId);
@@ -2945,6 +2997,7 @@ export async function getAgentHealth(db: D1Database, cache?: KVNamespace): Promi
       // wf branch has no agent_runs completed_at → null (nexus is excluded
       // from recovery anyway, so this never gates a workflow agent).
       last_run_completed_at: wf ? null : (latest?.last_completed_at ?? null),
+      last_run_route: wf ? undefined : latest?.route,
       avg_duration_ms: Math.round(avgMap.get(agentId) ?? 0),
       is_stalled: isStalled,
       stall_reference_at: stallReferenceAt,
@@ -2966,7 +3019,7 @@ export async function getAgentHealth(db: D1Database, cache?: KVNamespace): Promi
 // historical rows still carry that ID, so queries span both IDs to get
 // the full recent history.
 
-async function getNavigatorHealth(db: D1Database): Promise<NavigatorHealth> {
+async function getNavigatorHealth(db: D1Database, env?: Env): Promise<NavigatorHealth> {
   const DEFAULT_EMPTY: NavigatorHealth = {
     last_run_at: null,
     runs_last_hour: 0,
@@ -2978,25 +3031,38 @@ async function getNavigatorHealth(db: D1Database): Promise<NavigatorHealth> {
 
   try {
     // Two reads in parallel: last run (for status freshness) + last hour aggregates.
+    const parts = await historyParts(env, 'agent_runs', { core: db });
     const [latestRow, hourAgg] = await Promise.all([
-      db.prepare(`
+      unionFirst<{ started_at: string; status: string }>(parts, (p) => ({
+        sql: `
         SELECT started_at, status
         FROM agent_runs
-        WHERE agent_id IN ('navigator', 'fast_tick')
+        WHERE agent_id IN ('navigator', 'fast_tick')/*split*/
         ORDER BY started_at DESC
         LIMIT 1
-      `).first<{ started_at: string; status: string }>(),
+      `,
+        binds: [],
+      }), { sort: byDesc<{ started_at: string; status: string }>('started_at') }),
 
-      db.prepare(`
+      unionAggregateFirst<{ runs: number; successes: number; avg_records: number | null; avg_ms: number | null; n_rec?: number; n_ms?: number }>(parts, (p) => ({
+        sql: `
         SELECT
           COUNT(*) AS runs,
           SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes,
           AVG(records_processed) AS avg_records,
-          AVG(duration_ms) AS avg_ms
+          AVG(duration_ms) AS avg_ms,
+          COUNT(records_processed) AS n_rec,
+          COUNT(duration_ms) AS n_ms
         FROM agent_runs
         WHERE agent_id IN ('navigator', 'fast_tick')
-          AND started_at >= datetime('now', '-1 hour')
-      `).first<{ runs: number; successes: number; avg_records: number | null; avg_ms: number | null }>(),
+          AND started_at >= datetime('now', '-1 hour')/*split*/
+      `,
+        binds: [],
+      }), {
+        sum: ['runs', 'successes', 'n_rec', 'n_ms'],
+        avg: [{ col: 'avg_records', weight: 'n_rec' }, { col: 'avg_ms', weight: 'n_ms' }],
+        drop: ['n_rec', 'n_ms'],
+      }),
     ]);
 
     if (!latestRow) return DEFAULT_EMPTY;
@@ -3046,7 +3112,8 @@ export async function scaleAgents(
   ctx: AgentContext,
   backlogs: Backlog,
   budget: BudgetStatus,
-  limits: AgentBudgetLimits
+  limits: AgentBudgetLimits,
+  tdb: D1Database = db,
 ): Promise<number> {
   // We need the agent runner + modules to trigger agents
   const { agentModules } = await import('./index');
@@ -3095,7 +3162,7 @@ export async function scaleAgents(
       const detail = cartBacklog > 0
         ? `backlog ${cartBacklog}`
         : `geo backlog ${noGeoLabel} threats missing geo`;
-      await logActivity(db, 'flight_control', 'info', 'scaling_deferred',
+      await logActivity(tdb, 'flight_control', 'info', 'scaling_deferred',
         `Cartographer ${detail} — deferred to the dedicated :09 cron (not dispatched inside the :07 orchestrator invocation)`,
         {
           agent: 'cartographer',
@@ -3128,7 +3195,7 @@ export async function scaleAgents(
       }
 
       if (instances > 1) {
-        await logActivity(db, 'flight_control', 'info', 'scaling',
+        await logActivity(tdb, 'flight_control', 'info', 'scaling',
           `Scaling Cartographer to ${instances} instances (backlog: ${cartBacklog})`,
           { agent: 'cartographer', instances, backlog: cartBacklog }
         );
@@ -3145,7 +3212,7 @@ export async function scaleAgents(
         } catch { /* logged by agentRunner */ }
         actions++;
 
-        await logActivity(db, 'flight_control', 'info', 'scaling',
+        await logActivity(tdb, 'flight_control', 'info', 'scaling',
           `Ran Cartographer geo backlog pass (${noGeoLabel} threats missing geo)`,
           { agent: 'cartographer', mode: 'geo_backlog', no_geo_count: noGeoLabel }
         );
@@ -3183,13 +3250,13 @@ export async function scaleAgents(
     }
 
     if (instances > 1) {
-      await logActivity(db, 'flight_control', 'info', 'scaling',
+      await logActivity(tdb, 'flight_control', 'info', 'scaling',
         `Scaling Analyst to ${instances} background instances (backlog: ${analystBacklog}, unlinked: ${totalUnlinked >= UNLINKED_PROBE_CAP ? `>${UNLINKED_TIER_HIGH}` : totalUnlinked}, batch limit: ${limits.analyst_batch})`,
         { agent: 'analyst', instances, backlog: analystBacklog, total_unlinked_probe: totalUnlinked, total_unlinked_capped: totalUnlinked >= UNLINKED_PROBE_CAP, batch_limit: limits.analyst_batch }
       );
     }
   } else if (limits.pause_all_ai && analystBacklog > 0) {
-    await logActivity(db, 'flight_control', 'critical', 'throttle',
+    await logActivity(tdb, 'flight_control', 'critical', 'throttle',
       `Analyst paused — budget ${budget.throttle_level} ($${budget.spent_this_month}/$${budget.config.monthly_limit_usd})`,
       { throttle_level: budget.throttle_level, spent: budget.spent_this_month }
     );
@@ -3404,6 +3471,9 @@ function parseRunTimestampMs(ts: string): number {
 export interface StallRecoveryPlan {
   /** Orphan force-fail UPDATEs + one activity row per considered agent. */
   statements: D1PreparedStatement[];
+  /** The DB each statement targets (parallel to `statements`): orphans go to
+   *  the DB holding the run, activity rows to the routed store. */
+  statementDbs: D1Database[];
   /** Agents to dispatch (≤ maxPerTick). */
   toRecover: Array<{ agentId: string; mod: AgentModule }>;
   decisions: Array<{ agentId: string; decision: StallRecoveryDecision; attempt?: number }>;
@@ -3424,10 +3494,20 @@ export async function planStallRecoveries(
     nowMs: number;
     maxPerTick?: number;
     scheduleOwned?: ReadonlySet<string>;
+    /** Where activity rows go (Track B1c routed store); default `db`. */
+    activityDb?: D1Database;
+    /** Where an orphan's agent_runs row lives (AgentHealth.last_run_route); default `db`. */
+    runDb?: (route: AgentHealth['last_run_route']) => D1Database;
   },
 ): Promise<StallRecoveryPlan> {
   const { db, cache, modules, thresholdsMinutes, nowMs, maxPerTick, scheduleOwned } = deps;
+  const activityDb = deps.activityDb ?? db;
   const statements: D1PreparedStatement[] = [];
+  const statementDbs: D1Database[] = [];
+  const push = (target: D1Database, stmt: D1PreparedStatement): void => {
+    statements.push(stmt);
+    statementDbs.push(target);
+  };
   const toRecover: StallRecoveryPlan['toRecover'] = [];
   const decisions: StallRecoveryPlan['decisions'] = [];
 
@@ -3468,7 +3548,8 @@ export async function planStallRecoveries(
     // it is re-dispatched below. The completed_at IS NULL guard in the WHERE
     // keeps the force-fail write from ever touching a completed row.
     if (isOrphanedRun({ status: agent.last_run_status, completedAt: agent.last_run_completed_at }) && agent.last_run_at) {
-      statements.push(db.prepare(`
+      const orphanDb = deps.runDb ? deps.runDb(agent.last_run_route) : db;
+      push(orphanDb, orphanDb.prepare(`
         UPDATE agent_runs
            SET status = 'failed',
                completed_at = datetime('now'),
@@ -3541,7 +3622,7 @@ export async function planStallRecoveries(
           { expirationTtl: Math.ceil((cooldownMs * 2) / 1000) },
         );
       } catch { /* best-effort — worst case the next tick may recover again (still capped) */ }
-      statements.push(logActivityStmt(db, 'flight_control', 'warning', 'recovery',
+      push(activityDb, logActivityStmt(activityDb, 'flight_control', 'warning', 'recovery',
         `Recovering stalled agent: ${agent.agent_id} (last run: ${lastRunLabel}; attempt ${attempts}, next eligible in ${Math.round(cooldownMs / 3_600_000)}h)`,
         { ...meta, attempt: attempts, cooldown_hours: cooldownMs / 3_600_000 }
       ));
@@ -3554,7 +3635,7 @@ export async function planStallRecoveries(
         decision === 'skip_orphan_only' ? 'orphaned run cleared; not overdue on its own stall threshold' :
         decision === 'skip_cooldown' ? 'recovered recently; in backoff' :
         `per-tick recovery budget (${maxPerTick ?? MAX_STALL_RECOVERIES_PER_TICK}) used`;
-      statements.push(logActivityStmt(db, 'flight_control', 'info',
+      push(activityDb, logActivityStmt(activityDb, 'flight_control', 'info',
         decision === 'defer_budget' ? 'recovery_deferred' : 'recovery_skipped',
         `Stalled agent ${agent.agent_id} not re-dispatched — ${reason} (last run: ${lastRunLabel})`,
         meta
@@ -3563,14 +3644,15 @@ export async function planStallRecoveries(
     }
   }
 
-  return { statements, toRecover, decisions };
+  return { statements, statementDbs, toRecover, decisions };
 }
 
 async function recoverStalledAgents(
   db: D1Database,
   env: AgentContext['env'],
   ctx: AgentContext,
-  health: AgentHealth[]
+  health: AgentHealth[],
+  tdb: D1Database = db,
 ): Promise<number> {
   const { agentModules } = await import('./index');
   const { executeAgent } = await import('../lib/agentRunner');
@@ -3581,17 +3663,27 @@ async function recoverStalledAgents(
   // CPU budget, which is why dispatches are capped per tick (see above).
   const execCtx = ctx.input?._executionCtx as ExecutionContext | undefined;
 
-  const { statements, toRecover } = await planStallRecoveries(health, {
+  const { statements, statementDbs, toRecover } = await planStallRecoveries(health, {
     db,
     cache: env.CACHE,
     modules: agentModules,
     thresholdsMinutes,
     nowMs: Date.now(),
+    activityDb: tdb,
+    runDb: (route) => (route ? telemetryDbFor(env, route) : db),
   });
 
-  // One batched flush for all the orphan-clear + log writes.
-  if (statements.length > 0) {
-    try { await db.batch(statements); } catch { /* per-row failures don't block recoveries */ }
+  // One batched flush per target DB for the orphan-clear + log writes (a
+  // D1 batch is single-database; never mix telemetry and core statements).
+  const byDb = new Map<D1Database, D1PreparedStatement[]>();
+  statements.forEach((stmt, k) => {
+    const target = statementDbs[k] ?? db;
+    const list = byDb.get(target) ?? [];
+    list.push(stmt);
+    byDb.set(target, list);
+  });
+  for (const [target, list] of byDb) {
+    try { await target.batch(list); } catch { /* per-row failures don't block recoveries */ }
   }
 
   // Dispatch the (capped) recovery executions. Fire-and-forget via

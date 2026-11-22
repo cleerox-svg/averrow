@@ -90,6 +90,7 @@ import {
   type SiteScriptFindingKind,
   type ThreatMatch,
 } from "./site-script-watch";
+import { telemetryStore } from "./db-route";
 
 // ─── Tunables ────────────────────────────────────────────────────────
 
@@ -952,15 +953,16 @@ async function matchIocs(
 
 /** Telemetry-only completion event (target_agent NULL — no dispatch). */
 export async function emitSiteScriptEvent(
-  env: Pick<Env, "DB">,
+  env: Env,
   runId: string,
   stats: SiteScriptRunStats | null,
   error: string | null = null,
 ): Promise<void> {
   try {
+    const eventsDb = await telemetryStore(env);
     await withD1Retry(
       () =>
-        env.DB.prepare(
+        eventsDb.prepare(
           `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
            VALUES (?, 'site_scripts_scanned', 'site_script_watch', NULL, ?, 3, 'pending')`,
         )

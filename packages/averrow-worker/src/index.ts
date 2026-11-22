@@ -531,6 +531,43 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         return Response.json({ success: true, data: { ...result, seeded } });
       }
 
+      // Telemetry cut-over, agent-runs family (Track B1c; lib/telemetry-cutover.ts):
+      //   POST /api/internal/telemetry/copy-config[?dry_run=0]  (DRY RUN unless dry_run=0)
+      //        agent_configs + agent_approvals core → TELEMETRY_DB, ON CONFLICT DO NOTHING.
+      //   POST /api/internal/telemetry/backfill?table=agent_runs|agent_events|agent_activity_log&days=30[&dry_run=0]
+      //        one bounded, resumable history-copy batch (≤500 rows); DRY RUN unless dry_run=0.
+      //   GET  /api/internal/telemetry/preflight — the flip gate (ok + blocking reasons).
+      if (
+        (url.pathname === '/api/internal/telemetry/copy-config' && request.method === 'POST') ||
+        (url.pathname === '/api/internal/telemetry/backfill' && request.method === 'POST') ||
+        (url.pathname === '/api/internal/telemetry/preflight' && request.method === 'GET')
+      ) {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const cutover = await import('./lib/telemetry-cutover');
+        try {
+          if (url.pathname === '/api/internal/telemetry/preflight') {
+            return Response.json({ success: true, data: await cutover.telemetryPreflight(env) });
+          }
+          if (url.pathname === '/api/internal/telemetry/copy-config') {
+            // Same convention as backfill / cluster-retirement: a DRY RUN unless dry_run=0.
+            const dryRun = url.searchParams.get('dry_run') !== '0';
+            return Response.json({ success: true, data: await cutover.copyTelemetryConfig(env, { dryRun }) });
+          }
+          const parsed = cutover.parseBackfillParams(url.searchParams);
+          if (!parsed.ok) return Response.json({ success: false, error: parsed.error }, { status: 400 });
+          return Response.json({ success: true, data: await cutover.backfillTelemetryHistory(env, parsed.params) });
+        } catch (err) {
+          if (err instanceof cutover.TelemetryUnboundError) {
+            return Response.json({ success: false, error: err.message }, { status: 409 });
+          }
+          throw err;
+        }
+      }
+
       // GET  /api/internal/nexus/cluster-retirement            — dry-run report
       // POST /api/internal/nexus/cluster-retirement?dry_run=0&max_clusters=N&max_threats=N
       // Legacy NEXUS cluster retirement (lib/cluster-retirement.ts). GET is
@@ -926,7 +963,9 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
           const body = parsedBody.data;
           const runId = crypto.randomUUID();
           const { dispatchWorkflow } = await import('./lib/workflow-dispatch');
+          const { telemetryStore } = await import('./lib/db-route');
           const outcome = await dispatchWorkflow(env, {
+            activityDb: await telemetryStore(env),
             workflow: env.CAMPAIGN_HUNTER,
             workflowName: 'campaign-hunter',
             agentId: 'campaign_hunter',
@@ -951,10 +990,12 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         if (url.pathname === '/api/internal/agents/campaign_hunter/status') {
           const runId = url.searchParams.get('run_id') ?? '';
           if (!runId) return Response.json({ error: 'run_id is required' }, { status: 400 });
-          const row = await env.DB.prepare(
-            `SELECT id, status, started_at, completed_at, duration_ms, records_processed, outputs_generated, error_message
+          const { historyParts, unionFirst, preferFinalizedRun } = await import('./lib/telemetry-read');
+          const row = await unionFirst<{ id: string; completed_at: string | null }>(await historyParts(env, 'agent_runs'), () => ({
+            sql: `SELECT id, status, started_at, completed_at, duration_ms, records_processed, outputs_generated, error_message
                FROM agent_runs WHERE id = ? AND agent_id = 'campaign_hunter'`,
-          ).bind(runId).first();
+            binds: [runId],
+          }), { key: (r) => r.id, prefer: preferFinalizedRun });
           if (!row) return Response.json({ error: 'run not found' }, { status: 404 });
           return Response.json({ run: row });
         }
@@ -1186,8 +1227,14 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
              ORDER BY created_at DESC LIMIT ?`;
 
         const params = agentId ? [agentId, limit] : [limit];
-        const result = await env.DB.prepare(query).bind(...params).all();
-        return Response.json({ data: result.results });
+        // Track B1c: agent_activity_log spans telemetry ∪ core during the cut-over.
+        const { historyParts, unionRows, byDesc } = await import('./lib/telemetry-read');
+        const rows = await unionRows<{ id: string; created_at: string | null }>(
+          await historyParts(env, 'agent_activity_log'),
+          () => ({ sql: query, binds: params }),
+          { key: (r) => r.id, sort: byDesc<{ id: string; created_at: string | null }>('created_at'), limit },
+        );
+        return Response.json({ data: rows });
       }
 
       const response = await router.fetch(request, env, ctx);

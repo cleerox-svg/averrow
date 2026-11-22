@@ -112,7 +112,9 @@ describe("orchestrator processAgentEvents finalize + stale claims", () => {
   const body = orch.slice(start, orch.indexOf("\nasync function runJob", start));
 
   it("the final done/failed batch runs under the overload retry; the sweep runs before the claim", () => {
-    expect(body).toMatch(/withD1Retry\(\(\) => env\.DB\.batch\(finalStmts\)/);
+    // One retried batch per DB (Track B1c: an event is finalized on the DB it
+    // was read from — telemetry or core).
+    expect(body).toMatch(/withD1Retry\(\(\) => db\.batch\(stmts\)/);
     expect(body).toContain("overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS");
     expect(body.indexOf("STALE_PROCESSING_AGENT_EVENTS_SQL")).toBeGreaterThan(0);
     expect(body.indexOf("STALE_PROCESSING_AGENT_EVENTS_SQL"))

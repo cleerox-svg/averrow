@@ -45,6 +45,11 @@ export interface WorkflowDispatchEnv {
 }
 
 export interface DispatchOptions {
+  /**
+   * Where the workflow_* activity rows go: the routed agent-runs store
+   * (lib/db-route.ts telemetryStore, Track B1c). Default env.DB.
+   */
+  activityDb?: D1Database;
   /** The Workflow binding to dispatch (e.g. env.NEXUS_RUN). */
   workflow: Workflow;
   /** Stable name used as KV key and audit message — e.g. `nexus-run`. */
@@ -118,7 +123,7 @@ export async function dispatchWorkflow(
         remaining = Math.max(0, Math.ceil((parsed.until_epoch_ms - Date.now()) / 1000));
       }
     } catch { /* malformed value — treat as full cooldown */ }
-    await writeActivity(env.DB, opts.agentId, 'warning', 'workflow_cooldown_skip',
+    await writeActivity(opts.activityDb ?? env.DB, opts.agentId, 'warning', 'workflow_cooldown_skip',
       `Skipped ${opts.workflowName} dispatch — cooldown active (${remaining}s remaining)`,
       { workflow: opts.workflowName, cooldown_remaining_sec: remaining },
     );
@@ -141,7 +146,7 @@ export async function dispatchWorkflow(
       { expirationTtl: 60 * 60 * 24 * 7 }, // 7 days
     );
 
-    await writeActivity(env.DB, opts.agentId, 'info', 'workflow_dispatched',
+    await writeActivity(opts.activityDb ?? env.DB, opts.agentId, 'info', 'workflow_dispatched',
       `${opts.workflowName} dispatched (instance ${instance.id})`,
       { workflow: opts.workflowName, instance_id: instance.id },
     );
@@ -160,7 +165,7 @@ export async function dispatchWorkflow(
       );
     }
 
-    await writeActivity(env.DB, opts.agentId,
+    await writeActivity(opts.activityDb ?? env.DB, opts.agentId,
       setCooldown ? 'warning' : 'critical',
       'workflow_dispatch_failed',
       `${opts.workflowName} .create() failed: ${errMsg.slice(0, 180)}`,

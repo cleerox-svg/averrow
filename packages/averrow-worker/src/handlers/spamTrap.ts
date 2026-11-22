@@ -17,6 +17,7 @@ import { json } from "../lib/cors";
 import { handler, parsePagination, success, error, parseBody } from "../lib/handler-utils";
 import type { Env } from "../types";
 import { executePasteSeeding } from "../seeders/paste-seeder";
+import { byDesc, historyParts, preferFinalizedRun, unionFirst } from '../lib/telemetry-read';
 
 // ── GET /api/spam-trap/stats ──────────────────────────────────────
 
@@ -588,16 +589,20 @@ export const handleSpamTrapInsights = handler(async (_request, env, ctx) => {
   }>();
 
   // ── 3. Strategy ──────────────────────────────────────────────
-  const lastRun = await env.DB.prepare(`
-    SELECT id, started_at, completed_at, status, records_processed, error_message
-    FROM agent_runs
-    WHERE agent_id = 'seed_strategist'
-    ORDER BY started_at DESC
-    LIMIT 1
-  `).first<{
+  type SeedRun = {
     id: string; started_at: string; completed_at: string | null;
     status: string; records_processed: number; error_message: string | null;
-  }>();
+  };
+  const lastRun = await unionFirst<SeedRun>(await historyParts(env, 'agent_runs'), (p) => ({
+    sql: `
+    SELECT id, started_at, completed_at, status, records_processed, error_message
+    FROM agent_runs
+    WHERE agent_id = 'seed_strategist'/*split*/
+    ORDER BY started_at DESC
+    LIMIT 1
+  `,
+    binds: [],
+  }), { key: (r) => r.id, prefer: preferFinalizedRun, sort: byDesc<SeedRun>('started_at') });
 
   const recentPrunes = await env.DB.prepare(`
     SELECT COUNT(*) AS n

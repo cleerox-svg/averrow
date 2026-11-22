@@ -26,6 +26,7 @@ import type { Env } from "../types";
 import { computePlatformStatus } from "./platform-status";
 import { appendSystemUpdate, transitionStatus, type IncidentRow } from "./incidents";
 import type { CategoryStatus } from "@averrow/shared";
+import { historyParts, unionFirst } from "./telemetry-read";
 
 interface RecoveryCheckResult {
   /** Incidents we transitioned to monitoring this run. */
@@ -179,13 +180,15 @@ async function feedRecovered(env: Env, feedName: string): Promise<boolean> {
 }
 
 async function agentRecovered(env: Env, agentId: string): Promise<boolean> {
-  const row = await env.DB.prepare(
-    `SELECT 1 AS ok FROM agent_runs
+  // Track B1c: a success on either DB of the telemetry ∪ core union counts.
+  const row = await unionFirst<{ ok: number }>(await historyParts(env, "agent_runs"), (p) => ({
+    sql: `SELECT 1 AS ok FROM agent_runs
       WHERE agent_id = ?
         AND status = 'success'
-        AND started_at >= datetime('now', '-' || ? || ' minutes')
+        AND started_at >= datetime('now', '-' || ? || ' minutes')/*split*/
       LIMIT 1`,
-  ).bind(agentId, RECOVERY_WINDOW_MINUTES).first<{ ok: number }>();
+    binds: [agentId, RECOVERY_WINDOW_MINUTES],
+  }));
   return !!row;
 }
 

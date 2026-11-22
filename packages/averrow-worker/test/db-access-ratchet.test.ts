@@ -20,8 +20,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
-/** Recorded 2026-11-22 on the B1a/B1b branch. Lower it as callers move; never raise it. */
-const ENV_DB_BASELINE = 2293;
+/** Recorded 2026-11-22 (B1a/B1b: 2293; B1c agent-runs family moved: 2207). Lower it as callers move; never raise it. */
+const ENV_DB_BASELINE = 2207;
 
 const SRC = resolve(__dirname, "..", "src");
 const TELEMETRY_BINDING_ALLOWED = new Set(["lib/db-registry.ts", "lib/db-route.ts"]);

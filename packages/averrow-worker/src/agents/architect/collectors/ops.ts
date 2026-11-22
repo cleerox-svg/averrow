@@ -14,6 +14,7 @@ import type {
   CronTelemetry,
   OpsTelemetry,
 } from "../types";
+import { applySplit, byDesc, historyParts, unionGrouped, unionRows } from "../../../lib/telemetry-read";
 
 // ─── Query row shapes ─────────────────────────────────────────────
 
@@ -134,21 +135,29 @@ async function collectAgentTelemetry(
 ): Promise<AgentTelemetry[]> {
   // agent_runs uses TEXT datetime('now') format — lexicographic compare
   // matches chronological order.
-  const runRows = await env.DB.prepare(
-    `SELECT
+  // Track B1c: agent_runs spans telemetry ∪ core during the cut-over.
+  const runParts = await historyParts(env, "agent_runs");
+  const runRows = { results: await unionGrouped<AgentAggRow & { n_dur?: number }>(runParts, (p) => ({
+    sql: `SELECT
        agent_id,
        COUNT(*)                                       AS runs,
        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes,
        SUM(CASE WHEN status = 'failed'  THEN 1 ELSE 0 END) AS failures,
        AVG(duration_ms)                               AS avg_duration_ms,
        MAX(started_at)                                AS last_run_at,
-       NULL                                           AS last_error
+       NULL                                           AS last_error,
+       COUNT(duration_ms)                             AS n_dur
      FROM agent_runs
-     WHERE started_at >= ?
+     WHERE started_at >= ?/*split*/
      GROUP BY agent_id`,
-  )
-    .bind(sinceIso)
-    .all<AgentAggRow>();
+    binds: [sinceIso],
+  }), {
+    groupBy: ["agent_id"],
+    sum: ["runs", "successes", "failures", "n_dur"],
+    max: ["last_run_at", "last_error"],
+    avg: [{ col: "avg_duration_ms", weight: "n_dur" }],
+    drop: ["n_dur"],
+  }) };
 
   // Per-agent 7-day AI cost from budget_ledger.
   const costRows = await env.DB.prepare(
@@ -198,16 +207,16 @@ async function collectLastErrors(
   env: Env,
   sinceIso: string,
 ): Promise<Map<string, string>> {
-  const rows = await env.DB.prepare(
-    `SELECT agent_id, error_message
+  const parts = await historyParts(env, "agent_runs");
+  const rows = { results: await unionRows<LastErrorRow & { started_at?: string }>(parts, (p) => ({
+    sql: `SELECT agent_id, error_message, started_at
        FROM agent_runs
       WHERE started_at >= ?
         AND status = 'failed'
-        AND error_message IS NOT NULL
+        AND error_message IS NOT NULL/*split*/
       ORDER BY started_at DESC`,
-  )
-    .bind(sinceIso)
-    .all<LastErrorRow>();
+    binds: [sinceIso],
+  }), { sort: byDesc<LastErrorRow & { started_at?: string }>("started_at"), drop: ["started_at"] }) };
 
   const map = new Map<string, string>();
   for (const r of rows.results ?? []) {
@@ -232,18 +241,35 @@ async function collectCronTelemetry(
   // TODO: wire Cloudflare Cron Trigger analytics (graphQL analytics API)
   // once CF_ACCOUNT_ID + CF_API_TOKEN include the Analytics scope, to
   // separate handler-level outcome from per-agent outcome.
-  const row = await env.DB.prepare(
-    `SELECT
+  const cronParts = await historyParts(env, "agent_runs");
+  const perPart = await Promise.all(cronParts.map((part) => {
+    const q = applySplit(part, {
+      sql: `SELECT
        (SELECT status FROM agent_runs
-          WHERE started_at >= ?
+          WHERE started_at >= ?/*split*/
           ORDER BY started_at DESC LIMIT 1) AS status,
+       (SELECT MAX(started_at) FROM agent_runs WHERE started_at >= ?/*split*/) AS last_at,
        COUNT(*) AS runs,
        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failures
      FROM agent_runs
-     WHERE started_at >= ?`,
-  )
-    .bind(sinceIso, sinceIso)
-    .first<CronStatusRow>();
+     WHERE started_at >= ?/*split*/`,
+      binds: [sinceIso, sinceIso, sinceIso],
+    });
+    return part.db.prepare(q.sql).bind(...q.binds).first<CronStatusRow & { last_at?: string | null }>();
+  }));
+  // Union: counts summed; status from the part holding the newest run.
+  const row: CronStatusRow | null = perPart.length === 1 ? (perPart[0] ?? null) : perPart.reduce<(CronStatusRow & { last_at?: string | null }) | null>((acc, r) => {
+    if (!r) return acc;
+    if (!acc) return { ...r };
+    const newer = (r.last_at ?? "") > (acc.last_at ?? "");
+    return {
+      ...acc,
+      status: newer ? r.status : acc.status,
+      last_at: newer ? r.last_at : acc.last_at,
+      runs: (acc.runs ?? 0) + (r.runs ?? 0),
+      failures: (acc.failures ?? 0) + (r.failures ?? 0),
+    };
+  }, null);
 
   const lastStatus: CronTelemetry["last_status"] =
     row?.status === "success"

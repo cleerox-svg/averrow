@@ -37,7 +37,7 @@
 // target_agent NULL). Never throws (runs in a Navigator waitUntil tail).
 
 import type { Env } from "../types";
-import { createAgentRun, finalizeAgentRun } from "../db/agent-runs";
+import { createAgentRun, finalizeAgentRun, type AgentRunHandle, telemetryDbForRun } from "../db/agent-runs";
 import { D1_OVERLOAD_RETRY_BASE_MS, withD1Retry } from "./d1-retry";
 import { DB_REGISTRY, hasStore, storeBinding, type StoreId } from "./db-registry";
 import { getDatabaseSizes, type DbSizeRow } from "./db-sizes";
@@ -315,7 +315,7 @@ async function inventoryRun(
   attempts: number,
 ): Promise<DbInventoryRunResult> {
   const { nowMs } = opts;
-  let runId: string | null = null;
+  let run: AgentRunHandle | null = null;
   const done: StoreId[] = [];
   const failed: StoreId[] = [];
   const errors: string[] = [];
@@ -323,9 +323,9 @@ async function inventoryRun(
   let status: "success" | "partial" | "failed" = "failed";
   try {
     try {
-      runId = await createAgentRun(env, DB_INVENTORY_AGENT_ID);
+      run = await createAgentRun(env, DB_INVENTORY_AGENT_ID);
     } catch {
-      runId = null; // bookkeeping is best-effort; the inventory still runs
+      run = null; // bookkeeping is best-effort; the inventory still runs
     }
     let sizes: DbSizeRow[] = [];
     try {
@@ -365,11 +365,11 @@ async function inventoryRun(
       errors.push(`day state: ${errMsg(e)}`);
     }
     const errorMessage = errors.length > 0 ? errors.join("; ").slice(0, 1000) : null;
-    if (runId) {
+    if (run) {
       const backoff = opts.finalizeBackoffMs ?? DB_INVENTORY_FINALIZE_BACKOFF_MS;
       await finalizeAgentRun(
         env,
-        runId,
+        run,
         status === "failed"
           ? { kind: "failed", error_message: errorMessage ?? "db inventory failed" }
           : {
@@ -391,8 +391,8 @@ async function inventoryRun(
     const payload = JSON.stringify({ date, status, stores: done, failed });
     try {
       await withD1Retry(
-        () =>
-          env.DB.prepare(
+        async () =>
+          (await telemetryDbForRun(env, run)).prepare(
             `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
              VALUES (?, 'db_inventory_complete', ?, NULL, ?, 3, 'pending')
              ON CONFLICT DO NOTHING`,
@@ -403,7 +403,7 @@ async function inventoryRun(
       /* telemetry only */
     }
   }
-  return { ran: true, status, stores: done, failed, runId };
+  return { ran: true, status, stores: done, failed, runId: run?.id ?? null };
 }
 
 /** Latest stored inventory for a store (null when none / unreadable). */

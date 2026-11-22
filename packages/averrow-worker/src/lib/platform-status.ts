@@ -18,6 +18,7 @@
 
 import type { Env } from "../types";
 import { getWorkflowAgentStats } from "./workflow-agent-stats";
+import { historyParts, unionAggregateFirst, unionGrouped } from "./telemetry-read";
 
 // Shared types live in @averrow/shared so the React UI consumes the
 // exact same shape the worker emits. Re-exported here so existing
@@ -174,18 +175,21 @@ async function computeAgentsDaily(env: Env, days: string[]): Promise<DailyPoint[
   const earliest = days[0]!;
   // See PUBLIC_UPTIME_SEMANTICS below — 'partial' is a success here, and
   // in-flight rows are excluded from the denominator.
-  const rows = await env.DB.prepare(`
+  const rows = await unionGrouped<AgentDayRow>(await historyParts(env, "agent_runs"), (p) => ({
+    sql: `
     SELECT date(started_at) AS day,
            COUNT(*) AS total_runs,
            SUM(CASE WHEN status IN ('success', 'partial') THEN 1 ELSE 0 END) AS successes
       FROM agent_runs
      WHERE started_at >= ?
-       AND completed_at IS NOT NULL
+       AND completed_at IS NOT NULL/*split*/
      GROUP BY day
-  `).bind(earliest).all<AgentDayRow>();
+  `,
+    binds: [earliest],
+  }), { groupBy: ["day"], sum: ["total_runs", "successes"] });
 
   const byDay = new Map<string, AgentDayRow>();
-  for (const r of rows.results) byDay.set(r.day, r);
+  for (const r of rows) byDay.set(r.day, r);
 
   return days.map(day => {
     const row = byDay.get(day);
@@ -226,18 +230,21 @@ async function computeProcessingDaily(env: Env, days: string[]): Promise<DailyPo
   //
   // Navigator's historical agent_id was 'fast_tick' (per CLAUDE.md §6).
   const earliest = days[0]!;
-  const rows = await env.DB.prepare(`
+  const rows = await unionGrouped<ProcessingDayRow>(await historyParts(env, "agent_runs"), (p) => ({
+    sql: `
     SELECT date(started_at) AS day,
            SUM(CASE WHEN agent_id IN ('navigator', 'fast_tick') THEN 1 ELSE 0 END) AS navigator_runs,
            SUM(CASE WHEN agent_id = 'flight_control' THEN 1 ELSE 0 END) AS fc_runs,
            SUM(CASE WHEN agent_id = 'sentinel' THEN 1 ELSE 0 END) AS sentinel_runs
       FROM agent_runs
-     WHERE started_at >= ?
+     WHERE started_at >= ?/*split*/
      GROUP BY day
-  `).bind(earliest).all<ProcessingDayRow>();
+  `,
+    binds: [earliest],
+  }), { groupBy: ["day"], sum: ["navigator_runs", "fc_runs", "sentinel_runs"] });
 
   const byDay = new Map<string, ProcessingDayRow>();
-  for (const r of rows.results) byDay.set(r.day, r);
+  for (const r of rows) byDay.set(r.day, r);
 
   return days.map(day => {
     const row = byDay.get(day);
@@ -341,14 +348,17 @@ async function computeAgentsRealtime(env: Env): Promise<{ status: CategoryStatus
   // 0/0 → "no agent runs in 6h" → status='outage'. Add the workflow
   // event counts in alongside the agent_runs counts.
   const [runRow, wfStats] = await Promise.all([
-    env.DB.prepare(`
+    historyParts(env, "agent_runs").then((parts) => unionAggregateFirst<{ total: number; successes: number }>(parts, (p) => ({
+      sql: `
       SELECT COUNT(*) AS total,
              SUM(CASE WHEN status IN ('success', 'partial') THEN 1 ELSE 0 END) AS successes
         FROM agent_runs
        WHERE started_at >= datetime('now', '-6 hours')
-         AND completed_at IS NOT NULL
-    `).first<{ total: number; successes: number }>(),
-    getWorkflowAgentStats(env.DB, 6),
+         AND completed_at IS NOT NULL/*split*/
+    `,
+      binds: [],
+    }), { sum: ["total", "successes"] })),
+    getWorkflowAgentStats(env.DB, 6, env),
   ]);
 
   const runsTotal = runRow?.total ?? 0;
@@ -382,13 +392,16 @@ async function computeAgentsRealtime(env: Env): Promise<{ status: CategoryStatus
 
 async function computeProcessingRealtime(env: Env): Promise<{ status: CategoryStatus; note: string }> {
   // 6h expected: nav 72, fc 6, sentinel 3
-  const row = await env.DB.prepare(`
+  const row = await unionAggregateFirst<{ navigator_runs: number; fc_runs: number; sentinel_runs: number }>(await historyParts(env, "agent_runs"), (p) => ({
+    sql: `
     SELECT SUM(CASE WHEN agent_id IN ('navigator', 'fast_tick') THEN 1 ELSE 0 END) AS navigator_runs,
            SUM(CASE WHEN agent_id = 'flight_control' THEN 1 ELSE 0 END) AS fc_runs,
            SUM(CASE WHEN agent_id = 'sentinel' THEN 1 ELSE 0 END) AS sentinel_runs
       FROM agent_runs
-     WHERE started_at >= datetime('now', '-6 hours')
-  `).first<{ navigator_runs: number; fc_runs: number; sentinel_runs: number }>();
+     WHERE started_at >= datetime('now', '-6 hours')/*split*/
+  `,
+    binds: [],
+  }), { sum: ["navigator_runs", "fc_runs", "sentinel_runs"] });
 
   const nav = row?.navigator_runs ?? 0;
   const fc = row?.fc_runs ?? 0;

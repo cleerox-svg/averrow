@@ -7,6 +7,8 @@ import { emitPlatformNotification, renderPlatformFeedSilent } from '../lib/platf
 import { dispatchWorkflow } from '../lib/workflow-dispatch';
 import type { Env } from '../types';
 import { withD1Meter } from '../lib/d1-meter';
+import { telemetryFamilyDbs, telemetryStore } from "../lib/db-route";
+import { historyParts, unionRowsWithPart } from "../lib/telemetry-read";
 
 /** Dedicated daily Observer cron (see the branch in runScheduled). */
 export const OBSERVER_CRON = '41 0 * * *';
@@ -761,6 +763,7 @@ async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionConte
   if (hour % 4 === 0) {
     try {
       const result = await dispatchWorkflow(env, {
+        activityDb: await telemetryStore(env),
         workflow: env.NEXUS_RUN,
         workflowName: 'nexus-run',
         agentId: 'nexus',
@@ -936,11 +939,17 @@ export const STALE_PROCESSING_AGENT_EVENTS_SQL = `
         AND created_at <= datetime('now', '-1 hour')
       LIMIT ?`;
 
-async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void> {
+/** Exported for tests (test/telemetry-agent-runs-cutover.test.ts). */
+export async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void> {
   // Best-effort sweep of a previous tick's unfinalized claims (see above).
+  // Every DB that can hold agent_events (core, and TELEMETRY_DB when bound —
+  // Track B1c): a claim lives on the DB its event was written to.
   try {
-    const swept = await env.DB.prepare(STALE_PROCESSING_AGENT_EVENTS_SQL).bind(AGENT_EVENTS_PER_TICK * 4).run();
-    const n = swept.meta?.changes ?? 0;
+    let n = 0;
+    for (const { db } of telemetryFamilyDbs(env)) {
+      const swept = await db.prepare(STALE_PROCESSING_AGENT_EVENTS_SQL).bind(AGENT_EVENTS_PER_TICK * 4).run();
+      n += swept.meta?.changes ?? 0;
+    }
     if (n > 0) logger.warn('agent_events_stale_processing_failed', { count: n });
   } catch (err) {
     // The next tick retries; log so a persistently failing sweep is visible.
@@ -950,20 +959,36 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
   }
 
   try {
-    const events = await env.DB.prepare(`
-      SELECT id, event_type, source_agent, target_agent, payload_json, priority
-      FROM agent_events
-      WHERE status = 'pending'
-      ORDER BY priority ASC, created_at ASC
-      LIMIT ?
-    `).bind(AGENT_EVENTS_PER_TICK).all<{
+    // Pending events from telemetry ∪ core (one core part while the route is
+    // 'core' — the old single read). Each event remembers the DB it came
+    // from: its claim and its done/failed mark are written back THERE, so
+    // core events still pending at the flip are drained, never stranded.
+    type PendingRow = {
       id: string;
       event_type: string;
       source_agent: string;
       target_agent: string;
       payload_json: string | null;
       priority: number;
-    }>();
+      created_at?: string | null;
+    };
+    const eventParts = await historyParts(env, 'agent_events');
+    const tagged = await unionRowsWithPart<PendingRow>(eventParts, (p) => ({
+      sql: `
+      SELECT id, event_type, source_agent, target_agent, payload_json, priority, created_at
+      FROM agent_events
+      WHERE status = 'pending'
+      ORDER BY priority ASC, created_at ASC
+      LIMIT ?
+    `,
+      binds: [p.limit],
+    }), {
+      key: (r) => r.id,
+      sort: (a, b) => (a.priority - b.priority) || String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')),
+      limit: AGENT_EVENTS_PER_TICK,
+    });
+    const events = { results: tagged.map((t) => t.row) };
+    const eventDb = new Map<string, D1Database>(tagged.map((t) => [t.row.id, t.part.writeDb ?? env.DB]));
 
     if (events.results.length === 0) return;
 
@@ -981,10 +1006,23 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
 
     // Claim the whole tick's events up front (one batch) so a concurrent
     // consumer can't pick them up while their dispatch is planned.
-    const markStmts = (sql: string, ids: string[]): D1PreparedStatement[] =>
-      ids.map((id) => env.DB.prepare(sql).bind(id));
+    // One batch per DB (a D1 batch is single-database).
+    const markBatches = (marks: Array<{ sql: string; ids: string[] }>): Array<{ db: D1Database; stmts: D1PreparedStatement[] }> => {
+      const byDb = new Map<D1Database, D1PreparedStatement[]>();
+      for (const { sql, ids } of marks) {
+        for (const id of ids) {
+          const db = eventDb.get(id) ?? env.DB;
+          const list = byDb.get(db) ?? [];
+          list.push(db.prepare(sql).bind(id));
+          byDb.set(db, list);
+        }
+      }
+      return [...byDb].map(([db, stmts]) => ({ db, stmts }));
+    };
     const allIds = events.results.map((e) => e.id);
-    await env.DB.batch(markStmts(`UPDATE agent_events SET status = 'processing' WHERE id = ?`, allIds));
+    for (const { db, stmts } of markBatches([{ sql: `UPDATE agent_events SET status = 'processing' WHERE id = ?`, ids: allIds }])) {
+      await db.batch(stmts);
+    }
 
     // Coalesce per target + per-UTC-day cap (lib/agent-event-dispatch.ts).
     // Telemetry events (target_agent NULL/'') are recorded, never dispatched.
@@ -1049,19 +1087,21 @@ async function processAgentEvents(env: Env, ctx: ExecutionContext): Promise<void
       }
     }
 
-    const finalStmts = [
-      ...markStmts(`UPDATE agent_events SET status = 'done', processed_at = datetime('now') WHERE id = ?`, doneIds),
-      ...markStmts(`UPDATE agent_events SET status = 'failed' WHERE id = ?`, failedIds),
-    ];
+    const finalBatches = markBatches([
+      { sql: `UPDATE agent_events SET status = 'done', processed_at = datetime('now') WHERE id = ?`, ids: doneIds },
+      { sql: `UPDATE agent_events SET status = 'failed' WHERE id = ?`, ids: failedIds },
+    ]);
     // Under overload retry: the statements are idempotent, and a lost batch
     // would leave up to AGENT_EVENTS_PER_TICK rows 'processing' until the
     // next tick's stale sweep fails them.
-    if (finalStmts.length > 0) {
+    if (finalBatches.length > 0) {
       const { withD1Retry, D1_OVERLOAD_RETRY_BASE_MS } = await import('../lib/d1-retry');
-      await withD1Retry(() => env.DB.batch(finalStmts), {
-        label: 'agent_events finalize',
-        overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS,
-      });
+      for (const { db, stmts } of finalBatches) {
+        await withD1Retry(() => db.batch(stmts), {
+          label: 'agent_events finalize',
+          overloadBaseMs: D1_OVERLOAD_RETRY_BASE_MS,
+        });
+      }
     }
 
     logger.info('agent_events_processed', {
@@ -1529,7 +1569,7 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     // just produced N new items" — operators read it via
     // agent_activity_log / diagnostics, no auto-dispatch needed.
     try {
-      await env.DB.prepare(`
+      await (await telemetryStore(env)).prepare(`
         INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
         VALUES (?, 'feed_pulled', 'sentinel', NULL, ?, 2, 'pending')
       `).bind(crypto.randomUUID(), JSON.stringify({ newItems: feedResult.totalNew, trigger: 'immediate' })).run();
@@ -1814,7 +1854,7 @@ async function logFlightControlActivity(
   severity: 'info' | 'warning' | 'critical'
 ): Promise<void> {
   try {
-    await env.DB.prepare(`
+    await (await telemetryStore(env)).prepare(`
       INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
       VALUES (?, 'flight_control', ?, ?, ?, ?)
     `).bind(

@@ -15,7 +15,18 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 > `agent_approvals`, `feed_configs`, `feed_status`, `feed_pull_history`,
 > `budget_ledger`, `budget_config`, `agent_budget_rollups` — JOINs only
 > itself and is moving from core (`DB`) to `TELEMETRY_DB` (`averrow-telemetry`).
-> **Today every reader and writer still uses core.** The switch is
+> **B1c (agent-runs family): `agent_runs`, `agent_configs`, `agent_events`,
+> `agent_activity_log`, `agent_approvals` are converted** — writers go through
+> the route (resolved once per run / claim / workflow and carried, so a
+> mid-run flip finalizes on the DB the row was inserted into), history readers
+> read telemetry ∪ core through `lib/telemetry-read.ts` (one core part while
+> the route is `core` — the old read), config tables read the routed store,
+> and the reaper / agent_events sweeps act on both DBs. `feed_*` and
+> `budget_*` still use core. Before the flip: `POST
+> /api/internal/telemetry/copy-config?dry_run=0`, then `GET
+> /api/internal/telemetry/preflight` must say `ok: true`; after it, `POST
+> /api/internal/telemetry/backfill` copies history so the union can later
+> drop core. The switch is
 > `lib/db-route.ts` `telemetryStore(env)` (KV flag `db_route:telemetry`,
 > default `core`); caller families are converted to it one PR at a time, and
 > the cut-over is one KV write after every family is converted. Do not read
@@ -312,6 +323,7 @@ When adding a new workflow-dispatched agent:
 | PR-Z | 2026-05-14 | New `threat_cube_arcs` (country × brand × type × severity per hour). `handleObservatoryArcs` + `handleObservatoryBrandArcs` swapped to read from cube — eliminates the largest D1 spender on the backend side (~14M reads/24h → ~0.5M). Same OLAP-cubes pattern as `threat_cube_geo` / `threat_cube_brand` / `threat_cube_provider` / `threat_cube_status`. |
 | AI-outage detection | 2026-10-01 | Silent-AI-failure guard after ~3 months of zero working AI (last `budget_ledger` row 2026-07-10, Anthropic HTTP 400 credit balance). `failure_kind` on `lib/haiku.ts` results; strictly-API counters in analyst/sentinel/cartographer; `AgentResult.degraded` → run finalizes `partial`; FC `platform_ai_calls_failing` (migration 0272); diagnostics `ai_health`; public-status uptime counts finished `partial` as success and excludes in-flight rows. Branch `claude/averrow-intel-feeds-research-ukhoef`. |
 | B1a/B1b | 2026-11-22 | `TELEMETRY_DB` + `ARCHIVE_DB` + R2 `THREAT_ARCHIVE` bound (prod + staging), `migrations-telemetry/` schema mirror, `lib/db-route.ts` route switch (default core). No reader/writer moved yet |
+| B1c | 2026-11-22 | Agent-runs family (`agent_runs`, `agent_configs`, `agent_events`, `agent_activity_log`, `agent_approvals`) written through the route (write-forward, resolved once per run) and read as a telemetry ∪ core union (`lib/telemetry-read.ts`); cut-over tools `/api/internal/telemetry/{copy-config,backfill,preflight}`. Behaviour unchanged while the route is `core` |
 
 ---
 

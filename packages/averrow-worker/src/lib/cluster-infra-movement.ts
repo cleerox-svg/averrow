@@ -460,6 +460,8 @@ export async function detectClusterInfraMovement(
   db: D1Database,
   nowMs: number = Date.now(),
   thresholds: MovementThresholds = {},
+  /** Where pivot_detected events are written (routed agent-runs store, Track B1c); default `db`. */
+  eventsDb: D1Database = db,
 ): Promise<InfraMovementResult> {
   const hubThreshold = thresholds.hubFanoutThreshold ?? DEFAULT_HUB_FANOUT_THRESHOLD;
   const cap = thresholds.maxFingerprintElements ?? DEFAULT_MAX_FINGERPRINT_ELEMENTS;
@@ -618,7 +620,7 @@ export async function detectClusterInfraMovement(
   for (const cand of toEmit) {
     const { row, decision, prior } = cand;
     try {
-      await db.prepare(
+      await eventsDb.prepare(
         `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority)
          VALUES (?, 'pivot_detected', 'nexus', 'observer', ?, 1)`,
       ).bind(

@@ -31,6 +31,7 @@ import {
   countStatusCubeForHour,
   countArcsCubeForHour,
 } from "../../lib/cube-builder";
+import { byDesc, historyParts, preferFinalizedRun, unionFirst, unionRows } from '../../lib/telemetry-read';
 
 
 // ─── Pipeline Status (reads pre-computed data only — no COUNT queries) ───
@@ -303,14 +304,26 @@ export async function handlePipelineStatus(request: Request, env: Env): Promise<
     // for the grouping. Also KV-cached 5 min (cachedValue) so a refill of
     // the outer pipeline_status key doesn't recompute it.
     cachedValue<PipelineAgentRun[]>(env, 'pipeline.agent_last_runs_24h', 300, async () => {
-      const r = await env.DB.prepare(`
+      // Track B1c: one row per agent per part (the bare columns come from
+      // that part's MAX row); across parts keep the newer row per agent.
+      const parts = await historyParts(env, 'agent_runs');
+      const rows = await unionRows<PipelineAgentRun>(parts, () => ({
+        sql: `
       SELECT agent_id, MAX(completed_at) AS last_run_at,
              records_processed, duration_ms, status
       FROM agent_runs
       WHERE completed_at > datetime('now', '-24 hours')
       GROUP BY +agent_id
-    `).all<PipelineAgentRun>();
-      return r.results;
+    `,
+        binds: [],
+      }));
+      if (parts.length === 1) return rows;
+      const best = new Map<string, PipelineAgentRun>();
+      for (const r of rows) {
+        const cur = best.get(r.agent_id);
+        if (!cur || (r.last_run_at ?? '') > (cur.last_run_at ?? '')) best.set(r.agent_id, r);
+      }
+      return [...best.values()];
     }).then((results) => ({ results })),
   ]);
 
@@ -525,22 +538,25 @@ export async function handlePipelineDetail(
     // Latest agent run for the owning agent. Used for "Last run"
     // row in the sheet. Bounded to 24h so the index range scan
     // stays cheap.
-    env.DB.prepare(`
-      SELECT started_at, completed_at, duration_ms, status,
-             records_processed, error_message
-        FROM agent_runs
-       WHERE agent_id = ?
-         AND started_at >= datetime('now', '-1 day')
-       ORDER BY started_at DESC
-       LIMIT 1
-    `).bind(meta.agent).first<{
+    historyParts(env, 'agent_runs').then((parts) => unionFirst<{
       started_at: string;
       completed_at: string | null;
       duration_ms: number | null;
       status: string;
       records_processed: number | null;
       error_message: string | null;
-    }>(),
+    }>(parts, (p) => ({
+      sql: `
+      SELECT started_at, completed_at, duration_ms, status,
+             records_processed, error_message
+        FROM agent_runs
+       WHERE agent_id = ?
+         AND started_at >= datetime('now', '-1 day')/*split*/
+       ORDER BY started_at DESC
+       LIMIT 1
+    `,
+      binds: [meta.agent],
+    }), { sort: byDesc<{ started_at: string }>('started_at'), prefer: preferFinalizedRun, key: (r) => r.started_at })),
 
     // Failure rate from feed_pull_history. Only computed for
     // pipelines mapped to a feed_name — agent-driven enrichment

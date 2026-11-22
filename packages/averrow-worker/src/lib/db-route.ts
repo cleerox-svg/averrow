@@ -23,8 +23,11 @@
 // The flag is cached in-isolate for 60 s, so a flip takes effect within a
 // minute on every isolate (≤ 1 KV read per isolate per minute).
 //
-// Not used by any production caller yet: the per-family conversion PRs
-// come next. Direct `env.TELEMETRY_DB` use outside this file and
+// Converted so far: the agent-runs family (agent_runs, agent_configs,
+// agent_events, agent_activity_log, agent_approvals — Track B1c). Writers
+// resolve the route ONCE per run / claim (resolveTelemetry below) and carry
+// it; history readers go through lib/telemetry-read.ts (telemetry ∪ core).
+// feed_* / budget_* are still on core. Direct `env.TELEMETRY_DB` use outside this file and
 // lib/db-registry.ts is banned by test/db-access-ratchet.test.ts.
 
 import type { Env } from "../types";
@@ -99,4 +102,44 @@ export async function telemetryStore(env: Env, nowMs: number = Date.now()): Prom
   const db = storeBinding(env, route === "telemetry" ? "telemetry" : "core");
   if (!db) throw new StoreUnavailableError(route);
   return db;
+}
+
+// ─── Resolve once, carry for the run (Track B1c) ──────────────────
+
+/**
+ * A telemetry route resolved ONCE at the start of a run / claim and carried
+ * to every later statement of that unit of work. Never call
+ * telemetryStore() per statement inside a run: a run that straddles a flip
+ * (cartographer ~8 min) must heartbeat and finalize on the DB its row was
+ * inserted into, or the row is orphaned on the other DB.
+ */
+export interface TelemetryHandle {
+  route: TelemetryRoute;
+  db: D1Database;
+}
+
+/** The binding that serves a FIXED route (for a carried handle's route). */
+export function telemetryDbFor(env: Env, route: TelemetryRoute): D1Database {
+  const db = storeBinding(env, route === "telemetry" ? "telemetry" : "core");
+  if (!db) throw new StoreUnavailableError(route);
+  return db;
+}
+
+/** Resolve the route once; the returned handle is what a run carries. */
+export async function resolveTelemetry(env: Env, nowMs: number = Date.now()): Promise<TelemetryHandle> {
+  const { route } = await telemetryRouteState(env, nowMs);
+  return { route, db: telemetryDbFor(env, route) };
+}
+
+/**
+ * Every DB that can hold agent-runs family rows right now, core first:
+ * core always, TELEMETRY_DB whenever it is bound (whatever the route — a
+ * flip back to core must not strand rows written there). For sweepers that
+ * act on each DB's own rows (the orphan reaper, the agent_events drain),
+ * never for reads (use lib/telemetry-read.ts historyParts).
+ */
+export function telemetryFamilyDbs(env: Env): TelemetryHandle[] {
+  const out: TelemetryHandle[] = [{ route: "core", db: telemetryDbFor(env, "core") }];
+  if (hasStore(env, "telemetry")) out.push({ route: "telemetry", db: telemetryDbFor(env, "telemetry") });
+  return out;
 }

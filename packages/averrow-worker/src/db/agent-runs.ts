@@ -7,6 +7,8 @@
 
 import type { AgentRun, CompleteRunStats, Env } from "../types";
 import { withTimeout } from "../lib/run-sequential";
+import { resolveTelemetry, telemetryDbFor, type TelemetryRoute } from "../lib/db-route";
+import { byDesc, historyParts, preferFinalizedRun, unionFirst, unionRows } from "../lib/telemetry-read";
 
 // Re-export for consumers that import from db/agent-runs
 export type { AgentRun, CompleteRunStats };
@@ -14,14 +16,40 @@ export type { AgentRun, CompleteRunStats };
 // ─── Lifecycle ────────────────────────────────────────────────────
 
 /**
- * Create a new agent run record and return its ID.
+ * A run row plus the telemetry route it was inserted under (Track B1c). The
+ * route is resolved ONCE in createAgentRun and every later write of the run
+ * (heartbeat, finalize) goes to that same DB, so a `db_route:telemetry`
+ * flip mid-run can never strand the row on the other database.
  */
-export async function createAgentRun(env: Env, agentId: string): Promise<string> {
+export interface AgentRunHandle {
+  id: string;
+  route: TelemetryRoute;
+}
+
+function runDb(env: Env, run: AgentRunHandle): D1Database {
+  return telemetryDbFor(env, run.route);
+}
+
+/**
+ * The telemetry DB for a write that belongs to a run (its completion
+ * agent_events / agent_activity_log row): the run's own route when there is
+ * a handle, else the route resolved now (run bookkeeping failed to start).
+ */
+export async function telemetryDbForRun(env: Env, run: AgentRunHandle | null): Promise<D1Database> {
+  return run ? telemetryDbFor(env, run.route) : (await resolveTelemetry(env)).db;
+}
+
+/**
+ * Create a new agent run record (on the routed telemetry DB) and return its
+ * handle. Pass the handle — not just the id — to every later write.
+ */
+export async function createAgentRun(env: Env, agentId: string): Promise<AgentRunHandle> {
   const id = crypto.randomUUID();
-  await env.DB.prepare(
+  const { route, db } = await resolveTelemetry(env);
+  await db.prepare(
     "INSERT INTO agent_runs (id, agent_id, status, records_processed, outputs_generated, started_at) VALUES (?, ?, 'running', 0, 0, datetime('now'))"
   ).bind(id, agentId).run();
-  return id;
+  return { id, route };
 }
 
 /**
@@ -29,11 +57,11 @@ export async function createAgentRun(env: Env, agentId: string): Promise<string>
  */
 export async function completeAgentRun(
   env: Env,
-  runId: string,
+  run: AgentRunHandle,
   stats: CompleteRunStats,
 ): Promise<void> {
   const status = stats.status ?? 'success';
-  await env.DB.prepare(`
+  await runDb(env, run).prepare(`
     UPDATE agent_runs SET
       status = ?,
       records_processed = ?,
@@ -49,23 +77,23 @@ export async function completeAgentRun(
     stats.outputs_generated,
     stats.tokens_used ?? null,
     stats.error_message ?? null,
-    runId,
+    run.id,
   ).run();
 }
 
 export async function failAgentRun(
   env: Env,
-  runId: string,
+  run: AgentRunHandle,
   errorMessage: string,
 ): Promise<void> {
-  await env.DB.prepare(`
+  await runDb(env, run).prepare(`
     UPDATE agent_runs SET
       status = 'failed',
       error_message = ?,
       completed_at = datetime('now'),
       duration_ms = CAST((julianday('now') - julianday(started_at)) * 86400000 AS INTEGER)
     WHERE id = ?
-  `).bind(errorMessage, runId).run();
+  `).bind(errorMessage, run.id).run();
 }
 
 /**
@@ -75,12 +103,12 @@ export async function failAgentRun(
  */
 export async function updateAgentRunProgress(
   env: Env,
-  runId: string,
+  run: AgentRunHandle,
   recordsProcessed: number,
 ): Promise<void> {
-  await env.DB.prepare(
+  await runDb(env, run).prepare(
     "UPDATE agent_runs SET records_processed = ? WHERE id = ? AND completed_at IS NULL"
-  ).bind(recordsProcessed, runId).run();
+  ).bind(recordsProcessed, run.id).run();
 }
 
 export type AgentRunFinalOutcome =
@@ -106,7 +134,7 @@ export interface FinalizeRetryOptions {
  */
 export async function finalizeAgentRun(
   env: Env,
-  runId: string,
+  run: AgentRunHandle,
   outcome: AgentRunFinalOutcome,
   opts: FinalizeRetryOptions = {},
 ): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -120,8 +148,8 @@ export async function finalizeAgentRun(
     }
     try {
       const write = () => outcome.kind === "failed"
-        ? failAgentRun(env, runId, outcome.error_message)
-        : completeAgentRun(env, runId, outcome.stats);
+        ? failAgentRun(env, run, outcome.error_message)
+        : completeAgentRun(env, run, outcome.stats);
       await withTimeout(write, opts.attemptTimeoutMs ?? 0, "agent_runs finalize");
       return { ok: true };
     } catch (err) {
@@ -131,18 +159,22 @@ export async function finalizeAgentRun(
   return { ok: false, error: lastError };
 }
 
-// ─── Lookups ──────────────────────────────────────────────────────
+// ─── Lookups (union across telemetry + core during the cut-over) ──
 
 export async function getLatestRun(env: Env, agentId: string): Promise<AgentRun | null> {
-  return env.DB.prepare(
-    "SELECT * FROM agent_runs WHERE agent_id = ? ORDER BY started_at DESC LIMIT 1"
-  ).bind(agentId).first<AgentRun>();
+  const parts = await historyParts(env, "agent_runs");
+  return unionFirst<AgentRun>(parts, (p) => ({
+    sql: `SELECT * FROM agent_runs WHERE agent_id = ?/*split*/ ORDER BY started_at DESC LIMIT 1`,
+    binds: [agentId],
+  }), { key: (r) => r.id, prefer: preferFinalizedRun, sort: byDesc<AgentRun>("started_at") });
 }
 
 export async function getRunById(env: Env, runId: string): Promise<AgentRun | null> {
-  return env.DB.prepare("SELECT * FROM agent_runs WHERE id = ?")
-    .bind(runId)
-    .first<AgentRun>();
+  const parts = await historyParts(env, "agent_runs");
+  return unionFirst<AgentRun>(parts, () => ({
+    sql: "SELECT * FROM agent_runs WHERE id = ?",
+    binds: [runId],
+  }), { key: (r) => r.id, prefer: preferFinalizedRun });
 }
 
 export async function listRunsForAgent(
@@ -150,10 +182,11 @@ export async function listRunsForAgent(
   agentId: string,
   limit = 10,
 ): Promise<AgentRun[]> {
-  const rows = await env.DB.prepare(
-    "SELECT * FROM agent_runs WHERE agent_id = ? ORDER BY started_at DESC LIMIT ?"
-  ).bind(agentId, limit).all<AgentRun>();
-  return rows.results ?? [];
+  const parts = await historyParts(env, "agent_runs");
+  return unionRows<AgentRun>(parts, (p) => ({
+    sql: `SELECT * FROM agent_runs WHERE agent_id = ?/*split*/ ORDER BY started_at DESC LIMIT ?`,
+    binds: [agentId, p.limit],
+  }), { key: (r) => r.id, prefer: preferFinalizedRun, sort: byDesc<AgentRun>("started_at"), limit });
 }
 
 // ─── Batch operations ────────────────────────────────────────────

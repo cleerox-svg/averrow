@@ -20,6 +20,7 @@ import { computeBackoffRetryAt, FEED_RETRY_LADDER } from "./backoff";
 import { tagThreat, needsBrandTokens, loadBrandTokens, isIdpFamilyTag } from "./idp-tagging";
 import { enqueueAutoCaptures } from "./page-capture";
 import { withD1Meter } from "./d1-meter";
+import { telemetryStore } from "./db-route";
 
 // ─── Deduplication ───────────────────────────────────────────────
 
@@ -1500,7 +1501,7 @@ async function autoPauseFeed(
   // transitions. This is an operational event, not an agent insight,
   // so it intentionally does NOT go to agent_outputs.
   try {
-    await env.DB.prepare(
+    await (await telemetryStore(env)).prepare(
       `INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
        VALUES (?, 'feed_runner', 'feed_auto_paused', ?, ?, 'critical')`
     ).bind(
