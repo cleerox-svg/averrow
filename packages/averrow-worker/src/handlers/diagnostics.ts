@@ -25,6 +25,7 @@ import { SHADOW_SIGNAL_WEIGHTS, shadowScoreDelta } from "../lib/page-phishing-sc
 import { NRD_RETENTION_LAST_RESULT_KEY, parseNrdRetentionLastResult } from "../lib/nrd-retention";
 import type { Env } from "../types";
 import { labelPerDatabase } from "../lib/db-registry";
+import { getDatabasesPayload, type DatabasesPayload } from "../lib/db-health";
 
 // ─── Diagnostics caching (D1 overload 2026-11-08) ─────────────────
 /** KV key + TTL for the enrichment_pipeline whole-threats-table pass. */
@@ -284,13 +285,17 @@ export async function fetchD1EndpointAttribution(env: Env): Promise<{
   // 20 when the per-job `agent:` / `cron:` / `workflow:` labels landed —
   // see lib/d1-meter.ts). Every aggregate is weighted by _sample_interval:
   // AE down-samples high-volume datasets, and a bare SUM/COUNT under-counts
-  // once it does.
+  // once it does. Since the per-store split (lib/analytics.ts point shape
+  // v2) one record can write several points (one per store, blob2); the
+  // row sums are unchanged (GROUP BY blob1 sums the store points), but a
+  // record count must weight by double6 (1 on a record's first point) —
+  // pre-v2 and store-less points have blob2 '' and count 1.
   const sql = `
     SELECT
       blob1 AS endpoint,
       SUM(_sample_interval * double1) AS total_rows_read,
       SUM(_sample_interval * double3) AS total_queries,
-      SUM(_sample_interval) AS request_count
+      SUM(_sample_interval * if(blob2 = '', 1, double6)) AS request_count
     FROM trust_radar_d1_reads
     WHERE timestamp > NOW() - INTERVAL '1' DAY
     GROUP BY blob1
@@ -363,6 +368,8 @@ export async function fetchD1EndpointAttribution(env: Env): Promise<{
 // The meter layers are exclusive, so these rows are disjoint: they can be
 // summed and compared against that hour's `d1_hourly.rows_read` — the
 // remainder is unmetered traffic (HTTP handlers, the GeoIP import, …).
+// `points` counts records, not AE points (per-store split: see
+// fetchD1EndpointAttribution).
 
 export const D1_ATTRIBUTION_HOURLY_TOP = 10;
 
@@ -392,10 +399,10 @@ export async function fetchD1HourlyAttribution(
       SUM(_sample_interval * double1) AS rows_read,
       SUM(_sample_interval * double2) AS rows_written,
       SUM(_sample_interval * double3) AS queries,
-      SUM(_sample_interval) AS points
+      SUM(_sample_interval * if(blob2 = '', 1, double6)) AS points
     FROM trust_radar_d1_reads
     WHERE timestamp >= toDateTime('${start}')
-      AND (startsWith(blob1, 'agent:') OR startsWith(blob1, 'cron:') OR startsWith(blob1, 'workflow:'))
+      AND (startsWith(blob1, 'agent:') OR startsWith(blob1, 'cron:') OR startsWith(blob1, 'workflow:') OR startsWith(blob1, 'feed:') OR startsWith(blob1, 'job:'))
     GROUP BY hour, endpoint
     ORDER BY hour DESC, rows_read DESC
     LIMIT 5000
@@ -2340,10 +2347,16 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       d1Metrics, d1Attribution, d1BudgetState, d1TopQueries, d1TopWriteQueries,
       d1BillingCycle, d1Recent, d1Hourly, d1HourlyAttribution,
       cachedCountStats, nrdRetention, dnsQueueSize, domainGeoDrainable,
+      databases,
     ] = await Promise.all([
       d1MetricsP, d1AttributionP, d1BudgetStateP, d1TopQueriesP, d1TopWriteQueriesP,
       d1BillingCycleP, d1RecentP, d1HourlyP, d1HourlyAttributionP,
       cachedCountStatsP, nrdRetentionP, dnsQueueSizeP, domainGeoDrainableP,
+      // Databases page payload (lib/db-health.ts, 24h window) — KV-cached
+      // 10 min, fail-soft per section, so usually a KV read. Started only
+      // after the sequential main-DB reads: a cold build may fall back to
+      // PRAGMA size reads on the main DB, which must not overlap them.
+      offMain<DatabasesPayload | null>("databases", null, () => getDatabasesPayload(env, "24h")),
     ]);
 
     // Reconcile workflow-agent rollups into agent_mesh.per_agent shape.
@@ -2693,7 +2706,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // rollup_pending, dropped_unenrolled_24h, dropped_no_brand_24h,
           // dropped_24h by reason incl. ineligible_brand / rate_limited /
           // error). No field removed.
-          endpoint_version: 18,
+          // 19: additive `databases` block (the Databases page payload,
+          // lib/db-health.ts, 24h window) + the AE readers count records
+          // (double6-weighted) now that a run writes one point per store;
+          // d1_attribution_hourly also lists `feed:` rows. No field removed.
+          endpoint_version: 19,
         },
 
         brand_count_drift: brandCountDrift,
@@ -2826,6 +2843,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // rollup_pending = stored reports whose source rollup has not landed
         // (Navigator catches up ≤3 per tick).
         dmarc_ingest: dmarcIngest,
+
+        // Per-store database health (sizes, growth, reads/writes, overloads,
+        // top tables / jobs) — same payload as GET /api/internal/databases
+        // with window=24h. null (+ databases_error) if it failed outright.
+        databases,
 
         alerts: {
           // NX2 tier-gate visibility. `tracked` should trend to 0 (or

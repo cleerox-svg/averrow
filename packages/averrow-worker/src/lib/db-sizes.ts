@@ -143,19 +143,24 @@ async function safeFirst<T>(db: D1Database, sql: string): Promise<T | null> {
   }
 }
 
+/** User tables in one bound database (sqlite_master minus sqlite_ / _cf_ tables). */
+async function userTableCount(db: D1Database): Promise<number | null> {
+  const row = await safeFirst<{ n: number }>(
+    db,
+    "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'",
+  );
+  return finiteOrNull(row?.n);
+}
+
 /** PRAGMA fallback for one bound database. Sequential, three tiny reads. */
 async function pragmaSize(db: D1Database): Promise<{ sizeBytes: number | null; tables: number | null }> {
   const pageSize = await safeFirst<{ page_size: number }>(db, "PRAGMA page_size");
   const pageCount = await safeFirst<{ page_count: number }>(db, "PRAGMA page_count");
-  const tableCount = await safeFirst<{ n: number }>(
-    db,
-    "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'",
-  );
   const ps = finiteOrNull(pageSize?.page_size);
   const pc = finiteOrNull(pageCount?.page_count);
   return {
     sizeBytes: ps != null && pc != null && ps > 0 ? ps * pc : null,
-    tables: finiteOrNull(tableCount?.n),
+    tables: await userTableCount(db),
   };
 }
 
@@ -183,11 +188,17 @@ async function measureOne(
   };
   const dbId = deployEnv ? spec.databaseId[deployEnv] : null;
   const cf = dbId && cfList ? cfList.get(dbId.toLowerCase()) : undefined;
-  if (cf && cf.sizeBytes != null) {
-    return { ...base, sizeBytes: cf.sizeBytes, tables: cf.tables, source: "cf_api" };
-  }
   // Only measure the store's OWN binding — a fallback's size would be a lie.
   const db = hasStore(env, spec.id) ? storeBinding(env, spec.id) : undefined;
+  if (cf && cf.sizeBytes != null) {
+    // The CF list reports num_tables = 0 for every database (seen in prod
+    // 2026-11-22), so a 0 there is "not reported", not "empty": count from
+    // sqlite_master on the store's own binding instead (one tiny read).
+    const tables = cf.tables != null && cf.tables > 0
+      ? cf.tables
+      : db ? await userTableCount(db) : null;
+    return { ...base, sizeBytes: cf.sizeBytes, tables, source: "cf_api" };
+  }
   if (!db) return { ...base, sizeBytes: null, tables: null, source: null };
   const p = await pragmaSize(db);
   return {

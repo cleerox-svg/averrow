@@ -77,6 +77,28 @@ describe("measureDatabaseSizes", () => {
     expect(String((fetchMock.mock.calls[0] as unknown[] | undefined)?.[0])).toContain("per_page=1000");
   });
 
+  it("treats the CF list's num_tables = 0 as unreported and counts tables on the binding", async () => {
+    // Prod 2026-11-22: the list returned num_tables: 0 for every database.
+    const log: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      result: [
+        { uuid: idOf("core"), file_size: 5_423_157_248, num_tables: 0 },
+        { uuid: idOf("audit"), file_size: 6_373_376, num_tables: 0 },
+        { uuid: idOf("geo"), file_size: 673_132_544, num_tables: 0 },
+      ],
+    }), { status: 200 })));
+    const { databases: rows } = await measureDatabaseSizes(baseEnv({
+      CF_API_TOKEN: "t", CF_ACCOUNT_ID: "acc", DB: pragmaDb(4096, 1000, 250, log),
+    }));
+    expect(rows.find((r) => r.store === "core")).toMatchObject({ sizeBytes: 5_423_157_248, tables: 250, source: "cf_api" });
+    expect(rows.find((r) => r.store === "audit")).toMatchObject({ sizeBytes: 6_373_376, tables: 3, source: "cf_api" });
+    // geo is not bound here: size from CF, table count unknown rather than 0.
+    expect(rows.find((r) => r.store === "geo")).toMatchObject({ sizeBytes: 673_132_544, tables: null, source: "cf_api" });
+    // Only the table count is read, not the size PRAGMAs.
+    expect(log.some((s) => s.startsWith("PRAGMA"))).toBe(false);
+  });
+
   it("prefers CF_OPS_API_TOKEN and falls back to CF_API_TOKEN on a 403", async () => {
     const seen: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {

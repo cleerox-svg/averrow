@@ -14,7 +14,7 @@ import {
   Search, Menu, X, WifiOff,
   Plug, Building2, DollarSign, ListChecks, Compass, Layers,
   ShieldAlert, Bug, Network, Megaphone, Server,
-  KeyRound, Smartphone, EyeOff, Scale, TrendingUp, UserCog, Wrench,
+  Database, KeyRound, Smartphone, EyeOff, Scale, TrendingUp, UserCog, Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -144,6 +144,7 @@ function buildPaletteCommands(
     // workspaces (gating mirrors the pages)
     { label: 'Agents',                to: tabUrl('agents'),            group: 'PLATFORM', icon: Cpu, keywords: 'fleet runs mesh' },
     { label: 'Feeds',                 to: tabUrl('feeds'),             group: 'PLATFORM', icon: Rss, keywords: 'ingestion sources pulls' },
+    { label: 'Databases',             to: tabUrl('databases'),         group: 'PLATFORM', icon: Database, keywords: 'd1 storage capacity size overload sql' },
     { label: 'Takedown Integrations', to: tabUrl('takedown-integrations'), group: 'PLATFORM', icon: Plug, keywords: 'submitters providers registrars' },
     { label: 'Attribution Backlog',   to: tabUrl('attribution'), group: 'PLATFORM', icon: ListChecks, keywords: 'clusters unattributed' },
     { label: 'Audit Log',             to: tabUrl('audit'),       group: 'PLATFORM', icon: ClipboardList, keywords: 'compliance history actions' },
