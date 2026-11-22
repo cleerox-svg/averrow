@@ -1,6 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
+export interface DatabaseInfo {
+  store: string;
+  name: string | null;
+  sizeBytes: number | null;
+  tables: number | null;
+  source: 'cf_api' | 'pragma' | null;
+  capBytes: number;
+}
+
 export interface SystemHealthData {
   threats: { total: number; today: number; week: number };
   agents: { total: number; successes: number; errors: number };
@@ -10,10 +19,12 @@ export interface SystemHealthData {
   audit: { count: number };
   trend: { day: string; count: number }[];
   infrastructure: {
-    mainDb: { name: string; sizeMb: number; tables: number; region: string };
-    auditDb: { name: string; sizeKb: number; tables: number; region: string };
+    mainDb: { name: string | null; sizeMb: number | null; tables: number | null; region: string };
+    auditDb: { name: string | null; sizeKb: number | null; tables: number | null; region: string };
     worker: { name: string; platform: string };
     kvNamespaces: { name: string }[];
+    /** Per-store D1 view; absent on older workers. */
+    databases?: DatabaseInfo[];
   };
 }
 

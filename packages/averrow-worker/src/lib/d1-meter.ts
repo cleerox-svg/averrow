@@ -52,6 +52,7 @@
 
 import { newTally, recordD1Reads, writeD1Attribution, type D1Tally } from "./analytics";
 import type { Env } from "../types";
+import { DB_REGISTRY } from "./db-registry";
 
 // A metered statement answers this (module-private) key with the raw
 // statement it wraps — batch() uses it to unwrap.
@@ -226,8 +227,8 @@ function isD1Like(v: unknown): v is D1Database {
   return isRecord(v) && typeof v.prepare === "function";
 }
 
-/** Env bindings that are D1 databases (all bill against the account). */
-export const METERED_D1_BINDINGS = ["DB", "AUDIT_DB", "GEOIP_DB", "DNS_QUEUE_DB"] as const;
+/** Env bindings that are D1 databases (all bill against the account) — every DB_REGISTRY binding. */
+export const METERED_D1_BINDINGS: readonly string[] = DB_REGISTRY.map((s) => s.binding);
 
 /**
  * Shallow env copy whose bound D1 databases are metered into `tally` —

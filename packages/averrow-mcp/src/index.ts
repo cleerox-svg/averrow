@@ -112,8 +112,10 @@ const TOOLS: ToolDef[] = [
     name: "d1_health",
     description:
       "Database-level D1 health: size (page_count × page_size), per-table " +
-      "row counts (top N), index counts (incl. partial), schema version, " +
-      "FK enforcement state, applied migrations, sample query latency. " +
+      "row counts (top N; `rows` is an estimate unless `rows_exact` — see " +
+      "`rows_estimate` / `estimate_source`), index counts (incl. partial), " +
+      "schema version, FK enforcement state, applied migrations, sample " +
+      "primary-key probe latency. Cached 10 min server-side. " +
       "Optional check_fk runs PRAGMA foreign_key_check for orphan-row " +
       "detection (slow). Use when investigating storage growth, query " +
       "slowness, or schema drift.",
