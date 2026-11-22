@@ -17,6 +17,15 @@ paths = [
   # not a credential of ours (reviewed 2026-11-15).
   '''packages/averrow-worker/src/data/iok/rules\.json''',
 ]
+# Match against the whole finding (name + value) so an exception can name the
+# exact constant rather than allowlisting a value pattern everywhere.
+regexTarget = "match"
+regexes = [
+  # KV cache-key name, not a credential: "infra.db_sizes.v<N>" is a cache key
+  # string the generic-api-key rule flags because the constant ends in _KEY
+  # (lib/db-sizes.ts, reviewed 2026-11-22).
+  '''DB_SIZES_CACHE_KEY = "infra\.db_sizes\.v[0-9]+"''',
+]
 commits = [
   # imprsn8 default-admin hash (decommissioned in 2a021e28; credential dead).
   "1a8cf652e11b28cddcb2de5b513509f50ec213da",
