@@ -15,7 +15,7 @@ import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "../feeds/ty
 import { createNotification } from "./notifications";
 import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "./threatScoring";
 import { isPrivateIP } from "./geoip";
-import { withD1Retry, D1_OVERLOAD_RETRY_BASE_MS, type D1RetryOptions } from "./d1-retry";
+import { withD1Retry, isD1OverloadError, D1_OVERLOAD_RETRY_BASE_MS, type D1RetryOptions } from "./d1-retry";
 import { computeBackoffRetryAt, FEED_RETRY_LADDER } from "./backoff";
 import { tagThreat, needsBrandTokens, loadBrandTokens, isIdpFamilyTag } from "./idp-tagging";
 import { enqueueAutoCaptures } from "./page-capture";
@@ -791,8 +791,9 @@ async function runFeedWithTimeout(
 
   try {
     // Retried past D1's overload window, capped at
-    // FEED_FINALIZE_RETRY_BUDGET_MS so this slot is held at most that long
-    // past its timeout (see the constant for the loop-budget arithmetic).
+    // FEED_FINALIZE_RETRY_BUDGET_MS (the penalty below gets its own
+    // FEED_PENALTY_RETRY_FLOOR_MS), so this slot is held at most ~45 s past
+    // its timeout (see the constant for the loop-budget arithmetic).
     // Re-send safety: an earlier attempt that applied but reported an error
     // left the row 'failed' with this exact error + duration, which the
     // second WHERE arm matches, so the penalty still runs once.
@@ -956,17 +957,27 @@ export interface RunFeedOptions {
  * diagnosis, and the breaker penalty came ~15 min late).
  *
  * With D1_OVERLOAD_RETRY_BASE_MS one statement waits up to 3 + 6 + 12 s
- * (+ ≤ 2.25 s jitter); this cap bounds the whole sequence so a slot is held
- * at most this long past its timeout. Budget check: the feed pool returns
- * ≤ FEED_POOL_BUDGET_MS + 30 s after it starts, and the enrichment and
- * social loops size themselves from the time actually left (their own
- * start, capped by enrichmentDeadlineForTick), so a late pool only shrinks
- * them; worst case the last enrichment/social slot ends ≤ 30 s past
- * scheduledTime + ENRICHMENT_TICK_DEADLINE_MS (12 min), inside the 15-min
- * invocation wall. Every retry loop is finite and deadline-checked, so every
- * loop still always returns.
+ * (+ ≤ 2.25 s jitter); this cap bounds the pull-history write. The breaker
+ * penalty after it gets its own floor (FEED_PENALTY_RETRY_FLOOR_MS), so the
+ * whole finalize sequence holds a slot at most ~45 s (30 + 15, plus the
+ * last attempts' own execution time) past its timeout. Budget check: the
+ * feed pool returns ≤ FEED_POOL_BUDGET_MS + ~45 s after it starts, and the
+ * enrichment and social loops size themselves from the time actually left
+ * (their own start, capped by enrichmentDeadlineForTick), so a late pool
+ * only shrinks them; worst case the last enrichment/social slot ends ≤ ~45 s
+ * past scheduledTime + ENRICHMENT_TICK_DEADLINE_MS (12 min) ≈ 12m45s, inside
+ * the 15-min invocation wall. Every retry loop is finite and
+ * deadline-checked, so every loop still always returns.
  */
 export const FEED_FINALIZE_RETRY_BUDGET_MS = 30_000;
+
+/**
+ * Minimum retry window (ms) of the breaker writes that follow a finalize:
+ * the failure penalty (penalizeFeedFailure) and the success-side breaker
+ * reset. Covers 3 s + 6 s overload backoffs — past one 10 s window — even
+ * when the finalize before it used up FEED_FINALIZE_RETRY_BUDGET_MS.
+ */
+export const FEED_PENALTY_RETRY_FLOOR_MS = 15_000;
 
 /**
  * withD1Retry options for a pull's finalize writes. Only idempotent
@@ -1006,15 +1017,25 @@ export async function runFeed(
 
   const start = Date.now();
 
+  let result: FeedResult;
   try {
-    const result = await feedModule.ingest(ctx);
-    const durationMs = Date.now() - start;
-    // Log success in pull history. Retry on transient D1 errors: the pull
-    // already succeeded, so a blip here must not leave the row 'partial'
-    // (which the orphan reaper would later flip to failed + now also
-    // penalize the breaker). Idempotent UPDATE keyed on pullId. Overload
-    // errors back off past D1's 10 s window (feedFinalizeRetry).
-    const pullUpdate = await withD1Retry(
+    result = await feedModule.ingest(ctx);
+  } catch (err) {
+    // Only an ingest failure takes the failure path. A D1 error AFTER a
+    // successful ingest (the finalize writes below) must never be recorded
+    // as a failed pull or penalize the breaker.
+    return failPull(env, config, pullId, err, Date.now() - start, overloadBackoff);
+  }
+
+  const durationMs = Date.now() - start;
+  // Log success in pull history. Retry on transient D1 errors: the pull
+  // already succeeded, so a blip here must not leave the row 'partial'
+  // (which the orphan reaper would later flip to failed + now also
+  // penalize the breaker). Idempotent UPDATE keyed on pullId. Overload
+  // errors back off past D1's 10 s window (feedFinalizeRetry).
+  let pullUpdate: D1Result;
+  try {
+    pullUpdate = await withD1Retry(
       () =>
         env.DB.prepare(
           `UPDATE feed_pull_history SET
@@ -1037,21 +1058,44 @@ export async function runFeed(
         overloadBackoff,
       ),
     );
+  } catch (err) {
+    // The ingest succeeded; only its bookkeeping failed. Not a failed pull
+    // (no penalty): the row stays 'partial' and the Navigator reaper
+    // finalizes it. Rejects so callers do not count it as a clean run.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[runFeed] ${config.feed_name}: pull ${pullId} ingested but its success finalize failed — ${msg}`);
+    throw new Error(`Feed ${config.feed_name}: success finalize failed: ${msg}`);
+  }
 
-    // `status <> 'failed'` (not `= 'partial'`, so a withD1Retry re-send of
-    // an already-applied UPDATE still matches): a row already finalized as
-    // failed — abandoned by runAllFeeds' per-feed timeout, or reaped by
-    // Navigator — keeps that outcome. Its breaker penalty has already been
-    // applied, so a late success must not reset feed_status either.
-    if (!finalizeApplied(pullUpdate)) {
-      console.warn(`[runFeed] ${config.feed_name}: pull ${pullId} completed after it was finalized as failed (timed out or reaped) — keeping the failed row`);
-      return result;
-    }
+  // `status <> 'failed'` (not `= 'partial'`, so a withD1Retry re-send of
+  // an already-applied UPDATE still matches): a row already finalized as
+  // failed — abandoned by runAllFeeds' per-feed timeout, or reaped by
+  // Navigator — keeps that outcome. Its breaker penalty has already been
+  // applied, so a late success must not reset feed_status either.
+  if (!finalizeApplied(pullUpdate)) {
+    console.warn(`[runFeed] ${config.feed_name}: pull ${pullId} completed after it was finalized as failed (timed out or reaped) — keeping the failed row`);
+    return result;
+  }
 
+  // Close the breaker. Retried on OVERLOAD only (shouldRetry:
+  // isD1OverloadError): an overload rejection never ran the statement, so
+  // re-sending the non-idempotent `records_ingested_today + ?` is safe; an
+  // ambiguous error (ran, then reported a failure) is not retried. If these
+  // still fail, the pull stays a success — log, don't throw: a post-finalize
+  // error must not masquerade as a failed pull.
+  const resetRetry: D1RetryOptions = {
+    ...feedFinalizeRetry(`${config.feed_name} breaker reset`, Date.now() + FEED_PENALTY_RETRY_FLOOR_MS, overloadBackoff),
+    shouldRetry: (e: unknown) => isD1OverloadError(e instanceof Error ? e.message : String(e)),
+  };
+  try {
     // Ensure feed_status row exists (INSERT OR IGNORE), then update
-    await env.DB.prepare(
-      "INSERT OR IGNORE INTO feed_status (feed_name, health_status) VALUES (?, 'healthy')"
-    ).bind(config.feed_name).run();
+    await withD1Retry(
+      () =>
+        env.DB.prepare(
+          "INSERT OR IGNORE INTO feed_status (feed_name, health_status) VALUES (?, 'healthy')"
+        ).bind(config.feed_name).run(),
+      resetRetry,
+    );
 
     // Update feed_status: only set healthy if records were ingested, clear error.
     // consecutive_failures resets unconditionally on HTTP/parse success — feeds
@@ -1062,40 +1106,65 @@ export async function runFeed(
     // immediately when the upstream is healthy again. This is the
     // half-open → closed transition. (Open → half-open is implicit —
     // when the retry window passes, the feed pulls again.)
-    const statusUpdate = await env.DB.prepare(
-      `UPDATE feed_status SET
-         last_successful_pull = datetime('now'),
-         records_ingested_today = records_ingested_today + ?,
-         health_status = CASE WHEN ? > 0 THEN 'healthy' ELSE health_status END,
-         last_error = NULL,
-         consecutive_failures = 0,
-         next_retry_at = NULL
-       WHERE feed_name = ?`
-    ).bind(result.itemsNew, result.itemsFetched, config.feed_name).run();
-
-    return result;
+    await withD1Retry(
+      () =>
+        env.DB.prepare(
+          `UPDATE feed_status SET
+             last_successful_pull = datetime('now'),
+             records_ingested_today = records_ingested_today + ?,
+             health_status = CASE WHEN ? > 0 THEN 'healthy' ELSE health_status END,
+             last_error = NULL,
+             consecutive_failures = 0,
+             next_retry_at = NULL
+           WHERE feed_name = ?`
+        ).bind(result.itemsNew, result.itemsFetched, config.feed_name).run(),
+      resetRetry,
+    );
   } catch (err) {
-    const durationMs = Date.now() - start;
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[runFeed] ${config.feed_name}: FAILED after ${durationMs}ms — ${errorMsg}`);
-    if (err instanceof Error && err.stack) console.error(`[runFeed] ${config.feed_name}: stack:`, err.stack);
+    console.error(`[runFeed] ${config.feed_name}: pull ${pullId} succeeded but the breaker reset failed — ${err instanceof Error ? err.message : String(err)}`);
+  }
 
-    // Log failure in pull history. Guarded on 'partial': if runAllFeeds'
-    // per-feed timeout (or the Navigator reaper) already finalized this
-    // row, a late rejection must not overwrite its error or penalize the
-    // breaker a second time.
-    //
-    // Retried past D1's overload window (feedFinalizeRetry): before this the
-    // failure finalize had no retry at all, so a pull that failed during an
-    // overload stayed 'partial' and was reaped as "worker terminated".
-    // The second arm makes a re-send safe: if an earlier attempt applied but
-    // reported an error (e.g. "Network connection lost"), the row is already
-    // 'failed' with THIS error + duration, the re-send matches it again
-    // (changes = 1) and the penalty below still runs exactly once. A row
-    // finalized by the timeout path or the reaper carries a different
-    // error_message, so it never matches.
-    const finalizeDeadline = Date.now() + FEED_FINALIZE_RETRY_BUDGET_MS;
-    const failRetry = feedFinalizeRetry(`${config.feed_name} pull-failure finalize`, finalizeDeadline, overloadBackoff);
+  return result;
+}
+
+/**
+ * runFeed's failure path for an ingest that threw: finalize the row
+ * `failed`, penalize the breaker, and ALWAYS reject with the feed error
+ * (`Feed <name> failed: <ingest error>`), never a raw D1 error — callers
+ * (handleTriggerFeed, the feed loops) read that message.
+ */
+async function failPull(
+  env: Env,
+  config: FeedConfigRow,
+  pullId: string,
+  err: unknown,
+  durationMs: number,
+  overloadBackoff: boolean,
+): Promise<never> {
+  const errorMsg = err instanceof Error ? err.message : String(err);
+  console.error(`[runFeed] ${config.feed_name}: FAILED after ${durationMs}ms — ${errorMsg}`);
+  if (err instanceof Error && err.stack) console.error(`[runFeed] ${config.feed_name}: stack:`, err.stack);
+
+  // Log failure in pull history. Guarded on 'partial': if runAllFeeds'
+  // per-feed timeout (or the Navigator reaper) already finalized this
+  // row, a late rejection must not overwrite its error or penalize the
+  // breaker a second time.
+  //
+  // Retried past D1's overload window (feedFinalizeRetry): before this the
+  // failure finalize had no retry at all, so a pull that failed during an
+  // overload stayed 'partial' and was reaped as "worker terminated".
+  // The second arm makes a re-send safe: if an earlier attempt applied but
+  // reported an error (e.g. "Network connection lost"), the row is already
+  // 'failed' with THIS error + duration, the re-send matches it again
+  // (changes = 1) and the penalty below still runs exactly once. A row
+  // finalized by the timeout path or the reaper carries a different
+  // error_message, so it never matches.
+  const failRetry = feedFinalizeRetry(
+    `${config.feed_name} pull-failure finalize`,
+    Date.now() + FEED_FINALIZE_RETRY_BUDGET_MS,
+    overloadBackoff,
+  );
+  try {
     const failUpdate = await withD1Retry(
       () =>
         env.DB.prepare(
@@ -1113,13 +1182,19 @@ export async function runFeed(
     } else {
       console.warn(`[runFeed] ${config.feed_name}: pull ${pullId} failed after it was already finalized (timed out or reaped) — not penalizing again`);
     }
-
-    // Re-throw so callers (handleTriggerFeed) can distinguish success from failure.
-    // runAllFeeds uses Promise.allSettled, so this won't break the coordinator.
-    const feedError = new Error(`Feed ${config.feed_name} failed: ${errorMsg}`);
-    (feedError as Error & { feedResult: FeedResult }).feedResult = { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
-    throw feedError;
+  } catch (e) {
+    // Finalize still failing once its budget is spent: the row stays
+    // 'partial' and the Navigator reaper finalizes + penalizes it. A
+    // penalty failure after an applied finalize leaves the breaker one step
+    // behind (logged). Either way the caller still gets the feed error.
+    console.error(`[runFeed] ${config.feed_name}: failure bookkeeping for pull ${pullId} failed — ${e instanceof Error ? e.message : String(e)}`);
   }
+
+  // Re-throw so callers (handleTriggerFeed) can distinguish success from failure.
+  // runAllFeeds uses Promise.allSettled, so this won't break the coordinator.
+  const feedError = new Error(`Feed ${config.feed_name} failed: ${errorMsg}`);
+  (feedError as Error & { feedResult: FeedResult }).feedResult = { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
+  throw feedError;
 }
 
 /**
@@ -1134,8 +1209,15 @@ async function penalizeFeedFailure(
   env: Env,
   config: FeedConfigRow,
   errorMsg: string,
-  retry: D1RetryOptions = {},
+  retryIn: D1RetryOptions = {},
 ): Promise<void> {
+  // The penalty gets its OWN deadline floor: if the finalize before it
+  // spent most of the shared FEED_FINALIZE_RETRY_BUDGET_MS, inheriting that
+  // deadline would let the penalty fail and leave a `failed` row the reaper
+  // never touches with the breaker un-advanced.
+  const retry: D1RetryOptions = retryIn.deadline === undefined
+    ? retryIn
+    : { ...retryIn, deadline: Math.max(retryIn.deadline, Date.now() + FEED_PENALTY_RETRY_FLOOR_MS) };
   // `retry` (feedFinalizeRetry from the caller) carries the overload
   // backoff + the finalize deadline. Every statement wrapped below is safe
   // to re-run: a read, an INSERT OR IGNORE, and an UPDATE that SETs

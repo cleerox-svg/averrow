@@ -7,8 +7,9 @@
 //      idx_threats_cf_scan (0016). The old Phase 1 plan is pinned as a full
 //      SCAN so the comparison stays honest.
 //   2. cloudflare_scanner auth gate: 401/403 fails the pull BEFORE any D1
-//      read, caches the verdict per token fingerprint, and a cached verdict
-//      throws without a request; a 403 on the first submit fails the same way.
+//      read (probed every run, nothing cached); a 401/403 on the first
+//      submit or first Phase 2 poll fails the same way; Phase 2 polls oldest
+//      first and expires scans pending > 7 days.
 //   3. system-health 14-day trend: threatTrend14d returns exactly the rows of
 //      the original single GROUP BY, and its three reads are created_at
 //      index ranges (the closed-day read is cached per UTC date).
@@ -27,7 +28,6 @@ import {
   CF_SCAN_POLL_LIMIT,
   CF_AUTH_PROBE_PATH,
   CfScannerAuthError,
-  cfAuthDeniedKey,
   resolveScannerToken,
 } from "../src/feeds/cloudflare_scanner";
 import { threatTrend14d, threatTrendBounds } from "../src/handlers/admin/health";
@@ -127,7 +127,7 @@ describe.skipIf(!hasSqlite())("D1 step 1 — query plans on the migrated schema"
 
   it("cf_scanner Phase 2 seeks the partial idx_threats_cf_scan (submitted rows only)", () => {
     const p = plan(raw, CF_SCAN_PENDING_SQL, [CF_SCAN_POLL_LIMIT]);
-    expect(p).toMatch(/SEARCH threats USING INDEX idx_threats_cf_scan \(cf_scan_id>\?\)/);
+    expect(p).toMatch(/^SEARCH threats USING INDEX idx_threats_cf_scan \(cf_scan_id>\?\) \| USE TEMP B-TREE FOR ORDER BY$/);
   });
 
   it("old 14-day trend reads 14 days of threats; each new part reads one range", () => {
@@ -229,7 +229,7 @@ describe.skipIf(!hasSqlite())("cloudflare_scanner auth gate", () => {
     cache,
   });
 
-  it("probe 403 → throws CfScannerAuthError before any D1 read and caches the verdict", async () => {
+  it("probe 403 → throws CfScannerAuthError before any D1 read; nothing is cached, the next run probes again", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const calls = stubFetch(() => ({ status: 403, body: { success: false, errors: [{ code: 10000, message: "Authentication error" }] } }));
     const log: StatementLogEntry[] = [];
@@ -237,16 +237,21 @@ describe.skipIf(!hasSqlite())("cloudflare_scanner auth gate", () => {
     await expect(cloudflare_scanner.ingest(ctx)).rejects.toThrow("CF URL Scanner: CF_API_TOKEN lacks Account › URL Scanner › Edit (HTTP 403)");
     expect(calls).toEqual([{ url: `https://api.cloudflare.com/client/v4/accounts/acct/urlscanner${CF_AUTH_PROBE_PATH}`, method: "GET" }]);
     expect(log).toEqual([]);
-    expect(ctx.cache.store.get(await cfAuthDeniedKey("tok-1"))).toBe("403");
-    // The token itself is never part of the key.
-    expect([...ctx.cache.store.keys()].some((k) => k.includes("tok-1"))).toBe(false);
+    expect(ctx.cache.store.size).toBe(0);
 
-    // Next tick: no request, no D1, same failure.
+    // Next run: probes again (a permission fix on the same token value takes effect at once).
     const log2: StatementLogEntry[] = [];
-    const ctx2 = { ...ctxFor(log2, ctx.cache) };
-    await expect(cloudflare_scanner.ingest(ctx2)).rejects.toBeInstanceOf(CfScannerAuthError);
-    expect(calls).toHaveLength(1);
+    await expect(cloudflare_scanner.ingest(ctxFor(log2, ctx.cache))).rejects.toBeInstanceOf(CfScannerAuthError);
+    expect(calls).toHaveLength(2);
     expect(log2).toEqual([]);
+  });
+
+  it("probe 401 → 'invalid or expired' message naming the secret", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stubFetch(() => ({ status: 401, body: "unauthorized" }));
+    const log: StatementLogEntry[] = [];
+    await expect(cloudflare_scanner.ingest(ctxFor(log))).rejects.toThrow("CF URL Scanner: CF_API_TOKEN is invalid or expired (HTTP 401)");
+    expect(log).toEqual([]);
   });
 
   it("prefers CF_OPS_API_TOKEN, falls back to CF_API_TOKEN, and names the secret in the auth error", async () => {
@@ -268,37 +273,91 @@ describe.skipIf(!hasSqlite())("cloudflare_scanner auth gate", () => {
     );
     expect(seen).toEqual(["Bearer ops-tok"]);
     expect(log).toEqual([]);
-    expect(base.cache.store.has(await cfAuthDeniedKey("ops-tok"))).toBe(true);
   });
 
-  it("a rotated token is probed again", async () => {
+  it("a transient probe failure (5xx) fails the pull before any D1 read", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const cache = fakeKv({ [await cfAuthDeniedKey("old-token")]: "403" });
     const calls = stubFetch(() => ({ status: 503, body: "upstream down" }));
     const log: StatementLogEntry[] = [];
-    const ctx = ctxFor(log, cache);
-    await expect(cloudflare_scanner.ingest(ctx)).rejects.toThrow(/auth probe failed \(HTTP 503\)/);
+    await expect(cloudflare_scanner.ingest(ctxFor(log))).rejects.toThrow(/auth probe failed \(HTTP 503\)/);
     expect(calls).toHaveLength(1);
     expect(log).toEqual([]);
-    // A transient probe failure is not cached.
-    expect(cache.store.has(await cfAuthDeniedKey("tok-1"))).toBe(false);
   });
 
-  it("probe 404 → runs; a 403 on the first submit fails the pull and is cached", async () => {
+  it("probe 404 → runs; a 403 on the first submit fails the pull", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
     vi.spyOn(console, "error").mockImplementation(() => {});
     const calls = stubFetch((url, method) => (method === "POST" ? { status: 403, body: "denied" } : { status: 404, body: "" }));
     const log: StatementLogEntry[] = [];
-    const ctx = ctxFor(log);
-    await expect(cloudflare_scanner.ingest(ctx)).rejects.toBeInstanceOf(CfScannerAuthError);
+    await expect(cloudflare_scanner.ingest(ctxFor(log))).rejects.toBeInstanceOf(CfScannerAuthError);
     expect(calls.map((c) => c.method)).toEqual(["GET", "POST"]);
-    expect(ctx.cache.store.get(await cfAuthDeniedKey("tok-1"))).toBe("403");
     // Only the bounded candidate read + the safe-domain list ran; no writes.
     expect(log.map((e) => e.sql.replace(/\s+/g, " ").trim().slice(0, 40))).toEqual([
       "SELECT id, malicious_url FROM ( SELECT i",
       "SELECT domain FROM brand_safe_domains",
     ]);
+  });
+
+  it("a 401 on the first Phase 2 poll fails the pull too", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // An isolated DB: no submit candidates, one fresh pending scan.
+    const own = openMigratedDb();
+    const created = sqliteUtc(NOW - 4 * DAY);
+    own.prepare(`INSERT INTO threats (id, created_at, first_seen, status, severity, threat_type, source_feed, malicious_domain, ioc_value, cf_scan_id)
+      VALUES ('p1', ?, ?, 'active', 'high', 'phishing', 'phishtank', 'p1.example', 'p1.example', 'scan-p1')`).run(created, created);
+    let probed = false;
+    const calls = stubFetch(() => {
+      if (!probed) { probed = true; return { status: 404, body: "" }; }
+      return { status: 401, body: "expired" };
+    });
+    const log: StatementLogEntry[] = [];
+    const ctx = { env: { DB: d1FromSqlite(own, { log }), CACHE: fakeKv(), CF_ACCOUNT_ID: "acct", CF_API_TOKEN: "tok-1" } as unknown as Env, feedName: "cloudflare_scanner", feedUrl: "" };
+    await expect(cloudflare_scanner.ingest(ctx)).rejects.toThrow("CF_API_TOKEN is invalid or expired (HTTP 401)");
+    expect(calls).toHaveLength(2);
+    expect(log.some((e) => /^\s*UPDATE/.test(e.sql))).toBe(false);
+  });
+
+  it("Phase 2 polls oldest first on idx_threats_cf_scan and expires scans pending > 7 days without polling them", async () => {
+    const own = openMigratedDb();
+    const ins = own.prepare(`INSERT INTO threats (id, created_at, first_seen, status, severity, threat_type, source_feed, malicious_domain, ioc_value, cf_scan_id, confidence_score)
+      VALUES (?, ?, ?, 'active', 'high', 'phishing', 'phishtank', ?, ?, ?, 40)`);
+    // 120 stuck scans from long ago (would fill every slot without an order)
+    // plus 3 recent ones.
+    for (let i = 0; i < 120; i++) { const c = sqliteUtc(NOW - (30 + i / 10) * DAY); ins.run(`old${i}`, c, c, `o${i}.x`, `o${i}.x`, `scan-old${i}`); }
+    for (let i = 0; i < 3; i++) { const c = sqliteUtc(NOW - (i + 1) * DAY); ins.run(`new${i}`, c, c, `n${i}.x`, `n${i}.x`, `scan-new${i}`); }
+    // Prod shape: submitted scans are a tiny fraction of threats (audit 0198).
+    own.exec("BEGIN");
+    const bulk = own.prepare(`INSERT INTO threats (id, created_at, first_seen, status, severity, threat_type, source_feed, malicious_domain, ioc_value)
+      VALUES (?, ?, ?, 'active', 'high', 'phishing', 'phishtank', ?, ?)`);
+    for (let i = 0; i < 20_000; i++) { const c = sqliteUtc(NOW - (i % 900) * 3_600_000); bulk.run(`b${i}`, c, c, `b${i}.x`, `b${i}.x`); }
+    own.exec("COMMIT");
+    own.exec("ANALYZE");
+    expect(plan(own, CF_SCAN_PENDING_SQL, [CF_SCAN_POLL_LIMIT])).toMatch(/^SEARCH threats USING INDEX idx_threats_cf_scan \(cf_scan_id>\?\) \| USE TEMP B-TREE FOR ORDER BY$/);
+
+    const polled: string[] = [];
+    stubFetch((url) => { polled.push(url.split("/").pop()!); return { status: 404, body: "" }; });
+    const ctx = { env: { DB: d1FromSqlite(own), CACHE: fakeKv(), CF_ACCOUNT_ID: "acct", CF_API_TOKEN: "tok-1" } as unknown as Env, feedName: "cloudflare_scanner", feedUrl: "" };
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    vi.setSystemTime(NOW);
+    for (let pass = 0; pass < 2; pass++) {
+      const run = cloudflare_scanner.ingest(ctx);
+      let done = false;
+      void run.finally(() => { done = true; }).catch(() => {});
+      while (!done) await vi.advanceTimersByTimeAsync(1_000);
+      await run;
+    }
+    // Pass 1 expired the 100 oldest, pass 2 the other 20 and polled the recent ones.
+    const left = own.prepare("SELECT id FROM threats WHERE cf_scan_id IS NOT NULL AND cf_verdict IS NULL ORDER BY id").all() as Array<{ id: string }>;
+    expect(left.map((r) => r.id)).toEqual(["new0", "new1", "new2"]);
+    expect((own.prepare("SELECT COUNT(*) AS n FROM threats WHERE cf_verdict = 'expired'").get() as { n: number }).n).toBe(120);
+    // Expiry changes neither confidence nor status.
+    expect(own.prepare("SELECT DISTINCT confidence_score, status FROM threats WHERE cf_verdict = 'expired'").all()).toEqual([{ confidence_score: 40, status: "active" }]);
+    // Only the probe (2×) and the recent scans were requested.
+    expect(polled.filter((u) => u.startsWith("scan-old"))).toEqual([]);
+    expect(polled.filter((u) => u.startsWith("scan-new")).sort()).toEqual(["scan-new0", "scan-new1", "scan-new2"]);
   });
 
   it("happy path: submits recent threats only, polls, writes one summary diagnostic", async () => {

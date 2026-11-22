@@ -1,6 +1,5 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { loadSafeDomainSet, isSafeDomain } from "../lib/safeDomains";
-import { hashToken } from "../lib/hash";
 import { toSqliteDatetime } from "../lib/backoff";
 import type { Env } from "../types";
 
@@ -8,13 +7,16 @@ import type { Env } from "../types";
  * Cloudflare URL Scanner — two-phase enrichment of recent threat URLs.
  *
  * Step 0 (AUTH GATE, before any D1 read): one cheap authenticated GET on
- *   the URL Scanner API (CF_AUTH_PROBE_PATH). 401/403 → the pull THROWS
- *   `CfScannerAuthError`, and the verdict is cached in KV for
- *   CF_AUTH_DENIED_TTL_S, keyed on a fingerprint of the token, so later
- *   ticks fail just as fast without even probing. A rotated token gets a
- *   new key and is probed at once. (The token needs Account > URL Scanner >
- *   Edit; the shared CF_API_TOKEN lacked it from 2026-07-26: HTTP 403 code
- *   10000.) Any other probe failure (5xx, 429, network) also throws, uncached.
+ *   the URL Scanner API (CF_AUTH_PROBE_PATH), EVERY run. 401/403 → the pull
+ *   THROWS `CfScannerAuthError` (401: token invalid or expired; 403: token
+ *   lacks Account › URL Scanner › Edit; both name the secret used). Nothing
+ *   is cached: the D1 saving comes from probing first, and a cached denial
+ *   could outlive a permission fix on the same token value or be poisoned by
+ *   a transient 403. The breaker's backoff already spaces failed runs out.
+ *   (The shared CF_API_TOKEN lacked the permission from 2026-07-26: HTTP 403
+ *   code 10000.) Any other probe failure (5xx, 429, network) also throws.
+ *   The probe only proves read access, so a 401/403 on the FIRST submit or
+ *   the FIRST Phase 2 poll fails the pull the same way.
  *
  *   Token: the dedicated CF_OPS_API_TOKEN (Account › URL Scanner › Edit +
  *   Account › D1 › Read) if set, else the shared CF_API_TOKEN
@@ -32,7 +34,9 @@ import type { Env } from "../types";
  *
  * Phase 1 (SUBMIT): up to CF_SCAN_SUBMIT_LIMIT unscanned URLs per run, from
  *   the newest CF_SCAN_CANDIDATE_CAP threats created in the last
- *   CF_SCAN_WINDOW_DAYS days, prioritised brand-matched > phishing >
+ *   CF_SCAN_WINDOW_DAYS days (at ~14K new threats/day the 2,000-row cap
+ *   usually binds well inside 3 days — roughly the last 3-4 hours; the
+ *   window only matters when ingest is quiet), prioritised brand-matched > phishing >
  *   typosquat > C2 > rest, newest first. The candidate read is an index range
  *   on created_at capped at CF_SCAN_CANDIDATE_CAP rows; priority ordering is
  *   applied to that bounded set only. (It used to order ALL ~1.1M threats
@@ -42,8 +46,12 @@ import type { Env } from "../types";
  * Phase 2 (COLLECT): polls up to CF_SCAN_POLL_LIMIT submitted scans with no
  *   verdict yet (`cf_scan_id IS NOT NULL AND cf_verdict IS NULL`, served by
  *   the partial index idx_threats_cf_scan, which holds only submitted rows —
- *   a few thousand at most), stores the verdict, adjusts confidence and
- *   auto-remediates low-confidence threats whose CF verdict is clean.
+ *   a few thousand at most), oldest first, stores the verdict, adjusts
+ *   confidence and auto-remediates low-confidence threats whose CF verdict
+ *   is clean. A scan pending > CF_SCAN_PENDING_EXPIRE_DAYS is marked
+ *   cf_verdict = 'expired' without a poll (no confidence/status change) so
+ *   it leaves the pending set. cf_verdict has no reader outside this module
+ *   (audit 0253), so the extra value is safe.
  *
  * Writes one summary agent_outputs diagnostic per completed run. Uses the
  * CF_ACCOUNT_ID secret + CF_OPS_API_TOKEN (fallback CF_API_TOKEN). Schedule:
@@ -58,16 +66,12 @@ export const CF_SCAN_CANDIDATE_CAP = 2000;
 export const CF_SCAN_SUBMIT_LIMIT = 50;
 /** Phase 2 polls at most this many pending scans per run. */
 export const CF_SCAN_POLL_LIMIT = 100;
-/** How long a 401/403 verdict for one token is remembered (6h). */
-export const CF_AUTH_DENIED_TTL_S = 21_600;
 /**
  * The auth probe: a result lookup for the nil UUID. A token with URL
  * Scanner access gets 404 (no such scan); one without gets 401/403. Same
  * endpoint family Phase 2 polls, so it needs no extra permission.
  */
 export const CF_AUTH_PROBE_PATH = "/v2/result/00000000-0000-0000-0000-000000000000";
-
-const AUTH_DENIED_KEY_PREFIX = "cf_scanner:auth_denied:";
 
 export type ScannerTokenName = "CF_OPS_API_TOKEN" | "CF_API_TOKEN";
 
@@ -87,7 +91,11 @@ export function resolveScannerToken(
 /** Thrown when the scanner token cannot use the URL Scanner API. */
 export class CfScannerAuthError extends Error {
   constructor(readonly httpStatus: number, readonly tokenName: ScannerTokenName) {
-    super(`CF URL Scanner: ${tokenName} lacks Account › URL Scanner › Edit (HTTP ${httpStatus})`);
+    super(
+      httpStatus === 401
+        ? `CF URL Scanner: ${tokenName} is invalid or expired (HTTP 401)`
+        : `CF URL Scanner: ${tokenName} lacks Account › URL Scanner › Edit (HTTP ${httpStatus})`,
+    );
     this.name = "CfScannerAuthError";
   }
 }
@@ -112,10 +120,32 @@ export const CF_SCAN_CANDIDATES_SQL = `
     created_at DESC
   LIMIT ?`;
 
-/** Phase 2 pending-verdict read (partial index idx_threats_cf_scan). */
+/**
+ * A scan still without a verdict this many days after it could have been
+ * submitted is given up on (cf_verdict = 'expired').
+ */
+export const CF_SCAN_PENDING_EXPIRE_DAYS = 7;
+
+/**
+ * Phase 2 pending-verdict read (partial index idx_threats_cf_scan; the sort
+ * is a temp B-tree over the small pending set). Oldest first, so a scan
+ * that never returns a verdict reaches the head of the queue and is expired
+ * (see CF_SCAN_PENDING_EXPIRE_DAYS) instead of permanently holding one of
+ * the CF_SCAN_POLL_LIMIT slots. Without an ORDER BY, >100 stuck scans could
+ * starve every newer one. Newest-first would starve the stuck ones instead,
+ * so they would never be seen to expire.
+ *
+ * `+created_at` (the same unary-plus pin as `ORDER BY +threat_count` in
+ * lib/cluster-status.ts readers) stops the planner from walking a created_at
+ * index to satisfy the ORDER BY — with stats where most rows look pending it
+ * chose `SCAN threats USING INDEX idx_threats_created_brand`, a full index
+ * walk. A Postgres port drops the `+` (no unary + on timestamps) and relies
+ * on a partial index there.
+ */
 export const CF_SCAN_PENDING_SQL = `
-  SELECT id, cf_scan_id FROM threats
+  SELECT id, cf_scan_id, created_at FROM threats
    WHERE cf_scan_id IS NOT NULL AND cf_verdict IS NULL
+   ORDER BY +created_at ASC
    LIMIT ?`;
 
 interface CfScanSubmitResponse {
@@ -182,49 +212,17 @@ async function cfFetch<T>(accountId: string, token: string, path: string, init?:
 
 const isAuthStatus = (status: number): boolean => status === 401 || status === 403;
 
-/** KV key of the cached auth-denied verdict for `token` (never the token itself). */
-export async function cfAuthDeniedKey(token: string): Promise<string> {
-  return AUTH_DENIED_KEY_PREFIX + (await hashToken(token)).slice(0, 16);
-}
-
-async function rememberAuthDenied(kv: KVNamespace, key: string, status: number): Promise<void> {
-  try {
-    await kv.put(key, String(status), { expirationTtl: CF_AUTH_DENIED_TTL_S });
-  } catch {
-    // Best-effort: without the marker the next tick just probes again.
-  }
-}
-
-/**
- * Throws unless the token can use the URL Scanner API. A cached 401/403
- * verdict throws without a request; otherwise one probe request.
- */
+/** Throws unless the token can use the URL Scanner API: one probe request, every run. */
 async function assertScannerAccess(
-  ctx: FeedContext,
   accountId: string,
   token: string,
   tokenName: ScannerTokenName,
-  deniedKey: string,
 ): Promise<void> {
-  let cached: string | null = null;
-  try {
-    cached = await ctx.env.CACHE.get(deniedKey);
-  } catch {
-    cached = null; // KV transient — probe instead.
-  }
-  if (cached !== null) {
-    const status = Number(cached);
-    throw new CfScannerAuthError(isAuthStatus(status) ? status : 403, tokenName);
-  }
-
   const { status, raw } = await cfFetch<unknown>(accountId, token, CF_AUTH_PROBE_PATH);
-  if (isAuthStatus(status)) {
-    await rememberAuthDenied(ctx.env.CACHE, deniedKey, status);
-    throw new CfScannerAuthError(status, tokenName);
-  }
+  if (isAuthStatus(status)) throw new CfScannerAuthError(status, tokenName);
   // 2xx / 404 (no such scan) / other 4xx = the token got past auth.
   // 429, 5xx and network errors (0) mean the API is unusable right now:
-  // fail the pull (breaker backoff) without caching anything.
+  // fail the pull (breaker backoff).
   if (status === 0 || status === 429 || status >= 500) {
     throw new Error(`CF URL Scanner: auth probe failed (HTTP ${status}): ${raw.slice(0, 200)}`);
   }
@@ -241,8 +239,7 @@ export const cloudflare_scanner: FeedModule = {
     }
 
     // ─── Step 0: auth gate — before ANY D1 read ──────────────────
-    const deniedKey = await cfAuthDeniedKey(token);
-    await assertScannerAccess(ctx, accountId, token, tokenName, deniedKey);
+    await assertScannerAccess(accountId, token, tokenName);
 
     let submitted = 0, collected = 0, errors = 0, maliciousCount = 0;
 
@@ -275,13 +272,10 @@ export const cloudflare_scanner: FeedModule = {
       });
 
       // The probe only proves read access; submitting needs Edit. A 401/403
-      // on the first submit fails the pull the same way (and is cached).
+      // on the first submit fails the pull the same way.
       if (first) {
         first = false;
-        if (isAuthStatus(status)) {
-          await rememberAuthDenied(ctx.env.CACHE, deniedKey, status);
-          throw new CfScannerAuthError(status, tokenName);
-        }
+        if (isAuthStatus(status)) throw new CfScannerAuthError(status, tokenName);
       }
 
       if (resp?.success && resp.result?.uuid) {
@@ -307,10 +301,31 @@ export const cloudflare_scanner: FeedModule = {
     // ─── Phase 2: COLLECT results ────────────────────────────────
     const pending = await ctx.env.DB.prepare(CF_SCAN_PENDING_SQL)
       .bind(CF_SCAN_POLL_LIMIT)
-      .all<{ id: string; cf_scan_id: string }>();
+      .all<{ id: string; cf_scan_id: string; created_at: string }>();
 
+    // Threats are submitted within CF_SCAN_WINDOW_DAYS of creation, so one
+    // created before this has been pending > CF_SCAN_PENDING_EXPIRE_DAYS.
+    const expireBefore = toSqliteDatetime(
+      new Date(Date.now() - (CF_SCAN_WINDOW_DAYS + CF_SCAN_PENDING_EXPIRE_DAYS) * 86_400_000),
+    );
+    let expired = 0;
+    let firstPoll = true;
     for (const row of pending.results) {
+      if (row.created_at < expireBefore) {
+        await ctx.env.DB.prepare(
+          "UPDATE threats SET cf_verdict = 'expired' WHERE id = ? AND cf_verdict IS NULL",
+        ).bind(row.id).run();
+        expired++;
+        continue;
+      }
       const { parsed: resp, status } = await cfFetch<CfScanResultResponse>(accountId, token, `/v2/result/${row.cf_scan_id}`);
+
+      // Same rule as the first submit: a 401/403 here is an auth failure
+      // (e.g. the token was revoked mid-run), not a per-scan error.
+      if (firstPoll) {
+        firstPoll = false;
+        if (isAuthStatus(status)) throw new CfScannerAuthError(status, tokenName);
+      }
 
       if (!resp) {
         // 404 = still in progress, skip
@@ -371,7 +386,7 @@ export const cloudflare_scanner: FeedModule = {
     }
 
     // The one diagnostic per run: a summary of a run that got past the auth gate.
-    const summary = `CF Scanner done: candidates=${toScan.results.length}, submitted=${submitted}, collected=${collected}, malicious=${maliciousCount}, errors=${errors}`;
+    const summary = `CF Scanner done: candidates=${toScan.results.length}, submitted=${submitted}, collected=${collected}, expired=${expired}, malicious=${maliciousCount}, errors=${errors}`;
     try {
       await ctx.env.DB.prepare(
         "INSERT INTO agent_outputs (id, agent_id, type, summary, created_at) VALUES (?, 'sentinel', 'diagnostic', ?, datetime('now'))"

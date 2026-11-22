@@ -22,6 +22,7 @@ import {
   runFeed,
   dispatchDedicatedIngestFeed,
   FEED_FINALIZE_RETRY_BUDGET_MS,
+  FEED_PENALTY_RETRY_FLOOR_MS,
   feedRunTimeoutMs,
   type FeedConfigRow,
 } from "../src/lib/feedRunner";
@@ -180,10 +181,79 @@ describe.skipIf(!hasSqlite())("runFeed finalizes survive D1 overload", () => {
     const { db } = faulty(d1FromSqlite(raw), /^UPDATE feed_pull_history SET status = 'failed'/, forever);
     const { elapsed, result } = await settle(runFeed(envOf(db), CONFIG, failing));
     expect(result.status).toBe("rejected");
-    expect(String((result as PromiseRejectedResult).reason)).toContain("overloaded");
+    // Still the feed error, never the raw D1 error.
+    expect(String((result as PromiseRejectedResult).reason)).toContain("Feed test_feed failed: upstream 500");
     expect(elapsed).toBeLessThanOrEqual(FEED_FINALIZE_RETRY_BUDGET_MS);
     // Left partial for the reaper, as before.
     expect(pulls(raw)[0]!.status).toBe("partial");
+  });
+
+  it("penalty has its own retry floor: a finalize that spent the shared budget cannot starve it", async () => {
+    const raw = openDb();
+    // Finalize: 3 overloads (3 + 6 + 12 s ≈ 21-23 s of the 30 s budget).
+    // Penalty UPDATE: 2 overloads (3 + 6 s) — would not fit in the ~7-9 s left.
+    const fin = faulty(d1FromSqlite(raw), /^UPDATE feed_pull_history SET status = 'failed'/, ["overload", "overload", "overload"]);
+    const { db, attempts } = faulty(fin.db, /^UPDATE feed_status SET last_failure/, ["overload", "overload"]);
+    const { elapsed, result } = await settle(runFeed(envOf(db), CONFIG, failing));
+    expect(String((result as PromiseRejectedResult).reason)).toContain("Feed test_feed failed: upstream 500");
+    expect(fin.attempts()).toBe(4);
+    expect(attempts()).toBe(3);
+    expect(status(raw).consecutive_failures).toBe(1);
+    expect(elapsed).toBeLessThanOrEqual(FEED_FINALIZE_RETRY_BUDGET_MS + FEED_PENALTY_RETRY_FLOOR_MS + 1_000);
+  });
+
+  it("a penalty that still fails is logged; runFeed rejects with the feed error, not the D1 error", async () => {
+    const raw = openDb();
+    const forever: Fault[] = Array.from({ length: 50 }, () => "overload");
+    const { db } = faulty(d1FromSqlite(raw), /^UPDATE feed_status SET last_failure/, forever);
+    const { result } = await settle(runFeed(envOf(db), CONFIG, failing));
+    expect(String((result as PromiseRejectedResult).reason)).toBe("Error: Feed test_feed failed: upstream 500");
+    expect(pulls(raw)[0]!.status).toBe("failed");
+  });
+
+  it("success: an overload on the breaker reset is retried, so the breaker closes", async () => {
+    const raw = openDb();
+    raw.prepare("UPDATE feed_status SET consecutive_failures = 3, next_retry_at = '2026-01-01 00:00:00' WHERE feed_name = ?").run(CONFIG.feed_name);
+    const { db, attempts } = faulty(d1FromSqlite(raw), /^UPDATE feed_status SET last_successful_pull/, ["overload", "overload"]);
+    const { result } = await settle(runFeed(envOf(db), CONFIG, succeeding));
+    expect(result.status).toBe("fulfilled");
+    expect(attempts()).toBe(3);
+    expect(status(raw)).toMatchObject({ consecutive_failures: 0, next_retry_at: null });
+    const today = raw.prepare("SELECT records_ingested_today AS n FROM feed_status WHERE feed_name = ?").get(CONFIG.feed_name) as { n: number };
+    expect(today.n).toBe(OK.itemsNew); // counted once
+  });
+
+  it("success: an ambiguous error on the breaker reset is NOT re-sent (non-idempotent increment) and never takes the failure path", async () => {
+    const raw = openDb();
+    const { db, attempts } = faulty(d1FromSqlite(raw), /^UPDATE feed_status SET last_successful_pull/, ["ambiguous"]);
+    const { result } = await settle(runFeed(envOf(db), CONFIG, succeeding));
+    expect(result.status).toBe("fulfilled");
+    expect(attempts()).toBe(1);
+    expect(pulls(raw)[0]!.status).toBe("success");
+    const today = raw.prepare("SELECT records_ingested_today AS n FROM feed_status WHERE feed_name = ?").get(CONFIG.feed_name) as { n: number };
+    expect(today.n).toBe(OK.itemsNew);
+  });
+
+  it("success: a breaker reset that keeps failing is logged; the pull stays a success, no penalty", async () => {
+    const raw = openDb();
+    const forever: Fault[] = Array.from({ length: 50 }, () => "overload");
+    const { db } = faulty(d1FromSqlite(raw), /^UPDATE feed_status SET last_successful_pull/, forever);
+    const { elapsed, result } = await settle(runFeed(envOf(db), CONFIG, succeeding));
+    expect(result.status).toBe("fulfilled");
+    expect(pulls(raw)[0]!.status).toBe("success");
+    expect(status(raw).consecutive_failures).toBe(0);
+    expect(elapsed).toBeLessThanOrEqual(FEED_PENALTY_RETRY_FLOOR_MS);
+  });
+
+  it("success: a success finalize that never lands leaves the row partial for the reaper, without a penalty", async () => {
+    const raw = openDb();
+    const forever: Fault[] = Array.from({ length: 50 }, () => "overload");
+    const { db } = faulty(d1FromSqlite(raw), /^UPDATE feed_pull_history SET status = 'success'/, forever);
+    const { result } = await settle(runFeed(envOf(db), CONFIG, succeeding));
+    expect(result.status).toBe("rejected");
+    expect(String((result as PromiseRejectedResult).reason)).toContain("success finalize failed");
+    expect(pulls(raw)[0]!.status).toBe("partial");
+    expect(status(raw).consecutive_failures).toBe(0);
   });
 
   it("manual trigger (overloadBackoff: false) keeps the short in-request backoff", async () => {
