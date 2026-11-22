@@ -71,8 +71,9 @@ describe("classifyStatus", () => {
     expect(classifyStatus({ ...base, days_to_cap: 180 }).status).toBe("healthy");
     expect(classifyStatus({ ...base, overloads_24h: 1 }).status).toBe("warning");
     expect(classifyStatus({ ...base, overloads_24h: 4 }).status).toBe("warning");
-    expect(classifyStatus({ ...base, store: "audit", writes_cycle: 0 }).reasons).toEqual(["No writes this billing cycle"]);
-    // geo is written only on a MaxMind release — zero writes is fine.
+    expect(classifyStatus({ ...base, store: "dnsq", writes_cycle: 0 }).reasons).toEqual(["No writes this billing cycle"]);
+    // audit is append-only and rarely written; geo only on a MaxMind release.
+    expect(classifyStatus({ ...base, store: "audit", writes_cycle: 0 }).status).toBe("healthy");
     expect(classifyStatus({ ...base, store: "geo", writes_cycle: 0 }).status).toBe("healthy");
     // Unknown usage (null) is not "zero writes".
     expect(classifyStatus({ ...base, writes_cycle: null }).status).toBe("healthy");
@@ -80,8 +81,9 @@ describe("classifyStatus", () => {
   it("unknown when size is null and nothing else warns", () => {
     expect(classifyStatus({ ...base, size_bytes: null, overloads_24h: null }).status).toBe("unknown");
   });
-  it("audit note when the audit store had no writes", () => {
-    expect(noteFor("audit", { writes_cycle: 0, size_bytes: 1, bound: true })).toBe("No writes this billing cycle — check the audit writer");
+  it("no zero-write note for the rarely-written audit store; core still gets one", () => {
+    expect(noteFor("audit", { writes_cycle: 0, size_bytes: 1, bound: true })).toBeNull();
+    expect(noteFor("core", { writes_cycle: 0, size_bytes: 1, bound: true })).toBe("No writes this billing cycle — check its writers");
     expect(noteFor("geo", { writes_cycle: 0, size_bytes: 1, bound: false })).toBe("Not bound in this environment");
     expect(noteFor("core", { writes_cycle: 5, size_bytes: 1, bound: true })).toBeNull();
   });
@@ -247,8 +249,10 @@ describe("buildDatabasesBase — fail-soft", () => {
     expect(core.hourly[23]).toEqual({ hour: "2026-11-22T10:00:00Z", rows_read: 1000, rows_written: 10, overloads: 3 });
     expect(audit.writes_cycle).toBe(0);
     expect(audit.overloads_24h).toBe(0);
-    expect(audit.status).toBe("warning");
-    expect(audit.note).toBe("No writes this billing cycle — check the audit writer");
+    // audit is append-only and rarely written: a quiet cycle is not a warning.
+    expect(audit.status).not.toBe("overloaded");
+    expect(audit.status_reasons).not.toContain("No writes this billing cycle");
+    expect(audit.note).toBeNull();
     expect(base.summary.overloads_24h).toBe(6);
     expect(base.summary.largest_share_pct).toBeCloseTo(98.4, 1);
     expect(base.summary.cycle_rows_read).toBe(6000); // account-wide, staging included
