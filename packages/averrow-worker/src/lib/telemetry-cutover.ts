@@ -119,8 +119,10 @@ export type ConfigCopyDirection = "to_telemetry" | "to_core";
 export interface ConfigRowDiff {
   agent_id: string;
   /** insert = missing on target; update = differs and source is as new or newer (or force);
-   *  skip_target_newer = differs but the target row's updated_at is newer. */
-  action: "insert" | "update" | "skip_target_newer";
+   *  skip_target_newer = differs but the target row's updated_at is newer;
+   *  skip_unpause_needs_force = would re-enable a paused agent (enabled 0→1 or
+   *  clear paused_reason) — never done without force=1. */
+  action: "insert" | "update" | "skip_target_newer" | "skip_unpause_needs_force";
   /** Changed columns, target value → source value (empty for an insert). */
   changed: Record<string, { target: unknown; source: unknown }>;
 }
@@ -136,6 +138,7 @@ export interface ConfigCopyTableResult {
   inserted: number;
   updated: number;
   skipped_target_newer: number;
+  skipped_unpause_needs_force: number;
   /** Per-row plan (≤ CONFIG_DIFF_REPORT_LIMIT rows), dry run or not. */
   diffs: ConfigRowDiff[];
 }
@@ -167,6 +170,18 @@ export function configRowDiff(
     if (!sameValue(target[c], source[c])) changed[c] = { target: target[c] ?? null, source: source[c] ?? null };
   }
   return changed;
+}
+
+/**
+ * Would overwriting `target` with `source` re-enable a paused agent? A pause
+ * (manual or a tripped breaker) is only ever lifted by an operator, so
+ * reconcile never does it on its own — updated_at is not a safe tiebreak.
+ */
+function wouldUnpause(target: Record<string, unknown>, source: Record<string, unknown>): boolean {
+  const tgtPaused = Number(target.enabled) === 0;
+  const srcEnabled = Number(source.enabled) !== 0;
+  const clearsReason = target.paused_reason != null && source.paused_reason == null;
+  return (tgtPaused && srcEnabled) || clearsReason;
 }
 
 function upsertSql(table: ConfigTable): string {
@@ -236,12 +251,17 @@ export async function copyTelemetryConfig(
       if (Object.keys(changed).length === 0) continue;
       differing++;
       const sourceNewer = String(row.updated_at ?? "") >= String(tgt.updated_at ?? "");
-      plan.push({ row, diff: { agent_id: id, action: force || sourceNewer ? "update" : "skip_target_newer", changed } });
+      const action: ConfigRowDiff["action"] = force
+        ? "update"
+        : table === "agent_configs" && wouldUnpause(tgt, row)
+          ? "skip_unpause_needs_force"
+          : sourceNewer ? "update" : "skip_target_newer";
+      plan.push({ row, diff: { agent_id: id, action, changed } });
     }
     let inserted = 0;
     let updated = 0;
     if (!opts.dryRun) {
-      const writes = plan.filter((p) => p.diff.action !== "skip_target_newer");
+      const writes = plan.filter((p) => p.diff.action === "insert" || p.diff.action === "update");
       const sql = mode === "reconcile" ? upsertSql(table) : insertSql(table, "agent_id");
       for (let i = 0; i < writes.length; i += COPY_BATCH) {
         const chunk = writes.slice(i, i + COPY_BATCH);
@@ -262,6 +282,7 @@ export async function copyTelemetryConfig(
       inserted,
       updated,
       skipped_target_newer: plan.filter((p) => p.diff.action === "skip_target_newer").length,
+      skipped_unpause_needs_force: plan.filter((p) => p.diff.action === "skip_unpause_needs_force").length,
       diffs: plan.slice(0, CONFIG_DIFF_REPORT_LIMIT).map((p) => p.diff),
     });
   }
@@ -610,7 +631,7 @@ export async function telemetryPreflight(env: Env): Promise<TelemetryPreflight> 
       missing_on_telemetry: missing.slice(0, 50), content_mismatch: mismatch.slice(0, 50),
     });
     if (missing.length > 0) blocking.push(`${table}: ${missing.length} core row(s) not copied to TELEMETRY_DB (POST /api/internal/telemetry/copy-config?dry_run=0)`);
-    if (mismatch.length > 0) blocking.push(`${table}: ${mismatch.length} row(s) differ from core in ${PREFLIGHT_CONTENT_COLUMNS[table].join(" / ")} (POST /api/internal/telemetry/copy-config?mode=reconcile&dry_run=0)`);
+    if (mismatch.length > 0) blocking.push(`${table}: ${mismatch.length} row(s) differ from core in ${PREFLIGHT_CONTENT_COLUMNS[table].join(" / ")} — review POST /api/internal/telemetry/copy-config?mode=reconcile (dry run), apply with dry_run=0; rows reported skip_target_newer or skip_unpause_needs_force need force=1 after review`);
   }
 
   // History: informational (the union reads cover anything not backfilled).

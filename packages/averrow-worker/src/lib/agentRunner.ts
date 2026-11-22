@@ -404,17 +404,34 @@ async function executeAgentMetered(
   // ── Circuit breaker gate ────────────────────────────────────
   // On telemetry, a missing config row is seeded from core's row first, so a
   // flip made before copy-config can't reset a manual pause / tripped breaker
-  // to the default enabled=1 (best-effort; the default seed below follows).
+  // to the default enabled=1. If that seed fails (core read error), NO default
+  // row is written this run: the gate below then sees no row and the run
+  // proceeds exactly as the core path does with an absent row, and the next
+  // run retries the seed — a default enabled=1 row would mask core's pause
+  // for good.
+  let skipDefaultSeed = false;
   if (tRoute === "telemetry") {
+    let has: unknown = null;
     try {
-      const has = await tdb.prepare("SELECT 1 AS ok FROM agent_configs WHERE agent_id = ?").bind(agentId).first();
-      if (!has) await seedConfigRowFromCore(env, tdb, "agent_configs", agentId);
-    } catch { /* fall through to the default seed */ }
+      has = await tdb.prepare("SELECT 1 AS ok FROM agent_configs WHERE agent_id = ?").bind(agentId).first();
+    } catch { /* fall through to the default seed, as before */ has = null; }
+    if (!has) {
+      try {
+        await seedConfigRowFromCore(env, tdb, "agent_configs", agentId);
+      } catch (err) {
+        skipDefaultSeed = true;
+        console.warn(
+          `[agentRunner] ${agentId}: config seed from core failed (${err instanceof Error ? err.message : String(err)}) — no default row this run`,
+        );
+      }
+    }
   }
   // Ensure the config row exists (zero-ceremony for agents added after migration).
-  await tdb.prepare(
-    "INSERT OR IGNORE INTO agent_configs (agent_id) VALUES (?)"
-  ).bind(agentId).run();
+  if (!skipDefaultSeed) {
+    await tdb.prepare(
+      "INSERT OR IGNORE INTO agent_configs (agent_id) VALUES (?)"
+    ).bind(agentId).run();
+  }
 
   const configRow = await tdb.prepare(
     "SELECT enabled, paused_reason FROM agent_configs WHERE agent_id = ?"
@@ -457,8 +474,18 @@ async function executeAgentMetered(
     approval = await getApprovalState(tdb, agentId);
     // Same fallback for the approval row: a grandfathered / approved agent
     // must not be blocked because copy-config has not run yet.
-    if (approval === null && tRoute === "telemetry" && (await seedConfigRowFromCore(env, tdb, "agent_approvals", agentId))) {
-      approval = await getApprovalState(tdb, agentId);
+    // A core read failure here must not fail the gate OPEN (the outer
+    // catch): it leaves approval null → the pending path, as today.
+    if (approval === null && tRoute === "telemetry") {
+      let seeded = false;
+      try {
+        seeded = await seedConfigRowFromCore(env, tdb, "agent_approvals", agentId);
+      } catch (err) {
+        console.warn(
+          `[agentRunner] ${agentId}: approval seed from core failed (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+      if (seeded) approval = await getApprovalState(tdb, agentId);
     }
   } catch (err) {
     // Fail open: when agent_approvals isn't queryable (test fake
@@ -591,7 +618,10 @@ async function executeAgentMetered(
 
     // ── Circuit breaker: reset counter on success/partial ────
     await tdb.prepare(
-      "UPDATE agent_configs SET consecutive_failures = 0, updated_at = datetime('now') WHERE agent_id = ?"
+      // No-op unless there is something to reset: bumping updated_at on
+      // every success would make this row look "newer" than a manual pause
+      // set on the other DB (copy-config reconcile compares updated_at).
+      "UPDATE agent_configs SET consecutive_failures = 0, updated_at = datetime('now') WHERE agent_id = ? AND consecutive_failures <> 0"
     ).bind(agentId).run();
 
     return { runId, status: finalStatus, result };

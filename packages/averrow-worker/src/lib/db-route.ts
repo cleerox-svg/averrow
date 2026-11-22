@@ -59,6 +59,7 @@ export function resetTelemetryRouteCache(): void {
   cachedFlag = null;
   usedKnown = false;
   usedNegativeUntil = 0;
+  usedRetryAfter = 0;
 }
 
 // ─── "Telemetry was used" marker (rollback safety) ────────────────
@@ -69,20 +70,27 @@ export function resetTelemetryRouteCache(): void {
 // whatever the current route — so flipping back to core never hides the rows
 // written on telemetry meanwhile (FC would see every agent as stalled,
 // /status would lose the interval, pending pivot events would never be
-// consumed). Clear it only after telemetry's rows are copied back.
+// consumed). Never clear it while TELEMETRY_DB is bound: there is no tool
+// that copies telemetry's HISTORY rows back to core (copy-config
+// direction=to_core covers only the two config tables), so clearing it
+// would hide every run / event / activity row written while on telemetry.
 export const TELEMETRY_USED_KV_KEY = "db_route:telemetry_used";
+/** Per-isolate backoff after a failed marker write (KV down). */
+export const TELEMETRY_USED_RETRY_MS = 30_000;
 let usedKnown = false;
 let usedNegativeUntil = 0;
+let usedRetryAfter = 0;
 
 async function markTelemetryUsed(env: Env, nowMs: number): Promise<void> {
-  if (usedKnown) return;
+  if (usedKnown || nowMs < usedRetryAfter) return;
   try {
     if ((await env.CACHE.get(TELEMETRY_USED_KV_KEY)) == null) {
       await env.CACHE.put(TELEMETRY_USED_KV_KEY, new Date(nowMs).toISOString());
     }
     usedKnown = true;
   } catch {
-    // Retry on the next resolution; the route itself is unaffected.
+    // Back off, then retry on a later resolution; the route is unaffected.
+    usedRetryAfter = nowMs + TELEMETRY_USED_RETRY_MS;
   }
 }
 

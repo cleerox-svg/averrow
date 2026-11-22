@@ -192,7 +192,8 @@ export class CampaignHunterWorkflow extends WorkflowEntrypoint<Env, CampaignHunt
       ).bind(Date.now() - startMs, summary.itemsProcessed, outputsGenerated, summary.tokensUsed, runId).run();
 
       await runDb().prepare(
-        `UPDATE agent_configs SET consecutive_failures = 0, updated_at = datetime('now') WHERE agent_id = ?`,
+        // No-op unless there is something to reset (see agentRunner).
+        `UPDATE agent_configs SET consecutive_failures = 0, updated_at = datetime('now') WHERE agent_id = ? AND consecutive_failures <> 0`,
       ).bind(AGENT_ID).run();
 
       // A deliberate AI skip finishes like any completed run (status

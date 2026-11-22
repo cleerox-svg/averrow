@@ -28,7 +28,8 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 > `copy-config?mode=reconcile&dry_run=0` → `POST
 > /api/internal/telemetry/backfill` per history table. Once the route has
 > been `telemetry`, KV `db_route:telemetry_used` keeps history reads and the
-> agent_events consumer on both DBs even after a flip back to core. The switch is
+> agent_events consumer on both DBs even after a flip back to core. Never
+> clear it while `TELEMETRY_DB` is bound: history rows have no copy-back tool. The switch is
 > `lib/db-route.ts` `telemetryStore(env)` (KV flag `db_route:telemetry`,
 > default `core`); caller families are converted to it one PR at a time, and
 > the cut-over is one KV write after every family is converted. Do not read

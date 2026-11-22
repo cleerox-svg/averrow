@@ -24,7 +24,14 @@ import { hasSqlite, openMigratedDb, d1FromSqlite, fakeKv, sqliteTimestampHoursAg
 import { splitStatements } from "./migration-schema";
 import type { Env } from "../src/types";
 import type { AgentModule } from "../src/lib/agentRunner";
-import { resetTelemetryRouteCache, TELEMETRY_ROUTE_KV_KEY, TELEMETRY_USED_KV_KEY } from "../src/lib/db-route";
+import {
+  resetTelemetryRouteCache,
+  telemetryRouteState,
+  TELEMETRY_ROUTE_CACHE_MS,
+  TELEMETRY_ROUTE_KV_KEY,
+  TELEMETRY_USED_KV_KEY,
+  TELEMETRY_USED_RETRY_MS,
+} from "../src/lib/db-route";
 import {
   historyParts,
   mergeGroupedRows,
@@ -461,6 +468,84 @@ describe.skipIf(!hasSqlite())("review fixes (H1 / M1 / M2)", () => {
     // New writes go to core again.
     const run = await createAgentRun(w.env, "daily_snapshots");
     expect(run.route).toBe("core");
+  });
+
+  it("M-A: reconcile never lifts a pause without force=1", async () => {
+    const w = world(null);
+    // Core enabled and NEWER, telemetry paused (e.g. paused there after the flip).
+    w.core.prepare("INSERT INTO agent_configs (agent_id, enabled, updated_at) VALUES ('u', 1, '2026-11-22 12:00:00')").run();
+    w.tel.prepare("INSERT INTO agent_configs (agent_id, enabled, paused_reason, updated_at) VALUES ('u', 0, 'manual', '2026-11-22 10:00:00')").run();
+    const r = await copyTelemetryConfig(w.env, { dryRun: false, mode: "reconcile" });
+    const cfg = r.tables.find((t) => t.table === "agent_configs")!;
+    expect(cfg).toMatchObject({ updated: 0, skipped_unpause_needs_force: 1 });
+    expect(cfg.diffs[0]).toMatchObject({ agent_id: "u", action: "skip_unpause_needs_force" });
+    expect(rowsOf(w.tel, "SELECT enabled, paused_reason FROM agent_configs WHERE agent_id = 'u'")[0]).toEqual({ enabled: 0, paused_reason: "manual" });
+    await copyTelemetryConfig(w.env, { dryRun: false, mode: "reconcile", force: true });
+    expect(rowsOf(w.tel, "SELECT enabled, paused_reason FROM agent_configs WHERE agent_id = 'u'")[0]).toEqual({ enabled: 1, paused_reason: null });
+  });
+
+  it("M-A: a successful run only touches agent_configs.updated_at when it resets a non-zero failure count", async () => {
+    const w = world("telemetry");
+    w.tel.prepare("INSERT INTO agent_approvals (agent_id, state, requested_at) VALUES ('b1c_clean', 'approved', '2026-01-01'), ('b1c_failing', 'approved', '2026-01-01')").run();
+    w.tel.prepare("INSERT INTO agent_configs (agent_id, consecutive_failures, updated_at) VALUES ('b1c_clean', 0, '2020-01-01 00:00:00'), ('b1c_failing', 2, '2020-01-01 00:00:00')").run();
+    const mod = (name: string) => ({
+      name, displayName: name, description: "t", color: "#000", trigger: "manual", stallThresholdMinutes: 30,
+      async execute() { return { itemsProcessed: 1, itemsCreated: 0, itemsUpdated: 0, output: {} }; },
+    }) as unknown as AgentModule;
+    await executeAgent(w.env, mod("b1c_clean"), {}, null, "manual");
+    await executeAgent(w.env, mod("b1c_failing"), {}, null, "manual");
+    expect(rowsOf(w.tel, "SELECT agent_id, consecutive_failures, updated_at = '2020-01-01 00:00:00' AS untouched FROM agent_configs ORDER BY agent_id")).toEqual([
+      { agent_id: "b1c_clean", consecutive_failures: 0, untouched: 1 },
+      { agent_id: "b1c_failing", consecutive_failures: 0, untouched: 0 },
+    ]);
+    const hunter = readFileSync(resolve(__dirname, "..", "src", "workflows", "campaignHunter.ts"), "utf8");
+    expect(hunter).toMatch(/UPDATE agent_configs SET consecutive_failures = 0, updated_at = datetime\('now'\) WHERE agent_id = \? AND consecutive_failures <> 0/);
+  });
+
+  it("L-B: a core read failure during the seed writes no default config row and keeps the approval gate closed", async () => {
+    const w = world("telemetry");
+    const realCore = w.env.DB;
+    const failingCore = {
+      prepare(sql: string) {
+        if (/FROM agent_(configs|approvals) WHERE agent_id = \?/.test(sql)) throw new Error("core overloaded");
+        return realCore.prepare(sql);
+      },
+      batch: realCore.batch.bind(realCore),
+    } as unknown as D1Database;
+    const env = { ...w.env, DB: failingCore } as unknown as Env;
+    let ran = false;
+    const mod = {
+      name: "b1c_seedfail", displayName: "x", description: "t", color: "#000", trigger: "manual", stallThresholdMinutes: 30,
+      async execute() { ran = true; return { itemsProcessed: 1, itemsCreated: 0, itemsUpdated: 0, output: {} }; },
+    } as unknown as AgentModule;
+    const res = await executeAgent(env, mod, {}, null, "manual");
+    expect(rowsOf(w.tel, "SELECT COUNT(*) AS n FROM agent_configs WHERE agent_id = 'b1c_seedfail'")[0]!.n).toBe(0);
+    // Approval: null → the pending path (blocked), never fail-open.
+    expect(res.status).toBe("circuit_open");
+    expect(ran).toBe(false);
+    expect(rowsOf(w.tel, "SELECT state FROM agent_approvals WHERE agent_id = 'b1c_seedfail'")[0]!.state).toBe("pending");
+  });
+
+  it("L-C: a failed marker write backs off ~30 s per isolate", async () => {
+    let puts = 0;
+    const store = new Map<string, string>([[TELEMETRY_ROUTE_KV_KEY, "telemetry"]]);
+    const kv = {
+      get: async (k: string) => store.get(k) ?? null,
+      put: async () => { puts++; throw new Error("kv down"); },
+    } as unknown as KVNamespace;
+    const env = { DB: d1FromSqlite(openTelemetryDb()), TELEMETRY_DB: d1FromSqlite(openTelemetryDb()), CACHE: kv } as unknown as Env;
+    resetTelemetryRouteCache();
+    await telemetryRouteState(env, 1_000);
+    // 60 s later the 30 s backoff has expired → one more attempt.
+    await telemetryRouteState(env, 1_000 + TELEMETRY_ROUTE_CACHE_MS + 1);
+    expect(puts).toBe(2);
+    resetTelemetryRouteCache();
+    puts = 0;
+    await telemetryRouteState(env, 1_000);
+    await telemetryRouteState(env, 1_000 + TELEMETRY_USED_RETRY_MS - 1);
+    expect(puts).toBe(1);
+    await telemetryRouteState(env, 1_000 + TELEMETRY_USED_RETRY_MS);
+    expect(puts).toBe(2);
   });
 
   it("M2: without the marker, route core stays a single core read", async () => {
