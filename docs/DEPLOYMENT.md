@@ -62,7 +62,11 @@ cd packages/averrow-worker
 pnpm run db:migrate:audit:prod      # = wrangler d1 migrations apply AUDIT_DB --remote
 ```
 
-Migrations are also run automatically by the deploy workflow (production only — `deploy-radar.yml` runs `db:migrate:prod` and `db:migrate:audit:prod`; staging and dev are applied by hand with `--env staging` / `--env dev`).
+Migrations are also run automatically by the deploy workflow (production only — `deploy-radar.yml` runs `db:migrate:prod`, `db:migrate:audit:prod`, then the side DBs `db:migrate:geoip:prod`, `db:migrate:dnsq:prod`, `db:migrate:telemetry:prod` and `db:migrate:archive:prod`, each with 4 retries; any one failing stops the job before the deploy; staging and dev are applied by hand with `--env staging` / `--env dev`, e.g. `pnpm run db:migrate:telemetry:staging` / `db:migrate:archive:staging`).
+
+### Telemetry + archive side DBs (Track B1a, 2026-11)
+
+`TELEMETRY_DB` (`averrow-telemetry`, `migrations-telemetry/`) and `ARCHIVE_DB` (`averrow-archive`, `migrations-archive/`) are bound in prod and staging, not dev, together with the R2 bucket `THREAT_ARCHIVE` (`averrow-threat-archive` / `-staging`). All three must exist before the deploy (wrangler fails on a missing D1 or bucket). Nothing reads or writes them yet: the telemetry tables are still served from core until the KV flag `db_route:telemetry` is set to `telemetry` (`lib/db-route.ts`; the per-family caller conversions come first). Until that cut-over, a core migration that changes a wave-1 table must be mirrored in `migrations-telemetry/` (`test/telemetry-schema-parity.test.ts` fails otherwise).
 
 ### Audit migration 0002 — redact webhook URLs in historic audit rows
 
