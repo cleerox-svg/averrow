@@ -38,12 +38,33 @@ export function addToTally(
 }
 
 /**
+ * One store's share of a metered tally (lib/d1-meter.ts). `overloads` =
+ * statements D1 rejected with its 10 s-window overload error
+ * (lib/d1-retry.ts isD1OverloadError); `errors` = every other rejection.
+ * Both are also counted in `queries` (a query is counted when issued).
+ */
+export interface StoreTally {
+  rowsRead: number;
+  rowsWritten: number;
+  queries: number;
+  overloads: number;
+  errors: number;
+}
+
+/** Per-store breakdown, keyed by registry StoreId (lib/db-registry.ts). */
+export type StoreBreakdown = Record<string, StoreTally>;
+
+export function newStoreTally(): StoreTally {
+  return { rowsRead: 0, rowsWritten: 0, queries: 0, overloads: 0, errors: 0 };
+}
+
+/**
  * Record a request's D1 attribution to Analytics Engine.
  * Endpoint should be a stable label (e.g. "darkweb_overview", not the
  * full URL) so aggregation keys stay tight.
  */
-export function recordD1Reads(env: Env, endpoint: string, tally: D1Tally): void {
-  writeD1Attribution(env.AE, endpoint, tally);
+export function recordD1Reads(env: Env, endpoint: string, tally: D1Tally, stores?: StoreBreakdown): void {
+  writeD1Attribution(env.AE, endpoint, tally, stores);
 }
 
 /**
@@ -56,24 +77,76 @@ export function recordD1Reads(env: Env, endpoint: string, tally: D1Tally): void 
  * executeAgent / runSyncAgent — the run, and its post-return waitUntil tail
  * when it was given `_executionCtx`), `cron:<cron expression>` and
  * `cron:<expr>:bg` (cron/orchestrator.ts handleScheduled — non-agent work,
- * inline phase and post-return waitUntil tail), and `workflow:<name>`
+ * inline phase and post-return waitUntil tail), `feed:<feed_name>`
+ * (lib/feedRunner.ts runFeed — one pull), and `workflow:<name>`
  * (src/workflows/*, one point per step; not geoip_refresh). The meter
  * layers are exclusive (lib/d1-meter.ts), so these per-job rows are
  * disjoint and can be summed.
+ *
+ * Point shape (v2, 2026-11 — per-store split):
+ *   blob1   endpoint label (unchanged; index1 too)
+ *   blob2   store id (`core` / `audit` / `geo` / `dnsq`), '' = not attributed
+ *           to a store (handler tallies, or pre-v2 points)
+ *   double1 rows_read, double2 rows_written, double3 queries (unchanged
+ *           meaning — summed per endpoint over the store points they equal
+ *           the old single point, so `SUM(...) GROUP BY blob1` is unchanged)
+ *   double4 overloads, double5 other D1 errors (0 on pre-v2 points)
+ *   double6 record weight: 1 on the FIRST point of a record, 0 on the extra
+ *           store points. A "request/run count" must be
+ *           `SUM(_sample_interval * if(blob2 = '', 1, double6))` (pre-v2
+ *           points have blob2 '' and no double6), never a bare point count —
+ *           a run touching two stores writes two points.
+ *
+ * With a store breakdown, one point is written per store with queries > 0,
+ * plus a '' point for any remainder of the total not covered by a store
+ * (only possible for a hand-built tally). With nothing to write (no
+ * queries at all) a single '' point keeps the record count.
  */
 export function writeD1Attribution(
   ae: AnalyticsEngineDataset | undefined,
   endpoint: string,
   tally: D1Tally,
+  stores?: StoreBreakdown,
 ): void {
   if (!ae) return;
   try {
-    ae.writeDataPoint({
-      blobs: [endpoint],
-      doubles: [tally.rowsRead, tally.rowsWritten, tally.queries],
-      indexes: [endpoint],
-    });
+    for (const p of d1AttributionPoints(endpoint, tally, stores)) ae.writeDataPoint(p);
   } catch {
     /* AE failures are non-fatal — the response is the priority */
   }
+}
+
+/** The AE points writeD1Attribution writes (pure; exported for tests). */
+export function d1AttributionPoints(
+  endpoint: string,
+  tally: D1Tally,
+  stores?: StoreBreakdown,
+): AnalyticsEngineDataPoint[] {
+  const points: AnalyticsEngineDataPoint[] = [];
+  const rest = { ...tally };
+  const push = (store: string, t: StoreTally): void => {
+    points.push({
+      blobs: [endpoint, store],
+      doubles: [t.rowsRead, t.rowsWritten, t.queries, t.overloads, t.errors, points.length === 0 ? 1 : 0],
+      indexes: [endpoint],
+    });
+  };
+  for (const [store, t] of Object.entries(stores ?? {})) {
+    if (!store || t.queries <= 0) continue;
+    push(store, t);
+    rest.rowsRead -= t.rowsRead;
+    rest.rowsWritten -= t.rowsWritten;
+    rest.queries -= t.queries;
+  }
+  const unattributed = stores?.[""];
+  if (rest.queries > 0 || points.length === 0) {
+    push("", {
+      rowsRead: Math.max(0, rest.rowsRead),
+      rowsWritten: Math.max(0, rest.rowsWritten),
+      queries: Math.max(0, rest.queries),
+      overloads: unattributed?.overloads ?? 0,
+      errors: unattributed?.errors ?? 0,
+    });
+  }
+  return points;
 }
