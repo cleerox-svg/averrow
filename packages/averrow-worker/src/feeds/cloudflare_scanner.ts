@@ -49,7 +49,8 @@ import type { Env } from "../types";
  *   a few thousand at most), oldest first, stores the verdict, adjusts
  *   confidence and auto-remediates low-confidence threats whose CF verdict
  *   is clean. A scan pending > CF_SCAN_PENDING_EXPIRE_DAYS is marked
- *   cf_verdict = 'expired' without a poll (no confidence/status change) so
+ *   cf_verdict = 'expired' without a poll, and a 200 with no scan body is
+ *   marked 'failed' (no confidence/status change for either), so
  *   it leaves the pending set. cf_verdict has no reader outside this module
  *   (audit 0253), so the extra value is safe.
  *
@@ -122,9 +123,11 @@ export const CF_SCAN_CANDIDATES_SQL = `
 
 /**
  * A scan still without a verdict this many days after it could have been
- * submitted is given up on (cf_verdict = 'expired').
+ * submitted is given up on (cf_verdict = 'expired'). Cloudflare scans finish
+ * in minutes, so a day is generous; a longer window lets a handful of stuck
+ * scans fill every oldest-first poll slot and delay all newer verdicts.
  */
-export const CF_SCAN_PENDING_EXPIRE_DAYS = 7;
+export const CF_SCAN_PENDING_EXPIRE_DAYS = 1;
 
 /**
  * Phase 2 pending-verdict read (partial index idx_threats_cf_scan; the sort
@@ -334,7 +337,12 @@ export const cloudflare_scanner: FeedModule = {
       }
 
       if (!resp.success || !resp.result?.scan) {
+        // A finished request with no scan body is a terminal failure (dead
+        // URL, blocked fetch): retire it now so it can't hold a poll slot.
         errors++;
+        await ctx.env.DB.prepare(
+          "UPDATE threats SET cf_verdict = 'failed' WHERE id = ? AND cf_verdict IS NULL",
+        ).bind(row.id).run();
         continue;
       }
 

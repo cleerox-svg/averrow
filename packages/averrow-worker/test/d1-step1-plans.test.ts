@@ -9,7 +9,7 @@
 //   2. cloudflare_scanner auth gate: 401/403 fails the pull BEFORE any D1
 //      read (probed every run, nothing cached); a 401/403 on the first
 //      submit or first Phase 2 poll fails the same way; Phase 2 polls oldest
-//      first and expires scans pending > 7 days.
+//      first and expires scans pending > CF_SCAN_PENDING_EXPIRE_DAYS.
 //   3. system-health 14-day trend: threatTrend14d returns exactly the rows of
 //      the original single GROUP BY, and its three reads are created_at
 //      index ranges (the closed-day read is cached per UTC date).
@@ -320,7 +320,7 @@ describe.skipIf(!hasSqlite())("cloudflare_scanner auth gate", () => {
     expect(log.some((e) => /^\s*UPDATE/.test(e.sql))).toBe(false);
   });
 
-  it("Phase 2 polls oldest first on idx_threats_cf_scan and expires scans pending > 7 days without polling them", async () => {
+  it("Phase 2 polls oldest first on idx_threats_cf_scan and expires scans pending > CF_SCAN_PENDING_EXPIRE_DAYS without polling them", async () => {
     const own = openMigratedDb();
     const ins = own.prepare(`INSERT INTO threats (id, created_at, first_seen, status, severity, threat_type, source_feed, malicious_domain, ioc_value, cf_scan_id, confidence_score)
       VALUES (?, ?, ?, 'active', 'high', 'phishing', 'phishtank', ?, ?, ?, 40)`);
@@ -358,6 +358,33 @@ describe.skipIf(!hasSqlite())("cloudflare_scanner auth gate", () => {
     // Only the probe (2×) and the recent scans were requested.
     expect(polled.filter((u) => u.startsWith("scan-old"))).toEqual([]);
     expect(polled.filter((u) => u.startsWith("scan-new")).sort()).toEqual(["scan-new0", "scan-new1", "scan-new2"]);
+  });
+
+  it("Phase 2 retires a finished scan with no scan body as 'failed' so it can't hold a poll slot", async () => {
+    const own = openMigratedDb();
+    const ins = own.prepare(`INSERT INTO threats (id, created_at, first_seen, status, severity, threat_type, source_feed, malicious_domain, ioc_value, cf_scan_id, confidence_score)
+      VALUES (?, ?, ?, 'active', 'high', 'phishing', 'phishtank', ?, ?, ?, 40)`);
+    const c = sqliteUtc(NOW - 3_600_000);
+    ins.run("dead", c, c, "dead.x", "dead.x", "scan-dead");
+    ins.run("pending", c, c, "pend.x", "pend.x", "scan-pending");
+    stubFetch((url) => {
+      const id = url.split("/").pop()!;
+      if (id === "scan-dead") return { status: 200, body: JSON.stringify({ success: false, errors: [{ message: "scan failed" }] }) };
+      return { status: 404, body: "" };
+    });
+    const ctx = { env: { DB: d1FromSqlite(own), CACHE: fakeKv(), CF_ACCOUNT_ID: "acct", CF_API_TOKEN: "tok-1" } as unknown as Env, feedName: "cloudflare_scanner", feedUrl: "" };
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    vi.setSystemTime(NOW);
+    const run = cloudflare_scanner.ingest(ctx);
+    let done = false;
+    void run.finally(() => { done = true; }).catch(() => {});
+    while (!done) await vi.advanceTimersByTimeAsync(1_000);
+    await run;
+    const rows = own.prepare("SELECT id, cf_verdict, confidence_score, status FROM threats WHERE cf_scan_id IS NOT NULL ORDER BY id").all();
+    expect(rows).toEqual([
+      { id: "dead", cf_verdict: "failed", confidence_score: 40, status: "active" },
+      { id: "pending", cf_verdict: null, confidence_score: 40, status: "active" },
+    ]);
   });
 
   it("happy path: submits recent threats only, polls, writes one summary diagnostic", async () => {
