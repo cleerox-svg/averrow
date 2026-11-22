@@ -21,23 +21,46 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 > mid-run flip finalizes on the DB the row was inserted into), history readers
 > read telemetry ∪ core through `lib/telemetry-read.ts` (one core part while
 > the route is `core` — the old read), config tables read the routed store,
-> and the reaper / agent_events sweeps act on both DBs. `feed_*` and
-> `budget_*` still use core. Runbook: `POST
-> /api/internal/telemetry/copy-config?dry_run=0` → `GET
-> /api/internal/telemetry/preflight` says `ok: true` → flip → wait 90 s →
-> `copy-config?mode=reconcile&dry_run=0` → `POST
-> /api/internal/telemetry/backfill` per history table. Once the route has
-> been `telemetry`, KV `db_route:telemetry_used` keeps history reads and the
-> agent_events consumer on both DBs even after a flip back to core. Never
-> clear it while `TELEMETRY_DB` is bound: history rows have no copy-back tool. The switch is
-> `lib/db-route.ts` `telemetryStore(env)` (KV flag `db_route:telemetry`,
-> default `core`); caller families are converted to it one PR at a time, and
-> the cut-over is one KV write after every family is converted. Do not read
-> `env.TELEMETRY_DB` directly (`test/db-access-ratchet.test.ts`), and do not
-> add a JOIN from a cluster table to a non-cluster table: after the cut-over
-> the two live on different databases. `agent_outputs` is wave 2 and stays on
-> core for now. Until the cut-over, a core migration changing a cluster table
-> must be mirrored in `migrations-telemetry/` (`test/telemetry-schema-parity.test.ts`).
+> and the reaper / agent_events sweeps act on both DBs.
+> **B1d (feeds + budget families) are converted the same way, each on its
+> OWN flag** so a deploy never moves them: feeds = `feed_configs`,
+> `feed_status`, `feed_pull_history` (KV `db_route:telemetry:feeds`); budget =
+> `budget_ledger`, `budget_config`, `agent_budget_rollups` (KV
+> `db_route:telemetry:budget`); agents keeps `db_route:telemetry`. Each
+> defaults to `core` and has its own `used` marker
+> (`db_route:telemetry_used:feeds` / `:budget`; agents keeps
+> `db_route:telemetry_used`). A feed pull resolves the feeds family once at
+> start (`resolveFamily`) and carries it: pull row, finalize, timeout upsert,
+> breaker penalty / reset and auto-pause land on one DB, and feed modules
+> touch their own feeds rows through `FeedContext.feedsDb` (`feedStoreOf`).
+> An AI call resolves the budget family once (`BudgetManager.forEnv`): the
+> ledger + rollup batch is on one DB; `budget_config` is read on the routed
+> store; the month's spend (throttle, per-agent caps) is SUMmed per
+> (agent_id, year_month) across telemetry ∪ core, because after a flip a
+> month's rollup row exists on both DBs. The feed-pull reaper sweeps both DBs
+> and penalizes on the reaped row's DB. Feed / budget readers: config + status
+> from the routed store (`familyStore` / `familyReadDb`), history as a union;
+> a history ⋈ config JOIN of the same family runs per part. `system_config`
+> (failure threshold, last throttle level) stays on core.
+> Runbook, per family (`family=agents|feeds|budget`, agents default): `POST
+> /api/internal/telemetry/copy-config?family=…&dry_run=0` → `GET
+> /api/internal/telemetry/preflight?family=…` says `ok: true` → `POST
+> /api/internal/telemetry/route?family=…&to=telemetry&dry_run=0` (refused
+> unless that preflight is ok) → wait (agents 90 s; feeds ~12 min — the
+> longest pull + its finalize; budget 90 s) → `copy-config?family=…&mode=reconcile`
+> (dry run, review, `dry_run=0`) → `POST /api/internal/telemetry/backfill`
+> per history table. Once a family's route has been `telemetry`, its `used`
+> marker keeps its history reads (and, for agents, the agent_events consumer)
+> on both DBs even after a flip back to core. Never clear a marker while
+> `TELEMETRY_DB` is bound: history rows have no copy-back tool. The switch is
+> `lib/db-route.ts` (`familyStore` / `resolveFamily`; the agents API
+> `telemetryStore` / `resolveTelemetry` is unchanged). Do not read
+> `env.TELEMETRY_DB` directly (`test/db-access-ratchet.test.ts`), do not
+> add a JOIN from a cluster table to a table of another family or of core,
+> and do not batch two families together (`test/telemetry-batch-isolation.test.ts`).
+> `agent_outputs` is wave 2 and stays on core for now. A core migration
+> changing a cluster table must be mirrored in `migrations-telemetry/`
+> (`test/telemetry-schema-parity.test.ts`, `test/telemetry-migration-guard.test.ts`).
 
 | Table / KV key | Writer | Reader(s) | Purpose |
 |---|---|---|---|
@@ -327,6 +350,7 @@ When adding a new workflow-dispatched agent:
 | AI-outage detection | 2026-10-01 | Silent-AI-failure guard after ~3 months of zero working AI (last `budget_ledger` row 2026-07-10, Anthropic HTTP 400 credit balance). `failure_kind` on `lib/haiku.ts` results; strictly-API counters in analyst/sentinel/cartographer; `AgentResult.degraded` → run finalizes `partial`; FC `platform_ai_calls_failing` (migration 0272); diagnostics `ai_health`; public-status uptime counts finished `partial` as success and excludes in-flight rows. Branch `claude/averrow-intel-feeds-research-ukhoef`. |
 | B1a/B1b | 2026-11-22 | `TELEMETRY_DB` + `ARCHIVE_DB` + R2 `THREAT_ARCHIVE` bound (prod + staging), `migrations-telemetry/` schema mirror, `lib/db-route.ts` route switch (default core). No reader/writer moved yet |
 | B1c | 2026-11-22 | Agent-runs family (`agent_runs`, `agent_configs`, `agent_events`, `agent_activity_log`, `agent_approvals`) written through the route (write-forward, resolved once per run) and read as a telemetry ∪ core union (`lib/telemetry-read.ts`); cut-over tools `/api/internal/telemetry/{copy-config,backfill,preflight}`. Behaviour unchanged while the route is `core` |
+| B1d | 2026-11-22 | Feeds family (`feed_configs`, `feed_status`, `feed_pull_history`; flag `db_route:telemetry:feeds`) and budget family (`budget_ledger`, `budget_config`, `agent_budget_rollups`; flag `db_route:telemetry:budget`) converted the same way, each on its own flag (default core — the deploy moves neither). Cut-over tools take `family=`; new flip endpoint `/api/internal/telemetry/route` (preflight-gated) |
 
 ---
 
