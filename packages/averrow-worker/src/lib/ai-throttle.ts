@@ -27,6 +27,26 @@ import { BudgetManager, type BudgetEnv } from "./budgetManager";
 export const AI_THROTTLE_KV_KEY = "ai:throttle_reason";
 const AI_THROTTLE_KV_TTL_SECONDS = 60;
 
+/**
+ * The last decision computed from a successful budget read, kept 6h. When
+ * the budget read fails (core and/or TELEMETRY_DB down during the budget
+ * cut-over — BudgetManager already retries on the routed DB alone), it is
+ * returned instead of failing open; only with no last good decision does
+ * the throttle fail open.
+ */
+export const AI_THROTTLE_LAST_GOOD_KV_KEY = "ai:throttle_last_good";
+export const AI_THROTTLE_LAST_GOOD_TTL_SECONDS = 6 * 3600;
+
+async function readLastGood(env: BudgetEnv): Promise<string | null | undefined> {
+  if (!env.CACHE) return undefined;
+  try {
+    const v = await env.CACHE.get(AI_THROTTLE_LAST_GOOD_KV_KEY);
+    return v === null ? undefined : v === "" ? null : v;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Throttle decision plus whether it came from a successful budget read. */
 interface ThrottleDecision {
   reason: string | null;
@@ -68,7 +88,10 @@ async function computeThrottle(env: BudgetEnv): Promise<ThrottleDecision> {
  */
 export async function checkCostGuard(env: BudgetEnv, critical: boolean): Promise<string | null> {
   if (critical) return null;
-  return (await computeThrottle(env)).reason;
+  const decision = await computeThrottle(env);
+  if (decision.fresh) return decision.reason;
+  const lastGood = await readLastGood(env);
+  return lastGood === undefined ? decision.reason : lastGood;
 }
 
 /**
@@ -100,7 +123,14 @@ export async function getAiThrottleReason(
   if (env.CACHE && decision.fresh) {
     try {
       await env.CACHE.put(AI_THROTTLE_KV_KEY, decision.reason ?? "", { expirationTtl: AI_THROTTLE_KV_TTL_SECONDS });
+      await env.CACHE.put(AI_THROTTLE_LAST_GOOD_KV_KEY, decision.reason ?? "", { expirationTtl: AI_THROTTLE_LAST_GOOD_TTL_SECONDS });
     } catch { /* non-fatal */ }
+  }
+
+  if (!decision.fresh) {
+    // The budget read failed: the last good decision (≤ 6h) beats failing open.
+    const lastGood = await readLastGood(env);
+    if (lastGood !== undefined) return lastGood;
   }
 
   return decision.reason;

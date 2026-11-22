@@ -45,16 +45,23 @@ import { runFeed, applyReapPenalty, dispatchEnrichmentFeed } from "../src/lib/fe
 import { reapOrphanFeedPullHistory } from "../src/lib/feed-pull-reaper";
 import { BudgetManager } from "../src/lib/budgetManager";
 import { checkCostGuard } from "../src/lib/ai-throttle";
+import { withRoutedFeedConfig } from "../src/handlers/diagnostics";
+import { handleTelemetryCutover } from "../src/handlers/telemetryCutover";
+import { getAiThrottleReason, AI_THROTTLE_LAST_GOOD_KV_KEY } from "../src/lib/ai-throttle";
+import { checkAgentBudget, AGENT_BUDGET_LAST_GOOD_PREFIX } from "../src/lib/per-agent-budget";
 import {
   backfillSelectSql,
   backfillTelemetryHistory,
   copyTelemetryConfig,
   parseBackfillParams,
+  parseCopyConfigParams,
+  parseFamily,
   parseSetRouteParams,
   setTelemetryRoute,
   telemetryPreflight,
   telemetryRoutes,
   BackfillConflictError,
+  BackfillPrerequisiteError,
 } from "../src/lib/telemetry-cutover";
 
 const FEED_TABLES = ["feed_pull_history", "feed_status", "feed_configs"];
@@ -489,6 +496,235 @@ describe.skipIf(!hasSqlite())("route flip endpoint", () => {
     expect(parseSetRouteParams(new URLSearchParams("to=telemetry"))).toMatchObject({ ok: false });
     expect(parseSetRouteParams(new URLSearchParams("family=feeds&to=nope"))).toMatchObject({ ok: false });
     expect(parseSetRouteParams(new URLSearchParams("family=budget&to=telemetry"))).toMatchObject({ ok: true, params: { family: "budget", to: "telemetry", dryRun: true } });
+  });
+});
+
+describe.skipIf(!hasSqlite())("review fixes (M1 / M2 / L4 / L5)", () => {
+  it("M1: a never-settling KV read on one caller does not block a second caller", async () => {
+    let calls = 0;
+    const kv = {
+      get: (k: string) => {
+        if (k === FAMILY_ROUTE_KV_KEYS.agents && calls++ === 0) return new Promise<string | null>(() => {}); // request cancelled mid-read
+        return Promise.resolve(k === FAMILY_ROUTE_KV_KEYS.agents ? "telemetry" : null);
+      },
+      put: async () => {},
+    } as unknown as KVNamespace;
+    const env = { DB: d1FromSqlite(openTelemetryDb()), TELEMETRY_DB: d1FromSqlite(openTelemetryDb()), CACHE: kv } as unknown as Env;
+    resetTelemetryRouteCache();
+    void familyRouteState(env, "agents"); // hangs forever
+    const second = await Promise.race([
+      familyRouteState(env, "agents"),
+      new Promise<"blocked">((r) => setTimeout(() => r("blocked"), 200)),
+    ]);
+    expect(second).not.toBe("blocked");
+    expect(second).toMatchObject({ route: "telemetry" });
+  });
+
+  it("M2: feeds preflight blocks on a stale last_successful_pull / health_status and points at reconcile", async () => {
+    const w = world();
+    seedFeed(w.core, "a");
+    w.core.prepare("INSERT INTO feed_status (feed_name, health_status, last_successful_pull) VALUES ('a', 'healthy', '2026-11-22 10:00:00')").run();
+    await copyTelemetryConfig(w.env, { family: "feeds", dryRun: false });
+    expect((await telemetryPreflight(w.env, "feeds")).ok).toBe(true);
+    // A pull on core after the copy: telemetry's copy is now stale.
+    w.core.prepare("UPDATE feed_status SET last_successful_pull = '2026-11-22 11:00:00', health_status = 'degraded'").run();
+    const r = await telemetryPreflight(w.env, "feeds");
+    expect(r.ok).toBe(false);
+    expect(r.config.find((c) => c.table === "feed_status")!.content_mismatch[0]!.changed).toHaveProperty("last_successful_pull");
+    expect(r.config.find((c) => c.table === "feed_status")!.content_mismatch[0]!.changed).toHaveProperty("health_status");
+    expect(r.blocking.join(" ")).toMatch(/copy-config\?family=feeds&mode=reconcile .*IMMEDIATELY before the flip/);
+    await copyTelemetryConfig(w.env, { family: "feeds", dryRun: false, mode: "reconcile" });
+    expect((await telemetryPreflight(w.env, "feeds")).ok).toBe(true);
+  });
+
+  it("L5: a feed_pull_history backfill before copy-config is refused without advancing the cursor", async () => {
+    const w = world();
+    seedFeed(w.core, "a");
+    w.core.prepare("INSERT INTO feed_pull_history (id, feed_name, started_at, status) VALUES ('p1', 'a', ?, 'success')").run(sqliteTimestampHoursAgo(30));
+    await expect(backfillTelemetryHistory(w.env, { table: "feed_pull_history", days: 30, dryRun: false }, { pauseMs: 0 }))
+      .rejects.toThrow(BackfillPrerequisiteError);
+    expect(w.kv.store.has("telemetry_backfill:feed_pull_history")).toBe(false);
+    expect(countOf(w.tel, "feed_pull_history")).toBe(0);
+    await copyTelemetryConfig(w.env, { family: "feeds", dryRun: false });
+    expect((await backfillTelemetryHistory(w.env, { table: "feed_pull_history", days: 30, dryRun: false }, { pauseMs: 0 })).inserted).toBe(1);
+  });
+
+  it("L4: diagnostics' per-feed rollup takes config columns from the routed store on the union path", async () => {
+    const w = world({ feeds: "telemetry" });
+    const rollup = { results: [{ feed_name: "a", display_name: "A (core)", enabled: 1, paused_reason: null, total_pulls: 3 }], meta: { rows_read: 0, rows_written: 0 } };
+    seedFeed(w.tel, "a", { enabled: 0, paused_reason: "manual" });
+    expect((await withRoutedFeedConfig(w.env, rollup)).results[0]).toMatchObject({ enabled: 0, paused_reason: "manual", display_name: "a", total_pulls: 3 });
+    // One part (feeds never on telemetry): untouched.
+    const core = world();
+    expect(await withRoutedFeedConfig(core.env, rollup)).toBe(rollup);
+  });
+
+  it("the flip reports KV propagation + cache as its effective window", async () => {
+    const w = world();
+    const r = await setTelemetryRoute(w.env, { family: "budget", to: "core", dryRun: true, force: false });
+    expect(r.effective_within_ms).toBe(120_000);
+  });
+});
+
+describe.skipIf(!hasSqlite())("AppSec fixes (audit / fail-open / redaction / expect_from)", () => {
+  /** AUDIT_DB stub: records {action, outcome, details} per audit row. */
+  function withAudit(w: World): Array<{ action: string; outcome: string; details: Record<string, unknown> }> {
+    const rows: Array<{ action: string; outcome: string; details: Record<string, unknown> }> = [];
+    (w.env as unknown as { AUDIT_DB: unknown }).AUDIT_DB = {
+      prepare: () => ({
+        bind: (...a: unknown[]) => ({
+          run: async () => {
+            rows.push({ action: String(a[2]), outcome: String(a[8]), details: JSON.parse(String(a[5])) as Record<string, unknown> });
+            return {};
+          },
+        }),
+      }),
+    };
+    return rows;
+  }
+  const post = (path: string) => new Request(`https://x${path}`, { method: "POST" });
+  const call = (w: World, path: string) => handleTelemetryCutover(post(path), w.env, new URL(`https://x${path}`));
+
+  it("M1: one audit row per non-dry-run route / copy-config / backfill call, refusals and errors included; dry runs none", async () => {
+    const w = world();
+    const rows = withAudit(w);
+    seedFeed(w.core, "a");
+    w.core.prepare("INSERT INTO feed_pull_history (id, feed_name, started_at, status) VALUES ('p1', 'a', ?, 'success')").run(sqliteTimestampHoursAgo(30));
+
+    expect((await call(w, "/api/internal/telemetry/route?family=feeds&to=telemetry")).status).toBe(409); // dry run (refused)
+    expect(rows).toHaveLength(0);
+
+    const refused = await call(w, "/api/internal/telemetry/route?family=feeds&to=telemetry&dry_run=0");
+    expect(refused.status).toBe(409);
+    expect(rows[0]).toMatchObject({ action: "telemetry_route.flip", outcome: "failure", details: { actor: "internal", family: "feeds", from: null, to: "telemetry", force: false, dry_run: false, allowed: false } });
+    expect(Number(rows[0]!.details.refused_reasons_count)).toBeGreaterThan(0);
+
+    const bf = await call(w, "/api/internal/telemetry/backfill?table=feed_pull_history&dry_run=0");
+    expect(bf.status).toBe(409); // feed_configs not copied yet
+    expect(rows[1]).toMatchObject({ action: "telemetry_backfill", outcome: "failure", details: { table: "feed_pull_history", dry_run: false } });
+
+    await call(w, "/api/internal/telemetry/copy-config?family=feeds"); // dry run
+    expect(rows).toHaveLength(2);
+    expect((await call(w, "/api/internal/telemetry/copy-config?family=feeds&dry_run=0")).status).toBe(200);
+    expect(rows[2]).toMatchObject({ action: "telemetry_copy_config", outcome: "success", details: { family: "feeds", mode: "insert", dry_run: false } });
+    expect((rows[2]!.details.tables as Array<{ table: string; inserted: number }>).find((t) => t.table === "feed_configs")!.inserted).toBe(1);
+
+    const flipped = await call(w, "/api/internal/telemetry/route?family=feeds&to=telemetry&dry_run=0");
+    expect(flipped.status).toBe(200);
+    expect(rows[3]).toMatchObject({ action: "telemetry_route.flip", outcome: "success", details: { allowed: true, written: true, refused_reasons_count: 0 } });
+    expect(rows).toHaveLength(4);
+  });
+
+  /** A core DB whose agent_budget_rollups reads throw (overloaded / down). */
+  function failingRollupsCore(w: World): void {
+    const real = w.env.DB;
+    (w.env as unknown as { DB: unknown }).DB = {
+      prepare(sql: string) {
+        if (/FROM agent_budget_rollups/.test(sql)) throw new Error("D1 DB is overloaded");
+        return real.prepare(sql);
+      },
+      batch: real.batch.bind(real),
+    };
+  }
+  const month = new Date().toISOString().slice(0, 7);
+
+  it("M2: a failing core part falls back to the routed DB's spend instead of failing open", async () => {
+    const w = world({ budget: "telemetry" });
+    w.tel.prepare("INSERT INTO budget_config (id, monthly_limit_usd) VALUES (1, 80)").run();
+    w.tel.prepare("INSERT INTO agent_budget_rollups (agent_id, year_month, total_cost_usd, total_input_tokens, call_count) VALUES ('observer', ?, 79, 2000000, 9)").run(month);
+    w.kv.store.set(FAMILY_USED_KV_KEYS.budget, "2026-11-22T00:00:00Z");
+    failingRollupsCore(w);
+    const mgr = await BudgetManager.forEnv(w.env);
+    expect(await mgr.getMonthlySpend()).toBe(79);
+    expect(mgr.lastReadPartial).toBe(true);
+    expect(await getAiThrottleReason(w.env)).toMatch(/budget hard throttle/);
+    // observer's cap is far below 2M tokens → refused on the partial read too.
+    expect((await checkAgentBudget(w.env, "observer")).ok).toBe(false);
+  });
+
+  it("M2: when every DB fails, the last good decision (≤ 6h) is returned instead of failing open", async () => {
+    const w = world({ budget: "core" });
+    w.kv.store.set(AI_THROTTLE_LAST_GOOD_KV_KEY, "budget hard throttle (96% of $80)");
+    w.kv.store.set(`${AGENT_BUDGET_LAST_GOOD_PREFIX}observer`, "agent observer over monthly token cap: 9 / 1 tokens used");
+    failingRollupsCore(w);
+    expect(await getAiThrottleReason(w.env)).toBe("budget hard throttle (96% of $80)");
+    expect(await checkCostGuard(w.env, false)).toBe("budget hard throttle (96% of $80)");
+    expect(await checkAgentBudget(w.env, "observer")).toEqual({ ok: false, reason: "agent observer over monthly token cap: 9 / 1 tokens used" });
+    // No history → still fails open (unchanged behaviour).
+    w.kv.store.delete(AI_THROTTLE_LAST_GOOD_KV_KEY);
+    w.kv.store.delete(`${AGENT_BUDGET_LAST_GOOD_PREFIX}observer`);
+    expect(await getAiThrottleReason(w.env)).toBeNull();
+    expect((await checkAgentBudget(w.env, "observer")).ok).toBe(true);
+  });
+
+  it("M2: a successful budget read stores the last good decision", async () => {
+    const w = world();
+    w.core.prepare("INSERT INTO budget_config (id, monthly_limit_usd) VALUES (1, 80)").run();
+    expect(await getAiThrottleReason(w.env)).toBeNull();
+    expect(w.kv.store.get(AI_THROTTLE_LAST_GOOD_KV_KEY)).toBe("");
+    await checkAgentBudget(w.env, "observer");
+    expect(w.kv.store.get(`${AGENT_BUDGET_LAST_GOOD_PREFIX}observer`)).toBe("");
+  });
+
+  it("L1: credential columns are never echoed in copy-config diffs, preflight or reverse_config", async () => {
+    const w = world();
+    w.core.prepare("INSERT INTO feed_configs (feed_name, display_name, schedule_cron, api_key_encrypted, taxii_username, source_url) VALUES ('k', 'k', '0 * * * *', 'SECRET-CORE', 'user-core', 'https://a')").run();
+    w.tel.prepare("INSERT INTO feed_configs (feed_name, display_name, schedule_cron, api_key_encrypted, taxii_username, source_url) VALUES ('k', 'k', '0 * * * *', 'SECRET-TEL', 'user-tel', 'https://b')").run();
+    const r = await copyTelemetryConfig(w.env, { family: "feeds", dryRun: true, mode: "reconcile" });
+    const changed = r.tables.find((t) => t.table === "feed_configs")!.diffs[0]!.changed;
+    expect(changed.api_key_encrypted).toEqual({ target: "[redacted]", source: "[redacted]" });
+    expect(changed.taxii_username).toEqual({ target: "[redacted]", source: "[redacted]" });
+    expect(changed.source_url).toEqual({ target: "https://b", source: "https://a" });
+    const back = await setTelemetryRoute(w.env, { family: "feeds", to: "core", dryRun: true, force: false });
+    const all = JSON.stringify([r, back, await telemetryPreflight(w.env, "feeds")]);
+    expect(all).not.toMatch(/SECRET-|user-core|user-tel/);
+  });
+
+  it("L2: expect_from refuses a flip when the current flag differs", async () => {
+    const w = world({ budget: "telemetry" });
+    expect(parseSetRouteParams(new URLSearchParams("family=budget&to=core&expect_from=bogus"))).toMatchObject({ ok: false });
+    const p = parseSetRouteParams(new URLSearchParams("family=budget&to=core&expect_from=unset&force=1&dry_run=0"));
+    expect(p.ok).toBe(true);
+    if (!p.ok) return;
+    const r = await setTelemetryRoute(w.env, p.params);
+    expect(r.allowed).toBe(false);
+    expect(r.refused_reasons[0]).toMatch(/expect_from=unset but the budget flag is telemetry/);
+    expect(w.kv.store.get(FAMILY_ROUTE_KV_KEYS.budget)).toBe("telemetry");
+    const ok = await setTelemetryRoute(w.env, { ...p.params, expectFrom: "telemetry" });
+    expect(ok.written).toBe(true);
+  });
+});
+
+describe.skipIf(!hasSqlite())("QA fixes (empty family / feed missing on telemetry)", () => {
+  it("(a) an empty family= is a 400 on every tool, never silently agents", () => {
+    expect(parseSetRouteParams(new URLSearchParams("family=&to=telemetry"))).toMatchObject({ ok: false, error: expect.stringMatching(/family is empty/) });
+    expect(parseSetRouteParams(new URLSearchParams("family=%20&to=telemetry"))).toMatchObject({ ok: false });
+    expect(parseCopyConfigParams(new URLSearchParams("family="))).toMatchObject({ ok: false });
+    expect(parseBackfillParams(new URLSearchParams("table=feed_pull_history&family="))).toMatchObject({ ok: false });
+    expect(parseFamily(new URLSearchParams("family="))).toMatchObject({ ok: false });
+    // Absent stays agents (B1c back-compat) except on the route POST, which requires it.
+    expect(parseFamily(new URLSearchParams(""))).toEqual({ ok: true, family: "agents" });
+    expect(parseSetRouteParams(new URLSearchParams("to=telemetry"))).toMatchObject({ ok: false });
+  });
+
+  it("(b) a pull on telemetry for a feed only configured on core seeds its rows from core and runs", async () => {
+    const w = world({ feeds: "telemetry" });
+    seedFeed(w.core, "new_feed");
+    w.core.prepare("INSERT INTO feed_status (feed_name, health_status, consecutive_failures) VALUES ('new_feed', 'degraded', 2)").run();
+    // FK is enforced on the telemetry copy: a bare insert would fail.
+    expect(() => w.tel.prepare("INSERT INTO feed_pull_history (id, feed_name, status) VALUES ('x', 'new_feed', 'partial')").run()).toThrow(/FOREIGN KEY/);
+    await expect(runFeed(w.env, configOf("new_feed"), failingModule(), { overloadBackoff: false })).rejects.toThrow(/Feed new_feed failed/);
+    expect(rowsOf(w.tel, "SELECT feed_name FROM feed_configs")).toEqual([{ feed_name: "new_feed" }]);
+    expect(rowsOf(w.tel, "SELECT status FROM feed_pull_history")[0]!.status).toBe("failed");
+    // Breaker state came across with the seed, then the penalty advanced it there.
+    expect(rowsOf(w.tel, "SELECT consecutive_failures FROM feed_status")[0]!.consecutive_failures).toBe(3);
+    expect(countOf(w.core, "feed_pull_history")).toBe(0);
+  });
+
+  it("(b) a feed configured nowhere still fails the insert (no seed, no pull)", async () => {
+    const w = world({ feeds: "telemetry" });
+    await expect(runFeed(w.env, configOf("ghost"), okModule(), { overloadBackoff: false })).rejects.toThrow(/FOREIGN KEY/);
+    expect(countOf(w.tel, "feed_configs")).toBe(0);
   });
 });
 

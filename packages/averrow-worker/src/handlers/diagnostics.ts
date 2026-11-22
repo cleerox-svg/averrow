@@ -30,6 +30,31 @@ import { getWorkflowAgentStats } from "../lib/workflow-agent-stats";
 import { familyStore, telemetryStore } from "../lib/db-route";
 import { byDesc, byId, historyParts, unionAggregateFirst, unionGroupedResult, unionRowsResult } from "../lib/telemetry-read";
 
+/**
+ * Track B1d: on the feeds union path, the per-feed rollup's config columns
+ * (display_name, enabled, paused_reason) come from the ROUTED store's
+ * feed_configs — not the per-part LEFT JOIN, which for a feed whose in-window
+ * pulls all sit on core would show core's stale pause state. One part (feeds
+ * never on telemetry): the rows are returned untouched.
+ */
+export async function withRoutedFeedConfig<T extends { feed_name: string; display_name: string | null; enabled: number | null; paused_reason: string | null }>(
+  env: Env,
+  result: { results: T[]; meta: { rows_read: number; rows_written: number } },
+): Promise<{ results: T[]; meta: { rows_read: number; rows_written: number } }> {
+  if ((await historyParts(env, 'feed_pull_history')).length === 1) return result;
+  const cfg = await (await familyStore(env, 'feeds')).prepare(
+    `SELECT feed_name, display_name, enabled, paused_reason FROM feed_configs`,
+  ).all<{ feed_name: string; display_name: string | null; enabled: number | null; paused_reason: string | null }>();
+  const byName = new Map((cfg.results ?? []).map((c) => [c.feed_name, c]));
+  return {
+    ...result,
+    results: result.results.map((r) => {
+      const c = byName.get(r.feed_name);
+      return { ...r, display_name: c?.display_name ?? null, enabled: c?.enabled ?? null, paused_reason: c?.paused_reason ?? null };
+    }),
+  };
+}
+
 // ─── Diagnostics caching (D1 overload 2026-11-08) ─────────────────
 /** KV key + TTL for the enrichment_pipeline whole-threats-table pass. */
 export const DIAG_ENRICHMENT_CACHE_KEY = "diag.enrichment_pipeline.v1";
@@ -1865,7 +1890,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       total_rejected: number;
       last_success_at: string | null;
       last_failure_at: string | null;
-    }>, async () => rows(await unionGroupedResult<{
+    }>, async () => rows(await withRoutedFeedConfig(env, await unionGroupedResult<{
       feed_name: string;
       display_name: string | null;
       enabled: number | null;
@@ -1908,7 +1933,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         sum: ['total_pulls', 'success', 'partial', 'failed', 'total_ingested', 'total_rejected'],
         max: ['last_success_at', 'last_failure_at'],
         sort: (a, b) => (b.failed - a.failed) || (a.feed_name < b.feed_name ? -1 : a.feed_name > b.feed_name ? 1 : 0),
-      })));
+      }))));
 
     // Consecutive failures + auto-pause risk from feed_status
     const feedStatusT = soft("feeds", noRows<{

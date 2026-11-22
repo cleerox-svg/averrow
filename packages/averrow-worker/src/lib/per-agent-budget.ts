@@ -120,6 +120,32 @@ async function getDeclaredCap(agentId: string): Promise<{ cap: number; alertAt: 
   };
 }
 
+/** Last decision computed from a successful rollup read, kept 6h so a D1
+ *  outage (either DB of the budget union during the telemetry cut-over)
+ *  re-uses it instead of failing open. "" = pass, else the reason. */
+export const AGENT_BUDGET_LAST_GOOD_PREFIX = "agent_budget_last_good:";
+export const AGENT_BUDGET_LAST_GOOD_TTL_SECONDS = 6 * 3600;
+
+async function readLastGood(env: BudgetGateEnv, agentId: string): Promise<AgentBudgetDecision | null> {
+  if (!env.CACHE) return null;
+  try {
+    const v = await env.CACHE.get(`${AGENT_BUDGET_LAST_GOOD_PREFIX}${agentId}`);
+    if (v === null) return null;
+    return v === "" ? { ok: true } : { ok: false, reason: v };
+  } catch {
+    return null;
+  }
+}
+
+async function writeLastGood(env: BudgetGateEnv, agentId: string, value: string): Promise<void> {
+  if (!env.CACHE) return;
+  try {
+    await env.CACHE.put(`${AGENT_BUDGET_LAST_GOOD_PREFIX}${agentId}`, value, { expirationTtl: AGENT_BUDGET_LAST_GOOD_TTL_SECONDS });
+  } catch {
+    // non-fatal
+  }
+}
+
 /** Pre-flight enforcement check. Called from lib/anthropic.ts before
  *  every Anthropic dispatch. Returns the decision; the caller throws
  *  AnthropicError on `{ ok: false }`. */
@@ -177,19 +203,26 @@ export async function checkAgentBudget(env: BudgetGateEnv, agentId: string): Pro
     }
   } catch (err) {
     console.warn(`[per-agent-budget] getAgentMonthlyTokens failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
-    // Fail open on D1 hiccup — better to over-spend by one minute
-    // than crash a customer-facing call. Don't cache; retry next call.
+    // Both DBs failed (BudgetManager already falls back to the routed DB
+    // alone). Re-use the last good decision (≤ 6h old) before failing open;
+    // don't cache either way, retry next call.
+    const lastGood = await readLastGood(env, agentId);
+    if (lastGood) return lastGood;
+    // No history: fail open — better to over-spend by one minute
+    // than crash a customer-facing call.
     return { ok: true };
   }
 
   if (currentTokens >= declared.cap) {
     const reason = `agent ${agentId} over monthly token cap: ${currentTokens.toLocaleString()} / ${declared.cap.toLocaleString()} tokens used`;
     await safeCachePut(env, cacheKey, reason);
+    await writeLastGood(env, agentId, reason);
     return { ok: false, reason };
   }
 
   // Pass. Cache the decision.
   await safeCachePut(env, cacheKey, "");
+  await writeLastGood(env, agentId, "");
   return { ok: true };
 }
 

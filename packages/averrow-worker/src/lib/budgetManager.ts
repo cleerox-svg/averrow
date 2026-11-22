@@ -209,6 +209,33 @@ export class BudgetManager {
     return historyParts(this.env, "agent_budget_rollups");
   }
 
+  /**
+   * True when the last rollup read fell back to the routed DB alone (the
+   * other DB of the union failed): the spend it returned is a LOWER bound.
+   */
+  lastReadPartial = false;
+
+  /**
+   * Run a rollup read over the union; if it fails (either DB erroring) but
+   * the routed DB alone answers, use that partial spend rather than letting
+   * the AI spend gates fail open on the other DB's outage. Only when the
+   * routed DB fails too does the error propagate (callers then fall back to
+   * their last good decision, lib/ai-throttle.ts / lib/per-agent-budget.ts).
+   */
+  private async readRollups<T>(read: (parts: ReadPart[]) => Promise<T>): Promise<T> {
+    const parts = await this.rollupParts();
+    this.lastReadPartial = false;
+    try {
+      return await read(parts);
+    } catch (err) {
+      const routed = parts.length > 1 ? parts.find((p) => p.db === this.db) : undefined;
+      if (!routed) throw err;
+      console.warn(`[budgetManager] rollup union read failed, using the routed DB only: ${err instanceof Error ? err.message : String(err)}`);
+      this.lastReadPartial = true;
+      return read([{ ...routed, split: "", splitBinds: [] }]);
+    }
+  }
+
   /** Get budget config (singleton row). */
   async getConfig(): Promise<BudgetConfig> {
     const row = await this.db.prepare(
@@ -303,14 +330,14 @@ export class BudgetManager {
   async getMonthlySpend(): Promise<number> {
     // Summed across telemetry ∪ core: after a budget flip the month's
     // pre-flip increments are on core, the later ones on telemetry.
-    const result = await unionAggregateFirst<{ total: number }>(await this.rollupParts(), () => ({
+    const result = await this.readRollups((parts) => unionAggregateFirst<{ total: number }>(parts, () => ({
       sql: `
       SELECT COALESCE(SUM(total_cost_usd), 0) AS total
       FROM agent_budget_rollups
       WHERE year_month = strftime('%Y-%m', 'now')/*split*/
     `,
       binds: [],
-    }), { sum: ["total"] });
+    }), { sum: ["total"] }));
     return result?.total ?? 0;
   }
 
@@ -321,7 +348,7 @@ export class BudgetManager {
    *  any spend this month. */
   async getAgentMonthlyTokens(agentId: string): Promise<number> {
     // One PK row per DB; summed across telemetry ∪ core (see getMonthlySpend).
-    const row = await unionAggregateFirst<{ tokens: number }>(await this.rollupParts(), () => ({
+    const row = await this.readRollups((parts) => unionAggregateFirst<{ tokens: number }>(parts, () => ({
       sql: `
       SELECT total_input_tokens + total_output_tokens AS tokens
       FROM agent_budget_rollups
@@ -329,7 +356,7 @@ export class BudgetManager {
         AND year_month = strftime('%Y-%m', 'now')/*split*/
     `,
       binds: [agentId],
-    }), { sum: ["tokens"] });
+    }), { sum: ["tokens"] }));
     return row?.tokens ?? 0;
   }
 
@@ -340,7 +367,7 @@ export class BudgetManager {
    *  budget_ledger GROUP BY scan. */
   async getSpendByAgent(): Promise<{ agent_id: string; cost_usd: number; calls: number }[]> {
     // Per agent, summed across telemetry ∪ core (see getMonthlySpend).
-    return unionGrouped<{ agent_id: string; cost_usd: number; calls: number }>(await this.rollupParts(), () => ({
+    return this.readRollups((parts) => unionGrouped<{ agent_id: string; cost_usd: number; calls: number }>(parts, () => ({
       sql: `
       SELECT agent_id,
              total_cost_usd AS cost_usd,
@@ -354,7 +381,7 @@ export class BudgetManager {
       groupBy: ["agent_id"],
       sum: ["cost_usd", "calls"],
       sort: (a, b) => Number(b.cost_usd ?? 0) - Number(a.cost_usd ?? 0),
-    });
+    }));
   }
 
   /** Full budget status check — used by Flight Control and dashboard. */

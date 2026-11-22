@@ -44,10 +44,14 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 > (failure threshold, last throttle level) stays on core.
 > Runbook, per family (`family=agents|feeds|budget`, agents default): `POST
 > /api/internal/telemetry/copy-config?family=…&dry_run=0` → `GET
-> /api/internal/telemetry/preflight?family=…` says `ok: true` → `POST
+> /api/internal/telemetry/preflight?family=…` says `ok: true` (run
+> `copy-config?family=…&mode=reconcile` immediately before — feeds preflight
+> also compares `last_successful_pull` / `health_status`) → `POST
 > /api/internal/telemetry/route?family=…&to=telemetry&dry_run=0` (refused
-> unless that preflight is ok) → wait (agents 90 s; feeds ~12 min — the
-> longest pull + its finalize; budget 90 s) → `copy-config?family=…&mode=reconcile`
+> unless that preflight is ok) → wait (~2 min for every isolate: KV
+> propagation + 60 s cache; feeds ~12 min — the longest pull + its finalize;
+> a pull started on core that fails / is reaped after the flip penalizes
+> core's breaker and may raise a misleading `platform_feed_auto_paused`) → `copy-config?family=…&mode=reconcile`
 > (dry run, review, `dry_run=0`) → `POST /api/internal/telemetry/backfill`
 > per history table. Once a family's route has been `telemetry`, its `used`
 > marker keeps its history reads (and, for agents, the agent_events consumer)

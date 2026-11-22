@@ -1065,9 +1065,24 @@ async function runFeedUnmetered(
   const feedsDb = telemetryDbFor(env, route);
 
   // Create pull history entry
-  await feedsDb.prepare(
+  const insertPull = () => feedsDb.prepare(
     `INSERT INTO feed_pull_history (id, feed_name, started_at, status) VALUES (?, ?, ?, 'partial')`
   ).bind(pullId, config.feed_name, startedAt).run();
+  try {
+    await insertPull();
+  } catch (err) {
+    // On telemetry, feed_pull_history.feed_name REFERENCES feed_configs. A
+    // feed whose config exists only on core (added after copy-config, or a
+    // core migration not mirrored in migrations-telemetry/) would fail here
+    // before any breaker logic: seed its rows from core once, then retry.
+    // No extra read on the normal path.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (route !== "telemetry" || !/FOREIGN KEY/i.test(msg)) throw err;
+    const { seedFeedRowsFromCore } = await import("./telemetry-cutover");
+    if (!(await seedFeedRowsFromCore(env, feedsDb, config.feed_name))) throw err;
+    console.warn(`[runFeed] ${config.feed_name}: feed_configs row seeded on TELEMETRY_DB from core (missing after the feeds cut-over)`);
+    await insertPull();
+  }
 
   const ctx: FeedContext = {
     env,

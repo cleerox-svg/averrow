@@ -184,6 +184,37 @@ export class TelemetryUnboundError extends Error {
   }
 }
 
+/** A backfill chunk whose prerequisite is missing on telemetry (feed_pull_history before copy-config). */
+export class BackfillPrerequisiteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BackfillPrerequisiteError";
+  }
+}
+
+/**
+ * feed_pull_history.feed_name REFERENCES feed_configs on telemetry: every
+ * feed of the chunk must be copied first, or the batch fails on the FK. Checked
+ * before the insert, so the cursor never advances past the chunk.
+ */
+async function assertPullFeedsCopied(telemetry: D1Database, rows: Array<Record<string, unknown>>): Promise<void> {
+  const names = [...new Set(rows.map((r) => String(r.feed_name)))];
+  const found = new Set<string>();
+  for (let i = 0; i < names.length; i += 90) {
+    const slice = names.slice(i, i + 90);
+    const r = await telemetry.prepare(
+      `SELECT feed_name FROM feed_configs WHERE feed_name IN (${slice.map(() => "?").join(", ")})`,
+    ).bind(...slice).all<{ feed_name: string }>();
+    for (const row of r.results ?? []) found.add(row.feed_name);
+  }
+  const missing = names.filter((n) => !found.has(n));
+  if (missing.length > 0) {
+    throw new BackfillPrerequisiteError(
+      `feed_pull_history: feed_configs row(s) missing on TELEMETRY_DB (${missing.slice(0, 10).join(", ")}${missing.length > 10 ? ", …" : ""}) — run POST /api/internal/telemetry/copy-config?family=feeds&dry_run=0 first; the cursor was not advanced`,
+    );
+  }
+}
+
 /** A backfill that met a conflicting row it must not drop (agent_budget_rollups). */
 export class BackfillConflictError extends Error {
   constructor(message: string) {
@@ -210,8 +241,11 @@ function rowValues(table: CopyTable, row: Record<string, unknown>): unknown[] {
 /** Parse `family=` (default agents). */
 export function parseFamily(sp: URLSearchParams): { ok: true; family: TelemetryFamily } | { ok: false; error: string } {
   const raw = sp.get("family");
-  if (raw === null || raw === "") return { ok: true, family: "agents" };
+  // Absent = agents (B1c back-compat). Present but EMPTY (an unset shell
+  // variable) is an error, never silently agents.
+  if (raw === null) return { ok: true, family: "agents" };
   const f = raw.trim().toLowerCase();
+  if (f === "") return { ok: false, error: `family is empty — pass one of ${TELEMETRY_FAMILIES.join(", ")}` };
   return (TELEMETRY_FAMILIES as readonly string[]).includes(f)
     ? { ok: true, family: f as TelemetryFamily }
     : { ok: false, error: `family must be one of ${TELEMETRY_FAMILIES.join(", ")}` };
@@ -268,7 +302,15 @@ export const CONFIG_DIFF_REPORT_LIMIT = 200;
 const sameValue = (a: unknown, b: unknown): boolean =>
   (a ?? null) === (b ?? null) || (a != null && b != null && String(a) === String(b));
 
-/** Columns whose values differ between two rows of a config table. */
+/**
+ * Config columns whose VALUES are never echoed in a diff / preflight /
+ * reverse-config report (credentials and credential identifiers). The
+ * comparison still uses the real values; only the report is redacted.
+ */
+export const REDACTED_CONFIG_COLUMNS: ReadonlySet<string> = new Set(["api_key_encrypted", "taxii_username"]);
+export const REDACTED = "[redacted]";
+
+/** Columns whose values differ between two rows of a config table (sensitive values redacted). */
 export function configRowDiff(
   table: ConfigTable,
   target: Record<string, unknown>,
@@ -277,7 +319,10 @@ export function configRowDiff(
 ): Record<string, { target: unknown; source: unknown }> {
   const changed: Record<string, { target: unknown; source: unknown }> = {};
   for (const c of columns) {
-    if (!sameValue(target[c], source[c])) changed[c] = { target: target[c] ?? null, source: source[c] ?? null };
+    if (sameValue(target[c], source[c])) continue;
+    changed[c] = REDACTED_CONFIG_COLUMNS.has(c)
+      ? { target: REDACTED, source: REDACTED }
+      : { target: target[c] ?? null, source: source[c] ?? null };
   }
   return changed;
 }
@@ -445,6 +490,28 @@ export async function copyTelemetryConfig(
  * (agent_approvals). Without a core row it seeds nothing (the caller keeps
  * its own default). Returns true when a core row was copied.
  */
+/**
+ * Seed a feed's missing feeds-family rows on TELEMETRY_DB from core (Track
+ * B1d) — the feeds counterpart of seedConfigRowFromCore. runFeed calls it
+ * when a pull on telemetry fails the feed_pull_history → feed_configs FK: a
+ * feed whose config exists only on core (added after copy-config, or by a
+ * core migration not mirrored in migrations-telemetry/). Copies feed_configs
+ * and, if present, feed_status (so its breaker state is not reset), insert-
+ * only (ON CONFLICT DO NOTHING — never overwrites telemetry). Returns true
+ * when a core feed_configs row existed.
+ */
+export async function seedFeedRowsFromCore(env: Env, telemetry: D1Database, feedName: string): Promise<boolean> {
+  const core = telemetryDbFor(env, "core");
+  const cfg = await core.prepare(`SELECT ${COPY_COLUMNS.feed_configs.join(", ")} FROM feed_configs WHERE feed_name = ?`)
+    .bind(feedName).first<Record<string, unknown>>();
+  if (!cfg) return false;
+  await telemetry.prepare(insertSql("feed_configs", "feed_name")).bind(...rowValues("feed_configs", cfg)).run();
+  const st = await core.prepare(`SELECT ${COPY_COLUMNS.feed_status.join(", ")} FROM feed_status WHERE feed_name = ?`)
+    .bind(feedName).first<Record<string, unknown>>();
+  if (st) await telemetry.prepare(insertSql("feed_status", "feed_name")).bind(...rowValues("feed_status", st)).run();
+  return true;
+}
+
 export async function seedConfigRowFromCore(env: Env, telemetry: D1Database, table: "agent_configs" | "agent_approvals", agentId: string): Promise<boolean> {
   const cols = COPY_COLUMNS[table];
   const row = await env.DB.prepare(`SELECT ${cols.join(", ")} FROM ${table} WHERE agent_id = ?`)
@@ -655,6 +722,7 @@ export async function backfillTelemetryHistory(
     }
     scanned += rows.length;
     if (!params.dryRun) {
+      if (table === "feed_pull_history") await assertPullFeedsCopied(telemetry, rows);
       const res = await telemetry.batch(rows.map((r) => telemetry.prepare(insert).bind(...rowValues(table, r))));
       if (table === "agent_budget_rollups") await assertRollupConflictsIdentical(telemetry, rows, res);
       inserted += res.reduce((n, r) => n + Number(r.meta?.changes ?? 0), 0);
@@ -748,7 +816,9 @@ export const PREFLIGHT_CONTENT_COLUMNS: Record<ConfigTable, readonly string[]> =
   agent_configs: ["enabled", "paused_reason", "consecutive_failures", "consecutive_failure_threshold", "circuit_trip_rule"],
   agent_approvals: ["state"],
   feed_configs: ["enabled", "paused_reason", "consecutive_failure_threshold", "schedule_cron", "source_url", "feed_type", "taxii_next_added_after"],
-  feed_status: ["consecutive_failures", "next_retry_at"],
+  // last_successful_pull drives the due check (shouldRunNow): a stale copy
+  // would make every non-hourly feed look due right after the flip.
+  feed_status: ["consecutive_failures", "next_retry_at", "last_successful_pull", "health_status"],
   budget_config: ["monthly_limit_usd", "soft_pct", "hard_pct", "emergency_pct"],
 };
 
@@ -879,7 +949,7 @@ export async function telemetryPreflight(env: Env, family: TelemetryFamily = "ag
     const missing = c.missing_on_telemetry.length;
     const mismatch = c.content_mismatch.length;
     if (missing > 0) blocking.push(`${c.table}: ${missing} core row(s) not copied to TELEMETRY_DB (POST /api/internal/telemetry/copy-config?${famQ}dry_run=0)`);
-    if (mismatch > 0) blocking.push(`${c.table}: ${mismatch} row(s) differ from core in ${PREFLIGHT_CONTENT_COLUMNS[c.table].join(" / ")} — review POST /api/internal/telemetry/copy-config?${famQ}mode=reconcile (dry run), apply with dry_run=0; rows reported skip_target_newer or skip_unpause_needs_force need force=1 after review`);
+    if (mismatch > 0) blocking.push(`${c.table}: ${mismatch} row(s) differ from core in ${PREFLIGHT_CONTENT_COLUMNS[c.table].join(" / ")} — run POST /api/internal/telemetry/copy-config?${famQ}mode=reconcile (dry run, review, then dry_run=0) IMMEDIATELY before the flip (core keeps changing until then); rows reported skip_target_newer or skip_unpause_needs_force need force=1 after review`);
   }
 
   // Budget: the AI spend ceiling. BudgetManager.getConfig() falls back to a
@@ -930,11 +1000,19 @@ export async function telemetryRoutes(env: Env): Promise<FamilyRouteInfo[]> {
   return out;
 }
 
+/**
+ * Upper bound for every isolate to serve a new flag: KV's global propagation
+ * (eventually consistent, ~60 s) plus the 60 s in-isolate flag cache.
+ */
+export const ROUTE_FLIP_EFFECTIVE_MS = 60_000 + TELEMETRY_ROUTE_CACHE_MS;
+
 export interface SetRouteParams {
   family: TelemetryFamily;
   to: TelemetryRoute;
   dryRun: boolean;
   force: boolean;
+  /** Refuse unless the flag currently holds this value ('unset' = absent). */
+  expectFrom?: TelemetryRoute | "unset";
 }
 
 export function parseSetRouteParams(sp: URLSearchParams): { ok: true; params: SetRouteParams } | { ok: false; error: string } {
@@ -943,7 +1021,20 @@ export function parseSetRouteParams(sp: URLSearchParams): { ok: true; params: Se
   if (!fam.ok) return fam;
   const to = parseTelemetryRoute(sp.get("to"));
   if (!to) return { ok: false, error: "to must be core or telemetry" };
-  return { ok: true, params: { family: fam.family, to, dryRun: sp.get("dry_run") !== "0", force: sp.get("force") === "1" } };
+  // Optional compare-and-set guard: refuse unless the flag is currently this
+  // value ('unset' = no flag). Stops a stale runbook step from flipping twice.
+  const rawExpect = sp.get("expect_from");
+  let expectFrom: TelemetryRoute | "unset" | undefined;
+  if (rawExpect !== null) {
+    const v = rawExpect.trim().toLowerCase();
+    if (v === "unset") expectFrom = "unset";
+    else {
+      const r = parseTelemetryRoute(v);
+      if (!r) return { ok: false, error: "expect_from must be core, telemetry or unset" };
+      expectFrom = r;
+    }
+  }
+  return { ok: true, params: { family: fam.family, to, dryRun: sp.get("dry_run") !== "0", force: sp.get("force") === "1", ...(expectFrom ? { expectFrom } : {}) } };
 }
 
 export interface SetRouteResult {
@@ -959,7 +1050,7 @@ export interface SetRouteResult {
   preflight?: TelemetryPreflight;
   /** Flip-back gate: telemetry's config rows that core lacks / differs from. */
   reverse_config?: ConfigPreflight[];
-  /** Isolates pick the new flag up within this many ms. */
+  /** Upper bound (ms) until every isolate serves the new flag: KV propagation + the in-isolate cache. */
   effective_within_ms: number;
   routes: FamilyRouteInfo[];
 }
@@ -979,6 +1070,9 @@ export async function setTelemetryRoute(env: Env, params: SetRouteParams): Promi
   if (!state.bound) refused.push("TELEMETRY_DB is not bound in this environment");
   let from: TelemetryRoute | null = null;
   try { from = parseTelemetryRoute(await env.CACHE.get(FAMILY_ROUTE_KV_KEYS[family])); } catch { from = state.requested; }
+  if (params.expectFrom !== undefined && (from ?? "unset") !== params.expectFrom) {
+    refused.push(`expect_from=${params.expectFrom} but the ${family} flag is ${from ?? "unset"}`);
+  }
 
   if (state.bound && to === "telemetry") {
     preflight = await telemetryPreflight(env, family);
@@ -1012,7 +1106,7 @@ export async function setTelemetryRoute(env: Env, params: SetRouteParams): Promi
     refused_reasons: refused,
     ...(preflight ? { preflight } : {}),
     ...(reverse ? { reverse_config: reverse } : {}),
-    effective_within_ms: TELEMETRY_ROUTE_CACHE_MS,
+    effective_within_ms: ROUTE_FLIP_EFFECTIVE_MS,
     routes: await telemetryRoutes(env),
   };
 }
