@@ -1118,6 +1118,9 @@ export function AdminDashboard() {
                             `${formatBytes(db.sizeBytes)} · ${tablesLabel(db.tables)}`,
                             pct != null ? `${pct.toFixed(1)}% of ${formatBytes(db.capBytes)} cap${capStateSuffix(pct)}` : `Cap ${formatBytes(db.capBytes)}`,
                             db.store === 'core' ? `${migrations.total} migrations · ${infra.mainDb.region}` : null,
+                            db.store === 'core'
+                              ? (migrations.last_run ? `Last migration: ${shortDate(migrations.last_run)}` : 'Never migrated')
+                              : null,
                             db.source === 'cf_api' ? 'source: Cloudflare' : db.source === 'pragma' ? 'source: estimate' : null,
                           ]}
                         />
