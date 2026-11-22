@@ -266,7 +266,7 @@ describe.skipIf(!hasSqlite())("executeAgent D1 attribution", () => {
     expect(seen.env).not.toBe(env); // agent ran on the metered copy
     expect(ae.points).toHaveLength(1);
     const p = ae.points[0]!;
-    expect(p.blobs).toEqual(["agent:sentinel"]);
+    expect(p.blobs).toEqual(["agent:sentinel", "core"]);
     const [rowsRead, rowsWritten, queries] = p.doubles!;
     expect(rowsRead).toBeGreaterThanOrEqual(3); // the agent's SELECT * FROM t
     expect(rowsWritten).toBeGreaterThan(0);     // agent_runs insert + finalize
@@ -311,8 +311,10 @@ describe.skipIf(!hasSqlite())("executeAgent D1 attribution", () => {
       return { itemsProcessed: 0, itemsCreated: 0, itemsUpdated: 0, output: {} };
     },
   }) as unknown as AgentModule;
+  // rows_read / rows_written / queries (doubles 1-3; 4-6 are overloads /
+  // errors / record weight — asserted in the per-store tests).
   const pointFor = (ae: ReturnType<typeof fakeAe>, label: string) =>
-    ae.points.filter((p) => p.blobs?.[0] === label).map((p) => p.doubles);
+    ae.points.filter((p) => p.blobs?.[0] === label).map((p) => p.doubles?.slice(0, 3));
   const ctxCollecting = (): { ctx: ExecutionContext; drain: () => Promise<void> } => {
     const waited: Promise<unknown>[] = [];
     const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); }, passThroughOnException: () => {} } as unknown as ExecutionContext;
@@ -417,7 +419,7 @@ describe.skipIf(!hasSqlite())("withD1Meter / trackWaitUntil / workflow meter", (
       await e.DB.prepare("SELECT * FROM t").all();
       throw err;
     })).rejects.toBe(err);
-    expect(ae.points).toEqual([{ blobs: ["cron:test"], doubles: [3, 0, 1], indexes: ["cron:test"] }]);
+    expect(ae.points).toEqual([{ blobs: ["cron:test", "core"], doubles: [3, 0, 1, 0, 0, 1], indexes: ["cron:test"] }]);
   });
 
   it("trackWaitUntil forwards to the real ctx and settles nested waitUntil work", async () => {
@@ -454,10 +456,10 @@ describe.skipIf(!hasSqlite())("withD1Meter / trackWaitUntil / workflow meter", (
     });
     expect(result).toBe("done");
     expect(current).toBe(base);
-    expect(ae.points.map((p) => [p.blobs?.[0], p.doubles])).toEqual([
-      ["workflow:test", [3, 0, 1]],
-      ["workflow:test", [1, 0, 1]],
-      ["workflow:test", [2, 0, 1]],
+    expect(ae.points.map((p) => [p.blobs?.[0], p.blobs?.[1], p.doubles])).toEqual([
+      ["workflow:test", "core", [3, 0, 1, 0, 0, 1]],
+      ["workflow:test", "core", [1, 0, 1, 0, 0, 1]],
+      ["workflow:test", "core", [2, 0, 1, 0, 0, 1]],
     ]);
   });
 });
@@ -548,7 +550,8 @@ describe("handleScheduled D1 attribution", () => {
     // hourly-mesh guard without touching D1.
     await handleScheduled({ cron: "1 2 3 4 5", scheduledTime: Date.now() } as unknown as ScheduledEvent, env, ctx);
     await Promise.all(waited);
-    expect(ae.points).toEqual([{ blobs: ["cron:1 2 3 4 5"], doubles: [0, 0, 0], indexes: ["cron:1 2 3 4 5"] }]);
+    // No query at all → one store-less point keeps the record count.
+    expect(ae.points).toEqual([{ blobs: ["cron:1 2 3 4 5", ""], doubles: [0, 0, 0, 0, 0, 1], indexes: ["cron:1 2 3 4 5"] }]);
     vi.restoreAllMocks();
   });
 });

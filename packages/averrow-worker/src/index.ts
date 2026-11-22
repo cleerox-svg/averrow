@@ -33,6 +33,7 @@ import { registerAgentRoutes } from "./routes/agents";
 import { registerSpamTrapRoutes } from "./routes/spam-trap";
 import { registerEmailSecurityRoutes } from "./routes/email-security";
 import { registerFeedRoutes } from "./routes/feeds";
+import { registerDatabaseRoutes } from "./routes/databases";
 import { registerExportRoutes } from "./routes/export";
 import { registerSparrowRoutes } from "./routes/sparrow";
 import { registerThreatActorRoutes } from "./routes/threatActors";
@@ -70,6 +71,7 @@ registerBrandRoutes(router);
 registerThreatRoutes(router);
 registerInvestigationRoutes(router);
 registerFeedRoutes(router);
+registerDatabaseRoutes(router);
 registerExportRoutes(router);
 registerAgentRoutes(router);
 registerSpamTrapRoutes(router);
@@ -972,6 +974,10 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         if (url.pathname === '/api/internal/cartographer-health') {
           const { handleCartographerHealth } = await import('./handlers/cartographer-health');
           return handleCartographerHealth(request, env);
+        }
+        if (url.pathname === '/api/internal/databases') {
+          const { handleDatabases } = await import('./handlers/databases');
+          return handleDatabases(request, env);
         }
         if (url.pathname === '/api/internal/d1-health') {
           const { handleD1Health } = await import('./handlers/d1-health');

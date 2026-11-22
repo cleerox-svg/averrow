@@ -19,6 +19,7 @@ import { withD1Retry, isD1OverloadError, D1_OVERLOAD_RETRY_BASE_MS, type D1Retry
 import { computeBackoffRetryAt, FEED_RETRY_LADDER } from "./backoff";
 import { tagThreat, needsBrandTokens, loadBrandTokens, isIdpFamilyTag } from "./idp-tagging";
 import { enqueueAutoCaptures } from "./page-capture";
+import { withD1Meter } from "./d1-meter";
 
 // ─── Deduplication ───────────────────────────────────────────────
 
@@ -994,11 +995,28 @@ export function feedFinalizeRetry(
     : { label, deadline };
 }
 
-export async function runFeed(
+/**
+ * One feed pull, D1-metered as `feed:<feed_name>` (lib/d1-meter.ts). The
+ * meter layers are exclusive, so the pull's reads/writes leave the
+ * enclosing `cron:` / `agent:` row and land in their own; an abandoned
+ * (timed-out) pull is recorded when it finally settles. Metering is a
+ * no-op without the AE binding.
+ */
+export function runFeed(
   env: Env,
   config: FeedConfigRow,
   feedModule: FeedModule,
   opts: RunFeedOptions = {},
+): Promise<FeedResult> {
+  return withD1Meter(env, `feed:${config.feed_name}`, (meteredEnv) =>
+    runFeedUnmetered(meteredEnv, config, feedModule, opts));
+}
+
+async function runFeedUnmetered(
+  env: Env,
+  config: FeedConfigRow,
+  feedModule: FeedModule,
+  opts: RunFeedOptions,
 ): Promise<FeedResult> {
   const pullId = opts.pullId ?? crypto.randomUUID();
   const startedAt = new Date().toISOString();

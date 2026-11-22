@@ -159,7 +159,7 @@ describe("handlePlatformDiagnostics overload safety", () => {
     // Untouched sections are present and report no error.
     expect(data.feeds.per_feed).toEqual([]);
     expect(data.feeds_error).toBeUndefined();
-    expect(data._meta.endpoint_version).toBe(18);
+    expect(data._meta.endpoint_version).toBe(19);
     // 18: dmarc_ingest present with its zero shape when nothing is stored.
     expect(data.dmarc_ingest).toMatchObject({ reports_24h: 0, enrolled_brands: 0, dropped_unenrolled_24h: 0 });
     expect(data.dmarc_ingest_error).toBeUndefined();
