@@ -25,6 +25,7 @@ import { isAiTaskAllowed } from "./anthropic";
 import { isAbuseWorkersAiEnabled } from "./workers-ai";
 import { runAbuseRulesForMessage } from "./abuse-mailbox-rules-runner";
 import { deliverAbuseDetermination, type DeliveryOutcome } from "./abuse-mailbox-determination";
+import { telemetryStore } from "./db-route";
 
 export interface AbuseTriageParams {
   messageId: string;
@@ -99,7 +100,7 @@ export async function runAbuseTriagePipeline(
   // never folds into the workflow-agent rollup in platform-diagnostics.
   await step.do("log-activity", async () => {
     try {
-      await env.DB.prepare(
+      await (await telemetryStore(env)).prepare(
         `INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
          VALUES (?, ?, ?, ?, ?, ?)`,
       ).bind(

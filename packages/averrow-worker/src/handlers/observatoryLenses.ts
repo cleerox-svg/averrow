@@ -63,6 +63,7 @@ import { rollupWindowStartDay } from "../lib/takedown-outcome-rollup";
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
 import { roleHasPermission } from "../lib/role-permissions";
+import { byDesc, historyParts, unionRowsResult } from "../lib/telemetry-read";
 
 type ReadSession = ReturnType<typeof getReadSession>;
 
@@ -836,13 +837,17 @@ export async function handleObservatoryMovements(request: Request, env: Env): Pr
   return serveLens(request, env, "observatory_movements",
     `${CACHE_NS}.movements:${period}:${limit}`, LENS_TTL_S.movements, period,
     async (session, tally) => {
-      const rows = await session.prepare(`
+      // Track B1c: agent_events spans telemetry ∪ core during the cut-over.
+      const rows = await unionRowsResult<PivotRow>(await historyParts(env, "agent_events", { core: session }), (p) => ({
+        sql: `
         SELECT id, created_at, payload_json
         FROM agent_events
-        WHERE event_type = 'pivot_detected' AND created_at >= ?
+        WHERE event_type = 'pivot_detected' AND created_at >= ?/*split*/
         ORDER BY created_at DESC
         LIMIT ?
-      `).bind(snappedWindowStart(period), limit).all<PivotRow>();
+      `,
+        binds: [snappedWindowStart(period), p.limit],
+      }), { key: (r) => r.id, sort: byDesc<PivotRow>("created_at"), limit });
       addToTally(tally, rows.meta);
       const parsed = (rows.results ?? []).map(parsePivotRow);
 

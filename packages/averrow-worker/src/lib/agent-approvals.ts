@@ -22,6 +22,9 @@
  * the runner's gate for the 35 pre-5.4 agents.
  */
 
+import type { Env } from "../types";
+import { telemetryStore } from "./db-route";
+import { byDesc, historyParts, preferFinalizedRun, unionRows } from "./telemetry-read";
 export type ApprovalState = "pending" | "approved" | "rejected" | "changes_requested";
 
 export interface AgentApprovalRow {
@@ -83,17 +86,26 @@ export async function getApprovalState(db: D1Database, agentId: string): Promise
   `).bind(agentId).first<AgentApprovalRow>();
 }
 
-export async function getReviewBundle(db: D1Database, agentId: string): Promise<AgentReviewBundle> {
+/**
+ * `db` is the core DB (agent_outputs). With `env`, the approval row is read
+ * from the routed telemetry store and the runs from the telemetry ∪ core
+ * union (Track B1c); without it everything reads `db` (unit tests).
+ */
+export async function getReviewBundle(db: D1Database, agentId: string, env?: Env): Promise<AgentReviewBundle> {
+  type RunRow = AgentReviewBundle["recent_runs"][number];
+  const runParts = await historyParts(env, "agent_runs", { core: db });
   const [approval, runs, outputs] = await Promise.all([
-    getApprovalState(db, agentId),
-    db.prepare(`
+    getApprovalState(env ? await telemetryStore(env) : db, agentId),
+    unionRows<RunRow>(runParts, (p) => ({
+      sql: `
       SELECT id, started_at, completed_at, duration_ms, status,
              error_message, records_processed, outputs_generated
       FROM agent_runs
-      WHERE agent_id = ?
+      WHERE agent_id = ?/*split*/
       ORDER BY started_at DESC
-      LIMIT 10
-    `).bind(agentId).all<AgentReviewBundle["recent_runs"][number]>(),
+      LIMIT ?`,
+      binds: [agentId, p.limit],
+    }), { key: (r) => r.id, prefer: preferFinalizedRun, sort: byDesc<RunRow>("started_at"), limit: 10 }),
     db.prepare(`
       SELECT id, type, summary, severity, created_at
       FROM agent_outputs
@@ -104,7 +116,7 @@ export async function getReviewBundle(db: D1Database, agentId: string): Promise<
   ]);
   return {
     approval,
-    recent_runs: runs.results,
+    recent_runs: runs,
     recent_outputs: outputs.results,
   };
 }

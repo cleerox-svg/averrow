@@ -49,6 +49,7 @@ import {
   type LaneResult,
   type RetireResult,
 } from "../lib/nexus-threat-lanes";
+import { telemetryStore } from "../lib/db-route";
 
 // ─── NEXUS core correlation logic ─────────────────────────────────
 
@@ -59,6 +60,9 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   pivotsDetected: number;
   outputs: AgentOutputEntry[];
 }> {
+  // Telemetry DB resolved once for this run (Track B1c): pivot_detected and
+  // nexus_complete events go to the routed agent-runs store.
+  const eventsDb = await telemetryStore(env);
   const outputs: AgentOutputEntry[] = [];
   let clustersWritten = 0;
   let pivotsDetected = 0; // DORMANCY pivots only (F2 parity — movement is separate)
@@ -355,7 +359,7 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   }
 
   // --- Lane: ASN + threat_type (RUNS LAST — mops up) ---
-  const asnLane = await runAsnLane(db);
+  const asnLane = await runAsnLane(db, eventsDb);
   clustersWritten += asnLane.clustersWritten;
   pivotsDetected = asnLane.pivotsDetected;
 
@@ -473,7 +477,7 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
   // both paths, so movement behavior never diverges by dispatch source.
   // Idempotent diff, no AI.
   try {
-    const mv = await detectClusterInfraMovement(db);
+    const mv = await detectClusterInfraMovement(db, Date.now(), {}, eventsDb);
     infraMovementPivots = mv.emitted;
     outputs.push({
       type: "diagnostic",
@@ -502,7 +506,7 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
 
   // --- Emit completion event ---
   try {
-    await db.prepare(`
+    await eventsDb.prepare(`
       INSERT INTO agent_events (id, event_type, source_agent, payload_json)
       VALUES (?, 'nexus_complete', 'nexus', ?)
     `).bind(

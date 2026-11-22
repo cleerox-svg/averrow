@@ -48,6 +48,7 @@ import { purgeExpiredDmarcData, type DmarcPurgeResult } from '../lib/dmarc-reten
 import { reconcileDarkWeb } from '../lib/dark-web-reconciler';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
+import { telemetryFamilyDbs } from '../lib/db-route';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour, buildArcsCubeForHour, getCubeSourceWatermark } from '../lib/cube-builder';
 import type { CubeBuildResult } from '../lib/cube-builder';
 import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive, handleObservatoryHeatmap } from '../handlers/observatory';
@@ -539,9 +540,13 @@ async function runNavigatorImpl(
     // the nexus → observer edge never fired (2026-11-10). They expire only
     // after TARGETED_EVENT_EXPIRY_HOURS, i.e. two missed :07 ticks.
     try {
-      const stale = await env.DB.prepare(STALE_AGENT_EVENTS_DRAIN_SQL).bind(EVENT_DRAIN_LIMIT).run();
-      // D1 .run() returns meta with changes count
-      eventsDrained = stale.meta?.changes ?? 0;
+      // Every DB that can hold agent_events (core, and TELEMETRY_DB when
+      // bound — Track B1c): each drains its own stale rows.
+      for (const { db } of telemetryFamilyDbs(env)) {
+        const stale = await db.prepare(STALE_AGENT_EVENTS_DRAIN_SQL).bind(EVENT_DRAIN_LIMIT).run();
+        // D1 .run() returns meta with changes count
+        eventsDrained += stale.meta?.changes ?? 0;
+      }
       if (eventsDrained > 0) {
         console.log(`[navigator] drained ${eventsDrained} stale agent_events`);
       }

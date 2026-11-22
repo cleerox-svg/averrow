@@ -45,7 +45,7 @@
 // statements retry overload errors past the window, chunks are smaller with
 // a pause between them, and finalize + the event back off 3 s / 6 s / 12 s.
 
-import { createAgentRun, finalizeAgentRun, updateAgentRunProgress } from "../db/agent-runs";
+import { createAgentRun, finalizeAgentRun, updateAgentRunProgress, type AgentRunHandle, telemetryDbForRun } from "../db/agent-runs";
 import { D1_OVERLOAD_RETRY_BASE_MS, withD1Retry } from "../lib/d1-retry";
 import { logger } from "../lib/logger";
 import {
@@ -153,7 +153,7 @@ export async function runDailySnapshotsCron(
   const now = opts.now ?? Date.now;
   const deadline = now() + (opts.budgetMs ?? DAILY_SNAPSHOTS_BUDGET_MS);
 
-  let runId: string | null = null;
+  let runId: AgentRunHandle | null = null;
   try {
     runId = await createAgentRun(env, DAILY_SNAPSHOTS_AGENT_ID);
   } catch (err) {
@@ -252,7 +252,7 @@ export async function runDailySnapshotsCron(
         },
       );
       if (!fin.ok) {
-        logger.error("daily_snapshots_run_complete_error", { run_id: runId, error: fin.error });
+        logger.error("daily_snapshots_run_complete_error", { run_id: runId.id, error: fin.error });
       }
     }
 
@@ -264,8 +264,8 @@ export async function runDailySnapshotsCron(
     const payload = JSON.stringify({ date, trigger, status, provider: outcomes.provider, brand: outcomes.brand });
     try {
       await withD1Retry(
-        () =>
-          env.DB.prepare(
+        async () =>
+          (await telemetryDbForRun(env, runId)).prepare(
             `INSERT OR IGNORE INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
              VALUES (?, 'snapshots_generated', ?, NULL, ?, 3, 'pending')`,
           )

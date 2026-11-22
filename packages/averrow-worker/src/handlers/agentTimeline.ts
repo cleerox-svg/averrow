@@ -40,6 +40,7 @@ import { cachedValue } from "../lib/cached-value";
 import { getDbContext, getReadSession } from "../lib/db";
 import { newTally, addToTally, recordD1Reads, type D1Tally } from "../lib/analytics";
 import type { Env } from "../types";
+import { historyParts, type ReadPart } from "../lib/telemetry-read";
 
 // ─── Contract ───────────────────────────────────────────────────────
 
@@ -641,6 +642,32 @@ async function readAll<T>(stmt: D1PreparedStatement, tally: D1Tally): Promise<T[
 }
 
 /**
+ * One read across the parts of the telemetry ∪ core union (Track B1c). One
+ * part = exactly the old single read. Several: rows concatenated telemetry
+ * first and deduped by `id` (a backfilled copy is the same row); `newestFirst`
+ * re-applies an ORDER BY created_at DESC LIMIT n over the merged rows.
+ */
+async function readUnion<T extends { id: string }>(
+  parts: ReadPart[],
+  sql: string,
+  binds: unknown[],
+  tally: D1Tally,
+  newestFirst?: { col: Extract<keyof T, string>; limit: number },
+): Promise<T[]> {
+  const lists = await Promise.all(parts.map((part) => readAll<T>(part.db.prepare(sql).bind(...binds), tally)));
+  if (lists.length === 1) return lists[0] ?? [];
+  const seen = new Set<string>();
+  let out = lists.flat().filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+  if (newestFirst) {
+    const c = newestFirst.col;
+    out = out
+      .sort((a, b) => String(b[c] ?? "").localeCompare(String(a[c] ?? "")))
+      .slice(0, newestFirst.limit);
+  }
+  return out;
+}
+
+/**
  * Build the timeline. Exported for tests; `nowMs` is injectable so window
  * edges are deterministic.
  */
@@ -649,32 +676,40 @@ export async function computeAgentTimeline(
   nowMs: number,
   tally: D1Tally = newTally(),
   window: TimelineWindow = "1h",
+  env?: Env,
 ): Promise<AgentTimelineData> {
   const cfg = TIMELINE_WINDOWS[window];
   const windowEndMs = nowMs;
   const windowStartMs = nowMs - cfg.windowMs;
+  // agent_runs / agent_activity_log / agent_events span telemetry ∪ core
+  // during the cut-over; feed_pull_history stays on `db` (its own family).
+  const [runParts, activityParts, eventParts] = await Promise.all([
+    historyParts(env, "agent_runs", { core: db }),
+    historyParts(env, "agent_activity_log", { core: db }),
+    historyParts(env, "agent_events", { core: db }),
+  ]);
 
   const [windowRunRows, openRunRows, pullRows, activityRows, eventRows] = await Promise.all([
     // 1. Runs started near/in the window. MULTI-INDEX OR on
     //    idx_agent_runs_started; no ORDER BY (see file header).
-    readAll<RunRow>(db.prepare(
+    readUnion<RunRow>(runParts,
       `SELECT id, agent_id, started_at, completed_at, duration_ms, status, records_processed, error_message
          FROM agent_runs
         WHERE (started_at >= ? AND started_at < ?) OR started_at >= ?
         LIMIT ?`,
-    ).bind(...sinceRangeBinds(windowStartMs - cfg.runLookbackMs), cfg.runSqlLimit), tally),
+      [...sinceRangeBinds(windowStartMs - cfg.runLookbackMs), cfg.runSqlLimit], tally),
 
     // 2. Still-open runs that started before (1)'s bound. The WHERE repeats
     //    idx_agent_runs_open's partial-index predicate (migration 0320)
     //    verbatim so SQLite can use it; INDEXED BY pins it (same reason as
     //    lib/agent-runs-reaper.ts). The SQLite-text bound is a superset for
     //    ISO rows, which only over-includes a handful of open rows.
-    readAll<RunRow>(db.prepare(
+    readUnion<RunRow>(runParts,
       `SELECT id, agent_id, started_at, completed_at, duration_ms, status, records_processed, error_message
          FROM agent_runs INDEXED BY idx_agent_runs_open
         WHERE completed_at IS NULL AND status IN ('partial', 'running')
           AND started_at >= ?`,
-    ).bind(toSqliteTs(nowMs - cfg.openRunLookbackMs)), tally),
+      [toSqliteTs(nowMs - cfg.openRunLookbackMs)], tally),
 
     // 3. Feed pulls started near/in the window (idx_feed_pulls_started).
     readAll<PullRow>(db.prepare(
@@ -690,22 +725,24 @@ export async function computeAgentTimeline(
     //    idx_activity_agent (agent_id, created_at DESC), pinned. Newest
     //    first so a capped read drops the OLDEST rows, never in-window
     //    ones; foldWorkflowEvents re-sorts.
-    readAll<ActivityRow>(db.prepare(
+    readUnion<ActivityRow>(activityParts,
       `SELECT id, event_type, message, metadata_json, created_at
          FROM agent_activity_log INDEXED BY idx_activity_agent
         WHERE agent_id = ? AND created_at >= ?
         ORDER BY created_at DESC
         LIMIT ?`,
-    ).bind(WORKFLOW_AGENT_ID, toSqliteTs(windowStartMs - cfg.workflowLookbackMs), cfg.activitySqlLimit), tally),
+      [WORKFLOW_AGENT_ID, toSqliteTs(windowStartMs - cfg.workflowLookbackMs), cfg.activitySqlLimit], tally,
+      { col: "created_at", limit: cfg.activitySqlLimit }),
 
     // 5. The one event edge (nexus → observer), idx_agent_events_type_created.
-    readAll<EventRow>(db.prepare(
+    readUnion<EventRow>(eventParts,
       `SELECT id, source_agent, target_agent, created_at, status
          FROM agent_events
         WHERE event_type = 'pivot_detected' AND created_at >= ?
         ORDER BY created_at DESC
         LIMIT ?`,
-    ).bind(toSqliteTs(windowStartMs), cfg.maxEvents + 1), tally),
+      [toSqliteTs(windowStartMs), cfg.maxEvents + 1], tally,
+      { col: "created_at", limit: cfg.maxEvents + 1 }),
   ]);
 
   const runs = [
@@ -774,7 +811,7 @@ export async function handleAgentTimeline(
       async () => {
         const tally = newTally();
         const db = getReadSession(env, getDbContext(request));
-        const data = await computeAgentTimeline(db, Date.now(), tally, window);
+        const data = await computeAgentTimeline(db, Date.now(), tally, window, env);
         // 1h keeps the original attribution label so its history is unbroken.
         recordD1Reads(env, window === "1h" ? "agents_timeline" : "agents_timeline_24h", tally);
         return { success: true, data };

@@ -40,6 +40,7 @@ import { THREATS_WITHOUT_PROVIDER_COUNT_SQL } from "../lib/threat-rescan-predica
 // 'geopolitical_threat' string changes in one place; the CHECK
 // constraint in migration 0121 enforces match at the DB level.
 import { ALERT_TYPES } from "@averrow/shared";
+import { telemetryStore } from "../lib/db-route";
 
 // ─── ip-api.com batch types ───────────────────────────────────────
 
@@ -616,7 +617,7 @@ export const cartographerAgent: AgentModule = {
 
         // Emit agent_event after each enrichment batch
         try {
-          await env.DB.prepare(`
+          await (await telemetryStore(env)).prepare(`
             INSERT INTO agent_events (id, event_type, source_agent, payload_json, priority)
             VALUES (?, 'threats_enriched', 'cartographer', ?, 3)
           `).bind(

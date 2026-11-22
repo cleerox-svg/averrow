@@ -33,11 +33,12 @@ import {
   getReviewBundle as libGetReviewBundle,
 } from "../lib/agent-approvals";
 import type { Env } from "../types";
+import { telemetryStore } from "../lib/db-route";
 
 export async function handleListPendingApprovals(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const rows = await libListPending(env.DB);
+    const rows = await libListPending(await telemetryStore(env));
     return json({ success: true, data: { pending: rows, total: rows.length } }, 200, origin);
   } catch (err) {
     return json(
@@ -56,7 +57,7 @@ export async function handleGetApproval(
   const origin = request.headers.get("Origin");
   if (!agentId) return json({ success: false, error: "missing agent_id" }, 400, origin);
   try {
-    const row = await getApprovalState(env.DB, agentId);
+    const row = await getApprovalState(await telemetryStore(env), agentId);
     if (!row) return json({ success: false, error: `no approval row for ${agentId}` }, 404, origin);
     return json({ success: true, data: row }, 200, origin);
   } catch (err) {
@@ -76,7 +77,7 @@ export async function handleGetReviewBundle(
   const origin = request.headers.get("Origin");
   if (!agentId) return json({ success: false, error: "missing agent_id" }, 400, origin);
   try {
-    const bundle = await libGetReviewBundle(env.DB, agentId);
+    const bundle = await libGetReviewBundle(env.DB, agentId, env);
     if (!bundle.approval) {
       return json(
         { success: false, error: `no approval row for ${agentId}` },
@@ -106,7 +107,7 @@ export async function handleApproveAgent(
   try { body = await request.json() as typeof body; } catch { /* empty body OK on approve */ }
   const notes = typeof body.notes === "string" ? body.notes : null;
   try {
-    const row = await approveDeployment(env.DB, agentId, reviewerId, notes);
+    const row = await approveDeployment(await telemetryStore(env), agentId, reviewerId, notes);
     await audit(env, {
       action: "agent_approval_approved",
       userId: reviewerId,
@@ -139,7 +140,7 @@ export async function handleRejectAgent(
   }
   const notes = typeof body.notes === "string" ? body.notes : "";
   try {
-    const row = await rejectDeployment(env.DB, agentId, reviewerId, notes);
+    const row = await rejectDeployment(await telemetryStore(env), agentId, reviewerId, notes);
     await audit(env, {
       action: "agent_approval_rejected",
       userId: reviewerId,
@@ -172,7 +173,7 @@ export async function handleRequestChangesAgent(
   }
   const notes = typeof body.notes === "string" ? body.notes : "";
   try {
-    const row = await requestChanges(env.DB, agentId, reviewerId, notes);
+    const row = await requestChanges(await telemetryStore(env), agentId, reviewerId, notes);
     await audit(env, {
       action: "agent_approval_changes_requested",
       userId: reviewerId,

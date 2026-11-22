@@ -27,6 +27,9 @@
  * on (agent_id, created_at DESC)).
  */
 
+import type { Env } from "../types";
+import { applySplit, historyParts } from "./telemetry-read";
+
 export interface WorkflowAgentStats {
   agent_id:           string;
   /** Count of workflow_dispatched events (each ≈ one logical run). */
@@ -65,13 +68,21 @@ export interface WorkflowAgentStats {
   last_event_at:      string | null;
 }
 
+/**
+ * `db` is the core DB (or read session). With `env`, agent_activity_log is
+ * read across telemetry ∪ core during the cut-over (Track B1c) and the
+ * per-part rollups are merged: counts summed, timestamps MAX'd, and
+ * `last_error` taken from the part holding the newest failure.
+ */
 export async function getWorkflowAgentStats(
-  db: D1Database,
+  db: D1Database | D1DatabaseSession,
   windowHours: number = 24,
+  env?: Env,
 ): Promise<Map<string, WorkflowAgentStats>> {
   try {
-    const rows = await db.prepare(
-      `SELECT agent_id,
+    const parts = await historyParts(env, "agent_activity_log", { core: db, alias: "a" });
+    const lists = await Promise.all(parts.map(async (part) => {
+      const q = applySplit(part, { sql: `SELECT agent_id,
               SUM(CASE WHEN event_type = 'workflow_dispatched' THEN 1 ELSE 0 END) AS dispatched,
               SUM(CASE WHEN event_type = 'batch_complete' THEN 1 ELSE 0 END) AS completed,
               SUM(CASE WHEN event_type = 'workflow_dispatch_failed' THEN 1 ELSE 0 END) AS dispatch_failed,
@@ -93,10 +104,33 @@ export async function getWorkflowAgentStats(
               MAX(created_at) AS last_event_at
        FROM agent_activity_log a
        WHERE created_at >= datetime('now', '-' || ? || ' hours')
-         AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip','workflow_failed')
-       GROUP BY agent_id`,
-    ).bind(windowHours, windowHours).all<WorkflowAgentStats>();
-    return new Map(rows.results.map((r) => [r.agent_id, r]));
+         AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip','workflow_failed')/*split*/
+       GROUP BY agent_id`, binds: [windowHours, windowHours] });
+      return (await part.db.prepare(q.sql).bind(...q.binds).all<WorkflowAgentStats>()).results ?? [];
+    }));
+    if (lists.length === 1) return new Map((lists[0] ?? []).map((r) => [r.agent_id, r]));
+    const merged = new Map<string, WorkflowAgentStats>();
+    for (const list of lists) {
+      for (const r of list) {
+        const cur = merged.get(r.agent_id);
+        if (!cur) { merged.set(r.agent_id, { ...r }); continue; }
+        const maxTs = (x: string | null, y: string | null): string | null => (x === null ? y : y === null ? x : (y > x ? y : x));
+        const newerFailure = r.last_failure_at !== null && (cur.last_failure_at === null || r.last_failure_at > cur.last_failure_at);
+        merged.set(r.agent_id, {
+          agent_id: r.agent_id,
+          dispatched: Number(cur.dispatched ?? 0) + Number(r.dispatched ?? 0),
+          completed: Number(cur.completed ?? 0) + Number(r.completed ?? 0),
+          dispatch_failed: Number(cur.dispatch_failed ?? 0) + Number(r.dispatch_failed ?? 0),
+          cooldown_skipped: Number(cur.cooldown_skipped ?? 0) + Number(r.cooldown_skipped ?? 0),
+          run_failed: Number(cur.run_failed ?? 0) + Number(r.run_failed ?? 0),
+          last_completed_at: maxTs(cur.last_completed_at, r.last_completed_at),
+          last_failure_at: maxTs(cur.last_failure_at, r.last_failure_at),
+          last_error: newerFailure ? r.last_error : cur.last_error,
+          last_event_at: maxTs(cur.last_event_at, r.last_event_at),
+        });
+      }
+    }
+    return merged;
   } catch {
     // Failing the helper must not break the caller — return empty
     // map and the caller falls back to its agent_runs-only path.

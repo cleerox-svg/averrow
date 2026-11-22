@@ -26,6 +26,9 @@ import { NRD_RETENTION_LAST_RESULT_KEY, parseNrdRetentionLastResult } from "../l
 import type { Env } from "../types";
 import { labelPerDatabase } from "../lib/db-registry";
 import { getDatabasesPayload, type DatabasesPayload } from "../lib/db-health";
+import { getWorkflowAgentStats } from "../lib/workflow-agent-stats";
+import { telemetryStore } from "../lib/db-route";
+import { historyParts, unionGroupedResult, unionRowsResult } from "../lib/telemetry-read";
 
 // ─── Diagnostics caching (D1 overload 2026-11-08) ─────────────────
 /** KV key + TTL for the enrichment_pipeline whole-threats-table pass. */
@@ -1293,8 +1296,12 @@ function sqliteUtcMs(ts: string): number {
 export async function fetchPausedAgents(
   db: D1Database,
   nowMs: number = Date.now(),
+  env?: Env,
 ): Promise<PausedAgentDiag[]> {
-  const configs = await db.prepare(`
+  // Track B1c: with env, agent_configs is read from the routed store and
+  // the run lookups run on each part of the telemetry ∪ core union.
+  const configDb = env ? await telemetryStore(env) : db;
+  const configs = await configDb.prepare(`
     SELECT agent_id, paused_reason, paused_at, paused_after_n_failures,
            consecutive_failures
       FROM agent_configs
@@ -1311,16 +1318,38 @@ export async function fetchPausedAgents(
   const rows = configs.results ?? [];
   if (rows.length === 0) return [];
 
-  const stmt = db.prepare(`
+  type RecentRun = { error_message: string | null; started_at: string };
+  const parts = await historyParts(env, 'agent_runs', { core: db });
+  const perPart = await Promise.all(parts.map((part) => {
+    const partDb = part.writeDb ?? db;
+    const stmt = partDb.prepare(`
     SELECT error_message, started_at
       FROM agent_runs
      WHERE agent_id = ?
      ORDER BY started_at DESC
      LIMIT ?
   `);
-  const runBatches = await db.batch<{ error_message: string | null; started_at: string }>(
-    rows.map((r) => stmt.bind(r.agent_id, PAUSED_AGENT_RECENT_RUNS)),
-  );
+    return partDb.batch<RecentRun>(
+      rows.map((r) => stmt.bind(r.agent_id, PAUSED_AGENT_RECENT_RUNS)),
+    );
+  }));
+  // One part: that batch verbatim. Union: per agent, the newest
+  // PAUSED_AGENT_RECENT_RUNS across parts (duplicates are identical rows).
+  const runBatches: Array<{ results: RecentRun[] }> = perPart.length === 1
+    ? (perPart[0] ?? [])
+    : rows.map((_, i) => {
+        const seen = new Set<string>();
+        const merged = perPart.flatMap((b) => b[i]?.results ?? [])
+          .filter((run) => {
+            const k = `${run.started_at}|${run.error_message ?? ''}`;
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          })
+          .sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0))
+          .slice(0, PAUSED_AGENT_RECENT_RUNS);
+        return { results: merged };
+      });
 
   return rows.map((r, i) => {
     const runs = runBatches[i]?.results ?? [];
@@ -1349,9 +1378,10 @@ export async function fetchPausedAgents(
 export async function fetchPausedAgentsSafe(
   db: D1Database,
   nowMs: number = Date.now(),
+  env?: Env,
 ): Promise<{ paused: PausedAgentDiag[]; paused_error: string | null }> {
   try {
-    return { paused: await fetchPausedAgents(db, nowMs), paused_error: null };
+    return { paused: await fetchPausedAgents(db, nowMs, env), paused_error: null };
   } catch (err) {
     return { paused: [], paused_error: err instanceof Error ? err.message : String(err) };
   }
@@ -1942,7 +1972,9 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // of the whole agent_runs table (~132K rows, never pruned) with a
     // table lookup per row. Now a started_at range seek on
     // idx_agent_runs_started (window note under §3).
-    const agentMeshT = soft("agent_mesh", noRows<AgentMeshQueryRow>, async () => rows(await env.DB.prepare(`
+    const agentMeshT = soft("agent_mesh", noRows<AgentMeshQueryRow>, async () => {
+      const parts = await historyParts(env, 'agent_runs');
+      return rows(await unionGroupedResult<AgentMeshQueryRow & { n_dur?: number }>(parts, (p) => ({ sql: `
       SELECT
         agent_id,
         COUNT(*) AS total_runs,
@@ -1961,13 +1993,22 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         -- status='partial' with completed_at NULL. Excluding both (and any
         -- still-'running' row) keeps the figure representative of real
         -- execution time.
-        AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms
+        AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms,
+        COUNT(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS n_dur
       FROM agent_runs
       WHERE started_at >= datetime('now', '-' || ? || ' hours')
-        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')
+        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')/*split*/
       GROUP BY +agent_id
       ORDER BY agent_id ASC
-    `).bind(hoursBack, hoursBack).all<AgentMeshQueryRow>()));
+    `, binds: [hoursBack, hoursBack] }), {
+        groupBy: ['agent_id'],
+        sum: ['total_runs', 'success', 'partial', 'killed_runs', 'failed', 'running', 'total_records_processed', 'n_dur'],
+        max: ['last_completed_at', 'last_error'],
+        avg: [{ col: 'avg_duration_ms', weight: 'n_dur' }],
+        sort: (a, b) => (a.agent_id < b.agent_id ? -1 : a.agent_id > b.agent_id ? 1 : 0),
+        drop: ['n_dur'],
+      }));
+    });
 
     // Workflow-agent rollup from agent_activity_log. The Workflow path
     // (lib/workflow-dispatch.ts + workflows/*.ts) does NOT write to
@@ -1997,7 +2038,19 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       last_completed_at: string | null;
       last_error: string | null;
     };
-    const workflowAgentMeshT = soft("agent_mesh", noRows<WorkflowMeshRow>, async () => rows(await env.DB.prepare(`
+    const workflowAgentMeshT = soft("agent_mesh", noRows<WorkflowMeshRow>, async () => {
+      // Track B1c: during the cut-over the activity log spans telemetry ∪
+      // core; the shared rollup (lib/workflow-agent-stats.ts) merges the
+      // parts (last_error from the part holding the newest failure).
+      if ((await historyParts(env, 'agent_activity_log')).length > 1) {
+        const merged = await getWorkflowAgentStats(env.DB, hoursBack, env);
+        return { results: [...merged.values()].map((w): WorkflowMeshRow => ({
+          agent_id: w.agent_id, dispatched: w.dispatched, completed: w.completed,
+          dispatch_failed: w.dispatch_failed, cooldown_skipped: w.cooldown_skipped,
+          run_failed: w.run_failed, last_completed_at: w.last_completed_at, last_error: w.last_error,
+        })) };
+      }
+      return rows(await env.DB.prepare(`
       SELECT
         agent_id,
         SUM(CASE WHEN event_type = 'workflow_dispatched' THEN 1 ELSE 0 END) AS dispatched,
@@ -2032,7 +2085,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       WHERE created_at >= datetime('now', '-' || ? || ' hours')
         AND event_type IN ('workflow_dispatched','batch_complete','workflow_dispatch_failed','workflow_cooldown_skip','workflow_failed')
       GROUP BY +agent_id
-    `).bind(hoursBack, hoursBack).all<WorkflowMeshRow>()));
+    `).bind(hoursBack, hoursBack).all<WorkflowMeshRow>());
+    });
 
     // Stalled agents — started but never completed in the last N hours.
     // Seeks idx_agent_runs_status (status = 'running' is a handful of
@@ -2042,20 +2096,24 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       run_id: string;
       started_at: string;
       minutes_stalled: number;
-    }>, async () => rows(await env.DB.prepare(`
-      SELECT agent_id, id AS run_id, started_at,
-             ROUND((julianday('now') - julianday(started_at)) * 24 * 60, 1) AS minutes_stalled
-      FROM agent_runs
-      WHERE status = 'running'
-        AND datetime(started_at) < datetime('now', '-15 minutes')
-      ORDER BY started_at ASC
-      LIMIT 10
-    `).all<{
+    }>, async () => rows(await unionRowsResult<{
       agent_id: string;
       run_id: string;
       started_at: string;
       minutes_stalled: number;
-    }>()));
+    }>(await historyParts(env, 'agent_runs'), (p) => ({ sql: `
+      SELECT agent_id, id AS run_id, started_at,
+             ROUND((julianday('now') - julianday(started_at)) * 24 * 60, 1) AS minutes_stalled
+      FROM agent_runs
+      WHERE status = 'running'
+        AND datetime(started_at) < datetime('now', '-15 minutes')/*split*/
+      ORDER BY started_at ASC
+      LIMIT 10
+    `, binds: [] }), {
+      key: (r) => r.run_id,
+      sort: (a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : 0),
+      limit: 10,
+    })));
 
     // ─── 5. Backlog trends ──────────────────────────────────────────
     // backlog_history is pruned to 7 days by Flight Control — small.
@@ -2186,7 +2244,9 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       last_run_at: string | null;
       avg_duration_ms: number | null;
     };
-    const cronHealthT = soft("cron_health", noRows<CronHealthRow>, async () => rows(await env.DB.prepare(`
+    const cronHealthT = soft("cron_health", noRows<CronHealthRow>, async () => {
+      const parts = await historyParts(env, 'agent_runs');
+      return rows(await unionGroupedResult<CronHealthRow & { n_dur?: number }>(parts, (p) => ({ sql: `
       SELECT agent_id,
              COUNT(*) AS runs,
              SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,
@@ -2195,13 +2255,21 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
              -- See per-agent query above: exclude reaped/failed runs and
              -- mid-run kills so a single reaped cron run (e.g. navigator
              -- stamped at the 60min reap ceiling) can't dominate the mean.
-             AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms
+             AVG(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS avg_duration_ms,
+             COUNT(CASE WHEN status IN ('success', 'partial') AND completed_at IS NOT NULL THEN duration_ms END) AS n_dur
       FROM agent_runs
       WHERE agent_id IN ('navigator', 'fast_tick', 'flight_control', 'orchestrator')
         AND started_at >= datetime('now', '-' || ? || ' hours')
-        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')
+        AND datetime(started_at) >= datetime('now', '-' || ? || ' hours')/*split*/
       GROUP BY agent_id
-    `).bind(hoursBack, hoursBack).all<CronHealthRow>()));
+    `, binds: [hoursBack, hoursBack] }), {
+        groupBy: ['agent_id'],
+        sum: ['runs', 'success', 'not_success', 'n_dur'],
+        max: ['last_run_at'],
+        avg: [{ col: 'avg_duration_ms', weight: 'n_dur' }],
+        drop: ['n_dur'],
+      }));
+    });
 
     // ─── 8. Platform totals ─────────────────────────────────────────
     // Eight whole-table counts (brands ~114K, lookalike_domains, two
@@ -2317,7 +2385,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // of threats, so it runs in the sequence like every other main read.
     const pageAnalysisT = soft<PageAnalysisDiag | null>("page_analysis", null, () => buildPageAnalysisDiag(env));
     const velocityT = soft<VelocityDiag | null>("velocity", null, () => buildVelocityDiag(env));
-    const pausedAgentsT = () => fetchPausedAgentsSafe(env.DB);
+    const pausedAgentsT = () => fetchPausedAgentsSafe(env.DB, Date.now(), env);
     const dmarcIngestT = soft<DmarcIngestDiag | null>("dmarc_ingest", null, () => buildDmarcIngestDiag(env));
 
     // ── Main-DB reads, one at a time ────────────────────────────────

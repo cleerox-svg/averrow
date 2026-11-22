@@ -14,6 +14,7 @@ import {
 } from "../lib/geo-exhaustion";
 import type { Env } from "../types";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
+import { byDesc, historyParts, preferFinalizedRun, unionRows } from '../lib/telemetry-read';
 
 /** GET /api/admin/cartographer-health    (JWT super-admin auth)
  *  GET /api/internal/cartographer-health  (AVERROW_INTERNAL_SECRET auth) */
@@ -149,14 +150,7 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
     `).first<{ enriched_last_hour: number; enriched_last_6h: number; enriched_last_24h: number }>();
 
     // ─── Recent runs ──────────────────────────────────────────────
-    const recentRunsP = env.DB.prepare(`
-      SELECT id, status, started_at, completed_at, duration_ms, records_processed,
-             outputs_generated, tokens_used, error_message
-      FROM agent_runs
-      WHERE agent_id = 'cartographer'
-      ORDER BY started_at DESC
-      LIMIT 10
-    `).all<{
+    type CartoRun = {
       id: string;
       status: string;
       started_at: string;
@@ -166,7 +160,18 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
       outputs_generated: number | null;
       tokens_used: number | null;
       error_message: string | null;
-    }>();
+    };
+    const recentRunsP = historyParts(env, 'agent_runs').then((parts) => unionRows<CartoRun>(parts, (p) => ({
+      sql: `
+      SELECT id, status, started_at, completed_at, duration_ms, records_processed,
+             outputs_generated, tokens_used, error_message
+      FROM agent_runs
+      WHERE agent_id = 'cartographer'/*split*/
+      ORDER BY started_at DESC
+      LIMIT 10
+    `,
+      binds: [],
+    }), { key: (r) => r.id, prefer: preferFinalizedRun, sort: byDesc<CartoRun>('started_at'), limit: 10 })).then((results) => ({ results }));
 
     // ─── Recent Phase 0 batches ───────────────────────────────────
     // The diagnostic agent_outputs row pushed at the end of Phase 0 carries

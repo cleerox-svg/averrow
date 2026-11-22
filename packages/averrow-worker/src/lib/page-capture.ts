@@ -44,6 +44,7 @@ import {
 // The vendored ruleset itself (lib/iok-ruleset.ts) is loaded lazily in
 // matchKitRules, keeping the JSON off every other importer's path.
 import { deleteKitMatchesStmt, recordKitMatches, toKitMatchingView, type KitMatchView, type KitMatchingView } from "./iok-kit-matches";
+import { telemetryStore } from "./db-route";
 
 // ─── Tunables ────────────────────────────────────────────────────────
 
@@ -1495,13 +1496,13 @@ export async function runPageCapture(env: Env, opts: PageCaptureRunOptions = {})
 
 /** Telemetry-only completion event (target_agent NULL — no dispatch). */
 export async function emitPageCaptureEvent(
-  env: Pick<Env, "DB">,
+  env: Env,
   runId: string,
   stats: PageCaptureRunStats | null,
   error: string | null = null,
 ): Promise<void> {
   try {
-    await env.DB.prepare(
+    await (await telemetryStore(env)).prepare(
       `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
        VALUES (?, 'pages_captured', 'page_capture', NULL, ?, 3, 'pending')`,
     ).bind(

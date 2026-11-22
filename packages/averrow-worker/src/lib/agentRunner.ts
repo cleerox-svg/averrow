@@ -11,6 +11,7 @@ import type { Env } from "../types";
 import { createNotification } from "./notifications";
 import { withD1Retry, D1_OVERLOAD_RETRY_BASE_MS } from "./d1-retry";
 import { withD1Meter, isExecutionContextLike } from "./d1-meter";
+import { resolveTelemetry } from "./db-route";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -394,13 +395,18 @@ async function executeAgentMetered(
 ): Promise<ExecuteAgentResult> {
   const agentId = agentModule.name;
 
+  // Telemetry route resolved ONCE for the whole run (Track B1c): the config
+  // gate, the agent_runs insert, the finalize and the breaker bookkeeping all
+  // hit the same DB, even if db_route:telemetry flips while the agent runs.
+  const { db: tdb } = await resolveTelemetry(env);
+
   // ── Circuit breaker gate ────────────────────────────────────
   // Ensure the config row exists (zero-ceremony for agents added after migration).
-  await env.DB.prepare(
+  await tdb.prepare(
     "INSERT OR IGNORE INTO agent_configs (agent_id) VALUES (?)"
   ).bind(agentId).run();
 
-  const configRow = await env.DB.prepare(
+  const configRow = await tdb.prepare(
     "SELECT enabled, paused_reason FROM agent_configs WHERE agent_id = ?"
   ).bind(agentId).first<{ enabled: number; paused_reason: string | null }>();
 
@@ -410,7 +416,7 @@ async function executeAgentMetered(
 
     // Log to agent_activity_log so FC dashboard can surface skips.
     try {
-      await env.DB.prepare(
+      await tdb.prepare(
         `INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity, created_at)
          VALUES (?, ?, 'circuit_open_skip', ?, ?, 'info', datetime('now'))`
       ).bind(
@@ -438,7 +444,7 @@ async function executeAgentMetered(
   let approval: Awaited<ReturnType<typeof getApprovalState>> = null;
   let approvalGateAvailable = true;
   try {
-    approval = await getApprovalState(env.DB, agentId);
+    approval = await getApprovalState(tdb, agentId);
   } catch (err) {
     // Fail open: when agent_approvals isn't queryable (test fake
     // missing the table, transient D1 hiccup, migration not yet
@@ -466,7 +472,7 @@ async function executeAgentMetered(
       // agent in /api/admin/agents/approvals/pending. Best-effort:
       // failure to insert shouldn't crash the run path, but DOES
       // still block the agent from running until the row lands.
-      try { await createPending(env.DB, agentId); } catch (err) {
+      try { await createPending(tdb, agentId); } catch (err) {
         console.warn(
           `[agentRunner] ${agentId}: createPending failed: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -480,7 +486,7 @@ async function executeAgentMetered(
     // Same agent_activity_log entry shape as the circuit-breaker gate
     // so the FC dashboard can render both.
     try {
-      await env.DB.prepare(
+      await tdb.prepare(
         `INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity, created_at)
          VALUES (?, ?, 'approval_gate_skip', ?, ?, 'info', datetime('now'))`
       ).bind(
@@ -498,7 +504,7 @@ async function executeAgentMetered(
   const runId = crypto.randomUUID();
 
   // Create run record in v2 agent_runs table
-  await env.DB.prepare(
+  await tdb.prepare(
     `INSERT INTO agent_runs (id, agent_id, started_at, status, records_processed, outputs_generated)
      VALUES (?, ?, datetime('now'), 'partial', 0, 0)`
   ).bind(runId, agentId).run();
@@ -556,7 +562,7 @@ async function executeAgentMetered(
     // strategist). Idempotent UPDATE keyed on runId → safe to re-run.
     await withD1Retry(
       () =>
-        env.DB.prepare(
+        tdb.prepare(
           `UPDATE agent_runs SET
              status = ?, duration_ms = ?, records_processed = ?,
              outputs_generated = ?, tokens_used = ?, completed_at = datetime('now')
@@ -569,7 +575,7 @@ async function executeAgentMetered(
     );
 
     // ── Circuit breaker: reset counter on success/partial ────
-    await env.DB.prepare(
+    await tdb.prepare(
       "UPDATE agent_configs SET consecutive_failures = 0, updated_at = datetime('now') WHERE agent_id = ?"
     ).bind(agentId).run();
 
@@ -583,7 +589,7 @@ async function executeAgentMetered(
     // leave the run orphaned at 'partial'. Idempotent UPDATE keyed on runId.
     await withD1Retry(
       () =>
-        env.DB.prepare(
+        tdb.prepare(
           `UPDATE agent_runs SET status = 'failed', error_message = ?, duration_ms = ?, completed_at = datetime('now') WHERE id = ?`,
         ).bind(errorMsg, durationMs, runId).run(),
       { label: `${agentId} finalize-failure`, overloadBaseMs: finalizeOverloadBaseMs(triggerType) },
@@ -591,16 +597,16 @@ async function executeAgentMetered(
 
     // ── Circuit breaker: increment counter + maybe trip ──────
     try {
-      const prev = await env.DB.prepare(
+      const prev = await tdb.prepare(
         "SELECT consecutive_failures FROM agent_configs WHERE agent_id = ?"
       ).bind(agentId).first<{ consecutive_failures: number }>();
       const newCount = (prev?.consecutive_failures ?? 0) + 1;
 
-      await env.DB.prepare(
+      await tdb.prepare(
         "UPDATE agent_configs SET consecutive_failures = ?, updated_at = datetime('now') WHERE agent_id = ?"
       ).bind(newCount, agentId).run();
 
-      await tripCircuitIfNeeded(env, agentId, newCount, errorMsg);
+      await tripCircuitIfNeeded(env, tdb, agentId, newCount, errorMsg);
     } catch (e) {
       console.error(`[agentRunner] ${agentId}: circuit breaker bookkeeping failed:`, e);
     }
@@ -656,6 +662,7 @@ export async function runSyncAgent<T = unknown>(
 
 async function tripCircuitIfNeeded(
   env: Env,
+  tdb: D1Database,
   agentId: string,
   newCount: number,
   lastError: string,
@@ -665,7 +672,7 @@ async function tripCircuitIfNeeded(
 
   // Resolve the effective threshold: per-agent override if non-NULL,
   // else global default from system_config, else hardcoded fallback.
-  const perAgentRow = await env.DB.prepare(
+  const perAgentRow = await tdb.prepare(
     "SELECT consecutive_failure_threshold FROM agent_configs WHERE agent_id = ?"
   ).bind(agentId).first<{ consecutive_failure_threshold: number | null }>();
 
@@ -687,13 +694,13 @@ async function tripCircuitIfNeeded(
   if (newCount < threshold) return;
 
   // Check if already tripped (concurrent run could beat us to it).
-  const current = await env.DB.prepare(
+  const current = await tdb.prepare(
     "SELECT enabled FROM agent_configs WHERE agent_id = ?"
   ).bind(agentId).first<{ enabled: number }>();
   if (!current || current.enabled === 0) return;
 
   // Trip the circuit breaker.
-  await env.DB.prepare(
+  await tdb.prepare(
     `UPDATE agent_configs SET
        enabled = 0,
        paused_reason = 'auto:consecutive_failures',
@@ -728,7 +735,7 @@ async function tripCircuitIfNeeded(
 
   // Log to agent_activity_log.
   try {
-    await env.DB.prepare(
+    await tdb.prepare(
       `INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity, created_at)
        VALUES (?, ?, 'circuit_breaker_tripped', ?, ?, 'critical', datetime('now'))`
     ).bind(

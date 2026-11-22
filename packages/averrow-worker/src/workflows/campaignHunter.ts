@@ -34,17 +34,19 @@ export type CampaignHunterParams = {
   runId?: string;
 };
 
+import { resolveTelemetry, telemetryDbFor, type TelemetryRoute } from "../lib/db-route";
+
 const AGENT_ID = "campaign_hunter";
 
 async function logActivity(
-  env: Env,
+  db: D1Database,
   eventType: string,
   message: string,
   metadata: Record<string, unknown>,
   severity: "info" | "warning" | "critical" = "info",
 ): Promise<void> {
   try {
-    await env.DB.prepare(
+    await db.prepare(
       `INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).bind(crypto.randomUUID(), AGENT_ID, eventType, message, JSON.stringify(metadata), severity).run();
@@ -73,16 +75,26 @@ export class CampaignHunterWorkflow extends WorkflowEntrypoint<Env, CampaignHunt
     const startMs = Date.now();
 
     // ── Step 1: open the run ──────────────────────────────────────
-    await step.do("init-run", async () => {
-      await this.env.DB.prepare(
+    // The telemetry route is resolved ONCE, inside the durable init step,
+    // and returned from it (Track B1c): a replayed or resumed run reuses the
+    // persisted value, so every later step finalizes on the DB the row was
+    // inserted into even if db_route:telemetry flipped in between. An
+    // instance that ran init-run before this field existed returns
+    // undefined → core, where its row was written.
+    const initRoute = await step.do("init-run", async (): Promise<TelemetryRoute> => {
+      const { route, db } = await resolveTelemetry(this.env);
+      await db.prepare(
         `INSERT INTO agent_runs (id, agent_id, started_at, status, records_processed, outputs_generated)
          VALUES (?, ?, datetime('now'), 'partial', 0, 0)
          ON CONFLICT(id) DO NOTHING`,
       ).bind(runId, AGENT_ID).run();
-      await logActivity(this.env, "started",
+      await logActivity(db, "started",
         `Campaign Hunter workflow started for ${params.brandName} (${params.brandDomain})`,
         { run_id: runId, brand: params.brandDomain, triggered_by: "workflow" });
+      return route;
     });
+    const runRoute: TelemetryRoute = initRoute ?? "core";
+    const runDb = (): D1Database => telemetryDbFor(this.env, runRoute);
 
     // ── Step 2: resolve the brand ─────────────────────────────────
     const brand = await step.do("resolve-brand", async (): Promise<ResolvedBrand | null> => {
@@ -95,11 +107,11 @@ export class CampaignHunterWorkflow extends WorkflowEntrypoint<Env, CampaignHunt
 
     if (!brand) {
       await step.do("finalize-not-resolved", async () => {
-        await this.env.DB.prepare(
+        await runDb().prepare(
           `UPDATE agent_runs SET status = 'failed', error_message = 'brand_not_resolved',
              duration_ms = ?, completed_at = datetime('now') WHERE id = ?`,
         ).bind(Date.now() - startMs, runId).run();
-        await logActivity(this.env, "batch_complete",
+        await logActivity(runDb(), "batch_complete",
           `Campaign Hunter could not resolve brand "${params.brandName}"`,
           { run_id: runId, resolved: false }, "warning");
       });
@@ -141,11 +153,11 @@ export class CampaignHunterWorkflow extends WorkflowEntrypoint<Env, CampaignHunt
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await step.do("finalize-error", async () => {
-        await this.env.DB.prepare(
+        await runDb().prepare(
           `UPDATE agent_runs SET status = 'failed', error_message = ?, duration_ms = ?,
              completed_at = datetime('now') WHERE id = ?`,
         ).bind(msg.slice(0, 500), Date.now() - startMs, runId).run();
-        await logActivity(this.env, "batch_complete",
+        await logActivity(runDb(), "batch_complete",
           `Campaign Hunter failed for ${brand.name}: ${msg.slice(0, 120)}`,
           { run_id: runId, error: msg.slice(0, 200) }, "critical");
       });
@@ -174,19 +186,19 @@ export class CampaignHunterWorkflow extends WorkflowEntrypoint<Env, CampaignHunt
         }
       }
 
-      await this.env.DB.prepare(
+      await runDb().prepare(
         `UPDATE agent_runs SET status = 'success', duration_ms = ?, records_processed = ?,
            outputs_generated = ?, tokens_used = ?, completed_at = datetime('now') WHERE id = ?`,
       ).bind(Date.now() - startMs, summary.itemsProcessed, outputsGenerated, summary.tokensUsed, runId).run();
 
-      await this.env.DB.prepare(
+      await runDb().prepare(
         `UPDATE agent_configs SET consecutive_failures = 0, updated_at = datetime('now') WHERE agent_id = ?`,
       ).bind(AGENT_ID).run();
 
       // A deliberate AI skip finishes like any completed run (status
       // 'success', the info diagnostic row says why) — never 'failed', never
       // a critical activity row, never a consecutive_failures bump.
-      await logActivity(this.env, "batch_complete",
+      await logActivity(runDb(), "batch_complete",
         summary.aiSkipped
           ? `Campaign Hunter skipped for ${brand.name} — AI not available: ${summary.aiSkipped.slice(0, 160)}`
           : `Campaign Hunter complete for ${brand.name} — ${JSON.stringify(summary.output)}`,

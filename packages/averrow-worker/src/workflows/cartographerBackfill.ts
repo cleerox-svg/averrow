@@ -1,16 +1,18 @@
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
 import { PRIVATE_IP_SQL_FILTER } from '../lib/geoip';
 import { runWithWorkflowMeter } from '../lib/d1-meter';
+import { telemetryStore } from "../lib/db-route";
+import type { Env } from "../types";
 
 interface BackfillParams {
   batchSize: number;
   startOffset: number;
 }
 
-interface BackfillEnv {
-  DB: D1Database;
-  CARTOGRAPHER_BACKFILL: Workflow;
-}
+// The runtime env is the Worker's full Env (wrangler binds every binding to
+// every Workflow); typed as such so activity writes can use the routed
+// agent-runs store (lib/db-route.ts telemetryStore, Track B1c).
+type BackfillEnv = Env;
 
 export class CartographerBackfillWorkflow extends WorkflowEntrypoint<BackfillEnv, BackfillParams> {
   // Per-run D1 attribution → AE `workflow:cartographer_backfill` (lib/d1-meter.ts):
@@ -48,7 +50,7 @@ export class CartographerBackfillWorkflow extends WorkflowEntrypoint<BackfillEnv
 
     // Log start to agent_activity_log
     await step.do('log-start', async () => {
-      await this.env.DB.prepare(`
+      await (await telemetryStore(this.env)).prepare(`
         INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
         VALUES (?, 'cartographer', 'started', ?, ?, 'info')
       `).bind(
@@ -187,7 +189,7 @@ export class CartographerBackfillWorkflow extends WorkflowEntrypoint<BackfillEnv
       // Log progress every 10 batches
       if (batchNum % 10 === 0) {
         await step.do(`log-progress-${batchNum}`, async () => {
-          await this.env.DB.prepare(`
+          await (await telemetryStore(this.env)).prepare(`
             INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
             VALUES (?, 'cartographer', 'batch_complete', ?, ?, 'info')
           `).bind(
@@ -206,7 +208,7 @@ export class CartographerBackfillWorkflow extends WorkflowEntrypoint<BackfillEnv
 
     // Final log
     await step.do('log-complete', async () => {
-      await this.env.DB.prepare(`
+      await (await telemetryStore(this.env)).prepare(`
         INSERT INTO agent_activity_log (id, agent_id, event_type, message, metadata_json, severity)
         VALUES (?, 'cartographer', 'batch_complete', ?, ?, 'info')
       `).bind(
