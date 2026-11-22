@@ -6,8 +6,12 @@ import { Badge, StatTile, StatGrid } from '@/design-system/components';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import type { DatabaseEntry, DatabasesPayload, DbProposed, DbStatus } from '@/hooks/useDatabases';
 import {
-  DASH, STATUS_LABEL, formatBytes, formatCount, formatPct, formatTimeToFull, hourLabel, peakHour, usedPct,
+  DASH, OVERLOADS_SCOPE_DEFAULT, STATUS_LABEL, formatBytes, formatCount, formatPct, formatTimeToFull, hourLabel, peakHour,
+  thresholdText, thresholds, usedPct,
 } from './format';
+import type { DbWindow } from '@/hooks/useDatabases';
+
+export const windowParam = (w: DbWindow) => (w === '24h' ? undefined : w);
 
 export function StatusPill({ status }: { status: DbStatus }) {
   const badgeStatus = status === 'healthy' ? 'healthy' : status === 'warning' ? 'warning' : status === 'overloaded' ? 'failed' : 'inactive';
@@ -17,6 +21,7 @@ export function StatusPill({ status }: { status: DbStatus }) {
 export function SummaryStrip({ data }: { data: DatabasesPayload }) {
   const s = data.summary;
   const overloadsKnown = s.overloads_24h != null;
+  const scope = s.overloads_scope ?? data.overloads_scope ?? OVERLOADS_SCOPE_DEFAULT;
   return (
     <section aria-label="Fleet summary">
       <StatGrid cols={4}>
@@ -29,12 +34,12 @@ export function SummaryStrip({ data }: { data: DatabasesPayload }) {
         <StatTile
           label="Rows read · this cycle"
           value={formatCount(s.cycle_rows_read)}
-          sub={s.cycle_pct_of_plan != null ? `${formatPct(s.cycle_pct_of_plan, 1)} of the 25 B plan ceiling` : 'Not measured yet'}
+          sub={s.cycle_pct_of_plan != null ? `${formatPct(s.cycle_pct_of_plan, 1)} projected % of 25 B plan` : 'Not measured yet'}
         />
         <StatTile
           label="Overload rejections · 24h"
           value={overloadsKnown ? String(s.overloads_24h) : DASH}
-          sub={overloadsKnown ? (s.overloads_24h === 0 ? 'None rejected' : 'D1 refused these statements') : 'Not measured yet'}
+          sub={overloadsKnown ? `${s.overloads_24h === 0 ? 'None rejected' : 'D1 refused these statements'} · ${scope}` : 'Not measured yet'}
           accent={overloadsKnown && (s.overloads_24h ?? 0) > 0 ? 'var(--sev-critical)' : undefined}
         />
       </StatGrid>
@@ -42,7 +47,7 @@ export function SummaryStrip({ data }: { data: DatabasesPayload }) {
   );
 }
 
-function CapacityBar({ db }: { db: DatabaseEntry }) {
+function CapacityBar({ db, th }: { db: DatabaseEntry; th: { warn: number; critical: number } }) {
   const pct = usedPct(db.size_bytes, db.cap_bytes);
   return (
     <div>
@@ -63,10 +68,11 @@ function CapacityBar({ db }: { db: DatabaseEntry }) {
         style={{ margin: '8px 0' }}
       >
         {pct != null && <div className="dbp-bar-fill" data-tone={db.status} style={{ width: `${Math.min(100, Math.max(pct > 0 ? 0.6 : 0, pct))}%` }} />}
-        <div className="dbp-bar-mark" aria-hidden="true" />
+        <div className="dbp-bar-mark" data-k="warn" aria-hidden="true" style={{ left: `${th.warn * 100}%` }} />
+        <div className="dbp-bar-mark" aria-hidden="true" style={{ left: `${th.critical * 100}%` }} />
       </div>
       <div className="dbp-cap-foot">
-        <span>{pct == null ? 'Size not measured yet' : `${pct < 1 ? '<1' : Math.round(pct)}% used · alert at 80%`}</span>
+        <span>{pct == null ? 'Size not measured yet' : `${pct < 1 ? '<1' : Math.round(pct)}% used · ${thresholdText(th)}`}</span>
         <span>{formatTimeToFull(db)}</span>
       </div>
     </div>
@@ -96,7 +102,7 @@ function HourlyReadBars({ db }: { db: DatabaseEntry }) {
   );
 }
 
-export function DatabaseCard({ db }: { db: DatabaseEntry }) {
+export function DatabaseCard({ db, window: win = '24h', th = thresholds(undefined) }: { db: DatabaseEntry; window?: DbWindow; th?: { warn: number; critical: number } }) {
   const top = db.top_jobs[0];
   const footNote = db.note ?? (top ? `Top user: ${top.source} · ${formatCount(top.rows_read)} rows read` : null);
   const overloadsBad = (db.overloads_24h ?? 0) > 0;
@@ -113,7 +119,7 @@ export function DatabaseCard({ db }: { db: DatabaseEntry }) {
         <StatusPill status={db.status} />
       </div>
 
-      <CapacityBar db={db} />
+      <CapacityBar db={db} th={th} />
 
       <div className="dbp-metrics">
         <div className="dbp-metric"><span className="dbp-label">Reads · 6h</span><span className="dbp-metric-v">{formatCount(db.reads_6h)}</span></div>
@@ -121,7 +127,7 @@ export function DatabaseCard({ db }: { db: DatabaseEntry }) {
         <div className="dbp-metric">
           <span className="dbp-label">Overloads · 24h</span>
           <span className="dbp-metric-v" data-bad={overloadsBad}>{db.overloads_24h == null ? DASH : db.overloads_24h}</span>
-          {db.overloads_24h == null && <span className="dbp-muted" style={{ fontSize: 11 }}>not measured yet</span>}
+          <span className="dbp-muted" style={{ fontSize: 11 }}>{db.overloads_24h == null ? 'not measured yet' : OVERLOADS_SCOPE_DEFAULT}</span>
         </div>
       </div>
 
@@ -143,7 +149,7 @@ export function DatabaseCard({ db }: { db: DatabaseEntry }) {
 
       <div className="dbp-card-foot">
         <span>{footNote ?? ''}</span>
-        <Link to={tabUrl('databases', { db: db.store })} aria-label={`Open details for ${db.name}`}>Open details →</Link>
+        <Link to={tabUrl('databases', { db: db.store, window: windowParam(win) })} aria-label={`Open details for ${db.name}`}>Open details →</Link>
       </div>
     </article>
   );
@@ -167,10 +173,11 @@ export function ProposedCard({ p }: { p: DbProposed }) {
   );
 }
 
-export function CardsView({ data }: { data: DatabasesPayload }) {
+export function CardsView({ data, window: win = '24h' }: { data: DatabasesPayload; window?: DbWindow }) {
+  const th = thresholds(data.summary);
   return (
     <section className="dbp-grid" aria-label="Databases">
-      {data.databases.map((db) => <DatabaseCard key={db.store} db={db} />)}
+      {data.databases.map((db) => <DatabaseCard key={db.store} db={db} window={win} th={th} />)}
       {data.proposed.map((p) => <ProposedCard key={p.name} p={p} />)}
     </section>
   );

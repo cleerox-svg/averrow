@@ -80,7 +80,7 @@ export function DatabaseMap({
   return (
     <div className="dbp" style={{ gap: 20 }}>
       <div className="dbp-toolbar">
-        <p className="dbp-sub">Line width is rows read in the window. Red means the job ran while D1 was rejecting statements.</p>
+        <p className="dbp-sub">Line width is rows read in the window. Red means this job's statements were rejected (overloaded).</p>
         <label className="dbp-field">
           Window
           <select className="dbp-select" value={win} onChange={(e) => onWindow(e.target.value as DbWindow)} aria-label="Window">
@@ -171,7 +171,7 @@ export function DatabaseMap({
                 in {WINDOW_LABEL[win].toLowerCase()} across <span className="dbp-mono">{formatCount(selectedEdge.queries)}</span> queries
                 {share != null && selectedStore ? `, ${share}% of this window's reads on ${selectedStore.name}` : ''}.
               </span>
-              <span>Overloads while running: {selectedEdge.overloads == null ? 'not measured yet' : selectedEdge.overloads}</span>
+              <span>Rejected statements (metered jobs): {selectedEdge.overloads == null ? 'not measured yet' : selectedEdge.overloads}</span>
               {agentTab && <Link to={tabUrl(agentTab)}>See {selectedEdge.source} in {agentTab === 'agents' ? 'Agents' : 'Feeds'} →</Link>}
             </>
           ) : <span>Nothing to select yet.</span>}
@@ -179,7 +179,7 @@ export function DatabaseMap({
         <section className="dbp-panel" aria-label="Legend">
           <h3>Legend</h3>
           <div className="dbp-legend-item"><span className="dbp-legend-line" aria-hidden="true" />Normal load</div>
-          <div className="dbp-legend-item"><span className="dbp-legend-line" data-k="overload" aria-hidden="true" />Running during an overload</div>
+          <div className="dbp-legend-item"><span className="dbp-legend-line" data-k="overload" aria-hidden="true" />Statements rejected (overloaded)</div>
           <div className="dbp-legend-item"><span className="dbp-legend-line" data-k="idle" aria-hidden="true" />Read nothing in this window</div>
         </section>
         {data.proposed.length > 0 && (

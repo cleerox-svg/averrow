@@ -4,10 +4,11 @@
 import { Link } from 'react-router-dom';
 import { StatTile, StatGrid } from '@/design-system/components';
 import { tabUrl } from '@/lib/workspaceRoutes';
-import type { DatabaseEntry } from '@/hooks/useDatabases';
-import { StatusPill } from './DatabaseCards';
+import type { DatabaseEntry, DatabasesSummary, DbWindow } from '@/hooks/useDatabases';
+import { StatusPill, windowParam } from './DatabaseCards';
 import {
-  DASH, KIND_LABEL, formatBytes, formatCount, formatPct, formatTimeToFull, hourLabel, usedPct,
+  DASH, KIND_LABEL, OVERLOADS_SCOPE_DEFAULT, WINDOW_LABEL, formatBytes, formatCount, formatPct, formatTimeToFull, hourLabel,
+  overCap, thresholdText, thresholds, usedPct,
 } from './format';
 
 const DAY = 86_400_000;
@@ -21,14 +22,14 @@ export function projectionPoints(db: DatabaseEntry): { history: Pt[]; projection
     .sort((a, b) => a.t - b.t);
   const last = history[history.length - 1];
   const g = db.growth_bytes_per_day;
-  if (!last || g == null || g <= 0) return { history, projection: [] };
+  if (!last || g == null || g <= 0 || last.v >= db.cap_bytes) return { history, projection: [] };
   const toCap = (db.cap_bytes - last.v) / g;
   const days = Math.min(Math.max(toCap, 14), 730);
   const endV = Math.min(db.cap_bytes, last.v + g * days);
   return { history, projection: [last, { t: last.t + days * DAY, v: endV }] };
 }
 
-function CapacityChart({ db }: { db: DatabaseEntry }) {
+function CapacityChart({ db, th }: { db: DatabaseEntry; th: { warn: number; critical: number } }) {
   const { history, projection } = projectionPoints(db);
   if (history.length < 2) {
     return <p className="dbp-empty-inline">Not enough size history yet. The chart appears after a few daily samples.</p>;
@@ -43,16 +44,19 @@ function CapacityChart({ db }: { db: DatabaseEntry }) {
   const fmtDate = (t: number) => new Date(t).toISOString().slice(0, 10);
   const first = history[0]!;
   const lastPt = history[history.length - 1]!;
+  const over = overCap(db);
   const reach = projection.length && projection[1]!.v >= db.cap_bytes ? fmtDate(projection[1]!.t) : null;
-  const label = `Database size grew from ${formatBytes(first.v)} on ${fmtDate(first.t)} to ${formatBytes(lastPt.v)} on ${fmtDate(lastPt.t)}.${reach ? ` At this pace it reaches ${formatBytes(db.cap_bytes)} around ${reach}.` : ''}`;
+  const label = `Database size grew from ${formatBytes(first.v)} on ${fmtDate(first.t)} to ${formatBytes(lastPt.v)} on ${fmtDate(lastPt.t)}.${over ? ' The database is at or over the cap.' : reach ? ` At this pace it reaches ${formatBytes(db.cap_bytes)} around ${reach}.` : ''}`;
   return (
     <svg className="dbp-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
       <line className="axis" x1={L} x2={W - R} y1={H - B} y2={H - B} />
       <line className="axis" x1={L} x2={L} y1={T} y2={H - B} />
       <line className="cap" x1={L} x2={W - R} y1={y(db.cap_bytes)} y2={y(db.cap_bytes)} />
-      <line className="warn" x1={L} x2={W - R} y1={y(db.cap_bytes * 0.8)} y2={y(db.cap_bytes * 0.8)} />
+      <line className="warn" x1={L} x2={W - R} y1={y(db.cap_bytes * th.warn)} y2={y(db.cap_bytes * th.warn)} />
+      <line className="warn" x1={L} x2={W - R} y1={y(db.cap_bytes * th.critical)} y2={y(db.cap_bytes * th.critical)} />
       <text x={L - 6} y={y(db.cap_bytes) + 4} textAnchor="end">{formatBytes(db.cap_bytes)}</text>
-      <text x={L - 6} y={y(db.cap_bytes * 0.8) + 4} textAnchor="end">80%</text>
+      <text x={L - 6} y={y(db.cap_bytes * th.critical) + 4} textAnchor="end">{Math.round(th.critical * 100)}%</text>
+      <text x={L - 6} y={y(db.cap_bytes * th.warn) + 4} textAnchor="end">{Math.round(th.warn * 100)}%</text>
       <text x={L - 6} y={H - B + 4} textAnchor="end">0</text>
       <path className="line" d={path(history)} />
       {projection.length > 0 && <path className="proj" d={path(projection)} />}
@@ -96,18 +100,20 @@ function OverloadsChart({ db }: { db: DatabaseEntry }) {
   );
 }
 
-export function DatabaseDetail({ db }: { db: DatabaseEntry }) {
+export function DatabaseDetail({ db, window: win = '24h', summary }: { db: DatabaseEntry; window?: DbWindow; summary?: DatabasesSummary }) {
+  const th = thresholds(summary);
+  const over = overCap(db);
   const pct = usedPct(db.size_bytes, db.cap_bytes);
   const growth = db.growth_bytes_per_day;
-  const to80 = db.size_bytes != null && growth != null && growth > 0 && db.size_bytes < db.cap_bytes * 0.8
-    ? Math.round((db.cap_bytes * 0.8 - db.size_bytes) / growth)
+  const to80 = db.size_bytes != null && growth != null && growth > 0 && db.size_bytes < db.cap_bytes * th.critical
+    ? Math.round((db.cap_bytes * th.critical - db.size_bytes) / growth)
     : null;
   const maxJob = Math.max(1, ...db.top_jobs.map((j) => j.rows_read));
   const hasBytes = db.top_tables.some((t) => t.bytes != null);
 
   return (
     <div className="dbp">
-      <Link className="dbp-back" to={tabUrl('databases')}>← All databases</Link>
+      <Link className="dbp-back" to={tabUrl('databases', { window: windowParam(win) })}>← All databases</Link>
 
       <section className="dbp-detail-head" aria-label="Database summary">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -127,19 +133,19 @@ export function DatabaseDetail({ db }: { db: DatabaseEntry }) {
           )}
           {db.note && <p className="dbp-muted" style={{ fontSize: 13 }}>{db.note}</p>}
         </div>
-        <Link to={tabUrl('databases', { view: 'map' })}>View connections</Link>
+        <Link to={tabUrl('databases', { view: 'map', window: windowParam(win) })}>View connections</Link>
       </section>
 
       <section aria-label="Key figures" className="dbp-kpis-wrap">
         <StatGrid cols={4}>
           <StatTile label="Size" value={formatBytes(db.size_bytes)} sub={pct == null ? 'Not measured yet' : `${formatPct(pct, 0)} of ${formatBytes(db.cap_bytes)} limit`} />
-          <StatTile label="Time to full" value={db.days_to_cap != null && growth != null && growth > 0 ? formatTimeToFull(db).replace(' to full', '') : DASH} sub={to80 != null ? `80% alert in ≈ ${to80} days` : formatTimeToFull(db)} />
+          <StatTile label="Time to full" value={over ? 'At cap' : db.days_to_cap != null && growth != null && growth > 0 ? formatTimeToFull(db).replace(' to full', '') : DASH} sub={over ? 'At or over the cap' : to80 != null ? `critical (${Math.round(th.critical * 100)}%) in ≈ ${to80} days` : formatTimeToFull(db)} />
           <StatTile label="Reads · cycle" value={formatCount(db.reads_cycle)} sub={`24h ${formatCount(db.reads_24h)}`} />
           <StatTile label="Writes · cycle" value={formatCount(db.writes_cycle)} sub={`24h ${formatCount(db.writes_24h)}`} />
           <StatTile
             label="Overloads · 24h"
             value={db.overloads_24h == null ? DASH : String(db.overloads_24h)}
-            sub={db.overloads_24h == null ? 'Not measured yet' : undefined}
+            sub={db.overloads_24h == null ? 'Not measured yet' : OVERLOADS_SCOPE_DEFAULT}
             accent={(db.overloads_24h ?? 0) > 0 ? 'var(--sev-critical)' : undefined}
           />
         </StatGrid>
@@ -148,14 +154,14 @@ export function DatabaseDetail({ db }: { db: DatabaseEntry }) {
       <section className="dbp-two">
         <article className="dbp-art">
           <h3>Capacity and projection</h3>
-          <CapacityChart db={db} />
+          <CapacityChart db={db} th={th} />
           <p className="dbp-muted" style={{ fontSize: 12 }}>
-            Straight-line from the size history; dashed line is the projection to the limit.
+            Straight-line from the size history; dashed line is the projection to the limit. {thresholdText(th)}.
             {growth != null ? ` Growth ${formatBytes(growth)} per day.` : ''}
           </p>
         </article>
         <article className="dbp-art">
-          <h3>Overload rejections per hour · last 24 h</h3>
+          <h3>Overload rejections per hour · last 24 h <span className="dbp-muted" style={{ fontWeight: 400 }}>(metered jobs)</span></h3>
           <OverloadsChart db={db} />
         </article>
       </section>
@@ -196,7 +202,7 @@ export function DatabaseDetail({ db }: { db: DatabaseEntry }) {
         </article>
 
         <article className="dbp-art">
-          <h3>Top jobs in this window</h3>
+          <h3>Top jobs · {WINDOW_LABEL[win].toLowerCase()}</h3>
           {db.top_jobs.length === 0 ? (
             <p className="dbp-empty-inline">No per-job reads recorded for this database in this window.</p>
           ) : (

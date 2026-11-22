@@ -2,11 +2,11 @@
 
 import { Link } from 'react-router-dom';
 import { tabUrl } from '@/lib/workspaceRoutes';
-import type { DatabasesPayload } from '@/hooks/useDatabases';
-import { StatusPill } from './DatabaseCards';
+import type { DatabasesPayload, DbWindow } from '@/hooks/useDatabases';
+import { StatusPill, windowParam } from './DatabaseCards';
 import { DASH, formatBytes, formatCount, formatPct, formatTimeToFull, usedPct } from './format';
 
-export function DatabaseTable({ data }: { data: DatabasesPayload }) {
+export function DatabaseTable({ data, window: win = '24h' }: { data: DatabasesPayload; window?: DbWindow }) {
   return (
     <div className="dbp-tablewrap">
       <table className="dbp-table">
@@ -21,7 +21,7 @@ export function DatabaseTable({ data }: { data: DatabasesPayload }) {
             <th scope="col">Time to full</th>
             <th scope="col" className="num">Reads · cycle</th>
             <th scope="col" className="num">Writes · cycle</th>
-            <th scope="col" className="num">Overloads · 24h</th>
+            <th scope="col" className="num">Overloads · 24h <span className="dbp-muted">(metered jobs)</span></th>
             <th scope="col"><span className="sr-only">Details</span></th>
           </tr>
         </thead>
@@ -37,7 +37,7 @@ export function DatabaseTable({ data }: { data: DatabasesPayload }) {
               <td className="num">{formatCount(db.reads_cycle)}</td>
               <td className="num">{formatCount(db.writes_cycle)}</td>
               <td className="num">{db.overloads_24h == null ? DASH : db.overloads_24h}</td>
-              <td><Link to={tabUrl('databases', { db: db.store })} aria-label={`Open details for ${db.name}`}>Details →</Link></td>
+              <td><Link to={tabUrl('databases', { db: db.store, window: windowParam(win) })} aria-label={`Open details for ${db.name}`}>Details →</Link></td>
             </tr>
           ))}
           {data.proposed.map((p) => (

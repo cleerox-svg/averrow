@@ -84,6 +84,12 @@ export interface DatabasesSummary {
   cycle_rows_read: number | null;
   cycle_pct_of_plan: number | null;
   overloads_24h: number | null;
+  /** Size fraction (0-1) at which status becomes 'Check'. Default 0.5. */
+  warn_size_fraction?: number;
+  /** Size fraction (0-1) treated as critical. Default 0.8. */
+  critical_size_fraction?: number;
+  /** What overload counts cover, e.g. 'metered jobs' (HTTP traffic is not metered yet). */
+  overloads_scope?: string;
 }
 
 export interface DatabasesPayload {
@@ -93,6 +99,7 @@ export interface DatabasesPayload {
   databases: DatabaseEntry[];
   proposed: DbProposed[];
   edges: DbEdge[];
+  overloads_scope?: string;
   /** Fail-soft: `<section>_error` keys name a section that fell back server-side. */
   [sectionError: `${string}_error`]: string | undefined;
 }

@@ -59,7 +59,7 @@ export function Databases() {
       <div className="dbp">
         {isError && <PageState kind="error" layout="inline" title="Couldn't refresh databases" description="Showing the last loaded data." onRetry={() => { void refetch(); }} />}
         {detail
-          ? <DatabaseDetail db={detail} />
+          ? <DatabaseDetail db={detail} window={win} summary={data.summary} />
           : <PageState kind="empty" title="Database not found" description={`There is no database "${dbParam}".`} action={{ label: 'All databases', onClick: () => patch({ db: null }) }} />}
       </div>
     );
@@ -88,9 +88,9 @@ export function Databases() {
       <SummaryStrip data={data} />
 
       <div aria-busy={isFetching} style={{ display: 'contents' }}>
-        {view === 'cards' && <CardsView data={data} />}
+        {view === 'cards' && <CardsView data={data} window={win} />}
         {view === 'map' && <DatabaseMap data={data} window={win} onWindow={(w) => patch({ window: w === '24h' ? null : w })} />}
-        {view === 'table' && <DatabaseTable data={data} />}
+        {view === 'table' && <DatabaseTable data={data} window={win} />}
       </div>
     </div>
   );

@@ -227,3 +227,56 @@ describe('format helpers', () => {
     expect(projectionPoints(auditDb).projection).toEqual([]);
   });
 });
+
+describe('review fixes', () => {
+  it('words the thresholds from the payload with 50/80 defaults and draws both markers', async () => {
+    renderAt('/');
+    const card = await screen.findByRole('article', { name: 'trust-radar-v2 database' });
+    expect(within(card).getByText(/Check at 50% · critical at 80%/)).toBeInTheDocument();
+    expect(card.querySelectorAll('.dbp-bar-mark')).toHaveLength(2);
+  });
+
+  it('uses threshold fields when the server sends them', async () => {
+    get.mockResolvedValue({ success: true, data: { ...databasesFixture, summary: { ...databasesFixture.summary, warn_size_fraction: 0.6, critical_size_fraction: 0.9 } } });
+    renderAt('/');
+    const card = await screen.findByRole('article', { name: 'trust-radar-v2 database' });
+    expect(within(card).getByText(/Check at 60% · critical at 90%/)).toBeInTheDocument();
+  });
+
+  it('labels overloads as from metered jobs and the plan figure as projected', async () => {
+    renderAt('/');
+    const strip = await screen.findByRole('region', { name: 'Fleet summary' });
+    expect(within(strip).getByText(/from metered jobs/)).toBeInTheDocument();
+    expect(within(strip).getByText(/projected % of 25 B plan/)).toBeInTheDocument();
+  });
+
+  it('carries the window through card and detail links', async () => {
+    renderAt('/?window=cycle');
+    const link = await screen.findByRole('link', { name: 'Open details for trust-radar-v2' });
+    expect(link).toHaveAttribute('href', '/admin/operations?tab=databases&db=core&window=cycle');
+  });
+
+  it('labels detail top jobs with the window and keeps it on the back link', async () => {
+    renderAt('/?db=core&window=1h');
+    expect(await screen.findByRole('heading', { name: /Top jobs · last hour/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '← All databases' })).toHaveAttribute('href', '/admin/operations?tab=databases&window=1h');
+  });
+
+  it('shows no projection and "At or over the cap" when size >= cap', async () => {
+    const core = databasesFixture.databases[0]!;
+    const over = { ...core, size_bytes: core.cap_bytes + 1, size_history: [...core.size_history.slice(0, 3), { date: '2026-11-22', bytes: core.cap_bytes + 1 }] };
+    expect(projectionPoints(over).projection).toEqual([]);
+    get.mockResolvedValue({ success: true, data: { ...databasesFixture, databases: [over] } });
+    renderAt('/?db=core');
+    expect(await screen.findByRole('img', { name: /at or over the cap/ })).toBeInTheDocument();
+    expect(screen.getAllByText('At or over the cap').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('img', { name: /reaches/ })).toBeNull();
+  });
+
+  it('map: no Web & API group without http edges, and red means rejected statements', async () => {
+    renderAt('/?view=map');
+    await screen.findByRole('region', { name: 'Legend' });
+    expect(screen.queryByText('Web & API', { selector: 'text' })).toBeNull();
+    expect(screen.getByText(/Statements rejected \(overloaded\)/)).toBeInTheDocument();
+  });
+});

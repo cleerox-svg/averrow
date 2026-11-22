@@ -64,7 +64,8 @@
 .dbp-bar-fill[data-tone="warning"] { background: var(--sev-medium); }
 .dbp-bar-fill[data-tone="overloaded"] { background: var(--sev-critical); }
 .dbp-bar-fill[data-tone="unknown"] { background: var(--text-muted); }
-.dbp-bar-mark { position: absolute; top: 0; bottom: 0; width: 2px; left: 80%; background: var(--sev-critical); }
+.dbp-bar-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--sev-critical); }
+.dbp-bar-mark[data-k="warn"] { background: var(--sev-medium); }
 .dbp-cap-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-tertiary); flex-wrap: wrap; }
 
 .dbp-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }

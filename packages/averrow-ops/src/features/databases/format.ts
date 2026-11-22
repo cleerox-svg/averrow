@@ -34,7 +34,26 @@ export function usedPct(size: number | null, cap: number): number | null {
   return (size / cap) * 100;
 }
 
-export function formatTimeToFull(d: Pick<DatabaseEntry, 'days_to_cap' | 'growth_bytes_per_day'>): string {
+export const DEFAULT_WARN_FRACTION = 0.5;
+export const DEFAULT_CRITICAL_FRACTION = 0.8;
+export const OVERLOADS_SCOPE_DEFAULT = 'from metered jobs';
+
+export function thresholds(s: { warn_size_fraction?: number; critical_size_fraction?: number } | undefined) {
+  return {
+    warn: s?.warn_size_fraction ?? DEFAULT_WARN_FRACTION,
+    critical: s?.critical_size_fraction ?? DEFAULT_CRITICAL_FRACTION,
+  };
+}
+
+export const thresholdText = (t: { warn: number; critical: number }) =>
+  `Check at ${Math.round(t.warn * 100)}% · critical at ${Math.round(t.critical * 100)}%`;
+
+export function overCap(d: Pick<DatabaseEntry, 'size_bytes' | 'cap_bytes'>): boolean {
+  return d.size_bytes != null && d.size_bytes >= d.cap_bytes;
+}
+
+export function formatTimeToFull(d: Pick<DatabaseEntry, 'days_to_cap' | 'growth_bytes_per_day'> & Partial<Pick<DatabaseEntry, 'size_bytes' | 'cap_bytes'>>): string {
+  if (d.size_bytes != null && d.cap_bytes != null && d.size_bytes >= d.cap_bytes) return 'At or over the cap';
   if (d.growth_bytes_per_day == null) return 'Not enough history yet';
   if (d.growth_bytes_per_day <= 0) return 'Flat, not growing';
   if (d.days_to_cap == null) return 'Not enough history yet';
