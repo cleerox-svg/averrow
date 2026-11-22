@@ -16,7 +16,7 @@
 // Every section is fail-soft: a section that fails leaves its fields null /
 // empty and adds `<section>_error` at the top level.
 //
-// Caching: the window-independent part is cachedValue `databases.base.v1`
+// Caching: the window-independent part is cachedValue `databases.base.v2`
 // (10 min, single-flight); the window-dependent AE edges are
 // `databases.edges.v1.<window>` (10 min, single-flight).
 
@@ -619,7 +619,7 @@ export function composePayload(base: DatabasesBase, window: DbWindow, edges: DbE
 export const DATABASES_CACHE_TTL_S = 600;
 /** TTL for a base payload with any `<section>_error` (e.g. CF API blip). */
 export const DATABASES_DEGRADED_TTL_S = 60;
-export const DATABASES_BASE_CACHE_KEY = "databases.base.v1";
+export const DATABASES_BASE_CACHE_KEY = "databases.base.v2";
 export const databasesEdgesCacheKey = (w: DbWindow): string => `databases.edges.v1.${w}`;
 const SINGLE_FLIGHT = { lockTtlSeconds: 60, waitMs: 10_000 };
 

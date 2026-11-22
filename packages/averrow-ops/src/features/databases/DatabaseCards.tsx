@@ -6,7 +6,7 @@ import { Badge, StatTile, StatGrid } from '@/design-system/components';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import type { DatabaseEntry, DatabasesPayload, DbProposed, DbStatus } from '@/hooks/useDatabases';
 import {
-  DASH, OVERLOADS_SCOPE_DEFAULT, STATUS_LABEL, formatBytes, formatCount, formatPct, formatTimeToFull, hourLabel, peakHour,
+  DASH, OVERLOADS_SCOPE_DEFAULT, overloadsScopeText, STATUS_LABEL, formatBytes, formatCount, formatPct, formatTimeToFull, hourLabel, peakHour,
   thresholdText, thresholds, usedPct,
 } from './format';
 import type { DbWindow } from '@/hooks/useDatabases';
@@ -21,7 +21,7 @@ export function StatusPill({ status }: { status: DbStatus }) {
 export function SummaryStrip({ data }: { data: DatabasesPayload }) {
   const s = data.summary;
   const overloadsKnown = s.overloads_24h != null;
-  const scope = s.overloads_scope ?? data.overloads_scope ?? OVERLOADS_SCOPE_DEFAULT;
+  const scope = overloadsScopeText(s.overloads_scope ?? data.overloads_scope);
   return (
     <section aria-label="Fleet summary">
       <StatGrid cols={4}>

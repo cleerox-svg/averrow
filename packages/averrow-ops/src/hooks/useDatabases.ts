@@ -84,11 +84,14 @@ export interface DatabasesSummary {
   cycle_rows_read: number | null;
   cycle_pct_of_plan: number | null;
   overloads_24h: number | null;
-  /** Size fraction (0-1) at which status becomes 'Check'. Default 0.5. */
-  warn_size_fraction?: number;
-  /** Size fraction (0-1) treated as critical. Default 0.8. */
-  critical_size_fraction?: number;
-  /** What overload counts cover, e.g. 'metered jobs' (HTTP traffic is not metered yet). */
+  /** Server thresholds (lib/db-health.ts). Defaults 0.5 / 0.8 when absent. */
+  thresholds?: {
+    warn_size_fraction?: number;
+    critical_size_fraction?: number;
+    warn_days_to_cap?: number;
+    overloaded_min?: number;
+  };
+  /** What overload counts cover: 'metered_jobs' (HTTP traffic is not metered yet). */
   overloads_scope?: string;
 }
 

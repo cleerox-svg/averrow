@@ -352,7 +352,12 @@ async function inventoryRun(
     // Day state after EVERY run: only `failed` stays pending, and the
     // attempt count caps the day (DB_INVENTORY_MAX_RUNS_PER_DAY).
     try {
-      const state: DbInventoryDayState = { attempts, pending: failed };
+      // A whole-run failure outside the per-store loop leaves `failed` empty;
+      // keep the run's targets pending so the retry still happens.
+      const pending: StoreId[] = status === "failed" && failed.length === 0
+        ? (targets ?? DB_REGISTRY.filter((spec) => hasStore(env, spec.id)).map((spec) => spec.id))
+        : failed;
+      const state: DbInventoryDayState = { attempts, pending };
       await env.CACHE.put(inventoryStampKey(date), JSON.stringify(state), { expirationTtl: DB_INVENTORY_STAMP_TTL_S });
     } catch (e) {
       errors.push(`day state: ${errMsg(e)}`);

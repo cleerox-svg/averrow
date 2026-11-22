@@ -49,6 +49,13 @@ describe('Databases — cards (default)', () => {
     expect(get).toHaveBeenCalledWith('/api/databases?window=24h');
   });
 
+  it('maps the server overloads_scope token to text and never prints it raw', async () => {
+    renderAt('/admin/operations?tab=databases');
+    await screen.findByRole('region', { name: 'Fleet summary' });
+    expect(screen.queryByText(/metered_jobs/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/from metered jobs/).length).toBeGreaterThan(0);
+  });
+
   it('shows capacity, status and time to full on the core card', async () => {
     renderAt('/');
     const card = await screen.findByRole('article', { name: 'trust-radar-v2 database' });
@@ -237,7 +244,7 @@ describe('review fixes', () => {
   });
 
   it('uses threshold fields when the server sends them', async () => {
-    get.mockResolvedValue({ success: true, data: { ...databasesFixture, summary: { ...databasesFixture.summary, warn_size_fraction: 0.6, critical_size_fraction: 0.9 } } });
+    get.mockResolvedValue({ success: true, data: { ...databasesFixture, summary: { ...databasesFixture.summary, thresholds: { warn_size_fraction: 0.6, critical_size_fraction: 0.9, warn_days_to_cap: 180, overloaded_min: 5 } } } });
     renderAt('/');
     const card = await screen.findByRole('article', { name: 'trust-radar-v2 database' });
     expect(within(card).getByText(/Check at 60% · critical at 90%/)).toBeInTheDocument();

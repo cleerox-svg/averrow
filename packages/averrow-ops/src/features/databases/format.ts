@@ -38,11 +38,20 @@ export const DEFAULT_WARN_FRACTION = 0.5;
 export const DEFAULT_CRITICAL_FRACTION = 0.8;
 export const OVERLOADS_SCOPE_DEFAULT = 'from metered jobs';
 
-export function thresholds(s: { warn_size_fraction?: number; critical_size_fraction?: number } | undefined) {
+export function thresholds(
+  s: { thresholds?: { warn_size_fraction?: number; critical_size_fraction?: number } } | undefined,
+) {
   return {
-    warn: s?.warn_size_fraction ?? DEFAULT_WARN_FRACTION,
-    critical: s?.critical_size_fraction ?? DEFAULT_CRITICAL_FRACTION,
+    warn: s?.thresholds?.warn_size_fraction ?? DEFAULT_WARN_FRACTION,
+    critical: s?.thresholds?.critical_size_fraction ?? DEFAULT_CRITICAL_FRACTION,
   };
+}
+
+const OVERLOADS_SCOPE_TEXT: Record<string, string> = { metered_jobs: OVERLOADS_SCOPE_DEFAULT };
+
+/** Display text for the server's `overloads_scope` token; never prints the raw token. */
+export function overloadsScopeText(scope: string | undefined): string {
+  return (scope != null && OVERLOADS_SCOPE_TEXT[scope]) || OVERLOADS_SCOPE_DEFAULT;
 }
 
 export const thresholdText = (t: { warn: number; critical: number }) =>
