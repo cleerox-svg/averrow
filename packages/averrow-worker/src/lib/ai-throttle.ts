@@ -52,6 +52,28 @@ interface ThrottleDecision {
   reason: string | null;
   /** false = the budget read threw; `reason` is the fail-open null. */
   fresh: boolean;
+  /**
+   * true = the spend was read from the routed DB alone (the union failed):
+   * a LOWER bound. Its throttle is trusted, its "allow" is not.
+   */
+  partial: boolean;
+}
+
+/**
+ * The decision to return, from a computed decision + the last good one:
+ *   full read     → the computed decision (the caller caches it);
+ *   partial read  → its throttle if it throttles; else the last good
+ *                   decision if THAT throttles (a lower-bound spend must not
+ *                   lift a real throttle); else allow;
+ *   failed read   → the last good decision, else fail open.
+ * Only a full read may be cached (60 s key or last-good).
+ */
+async function resolveDecision(env: BudgetEnv, d: ThrottleDecision): Promise<string | null> {
+  if (d.fresh && !d.partial) return d.reason;
+  if (d.fresh && d.reason) return d.reason;
+  const lastGood = await readLastGood(env);
+  if (d.fresh) return lastGood ?? null; // partial + allow: only a last-good THROTTLE wins
+  return lastGood === undefined ? d.reason : lastGood;
 }
 
 function throttleReason(level: string, pctUsed: number, limitUsd: number): string {
@@ -62,16 +84,18 @@ async function computeThrottle(env: BudgetEnv): Promise<ThrottleDecision> {
   try {
     const budget = await BudgetManager.forEnv(env);
     const status = await budget.getStatus();
+    const partial = status.partial_spend === true;
     if (status.throttle_level === "emergency" || status.throttle_level === "hard") {
       return {
         reason: throttleReason(status.throttle_level, status.pct_used, status.config.monthly_limit_usd),
         fresh: true,
+        partial,
       };
     }
-    return { reason: null, fresh: true };
+    return { reason: null, fresh: true, partial };
   } catch (err) {
-    console.warn(`[ai-throttle] budget read failed (failing open): ${err instanceof Error ? err.message : String(err)}`);
-    return { reason: null, fresh: false };
+    console.warn(`[ai-throttle] budget read failed (last good decision, else fail open): ${err instanceof Error ? err.message : String(err)}`);
+    return { reason: null, fresh: false, partial: false };
   }
 }
 
@@ -88,10 +112,7 @@ async function computeThrottle(env: BudgetEnv): Promise<ThrottleDecision> {
  */
 export async function checkCostGuard(env: BudgetEnv, critical: boolean): Promise<string | null> {
   if (critical) return null;
-  const decision = await computeThrottle(env);
-  if (decision.fresh) return decision.reason;
-  const lastGood = await readLastGood(env);
-  return lastGood === undefined ? decision.reason : lastGood;
+  return resolveDecision(env, await computeThrottle(env));
 }
 
 /**
@@ -120,18 +141,14 @@ export async function getAiThrottleReason(
 
   const decision = await computeThrottle(env);
 
-  if (env.CACHE && decision.fresh) {
+  // Only a FULL read is cached: a partial (routed-DB-only, lower-bound) or
+  // failed read never writes the 60 s key or last-good.
+  if (env.CACHE && decision.fresh && !decision.partial) {
     try {
       await env.CACHE.put(AI_THROTTLE_KV_KEY, decision.reason ?? "", { expirationTtl: AI_THROTTLE_KV_TTL_SECONDS });
       await env.CACHE.put(AI_THROTTLE_LAST_GOOD_KV_KEY, decision.reason ?? "", { expirationTtl: AI_THROTTLE_LAST_GOOD_TTL_SECONDS });
     } catch { /* non-fatal */ }
   }
 
-  if (!decision.fresh) {
-    // The budget read failed: the last good decision (≤ 6h) beats failing open.
-    const lastGood = await readLastGood(env);
-    if (lastGood !== undefined) return lastGood;
-  }
-
-  return decision.reason;
+  return resolveDecision(env, decision);
 }

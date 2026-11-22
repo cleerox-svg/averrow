@@ -1079,8 +1079,25 @@ async function runFeedUnmetered(
     const msg = err instanceof Error ? err.message : String(err);
     if (route !== "telemetry" || !/FOREIGN KEY/i.test(msg)) throw err;
     const { seedFeedRowsFromCore } = await import("./telemetry-cutover");
-    if (!(await seedFeedRowsFromCore(env, feedsDb, config.feed_name))) throw err;
+    let seeded: boolean;
+    try {
+      seeded = await seedFeedRowsFromCore(env, feedsDb, config.feed_name);
+    } catch (seedErr) {
+      // Keep the original FK failure visible: it is the real cause.
+      throw new Error(
+        `${msg} (seeding feed_configs from core also failed: ${seedErr instanceof Error ? seedErr.message : String(seedErr)})`,
+      );
+    }
+    if (!seeded) throw err;
     console.warn(`[runFeed] ${config.feed_name}: feed_configs row seeded on TELEMETRY_DB from core (missing after the feeds cut-over)`);
+    // The seeded row is now the routed config: a feed disabled on core must
+    // not run once just because the caller held a stale enabled config.
+    const seededCfg = await feedsDb.prepare("SELECT enabled FROM feed_configs WHERE feed_name = ?")
+      .bind(config.feed_name).first<{ enabled: number }>();
+    if (seededCfg && Number(seededCfg.enabled) === 0) {
+      console.warn(`[runFeed] ${config.feed_name}: seeded feed_configs row is disabled — pull skipped`);
+      return { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
+    }
     await insertPull();
   }
 

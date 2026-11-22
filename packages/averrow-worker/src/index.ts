@@ -557,7 +557,7 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         // Dispatch + one audit_log row per authorized non-dry-run mutation
         // (handlers/telemetryCutover.ts).
         const { handleTelemetryCutover } = await import('./handlers/telemetryCutover');
-        return handleTelemetryCutover(request, env, url);
+        return await handleTelemetryCutover(request, env, url);
       }
 
       // GET  /api/internal/nexus/cluster-retirement            — dry-run report

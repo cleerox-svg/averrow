@@ -483,14 +483,6 @@ export async function copyTelemetryConfig(
 }
 
 /**
- * Seed a missing agents-family config row on TELEMETRY_DB from core's row (Track B1c).
- * executeAgent calls this when the route is 'telemetry' and telemetry has no
- * row for the agent, so a flip made before copy-config can't reset a manual
- * pause / breaker state (agent_configs) or block a grandfathered agent
- * (agent_approvals). Without a core row it seeds nothing (the caller keeps
- * its own default). Returns true when a core row was copied.
- */
-/**
  * Seed a feed's missing feeds-family rows on TELEMETRY_DB from core (Track
  * B1d) — the feeds counterpart of seedConfigRowFromCore. runFeed calls it
  * when a pull on telemetry fails the feed_pull_history → feed_configs FK: a
@@ -512,6 +504,14 @@ export async function seedFeedRowsFromCore(env: Env, telemetry: D1Database, feed
   return true;
 }
 
+/**
+ * Seed a missing agents-family config row on TELEMETRY_DB from core's row (Track B1c).
+ * executeAgent calls this when the route is 'telemetry' and telemetry has no
+ * row for the agent, so a flip made before copy-config can't reset a manual
+ * pause / breaker state (agent_configs) or block a grandfathered agent
+ * (agent_approvals). Without a core row it seeds nothing (the caller keeps
+ * its own default). Returns true when a core row was copied.
+ */
 export async function seedConfigRowFromCore(env: Env, telemetry: D1Database, table: "agent_configs" | "agent_approvals", agentId: string): Promise<boolean> {
   const cols = COPY_COLUMNS[table];
   const row = await env.DB.prepare(`SELECT ${cols.join(", ")} FROM ${table} WHERE agent_id = ?`)

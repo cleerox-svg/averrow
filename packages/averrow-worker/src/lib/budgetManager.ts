@@ -164,6 +164,13 @@ export interface BudgetStatus {
   daily_burn_rate: number;
   projected_monthly: number;
   anthropic_reported: number;
+  /**
+   * Present (true) only when the month's spend came from the routed DB alone
+   * because the telemetry ∪ core union read failed: `spent_this_month` is a
+   * LOWER bound, so a non-throttling level from it must not lift a throttle
+   * (lib/ai-throttle.ts). Absent on a normal read.
+   */
+  partial_spend?: true;
 }
 
 export interface AgentBudgetLimits {
@@ -416,6 +423,7 @@ export class BudgetManager {
       daily_burn_rate: Math.round(dailyBurn * 100) / 100,
       projected_monthly: Math.round(projected * 100) / 100,
       anthropic_reported: Math.round(anthropicReported * 100) / 100,
+      ...(this.lastReadPartial ? { partial_spend: true as const } : {}),
     };
   }
 

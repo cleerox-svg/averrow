@@ -666,6 +666,56 @@ describe.skipIf(!hasSqlite())("AppSec fixes (audit / fail-open / redaction / exp
     expect(w.kv.store.get(`${AGENT_BUDGET_LAST_GOOD_PREFIX}observer`)).toBe("");
   });
 
+  it("re-review M1: a partial read under the cap does not lift a last-good throttle, and is never cached", async () => {
+    const w = world({ budget: "telemetry" });
+    w.tel.prepare("INSERT INTO budget_config (id, monthly_limit_usd) VALUES (1, 80)").run();
+    // Post-flip spend only ($5 of $80) on telemetry; the real month total lives partly on core.
+    w.tel.prepare("INSERT INTO agent_budget_rollups (agent_id, year_month, total_cost_usd, total_input_tokens, call_count) VALUES ('observer', ?, 5, 10, 1)").run(month);
+    w.kv.store.set(FAMILY_USED_KV_KEYS.budget, "2026-11-22T00:00:00Z");
+    const throttled = "budget hard throttle (96% of $80)";
+    const rejected = "agent observer over monthly token cap: 9 / 1 tokens used";
+    w.kv.store.set(AI_THROTTLE_LAST_GOOD_KV_KEY, throttled);
+    w.kv.store.set(`${AGENT_BUDGET_LAST_GOOD_PREFIX}observer`, rejected);
+    failingRollupsCore(w); // core overload window → union fails, telemetry answers
+    expect((await (await BudgetManager.forEnv(w.env)).getStatus()).partial_spend).toBe(true);
+    expect(await getAiThrottleReason(w.env)).toBe(throttled);
+    expect(await checkCostGuard(w.env, false)).toBe(throttled);
+    expect(await checkAgentBudget(w.env, "observer")).toEqual({ ok: false, reason: rejected });
+    // Nothing partial was written: last-good kept, no 60 s decision cached.
+    expect(w.kv.store.get(AI_THROTTLE_LAST_GOOD_KV_KEY)).toBe(throttled);
+    expect(w.kv.store.get(`${AGENT_BUDGET_LAST_GOOD_PREFIX}observer`)).toBe(rejected);
+    expect(w.kv.store.has("ai:throttle_reason")).toBe(false);
+    expect(w.kv.store.has("agent_budget:observer")).toBe(false);
+    // Last-good allowed → the partial allow stands (still not cached).
+    w.kv.store.set(AI_THROTTLE_LAST_GOOD_KV_KEY, "");
+    w.kv.store.set(`${AGENT_BUDGET_LAST_GOOD_PREFIX}observer`, "");
+    expect(await getAiThrottleReason(w.env)).toBeNull();
+    expect((await checkAgentBudget(w.env, "observer")).ok).toBe(true);
+    expect(w.kv.store.has("ai:throttle_reason")).toBe(false);
+  });
+
+  it("re-review M1: a partial read that itself throttles throttles (without caching)", async () => {
+    const w = world({ budget: "telemetry" });
+    w.tel.prepare("INSERT INTO budget_config (id, monthly_limit_usd) VALUES (1, 80)").run();
+    w.tel.prepare("INSERT INTO agent_budget_rollups (agent_id, year_month, total_cost_usd, call_count) VALUES ('observer', ?, 79, 1)").run(month);
+    w.kv.store.set(FAMILY_USED_KV_KEYS.budget, "2026-11-22T00:00:00Z");
+    w.kv.store.set(AI_THROTTLE_LAST_GOOD_KV_KEY, "");
+    failingRollupsCore(w);
+    expect(await getAiThrottleReason(w.env)).toMatch(/budget hard throttle/);
+    expect(w.kv.store.get(AI_THROTTLE_LAST_GOOD_KV_KEY)).toBe("");
+  });
+
+  it("re-review L3: a route flip that throws is audited as a failure", async () => {
+    const w = world();
+    const rows = withAudit(w);
+    seedFeed(w.core, "a");
+    await copyTelemetryConfig(w.env, { family: "feeds", dryRun: false });
+    const kv = w.env.CACHE as unknown as { put: (...a: unknown[]) => Promise<void> };
+    kv.put = async () => { throw new Error("kv down"); };
+    await expect(call(w, "/api/internal/telemetry/route?family=feeds&to=telemetry&dry_run=0")).rejects.toThrow(/kv down/);
+    expect(rows.at(-1)).toMatchObject({ action: "telemetry_route.flip", outcome: "failure", details: { family: "feeds", error: "kv down" } });
+  });
+
   it("L1: credential columns are never echoed in copy-config diffs, preflight or reverse_config", async () => {
     const w = world();
     w.core.prepare("INSERT INTO feed_configs (feed_name, display_name, schedule_cron, api_key_encrypted, taxii_username, source_url) VALUES ('k', 'k', '0 * * * *', 'SECRET-CORE', 'user-core', 'https://a')").run();
@@ -719,6 +769,17 @@ describe.skipIf(!hasSqlite())("QA fixes (empty family / feed missing on telemetr
     // Breaker state came across with the seed, then the penalty advanced it there.
     expect(rowsOf(w.tel, "SELECT consecutive_failures FROM feed_status")[0]!.consecutive_failures).toBe(3);
     expect(countOf(w.core, "feed_pull_history")).toBe(0);
+  });
+
+  it("re-review L1: a feed seeded from core as DISABLED is not pulled", async () => {
+    const w = world({ feeds: "telemetry" });
+    seedFeed(w.core, "off_feed", { enabled: 0, paused_reason: "manual" });
+    let ran = false;
+    const res = await runFeed(w.env, configOf("off_feed"), okModule(() => { ran = true; }), { overloadBackoff: false });
+    expect(ran).toBe(false);
+    expect(res.itemsFetched).toBe(0);
+    expect(rowsOf(w.tel, "SELECT enabled FROM feed_configs WHERE feed_name = 'off_feed'")[0]!.enabled).toBe(0);
+    expect(countOf(w.tel, "feed_pull_history")).toBe(0);
   });
 
   it("(b) a feed configured nowhere still fails the insert (no seed, no pull)", async () => {

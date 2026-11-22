@@ -194,12 +194,14 @@ export async function checkAgentBudget(env: BudgetGateEnv, agentId: string): Pro
   // Read current rollup state. Single primary-key lookup on
   // agent_budget_rollups — O(log n).
   let currentTokens = 0;
+  let partial = false;
   try {
     if (env.DB) {
       // Budget family resolved for this check; the rollup is summed across
       // telemetry ∪ core during the cut-over (BudgetManager.forEnv).
       const budget = await BudgetManager.forEnv(env);
       currentTokens = await budget.getAgentMonthlyTokens(agentId);
+      partial = budget.lastReadPartial;
     }
   } catch (err) {
     console.warn(`[per-agent-budget] getAgentMonthlyTokens failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
@@ -211,6 +213,17 @@ export async function checkAgentBudget(env: BudgetGateEnv, agentId: string): Pro
     // No history: fail open — better to over-spend by one minute
     // than crash a customer-facing call.
     return { ok: true };
+  }
+
+  if (partial) {
+    // The union failed and only the routed DB answered: `currentTokens` is a
+    // LOWER bound. Its rejection is trusted; its pass is not — a last good
+    // rejection still wins. Never cached (60 s key or last-good).
+    if (currentTokens >= declared.cap) {
+      return { ok: false, reason: `agent ${agentId} over monthly token cap: ${currentTokens.toLocaleString()} / ${declared.cap.toLocaleString()} tokens used (partial read)` };
+    }
+    const lastGood = await readLastGood(env, agentId);
+    return lastGood && !lastGood.ok ? lastGood : { ok: true };
   }
 
   if (currentTokens >= declared.cap) {

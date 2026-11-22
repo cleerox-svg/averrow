@@ -44,7 +44,24 @@ export async function handleTelemetryCutover(request: Request, env: Env, url: UR
     }
     const rp = parseSetRouteParams(sp);
     if (!rp.ok) return Response.json({ success: false, error: rp.error }, { status: 400 });
-    const flipped = await setTelemetryRoute(env, rp.params);
+    let flipped: Awaited<ReturnType<typeof setTelemetryRoute>>;
+    try {
+      flipped = await setTelemetryRoute(env, rp.params);
+    } catch (err) {
+      if (!rp.params.dryRun) {
+        await audit(env, {
+          action: "telemetry_route.flip",
+          userId: null,
+          resourceType: "telemetry_route",
+          resourceId: rp.params.family,
+          outcome: "failure",
+          details: { actor: "internal", family: rp.params.family, to: rp.params.to, expect_from: rp.params.expectFrom ?? null, force: rp.params.force, dry_run: false, allowed: false, written: false, error: errMsg(err) },
+          request,
+        });
+      }
+      if (isKnownConflict(err)) return conflict(err);
+      throw err;
+    }
     if (!rp.params.dryRun) {
       await audit(env, {
         action: "telemetry_route.flip",
