@@ -254,7 +254,7 @@ describe('review fixes', () => {
     renderAt('/');
     const strip = await screen.findByRole('region', { name: 'Fleet summary' });
     expect(within(strip).getByText(/from metered jobs/)).toBeInTheDocument();
-    expect(within(strip).getByText(/projected % of 25 B plan/)).toBeInTheDocument();
+    expect(within(strip).getByText(/of the 25 B plan this cycle/)).toBeInTheDocument();
   });
 
   it('carries the window through card and detail links', async () => {

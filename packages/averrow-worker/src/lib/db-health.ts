@@ -153,8 +153,11 @@ export const STORE_LABELS: Record<StoreId, string> = {
 /**
  * Stores whose role means a billing cycle with zero writes is suspicious.
  * geo is excluded: it is written only when MaxMind ships a changed release.
+ * audit is excluded: it is append-only and written only on rare staff
+ * actions (logins, approvals, role changes) — prod had multi-day gaps with
+ * a healthy writer (2026-11-10 → 11-17), so a quiet cycle start is normal.
  */
-export const STORES_EXPECTING_WRITES: ReadonlySet<StoreId> = new Set<StoreId>(["core", "audit", "dnsq"]);
+export const STORES_EXPECTING_WRITES: ReadonlySet<StoreId> = new Set<StoreId>(["core", "dnsq"]);
 
 export const PROPOSED_DATABASES: DatabasesPayload["proposed"] = [
   {
@@ -248,9 +251,7 @@ export function classifyStatus(input: {
 export function noteFor(store: StoreId, card: { writes_cycle: number | null; size_bytes: number | null; bound: boolean }): string | null {
   if (!card.bound) return "Not bound in this environment";
   if (card.writes_cycle === 0 && STORES_EXPECTING_WRITES.has(store)) {
-    return store === "audit"
-      ? "No writes this billing cycle — check the audit writer"
-      : "No writes this billing cycle — check its writers";
+    return "No writes this billing cycle — check its writers";
   }
   if (card.size_bytes == null) return "Size not measured — check the CF API token's D1 read scope";
   return null;

@@ -34,7 +34,7 @@ export function SummaryStrip({ data }: { data: DatabasesPayload }) {
         <StatTile
           label="Rows read · this cycle"
           value={formatCount(s.cycle_rows_read)}
-          sub={s.cycle_pct_of_plan != null ? `${formatPct(s.cycle_pct_of_plan, 1)} projected % of 25 B plan` : 'Not measured yet'}
+          sub={s.cycle_pct_of_plan != null ? `${formatPct(s.cycle_pct_of_plan, 1)} of the 25 B plan this cycle` : 'Not measured yet'}
         />
         <StatTile
           label="Overload rejections · 24h"
