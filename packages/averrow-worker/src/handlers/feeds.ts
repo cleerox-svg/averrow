@@ -1,9 +1,17 @@
 // TODO: Refactor to use handler-utils (Phase 6 continuation)
+//
+// Telemetry cut-over (Track B1d): feed_configs / feed_status are read and
+// written on the routed feeds store (familyStore(env, "feeds")); history
+// (feed_pull_history) is read as a telemetry ∪ core union
+// (lib/telemetry-read.ts). With the feeds flag unset each read is one core
+// statement, exactly the pre-cut-over query.
 import { json } from "../lib/cors";
 import { runAllFeeds, runFeed } from "../lib/feedRunner";
 import type { FeedConfigRow } from "../lib/feedRunner";
 import { feedModules } from "../feeds";
 import type { Env, UpdateFeedBody } from "../types";
+import { familyStore, resolveFamily } from "../lib/db-route";
+import { byDesc, byId, historyParts, unionGrouped, unionRows } from "../lib/telemetry-read";
 
 /** Mask a credential for safe display: show last 4 chars only */
 function maskSecret(val: string | null): string | null {
@@ -12,11 +20,28 @@ function maskSecret(val: string | null): string | null {
   return "****" + val.slice(-4);
 }
 
+/** Latest pull per feed (count + duration), across both DBs during the cut-over. */
+async function latestPullPerFeed(env: Env): Promise<Array<{ feed_name: string; last_pull_count: number; duration_ms: number | null; started_at: string }>> {
+  const parts = await historyParts(env, "feed_pull_history");
+  // One row per feed per part; across parts the newest started_at wins (a
+  // backfilled copy is identical, so either duplicate is fine).
+  return unionRows<{ feed_name: string; last_pull_count: number; duration_ms: number | null; started_at: string }>(parts, () => ({
+    sql: `SELECT feed_name, records_ingested AS last_pull_count, duration_ms, started_at
+       FROM feed_pull_history
+       WHERE id IN (SELECT id FROM feed_pull_history GROUP BY feed_name HAVING started_at = MAX(started_at))`,
+    binds: [],
+  }), {
+    key: (r) => r.feed_name,
+    prefer: (seen, other) => (String(other.started_at ?? "") > String(seen.started_at ?? "") ? other : seen),
+  });
+}
+
 // ─── List all feed configs ──────────────────────────────────────
 export async function handleListFeeds(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const configs = await env.DB.prepare(
+    const feedsDb = await familyStore(env, "feeds");
+    const configs = await feedsDb.prepare(
       `SELECT c.*, s.last_successful_pull, s.last_failure, s.records_ingested_today, s.health_status
        FROM feed_configs c
        LEFT JOIN feed_status s ON c.feed_name = s.feed_name
@@ -25,21 +50,19 @@ export async function handleListFeeds(request: Request, env: Env): Promise<Respo
     ).all();
 
     // Enrich with last pull count and avg duration from feed_pull_history
-    const lastPulls = await env.DB.prepare(
-      `SELECT feed_name, records_ingested AS last_pull_count, duration_ms
-       FROM feed_pull_history
-       WHERE id IN (SELECT id FROM feed_pull_history GROUP BY feed_name HAVING started_at = MAX(started_at))`
-    ).all<{ feed_name: string; last_pull_count: number; duration_ms: number | null }>();
+    const lastPulls = await latestPullPerFeed(env);
 
-    const avgDurations = await env.DB.prepare(
-      `SELECT feed_name, AVG(duration_ms) AS avg_duration_ms
+    const parts = await historyParts(env, "feed_pull_history");
+    const avgDurations = await unionGrouped<{ feed_name: string; avg_duration_ms: number; n_dur: number }>(parts, () => ({
+      sql: `SELECT feed_name, AVG(duration_ms) AS avg_duration_ms, COUNT(duration_ms) AS n_dur
        FROM feed_pull_history
-       WHERE started_at >= datetime('now', '-1 day') AND duration_ms IS NOT NULL
-       GROUP BY feed_name`
-    ).all<{ feed_name: string; avg_duration_ms: number }>();
+       WHERE started_at >= datetime('now', '-1 day') AND duration_ms IS NOT NULL/*split*/
+       GROUP BY feed_name`,
+      binds: [],
+    }), { groupBy: ["feed_name"], avg: [{ col: "avg_duration_ms", weight: "n_dur" }], sum: ["n_dur"], drop: ["n_dur"] });
 
-    const lastPullMap = new Map(lastPulls.results.map(r => [r.feed_name, r]));
-    const avgDurMap = new Map(avgDurations.results.map(r => [r.feed_name, r.avg_duration_ms]));
+    const lastPullMap = new Map(lastPulls.map(r => [r.feed_name, r]));
+    const avgDurMap = new Map(avgDurations.map(r => [r.feed_name, r.avg_duration_ms]));
 
     const masked = configs.results.map((r: Record<string, unknown>) => ({
       ...r,
@@ -57,7 +80,8 @@ export async function handleListFeeds(request: Request, env: Env): Promise<Respo
 export async function handleGetFeed(request: Request, env: Env, feedName: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const feed = await env.DB.prepare(
+    const feedsDb = await familyStore(env, "feeds");
+    const feed = await feedsDb.prepare(
       `SELECT c.*, s.last_successful_pull, s.last_failure, s.records_ingested_today, s.health_status
        FROM feed_configs c
        LEFT JOIN feed_status s ON c.feed_name = s.feed_name
@@ -67,15 +91,17 @@ export async function handleGetFeed(request: Request, env: Env, feedName: string
     if (!feed) return json({ success: false, error: "Feed not found" }, 404, origin);
 
     // Recent pull history
-    const pulls = await env.DB.prepare(
-      `SELECT id, status, records_ingested, records_rejected, error_message, duration_ms, started_at, completed_at
-       FROM feed_pull_history WHERE feed_name = ? ORDER BY started_at DESC LIMIT 20`
-    ).bind(feedName).all();
+    const parts = await historyParts(env, "feed_pull_history");
+    const pulls = await unionRows<{ id: string; started_at: string }>(parts, (p) => ({
+      sql: `SELECT id, status, records_ingested, records_rejected, error_message, duration_ms, started_at, completed_at
+       FROM feed_pull_history WHERE feed_name = ?/*split*/ ORDER BY started_at DESC LIMIT ?`,
+      binds: [feedName, p.limit],
+    }), { key: byId, sort: byDesc("started_at"), limit: 20 });
 
     const result: Record<string, unknown> = { ...feed as Record<string, unknown> };
     result.api_key_encrypted = maskSecret(result.api_key_encrypted as string | null);
 
-    return json({ success: true, data: { feed: result, pulls: pulls.results } }, 200, origin);
+    return json({ success: true, data: { feed: result, pulls } }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
@@ -134,11 +160,12 @@ export async function handleUpdateFeed(request: Request, env: Env, feedName: str
     updates.push("updated_at = datetime('now')");
     values.push(feedName);
 
-    await env.DB.prepare(
+    const feedsDb = await familyStore(env, "feeds");
+    await feedsDb.prepare(
       `UPDATE feed_configs SET ${updates.join(", ")} WHERE feed_name = ?`
     ).bind(...values).run();
 
-    const updated = await env.DB.prepare("SELECT * FROM feed_configs WHERE feed_name = ?").bind(feedName).first();
+    const updated = await feedsDb.prepare("SELECT * FROM feed_configs WHERE feed_name = ?").bind(feedName).first();
     return json({ success: true, data: updated }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -154,13 +181,15 @@ export async function handleTriggerFeed(request: Request, env: Env, feedName: st
       return json({ success: false, error: "Feed module not implemented" }, 501, origin);
     }
 
-    const config = await env.DB.prepare("SELECT * FROM feed_configs WHERE feed_name = ?").bind(feedName).first<FeedConfigRow>();
+    // One feeds route for the config read and the pull it starts.
+    const feeds = await resolveFamily(env, "feeds");
+    const config = await feeds.db.prepare("SELECT * FROM feed_configs WHERE feed_name = ?").bind(feedName).first<FeedConfigRow>();
     if (!config) return json({ success: false, error: "Feed not found" }, 404, origin);
 
     // Use runFeed() so feed_status and feed_pull_history are properly updated.
     // Awaited inside this request, so its finalize keeps the short D1 retry
     // backoff instead of waiting out an overload window (RunFeedOptions).
-    const result = await runFeed(env, config, mod, { overloadBackoff: false });
+    const result = await runFeed(env, config, mod, { overloadBackoff: false, feeds });
 
     // Bust the feeds_overview cache so the UI sees the new pull
     // immediately (was stale up to 5 min after PR #1178 added KV).
@@ -206,29 +235,32 @@ export async function handleFeedStats(request: Request, env: Env): Promise<Respo
     const cached = await env.CACHE.get(cacheKey);
     if (cached) return json(JSON.parse(cached), 200, origin);
 
-    const totals = await env.DB.prepare(`
+    const feedsDb = await familyStore(env, "feeds");
+    const totals = await feedsDb.prepare(`
       SELECT
         COUNT(*) as total_feeds,
         SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) as enabled_feeds
       FROM feed_configs
     `).first();
 
-    const statusSummary = await env.DB.prepare(`
+    const statusSummary = await feedsDb.prepare(`
       SELECT health_status, COUNT(*) as count
       FROM feed_status GROUP BY health_status
     `).all();
 
-    const recentPulls = await env.DB.prepare(`
-      SELECT feed_name, status, records_ingested, duration_ms, started_at
-      FROM feed_pull_history ORDER BY started_at DESC LIMIT 50
-    `).all();
+    const parts = await historyParts(env, "feed_pull_history");
+    const recentPulls = await unionRows<{ id: string; started_at: string }>(parts, (p) => ({
+      sql: `SELECT id, feed_name, status, records_ingested, duration_ms, started_at
+      FROM feed_pull_history WHERE 1 = 1/*split*/ ORDER BY started_at DESC LIMIT ?`,
+      binds: [p.limit],
+    }), { key: byId, sort: byDesc("started_at"), limit: 50, drop: ["id"] });
 
     const data = {
       success: true,
       data: {
         summary: totals,
         statusBreakdown: statusSummary.results,
-        recentPulls: recentPulls.results,
+        recentPulls,
       },
     };
 
@@ -245,10 +277,12 @@ export async function handleIngestionJobs(request: Request, env: Env): Promise<R
   try {
     const url = new URL(request.url);
     const limit = Math.min(500, parseInt(url.searchParams.get("limit") ?? "20", 10));
-    const rows = await env.DB.prepare(
-      "SELECT * FROM feed_pull_history ORDER BY started_at DESC LIMIT ?"
-    ).bind(limit).all();
-    return json({ success: true, data: rows.results }, 200, origin);
+    const parts = await historyParts(env, "feed_pull_history");
+    const rows = await unionRows<{ id: string; started_at: string }>(parts, (p) => ({
+      sql: "SELECT * FROM feed_pull_history WHERE 1 = 1/*split*/ ORDER BY started_at DESC LIMIT ?",
+      binds: [p.limit],
+    }), { key: byId, sort: byDesc("started_at"), limit });
+    return json({ success: true, data: rows }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
@@ -258,7 +292,8 @@ export async function handleIngestionJobs(request: Request, env: Env): Promise<R
 export async function handleResetCircuit(request: Request, env: Env, feedName: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    await env.DB.prepare(
+    const feedsDb = await familyStore(env, "feeds");
+    await feedsDb.prepare(
       `UPDATE feed_status SET health_status = 'healthy', last_failure = NULL WHERE feed_name = ?`
     ).bind(feedName).run();
     return json({ success: true }, 200, origin);
@@ -271,6 +306,18 @@ export async function handleResetCircuit(request: Request, env: Env, feedName: s
 export async function handleFeedQuota(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   return json({ success: true, data: [] }, 200, origin);
+}
+
+interface OverviewRow {
+  feed_name: string;
+  total_pulls: number;
+  total_ingested: number;
+  total_rejected: number;
+  successes: number;
+  errors: number;
+  last_run: string | null;
+  last_completed: string | null;
+  [k: string]: unknown;
 }
 
 // ─── Feeds overview with aggregated pull stats ─────────────────
@@ -288,12 +335,19 @@ export async function handleFeedsOverview(request: Request, env: Env): Promise<R
     const cached = await env.CACHE.get(cacheKey);
     if (cached) return json(JSON.parse(cached), 200, origin);
 
+    // Track B1d: config ⋈ status ⋈ history all live in the feeds family, so
+    // each part runs the whole JOIN on its own DB; the per-feed groups are
+    // merged (counts summed, last_* maxed) and the config columns come from
+    // the routed store's part (routedFirst + first-seen wins).
+    const parts = await historyParts(env, "feed_pull_history", { alias: "fph", routedFirst: true });
+
     // Bug fix: status='error' never matched the CHECK constraint
     // (schema only allows 'success'/'partial'/'failed'), so the
     // `errors` field in the response has been 0 forever. Switched
     // to status='failed' to count actual failed pulls.
-    const [rowsResult, hourlyResult] = await Promise.all([
-      env.DB.prepare(`
+    const [rows, hourly] = await Promise.all([
+      unionGrouped<OverviewRow>(parts, () => ({
+        sql: `
         SELECT
           fc.feed_name,
           fc.display_name,
@@ -320,16 +374,25 @@ export async function handleFeedsOverview(request: Request, env: Env): Promise<R
           MAX(fph.completed_at) as last_completed
         FROM feed_configs fc
         LEFT JOIN feed_status fs ON fs.feed_name = fc.feed_name
-        LEFT JOIN feed_pull_history fph ON fph.feed_name = fc.feed_name
+        LEFT JOIN feed_pull_history fph ON fph.feed_name = fc.feed_name/*split*/
         GROUP BY fc.feed_name
         ORDER BY total_ingested DESC
-      `).all(),
+      `,
+        binds: [],
+      }), {
+        groupBy: ["feed_name"],
+        sum: ["total_pulls", "total_ingested", "total_rejected", "successes", "errors"],
+        max: ["last_run", "last_completed"],
+        sort: (a, b) => Number(b.total_ingested ?? 0) - Number(a.total_ingested ?? 0),
+      }),
 
       // Hourly buckets for the per-card sparkline. 24h window keeps
       // the index range scan cheap (idx_feed_pulls_feed). One row
       // per (feed_name, hour) bucket; frontend rebuilds 24-element
       // arrays from these.
-      env.DB.prepare(`
+      historyParts(env, "feed_pull_history").then((hp) =>
+        unionGrouped<{ feed_name: string; hour: number; pulls: number; ingested: number; errors: number }>(hp, () => ({
+          sql: `
         SELECT
           feed_name,
           CAST(strftime('%H', started_at) AS INTEGER) AS hour,
@@ -337,9 +400,11 @@ export async function handleFeedsOverview(request: Request, env: Env): Promise<R
           COALESCE(SUM(records_ingested), 0) AS ingested,
           SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS errors
         FROM feed_pull_history
-        WHERE started_at >= datetime('now', '-1 day')
+        WHERE started_at >= datetime('now', '-1 day')/*split*/
         GROUP BY feed_name, hour
-      `).all<{ feed_name: string; hour: number; pulls: number; ingested: number; errors: number }>(),
+      `,
+          binds: [],
+        }), { groupBy: ["feed_name", "hour"], sum: ["pulls", "ingested", "errors"] })),
     ]);
 
     // Build per-feed 24-element arrays, indexed so position 0 is
@@ -349,7 +414,7 @@ export async function handleFeedsOverview(request: Request, env: Env): Promise<R
     const pullsMap    = new Map<string, number[]>();
     const ingestedMap = new Map<string, number[]>();
     const errorsMap   = new Map<string, number[]>();
-    for (const row of hourlyResult.results) {
+    for (const row of hourly) {
       if (!pullsMap.has(row.feed_name))    pullsMap.set(row.feed_name,    new Array(24).fill(0));
       if (!ingestedMap.has(row.feed_name)) ingestedMap.set(row.feed_name, new Array(24).fill(0));
       if (!errorsMap.has(row.feed_name))   errorsMap.set(row.feed_name,   new Array(24).fill(0));
@@ -359,7 +424,7 @@ export async function handleFeedsOverview(request: Request, env: Env): Promise<R
       errorsMap.get(row.feed_name)![idx]   = row.errors   ?? 0;
     }
 
-    const data = (rowsResult.results as Record<string, unknown>[]).map(r => ({
+    const data = (rows as Record<string, unknown>[]).map(r => ({
       ...r,
       pulls_per_hour:    pullsMap.get(r.feed_name as string)    ?? new Array(24).fill(0),
       ingested_per_hour: ingestedMap.get(r.feed_name as string) ?? new Array(24).fill(0),
@@ -384,27 +449,28 @@ export async function handleFeedsOverview(request: Request, env: Env): Promise<R
 //                    last_error = NULL
 //
 // D1 doesn't expose multi-statement transactions to Workers, but
-// env.DB.batch([...]) runs the statements atomically from the
-// caller's point of view. If any statement fails the whole batch
-// is rejected.
+// db.batch([...]) runs the statements atomically from the caller's
+// point of view. If any statement fails the whole batch is rejected.
+// Both tables are in the feeds family, so the batch runs on ONE DB.
 export async function handleUnpauseFeed(request: Request, env: Env, feedName: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
+    const feedsDb = await familyStore(env, "feeds");
     // Sanity check: feed must exist
-    const existing = await env.DB.prepare(
+    const existing = await feedsDb.prepare(
       "SELECT feed_name FROM feed_configs WHERE feed_name = ?"
     ).bind(feedName).first();
     if (!existing) return json({ success: false, error: "Feed not found" }, 404, origin);
 
-    await env.DB.batch([
-      env.DB.prepare(
+    await feedsDb.batch([
+      feedsDb.prepare(
         `UPDATE feed_configs
            SET enabled = 1,
                paused_reason = NULL,
                updated_at = datetime('now')
            WHERE feed_name = ?`
       ).bind(feedName),
-      env.DB.prepare(
+      feedsDb.prepare(
         `UPDATE feed_status
            SET consecutive_failures = 0,
                health_status = 'healthy',
@@ -437,12 +503,13 @@ export async function handleUnpauseFeed(request: Request, env: Env, feedName: st
 export async function handlePauseFeed(request: Request, env: Env, feedName: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const existing = await env.DB.prepare(
+    const feedsDb = await familyStore(env, "feeds");
+    const existing = await feedsDb.prepare(
       "SELECT feed_name FROM feed_configs WHERE feed_name = ?"
     ).bind(feedName).first();
     if (!existing) return json({ success: false, error: "Feed not found" }, 404, origin);
 
-    await env.DB.prepare(
+    await feedsDb.prepare(
       `UPDATE feed_configs
          SET enabled = 0,
              paused_reason = 'manual',
@@ -471,16 +538,20 @@ export async function handleFeedPullHistory(request: Request, env: Env, feedName
     const url = new URL(request.url);
     const limit = Math.min(50, parseInt(url.searchParams.get("limit") ?? "20", 10));
 
-    const rows = await env.DB.prepare(`
+    const parts = await historyParts(env, "feed_pull_history");
+    const rows = await unionRows<{ id: string; started_at: string }>(parts, (p) => ({
+      sql: `
       SELECT id, feed_name, started_at, completed_at, duration_ms,
              records_ingested, records_rejected, status, error_message
       FROM feed_pull_history
-      WHERE feed_name = ?
+      WHERE feed_name = ?/*split*/
       ORDER BY started_at DESC
       LIMIT ?
-    `).bind(feedName, limit).all();
+    `,
+      binds: [feedName, p.limit],
+    }), { key: byId, sort: byDesc("started_at"), limit });
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    return json({ success: true, data: rows }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
@@ -506,8 +577,9 @@ export async function handleFeedsAggregateStats(request: Request, env: Env): Pro
     // unbounded SUM over feed_pull_history (44.6K rows and growing
     // forever — EXPLAIN was a full SCAN feed_pull_history). Bounded by
     // feed count, not history depth; EXPLAIN no longer touches
-    // feed_pull_history.
-    const stats = await env.DB.prepare(`
+    // feed_pull_history. Both tables: the routed feeds store.
+    const feedsDb = await familyStore(env, "feeds");
+    const stats = await feedsDb.prepare(`
       SELECT
         COUNT(CASE WHEN enabled=1 THEN 1 END) as active,
         COUNT(CASE WHEN enabled=0 THEN 1 END) as disabled,

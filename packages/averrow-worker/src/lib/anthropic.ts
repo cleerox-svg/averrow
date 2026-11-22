@@ -93,6 +93,9 @@ export type AnthropicEnv = Pick<
   // env shape don't carry CACHE; the gate's try/catch handles
   // absence by falling through to the slow path each call.
   CACHE?: KVNamespace;
+  // Budget family routing (Track B1d, lib/db-route.ts): the ledger write
+  // goes to TELEMETRY_DB once `db_route:telemetry:budget` says so.
+  TELEMETRY_DB?: D1Database;
 };
 
 export interface AnthropicCallOptions {
@@ -567,7 +570,9 @@ export async function callAnthropic(
   const outputTokens = usage?.output_tokens ?? 0;
   if (env.DB) {
     try {
-      const budget = new BudgetManager(env.DB);
+      // Budget family resolved once for this call: the ledger row and the
+      // rollup increment are one batch on one DB (Track B1d).
+      const budget = await BudgetManager.forEnv(env);
       await budget.recordCost(
         agentId,
         runId,

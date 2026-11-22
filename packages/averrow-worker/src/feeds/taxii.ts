@@ -25,7 +25,7 @@
 
 import type { Env } from "../types";
 import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
-import { threatId } from "./types";
+import { feedStoreOf, threatId } from "./types";
 import { insertThreat } from "../lib/feedRunner";
 import { fetchTaxiiObjects, type TaxiiAuth } from "../lib/taxii-client";
 import { iterParsedIndicators, type ParsedIndicator } from "../lib/stix-parser";
@@ -209,7 +209,9 @@ async function taxiiIngest(ctx: FeedContext): Promise<FeedResult> {
   // standard FeedContext only carries feed_name + source_url, so
   // every TAXII-backed feed has to look up its own row to find
   // its collection ID, auth params, and cursor.
-  const cfg = await env.DB.prepare(`
+  // The pull's feeds store (Track B1d): feed_configs lives there.
+  const feedsDb = feedStoreOf(ctx);
+  const cfg = await feedsDb.prepare(`
     SELECT feed_name, batch_size,
            taxii_root_url, taxii_collection_id, taxii_auth_type,
            taxii_username, taxii_api_key_env, taxii_next_added_after
@@ -356,7 +358,7 @@ async function taxiiIngest(ctx: FeedContext): Promise<FeedResult> {
     const isSentinel = !incoming || incoming === "None" || incoming === "null";
     if (!isSentinel && (!cursor || incoming! > cursor)) {
       try {
-        await env.DB.prepare(
+        await feedsDb.prepare(
           `UPDATE feed_configs
               SET taxii_next_added_after = ?,
                   updated_at = datetime('now')

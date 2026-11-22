@@ -8,6 +8,15 @@
  * - IOC deduplication via KV cache + DB INSERT OR IGNORE
  * - Per-feed execution logging to feed_pull_history
  * - Feed health status tracking in feed_status
+ *
+ * Telemetry cut-over (Track B1d): feed_configs / feed_status /
+ * feed_pull_history are the FEEDS family, routed by `db_route:telemetry:feeds`
+ * (lib/db-route.ts). A pull resolves the family ONCE at its start
+ * (resolveFamily) and carries the route, so its pull_history INSERT, its
+ * finalize, the breaker penalty / reset and an auto-pause all hit the same DB
+ * even when the flag flips mid-pull. Feed loops read configs + statuses from
+ * the routed store. system_config (the global failure threshold) and
+ * agent_activity_log (agents family) are not feeds tables.
  */
 
 import type { Env } from "../types";
@@ -20,7 +29,8 @@ import { computeBackoffRetryAt, FEED_RETRY_LADDER } from "./backoff";
 import { tagThreat, needsBrandTokens, loadBrandTokens, isIdpFamilyTag } from "./idp-tagging";
 import { enqueueAutoCaptures } from "./page-capture";
 import { withD1Meter } from "./d1-meter";
-import { telemetryStore } from "./db-route";
+import { familyStore, resolveFamily, telemetryDbFor, telemetryStore, type TelemetryHandle, type TelemetryRoute } from "./db-route";
+import { byDesc, historyParts, unionFirst } from "./telemetry-read";
 
 // ─── Deduplication ───────────────────────────────────────────────
 
@@ -394,9 +404,9 @@ export async function dispatchEnrichmentFeed(
   mod: FeedModule,
 ): Promise<void> {
   try {
-    const config = await loadDispatchableFeed(env, name, "dispatchEnrichmentFeed");
-    if (!config) return;
-    await runFeed(env, config, mod);
+    const loaded = await loadDispatchableFeed(env, name, "dispatchEnrichmentFeed");
+    if (!loaded) return;
+    await runFeed(env, loaded.config, mod, { feeds: loaded.feeds });
   } catch (err) {
     console.error(`[dispatchEnrichmentFeed] ${name} failed:`, err instanceof Error ? err.message : String(err));
   }
@@ -434,9 +444,9 @@ export async function dispatchDedicatedIngestFeed(
   mod: FeedModule,
 ): Promise<void> {
   try {
-    const config = await loadDispatchableFeed(env, name, "dispatchDedicatedIngestFeed");
-    if (!config) return;
-    await runFeedWithTimeout(env, config, mod, feedRunTimeoutMs(name), null);
+    const loaded = await loadDispatchableFeed(env, name, "dispatchDedicatedIngestFeed");
+    if (!loaded) return;
+    await runFeedWithTimeout(env, loaded.config, mod, feedRunTimeoutMs(name), null, loaded.feeds);
   } catch (err) {
     console.error(`[dispatchDedicatedIngestFeed] ${name} failed:`, err instanceof Error ? err.message : String(err));
   }
@@ -445,9 +455,12 @@ export async function dispatchDedicatedIngestFeed(
 /**
  * The shared gate for cron-dispatched feeds: the feed_configs row when the
  * feed exists, is enabled, and is not in circuit-breaker backoff; else null.
+ * Resolves the feeds family once: the gate reads and the pull it gates use
+ * the same DB.
  */
-async function loadDispatchableFeed(env: Env, name: string, tag: string): Promise<FeedConfigRow | null> {
-  const config = await env.DB.prepare(
+async function loadDispatchableFeed(env: Env, name: string, tag: string): Promise<{ config: FeedConfigRow; feeds: TelemetryHandle } | null> {
+  const feeds = await resolveFamily(env, "feeds");
+  const config = await feeds.db.prepare(
     `SELECT feed_name, display_name, source_url, schedule_cron, rate_limit,
             batch_size, retry_count, enabled, consecutive_failure_threshold
        FROM feed_configs WHERE feed_name = ?`,
@@ -463,7 +476,7 @@ async function loadDispatchableFeed(env: Env, name: string, tag: string): Promis
 
   // Respect the circuit breaker: if a prior failure stamped a future
   // next_retry_at, stay backed off until the window opens.
-  const status = await env.DB.prepare(
+  const status = await feeds.db.prepare(
     "SELECT next_retry_at FROM feed_status WHERE feed_name = ?",
   ).bind(name).first<{ next_retry_at: string | null }>();
   if (status?.next_retry_at) {
@@ -474,7 +487,7 @@ async function loadDispatchableFeed(env: Env, name: string, tag: string): Promis
       return null;
     }
   }
-  return config;
+  return { config, feeds };
 }
 
 // ─── Bounded concurrency ─────────────────────────────────────────
@@ -684,14 +697,24 @@ function timeoutAllowanceMs(errorMessage: string | null): number | null {
  * (≥ hangEvidenceMinMs) — clipped or not. The allowance is read back from
  * the "timed out after Ns" error text the timeout path writes (whole
  * seconds, so it needs no new column). One indexed row read
- * (idx_feed_pulls_feed); only called after a qualifying clipped timeout.
+ * (idx_feed_pulls_feed) per DB; only called after a qualifying clipped
+ * timeout. A union read (lib/telemetry-read.ts): right after a feeds flip
+ * the previous pull is on the other DB.
  */
 async function previousPullTimedOutAsHang(env: Env, feedName: string, pullId: string): Promise<boolean> {
-  const prev = await env.DB.prepare(
-    `SELECT status, error_message FROM feed_pull_history
+  const parts = await historyParts(env, "feed_pull_history");
+  // One part (feeds never on telemetry): exactly the pre-cut-over statement.
+  // Union: id + started_at are added for the dedupe and the merge order.
+  const prev = await unionFirst<{ id?: string; started_at?: string; status: string; error_message: string | null }>(parts, () => ({
+    sql: parts.length === 1
+      ? `SELECT status, error_message FROM feed_pull_history
       WHERE feed_name = ? AND id <> ?
+      ORDER BY started_at DESC LIMIT 1`
+      : `SELECT status, error_message, id, started_at FROM feed_pull_history
+      WHERE feed_name = ? AND id <> ?/*split*/
       ORDER BY started_at DESC LIMIT 1`,
-  ).bind(feedName, pullId).first<{ status: string; error_message: string | null }>();
+    binds: [feedName, pullId],
+  }), { key: (r) => String(r.id), sort: byDesc("started_at") });
   if (prev?.status !== "failed") return false;
   const allowance = timeoutAllowanceMs(prev.error_message);
   return allowance !== null && allowance >= hangEvidenceMinMs(feedName);
@@ -752,12 +775,17 @@ async function runFeedWithTimeout(
   mod: FeedModule,
   timeoutMs: number,
   clippedBy: DeadlineClip | null,
+  feedsIn?: TelemetryHandle,
 ): Promise<FeedResult> {
   const pullId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
   const start = Date.now();
+  // Resolved once for this pull: runFeed's INSERT and this timeout finalize
+  // (+ its penalty) must land on the same DB whatever the flag does meanwhile.
+  const feeds = feedsIn ?? await resolveFamily(env, "feeds");
+  const feedsDb = feeds.db;
 
-  const pull = runFeed(env, config, mod, { pullId });
+  const pull = runFeed(env, config, mod, { pullId, feeds });
   // Consume a late settlement of an abandoned pull. Promise.race below
   // also subscribes, but only this handler survives the race settling.
   let abandoned = false;
@@ -806,7 +834,7 @@ async function runFeedWithTimeout(
     const durationMs = Date.now() - start;
     const finalize = await withD1Retry(
       () =>
-        env.DB.prepare(
+        feedsDb.prepare(
           `INSERT INTO feed_pull_history
              (id, feed_name, started_at, completed_at, duration_ms, status, error_message)
            VALUES (?, ?, ?, datetime('now'), ?, 'failed', ?)
@@ -826,12 +854,12 @@ async function runFeedWithTimeout(
 
     if (finalizeApplied(finalize)) {
       if (!clippedBy) {
-        await penalizeFeedFailure(env, config, errorMsg, finalizeRetry);
+        await penalizeFeedFailure(env, feedsDb, config, errorMsg, finalizeRetry);
       } else if (
         timeoutMs >= hangEvidenceMinMs(config.feed_name)
         && await previousPullTimedOutAsHang(env, config.feed_name, pullId)
       ) {
-        await penalizeFeedFailure(env, config, `${errorMsg}; previous pull also timed out`, finalizeRetry);
+        await penalizeFeedFailure(env, feedsDb, config, `${errorMsg}; previous pull also timed out`, finalizeRetry);
       }
     }
   } catch (e) {
@@ -944,6 +972,14 @@ export interface RunFeedOptions {
    * executeAgent's `api`/`manual` vs `scheduled` triggers, CLAUDE.md §6).
    */
   overloadBackoff?: boolean;
+  /**
+   * The feeds-family route this pull was resolved under (Track B1d). Callers
+   * that write the pull row themselves (runFeedWithTimeout's timeout
+   * finalize) or gated it on that DB (the dedicated-cron dispatchers) pass
+   * theirs; otherwise runFeed resolves it once at start. Only the ROUTE is
+   * used: the DB is taken from runFeed's own (D1-metered) env.
+   */
+  feeds?: { route: TelemetryRoute };
 }
 
 /**
@@ -1022,9 +1058,14 @@ async function runFeedUnmetered(
   const pullId = opts.pullId ?? crypto.randomUUID();
   const startedAt = new Date().toISOString();
   const overloadBackoff = opts.overloadBackoff ?? true;
+  // The feeds family, resolved ONCE for this pull (or handed in by the
+  // caller that resolved it). Every write below — and the feed module's own
+  // feed-table writes via ctx.feedsDb — goes to this DB.
+  const route = opts.feeds?.route ?? (await resolveFamily(env, "feeds")).route;
+  const feedsDb = telemetryDbFor(env, route);
 
   // Create pull history entry
-  await env.DB.prepare(
+  await feedsDb.prepare(
     `INSERT INTO feed_pull_history (id, feed_name, started_at, status) VALUES (?, ?, ?, 'partial')`
   ).bind(pullId, config.feed_name, startedAt).run();
 
@@ -1032,6 +1073,7 @@ async function runFeedUnmetered(
     env,
     feedName: config.feed_name,
     feedUrl: config.source_url ?? "",
+    feedsDb,
   };
 
   const start = Date.now();
@@ -1043,7 +1085,7 @@ async function runFeedUnmetered(
     // Only an ingest failure takes the failure path. A D1 error AFTER a
     // successful ingest (the finalize writes below) must never be recorded
     // as a failed pull or penalize the breaker.
-    return failPull(env, config, pullId, err, Date.now() - start, overloadBackoff);
+    return failPull(env, feedsDb, config, pullId, err, Date.now() - start, overloadBackoff);
   }
 
   const durationMs = Date.now() - start;
@@ -1056,7 +1098,7 @@ async function runFeedUnmetered(
   try {
     pullUpdate = await withD1Retry(
       () =>
-        env.DB.prepare(
+        feedsDb.prepare(
           `UPDATE feed_pull_history SET
              status = 'success', records_ingested = ?, records_rejected = ?,
              error_message = ?, duration_ms = ?, completed_at = datetime('now')
@@ -1110,7 +1152,7 @@ async function runFeedUnmetered(
     // Ensure feed_status row exists (INSERT OR IGNORE), then update
     await withD1Retry(
       () =>
-        env.DB.prepare(
+        feedsDb.prepare(
           "INSERT OR IGNORE INTO feed_status (feed_name, health_status) VALUES (?, 'healthy')"
         ).bind(config.feed_name).run(),
       resetRetry,
@@ -1127,7 +1169,7 @@ async function runFeedUnmetered(
     // when the retry window passes, the feed pulls again.)
     await withD1Retry(
       () =>
-        env.DB.prepare(
+        feedsDb.prepare(
           `UPDATE feed_status SET
              last_successful_pull = datetime('now'),
              records_ingested_today = records_ingested_today + ?,
@@ -1154,6 +1196,7 @@ async function runFeedUnmetered(
  */
 async function failPull(
   env: Env,
+  feedsDb: D1Database,
   config: FeedConfigRow,
   pullId: string,
   err: unknown,
@@ -1186,7 +1229,7 @@ async function failPull(
   try {
     const failUpdate = await withD1Retry(
       () =>
-        env.DB.prepare(
+        feedsDb.prepare(
           `UPDATE feed_pull_history SET
              status = 'failed', error_message = ?1, duration_ms = ?2, completed_at = datetime('now')
            WHERE id = ?3
@@ -1197,7 +1240,7 @@ async function failPull(
     );
 
     if (finalizeApplied(failUpdate)) {
-      await penalizeFeedFailure(env, config, errorMsg, failRetry);
+      await penalizeFeedFailure(env, feedsDb, config, errorMsg, failRetry);
     } else {
       console.warn(`[runFeed] ${config.feed_name}: pull ${pullId} failed after it was already finalized (timed out or reaped) — not penalizing again`);
     }
@@ -1222,10 +1265,12 @@ async function failPull(
  * (computeFeedRetryAt), mark degraded, notify on the healthy → degraded
  * transition, and auto-pause at the threshold. Shared by runFeed's catch
  * and runAllFeeds' per-feed timeout so a hung pull backs off exactly like
- * a thrown one. Moved verbatim out of runFeed's catch.
+ * a thrown one. Moved verbatim out of runFeed's catch. `feedsDb` is the
+ * pull's carried feeds store (the DB its row was finalized on).
  */
 async function penalizeFeedFailure(
   env: Env,
+  feedsDb: D1Database,
   config: FeedConfigRow,
   errorMsg: string,
   retryIn: D1RetryOptions = {},
@@ -1247,7 +1292,7 @@ async function penalizeFeedFailure(
   // counter so we can increment locally and avoid an extra round trip.
   let prevStatus = await withD1Retry(
     () =>
-      env.DB.prepare(
+      feedsDb.prepare(
         `SELECT health_status, consecutive_failures FROM feed_status WHERE feed_name = ?`
       ).bind(config.feed_name).first<{ health_status: string; consecutive_failures: number | null }>(),
     retry,
@@ -1262,7 +1307,7 @@ async function penalizeFeedFailure(
   if (!prevStatus) {
     await withD1Retry(
       () =>
-        env.DB.prepare(
+        feedsDb.prepare(
           "INSERT OR IGNORE INTO feed_status (feed_name, health_status) VALUES (?, 'healthy')",
         ).bind(config.feed_name).run(),
       retry,
@@ -1279,7 +1324,7 @@ async function penalizeFeedFailure(
   const nextRetryAt = computeFeedRetryAt(newFailureCount);
   await withD1Retry(
     () =>
-      env.DB.prepare(
+      feedsDb.prepare(
         `UPDATE feed_status SET
            last_failure = datetime('now'),
            health_status = 'degraded',
@@ -1319,7 +1364,7 @@ async function penalizeFeedFailure(
     const globalThreshold = await getGlobalFailureThreshold(env.DB);
     const threshold = resolveFailureThreshold(config, globalThreshold);
     if (newFailureCount >= threshold) {
-      await autoPauseFeed(env, config, newFailureCount, threshold, errorMsg);
+      await autoPauseFeed(env, feedsDb, config, newFailureCount, threshold, errorMsg);
     }
   } catch (e) {
     console.error(`[runFeed] auto-pause check failed for ${config.feed_name}:`, e);
@@ -1354,8 +1399,8 @@ async function penalizeFeedFailure(
  *
  * Returns the count of recovered feeds for the caller's diagnostics.
  */
-async function autoRecoverStalePausedFeeds(env: Env): Promise<number> {
-  const stale = await env.DB.prepare(`
+async function autoRecoverStalePausedFeeds(feedsDb: D1Database): Promise<number> {
+  const stale = await feedsDb.prepare(`
     SELECT fc.feed_name FROM feed_configs fc
     LEFT JOIN feed_status fs ON fs.feed_name = fc.feed_name
     WHERE fc.enabled = 0
@@ -1368,8 +1413,8 @@ async function autoRecoverStalePausedFeeds(env: Env): Promise<number> {
 
   for (const row of stale.results) {
     try {
-      await env.DB.batch([
-        env.DB.prepare(
+      await feedsDb.batch([
+        feedsDb.prepare(
           `UPDATE feed_configs
              SET enabled = 1,
                  paused_reason = NULL,
@@ -1377,7 +1422,7 @@ async function autoRecoverStalePausedFeeds(env: Env): Promise<number> {
            WHERE feed_name = ?
              AND paused_reason = 'auto:consecutive_failures'`
         ).bind(row.feed_name),
-        env.DB.prepare(
+        feedsDb.prepare(
           `UPDATE feed_status
              SET consecutive_failures = 0,
                  health_status = 'healthy',
@@ -1410,6 +1455,7 @@ async function autoRecoverStalePausedFeeds(env: Env): Promise<number> {
  */
 async function autoPauseFeed(
   env: Env,
+  feedsDb: D1Database,
   config: FeedConfigRow,
   failureCount: number,
   threshold: number,
@@ -1418,7 +1464,7 @@ async function autoPauseFeed(
   // Read the current enabled state so we only fire the notification on
   // the enabled → paused transition. This also short-circuits if two
   // concurrent failing runs both hit the threshold in the same tick.
-  const current = await env.DB.prepare(
+  const current = await feedsDb.prepare(
     "SELECT enabled, paused_reason FROM feed_configs WHERE feed_name = ?"
   ).bind(config.feed_name).first<{ enabled: number; paused_reason: string | null }>();
 
@@ -1460,7 +1506,7 @@ async function autoPauseFeed(
       ? 'auto:upstream_dead'
       : 'auto:consecutive_failures';
 
-  await env.DB.prepare(
+  await feedsDb.prepare(
     `UPDATE feed_configs
        SET enabled = 0,
            paused_reason = ?,
@@ -1534,18 +1580,22 @@ async function autoPauseFeed(
 // This applies the SAME breaker penalty runFeed's catch applies on a
 // caught failure: increment the counter, stamp an exponential-backoff
 // next_retry_at, mark degraded, and auto-pause if the threshold is
-// crossed. Called by the reaper for each distinct feed it reaps.
+// crossed. Called by the reaper for each distinct feed it reaps, with the DB
+// the reaped row lives on (`feedsDb`; the routed feeds store when omitted):
+// the breaker penalty lands where that pull's own finalize would have.
 // Idempotent-safe and never throws — the reaper must not be broken by it.
 export async function applyReapPenalty(
   env: Env,
   feedName: string,
   reapError: string,
+  feedsDbIn?: D1Database,
 ): Promise<void> {
   try {
+    const feedsDb = feedsDbIn ?? await familyStore(env, "feeds");
     // Pull the config so we can resolve the per-feed threshold + display
     // name for auto-pause. If the feed has no config row (or is already
     // disabled), there's nothing to penalize.
-    const config = await env.DB.prepare(
+    const config = await feedsDb.prepare(
       `SELECT feed_name, display_name, source_url, schedule_cron, rate_limit,
               batch_size, retry_count, enabled, consecutive_failure_threshold
          FROM feed_configs WHERE feed_name = ?`,
@@ -1553,16 +1603,16 @@ export async function applyReapPenalty(
     if (!config || config.enabled === 0) return;
 
     // Ensure a feed_status row exists, then read the current counter.
-    await env.DB.prepare(
+    await feedsDb.prepare(
       "INSERT OR IGNORE INTO feed_status (feed_name, health_status) VALUES (?, 'healthy')",
     ).bind(feedName).run();
-    const prev = await env.DB.prepare(
+    const prev = await feedsDb.prepare(
       "SELECT health_status, consecutive_failures FROM feed_status WHERE feed_name = ?",
     ).bind(feedName).first<{ health_status: string; consecutive_failures: number | null }>();
 
     const newFailureCount = (prev?.consecutive_failures ?? 0) + 1;
     const nextRetryAt = computeFeedRetryAt(newFailureCount);
-    await env.DB.prepare(
+    await feedsDb.prepare(
       `UPDATE feed_status SET
          last_failure = datetime('now'),
          health_status = 'degraded',
@@ -1578,7 +1628,7 @@ export async function applyReapPenalty(
     const globalThreshold = await getGlobalFailureThreshold(env.DB);
     const threshold = resolveFailureThreshold(config, globalThreshold);
     if (newFailureCount >= threshold) {
-      await autoPauseFeed(env, config, newFailureCount, threshold, reapError);
+      await autoPauseFeed(env, feedsDb, config, newFailureCount, threshold, reapError);
     }
   } catch (e) {
     console.error(`[applyReapPenalty] failed for ${feedName}:`, e);
@@ -1623,15 +1673,19 @@ export async function runAllFeeds(
   //
   // Manual pauses (paused_reason starts with anything other than
   // 'auto:') are NEVER touched by this recovery loop.
-  await autoRecoverStalePausedFeeds(env);
+  //
+  // Configs + statuses come from the routed feeds store (resolved once for
+  // the dispatch decision); each pull then resolves its own route at start.
+  const feedsDb = await familyStore(env, "feeds");
+  await autoRecoverStalePausedFeeds(feedsDb);
 
   // Fetch enabled feed configs
-  const configs = await env.DB.prepare(
+  const configs = await feedsDb.prepare(
     "SELECT * FROM feed_configs WHERE enabled = 1"
   ).all<FeedConfigRow>();
 
   // Fetch feed status for last-run checks
-  const statuses = await env.DB.prepare(
+  const statuses = await feedsDb.prepare(
     "SELECT * FROM feed_status"
   ).all<FeedStatusRow>();
   const statusMap = new Map(statuses.results.map(s => [s.feed_name, s]));
@@ -1883,8 +1937,9 @@ export async function runAllEnrichmentFeeds(
   try {
     // Build a map of DB configs keyed by feed_name (empty if query fails)
     const configMap = new Map<string, FeedConfigRow>();
+    const feedsDb = await familyStore(env, "feeds");
     try {
-      const configs = await env.DB.prepare(
+      const configs = await feedsDb.prepare(
         "SELECT * FROM feed_configs WHERE feed_type = 'enrichment'"
       ).all<FeedConfigRow>();
       for (const c of configs.results) configMap.set(c.feed_name, c);
@@ -1897,7 +1952,7 @@ export async function runAllEnrichmentFeeds(
     // Load feed_status for schedule checks
     let statusMap = new Map<string, FeedStatusRow>();
     try {
-      const statuses = await env.DB.prepare("SELECT * FROM feed_status").all<FeedStatusRow>();
+      const statuses = await feedsDb.prepare("SELECT * FROM feed_status").all<FeedStatusRow>();
       statusMap = new Map(statuses.results.map(s => [s.feed_name, s]));
     } catch {
       console.warn('[enrichment] feed_status query failed — will run all modules unconditionally');
@@ -2025,8 +2080,9 @@ export async function runAllSocialFeeds(
   try {
     // Build a map of DB configs keyed by feed_name (empty if query fails)
     const configMap = new Map<string, FeedConfigRow>();
+    const feedsDb = await familyStore(env, "feeds");
     try {
-      const configs = await env.DB.prepare(
+      const configs = await feedsDb.prepare(
         "SELECT * FROM feed_configs WHERE feed_type = 'social'"
       ).all<FeedConfigRow>();
       for (const c of configs.results) configMap.set(c.feed_name, c);
@@ -2039,7 +2095,7 @@ export async function runAllSocialFeeds(
     // Load feed_status for schedule checks
     let statusMap = new Map<string, FeedStatusRow>();
     try {
-      const statuses = await env.DB.prepare("SELECT * FROM feed_status").all<FeedStatusRow>();
+      const statuses = await feedsDb.prepare("SELECT * FROM feed_status").all<FeedStatusRow>();
       statusMap = new Map(statuses.results.map(s => [s.feed_name, s]));
     } catch {
       console.warn('[social] feed_status query failed — will run all modules unconditionally');

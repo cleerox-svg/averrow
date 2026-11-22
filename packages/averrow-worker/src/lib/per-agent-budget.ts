@@ -36,7 +36,7 @@ import { BudgetManager } from "./budgetManager";
  *  inside the AI wrapper don't have to widen their env shape.
  *  CACHE is optional — the gate falls through to the slow D1 path
  *  every call when KV isn't bound (test fixtures, retired modules). */
-export type BudgetGateEnv = Pick<Env, "DB"> & { CACHE?: KVNamespace };
+export type BudgetGateEnv = Pick<Env, "DB"> & { CACHE?: KVNamespace; TELEMETRY_DB?: D1Database };
 
 /** KV key for per-agent throttle decision. Mirrors the
  *  `ai:throttle_reason` 60s cache pattern used by the global
@@ -170,7 +170,9 @@ export async function checkAgentBudget(env: BudgetGateEnv, agentId: string): Pro
   let currentTokens = 0;
   try {
     if (env.DB) {
-      const budget = new BudgetManager(env.DB);
+      // Budget family resolved for this check; the rollup is summed across
+      // telemetry ∪ core during the cut-over (BudgetManager.forEnv).
+      const budget = await BudgetManager.forEnv(env);
       currentTokens = await budget.getAgentMonthlyTokens(agentId);
     }
   } catch (err) {
@@ -198,7 +200,7 @@ export async function getAgentBudgetSnapshot(env: BudgetGateEnv, agentId: string
 
   let currentTokens = 0;
   if (env.DB) {
-    const budget = new BudgetManager(env.DB);
+    const budget = await BudgetManager.forEnv(env);
     currentTokens = await budget.getAgentMonthlyTokens(agentId);
   }
   const pct = declared.cap > 0 ? (currentTokens / declared.cap) * 100 : 0;

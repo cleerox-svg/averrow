@@ -36,22 +36,59 @@
 // Never hand-roll a union in a caller: build the parts with historyParts()
 // and read through unionRows / unionFirst / unionGrouped.
 
+//
+// Feeds / budget families (Track B1d) use the same machinery: their history
+// tables are feed_pull_history, budget_ledger and agent_budget_rollups, and
+// each table's union follows ITS family's route + 'used' marker
+// (lib/db-route.ts), so cutting one family over never changes another
+// family's reads. agent_budget_rollups is a keyed counter table (PK agent_id,
+// year_month, upserted in place): a month's row can exist on both DBs (core
+// holds the increments made before the flip, telemetry the ones after), so
+// its readers always SUM per (agent_id, year_month) across the parts
+// (unionGrouped), and its backfill copies only CLOSED months that have no row
+// on telemetry (lib/telemetry-cutover.ts).
+
 import type { Env } from "../types";
-import { telemetryEverUsed, telemetryRouteState, telemetryDbFor } from "./db-route";
+import { familyEverUsed, familyRouteState, telemetryDbFor, type TelemetryFamily } from "./db-route";
 
 export type ReadDb = Pick<D1Database, "prepare">;
 
-/** History tables of the agent-runs family (append / finalize-in-place). */
-export type TelemetryHistoryTable = "agent_runs" | "agent_events" | "agent_activity_log";
+/** History tables per family (append / finalize-in-place; rollups: keyed counters). */
+export type TelemetryHistoryTable =
+  | "agent_runs" | "agent_events" | "agent_activity_log"
+  | "feed_pull_history"
+  | "budget_ledger" | "agent_budget_rollups";
 
 /** Time column per history table (the backfill window is on it). */
 export const HISTORY_TIME_COLUMN: Record<TelemetryHistoryTable, string> = {
   agent_runs: "started_at",
   agent_events: "created_at",
   agent_activity_log: "created_at",
+  feed_pull_history: "started_at",
+  budget_ledger: "created_at",
+  // 'YYYY-MM' — the backfill window is in whole months (closed months only).
+  agent_budget_rollups: "year_month",
 };
 
+/** The family whose route + marker a history table's reads follow. */
+export const HISTORY_TABLE_FAMILY: Record<TelemetryHistoryTable, TelemetryFamily> = {
+  agent_runs: "agents",
+  agent_events: "agents",
+  agent_activity_log: "agents",
+  feed_pull_history: "feeds",
+  budget_ledger: "budget",
+  agent_budget_rollups: "budget",
+};
+
+/** The agents family's history tables (B1c; the default backfill / preflight set). */
 export const TELEMETRY_HISTORY_TABLES: readonly TelemetryHistoryTable[] = ["agent_runs", "agent_events", "agent_activity_log"];
+
+/** History tables per family. */
+export const FAMILY_HISTORY_TABLES: Record<TelemetryFamily, readonly TelemetryHistoryTable[]> = {
+  agents: TELEMETRY_HISTORY_TABLES,
+  feeds: ["feed_pull_history"],
+  budget: ["budget_ledger", "agent_budget_rollups"],
+};
 
 /** KV key holding the backfill cursor for one history table. */
 export const backfillCursorKey = (table: TelemetryHistoryTable): string => `telemetry_backfill:${table}`;
@@ -144,25 +181,54 @@ export interface ReadPart {
 export async function historyParts(
   env: Env | undefined,
   table: TelemetryHistoryTable,
-  opts: { core?: ReadDb; alias?: string; nowMs?: number } = {},
+  opts: {
+    core?: ReadDb;
+    alias?: string;
+    nowMs?: number;
+    /**
+     * Put the part of the family's CURRENT route first (core first after a
+     * flip back). For a query that JOINs a history table to its family's
+     * config table (feed_pull_history ⋈ feed_configs) and merges groups
+     * first-seen-wins: the config columns then come from the routed store.
+     * Default (false): telemetry first, as B1c.
+     */
+    routedFirst?: boolean;
+  } = {},
 ): Promise<ReadPart[]> {
   const nowMs = opts.nowMs ?? Date.now();
   const core = opts.core ?? env?.DB;
   if (!core) throw new Error("telemetry-read: no core database");
   if (!env) return [{ source: "core", db: core, split: "", splitBinds: [] }];
-  const { route, bound } = await telemetryRouteState(env, nowMs);
+  const family = HISTORY_TABLE_FAMILY[table];
+  const { route, bound } = await familyRouteState(env, family, nowMs);
   // Both DBs while the route is 'telemetry' AND after it ever was (rollback
   // safety: a flip back to core must not hide the rows written on telemetry).
-  const readBoth = route === "telemetry" || (bound && (await telemetryEverUsed(env, nowMs)));
+  const readBoth = route === "telemetry" || (bound && (await familyEverUsed(env, family, nowMs)));
   if (!readBoth) {
     return [{ source: "core", db: core, writeDb: env.DB, split: "", splitBinds: [] }];
   }
   const telemetry = telemetryDbFor(env, "telemetry");
   const cursor = await readCursor(env, table, nowMs);
-  return [
+  const parts: ReadPart[] = [
     { source: "telemetry", db: telemetry, writeDb: telemetry, split: "", splitBinds: [] },
     { source: "core", db: core, writeDb: env.DB, ...coreSplitPredicate(table, cursor, opts.alias) },
   ];
+  return opts.routedFirst && route === "core" ? [parts[1]!, parts[0]!] : parts;
+}
+
+/**
+ * The parts of a family's history read, or null when the family reads ONE
+ * core part (route core, telemetry never used) — the caller then runs its
+ * pre-cut-over statement unchanged. For readers whose single-DB statement
+ * JOINs a history table to a core table and must be split on the union path.
+ */
+export async function historyPartsIfUnion(
+  env: Env,
+  table: TelemetryHistoryTable,
+  opts: Parameters<typeof historyParts>[2] = {},
+): Promise<ReadPart[] | null> {
+  const parts = await historyParts(env, table, opts);
+  return parts.length > 1 ? parts : null;
 }
 
 export interface PartQuery {

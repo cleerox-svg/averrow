@@ -8,6 +8,7 @@
  */
 
 import type { Env } from '../types';
+import { familyStore } from '../lib/db-route';
 import { computeSanHash } from '../lib/ssl-cert-identity';
 import { tagThreat, isIdpFamilyTag } from '../lib/idp-tagging';
 import { enqueueAutoCaptures } from '../lib/page-capture';
@@ -412,9 +413,12 @@ export class CertStreamMonitor {
       await this.loadBrandKeywords();
     }
 
-    // Update feed_status for dashboard
+    // Update feed_status for dashboard (the routed feeds store, Track B1d —
+    // one KV read per isolate per minute; a single absolute-value UPDATE,
+    // so it needs no carried route).
     try {
-      await this.env.DB.prepare(`
+      const feedsDb = await familyStore(this.env, 'feeds');
+      await feedsDb.prepare(`
         UPDATE feed_status
         SET health_status = ?,
             records_ingested_today = ?,

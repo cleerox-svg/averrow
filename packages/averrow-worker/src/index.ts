@@ -531,16 +531,22 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         return Response.json({ success: true, data: { ...result, seeded } });
       }
 
-      // Telemetry cut-over, agent-runs family (Track B1c; lib/telemetry-cutover.ts):
-      //   POST /api/internal/telemetry/copy-config[?mode=insert|reconcile][&direction=to_telemetry|to_core][&force=1][&dry_run=0]
-      //        agent_configs + agent_approvals; DRY RUN unless dry_run=0.
-      //   POST /api/internal/telemetry/backfill?table=agent_runs|agent_events|agent_activity_log&days=30[&dry_run=0]
+      // Telemetry cut-over, per family (Track B1c agents, B1d feeds + budget;
+      // lib/telemetry-cutover.ts). family=agents|feeds|budget, default agents:
+      //   POST /api/internal/telemetry/copy-config[?family=…][&mode=insert|reconcile][&direction=to_telemetry|to_core][&force=1][&dry_run=0]
+      //        the family's config tables; DRY RUN unless dry_run=0.
+      //   POST /api/internal/telemetry/backfill?table=<history table>&days=30[&dry_run=0]
       //        one bounded, resumable history-copy batch (≤500 rows); DRY RUN unless dry_run=0.
-      //   GET  /api/internal/telemetry/preflight — the flip gate (ok + blocking reasons).
+      //   GET  /api/internal/telemetry/preflight[?family=…] — the flip gate (ok + blocking reasons).
+      //   GET  /api/internal/telemetry/route — every family's flag / route / used marker.
+      //   POST /api/internal/telemetry/route?family=…&to=core|telemetry[&force=1][&dry_run=0]
+      //        the flip (one KV write); refused unless preflight ok (to=telemetry)
+      //        or core's config matches telemetry's (to=core, force=1 overrides); DRY RUN unless dry_run=0.
       if (
         (url.pathname === '/api/internal/telemetry/copy-config' && request.method === 'POST') ||
         (url.pathname === '/api/internal/telemetry/backfill' && request.method === 'POST') ||
-        (url.pathname === '/api/internal/telemetry/preflight' && request.method === 'GET')
+        (url.pathname === '/api/internal/telemetry/preflight' && request.method === 'GET') ||
+        (url.pathname === '/api/internal/telemetry/route' && (request.method === 'GET' || request.method === 'POST'))
       ) {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
         const authHeader = request.headers.get('Authorization');
@@ -549,8 +555,20 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         }
         const cutover = await import('./lib/telemetry-cutover');
         try {
+          if (url.pathname === '/api/internal/telemetry/route') {
+            if (request.method === 'GET') {
+              return Response.json({ success: true, data: await cutover.telemetryRoutes(env) });
+            }
+            const rp = cutover.parseSetRouteParams(url.searchParams);
+            if (!rp.ok) return Response.json({ success: false, error: rp.error }, { status: 400 });
+            const flipped = await cutover.setTelemetryRoute(env, rp.params);
+            // A refused flip is a 409 with the reasons; a dry run that would pass is 200.
+            return Response.json({ success: flipped.allowed, data: flipped, ...(flipped.allowed ? {} : { error: flipped.refused_reasons.join('; ') }) }, { status: flipped.allowed ? 200 : 409 });
+          }
           if (url.pathname === '/api/internal/telemetry/preflight') {
-            return Response.json({ success: true, data: await cutover.telemetryPreflight(env) });
+            const fam = cutover.parseFamily(url.searchParams);
+            if (!fam.ok) return Response.json({ success: false, error: fam.error }, { status: 400 });
+            return Response.json({ success: true, data: await cutover.telemetryPreflight(env, fam.family) });
           }
           if (url.pathname === '/api/internal/telemetry/copy-config') {
             // Same convention as backfill / cluster-retirement: a DRY RUN unless dry_run=0.
@@ -562,7 +580,7 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
           if (!parsed.ok) return Response.json({ success: false, error: parsed.error }, { status: 400 });
           return Response.json({ success: true, data: await cutover.backfillTelemetryHistory(env, parsed.params) });
         } catch (err) {
-          if (err instanceof cutover.TelemetryUnboundError) {
+          if (err instanceof cutover.TelemetryUnboundError || err instanceof cutover.BackfillConflictError) {
             return Response.json({ success: false, error: err.message }, { status: 409 });
           }
           throw err;

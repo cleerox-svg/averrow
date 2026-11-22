@@ -13,10 +13,14 @@
  * and emergency (99%) pause every non-critical call. Measured against
  * our own `budget_ledger` (via agent_budget_rollups), not the provider
  * balance.
+ *
+ * Telemetry cut-over (Track B1d): the budget is read through
+ * BudgetManager.forEnv — budget_config from the routed budget store, the
+ * month's spend summed across telemetry ∪ core — so the throttle sees the
+ * whole month before, during and after a budget flip.
  */
 
-import type { Env } from "../types";
-import { BudgetManager } from "./budgetManager";
+import { BudgetManager, type BudgetEnv } from "./budgetManager";
 
 /** KV key holding the cached non-critical throttle decision. "" = not
  *  throttled; any other value = the throttle reason. */
@@ -34,9 +38,9 @@ function throttleReason(level: string, pctUsed: number, limitUsd: number): strin
   return `budget ${level} throttle (${pctUsed}% of $${limitUsd})`;
 }
 
-async function computeThrottle(env: Pick<Env, "DB">): Promise<ThrottleDecision> {
+async function computeThrottle(env: BudgetEnv): Promise<ThrottleDecision> {
   try {
-    const budget = new BudgetManager(env.DB);
+    const budget = await BudgetManager.forEnv(env);
     const status = await budget.getStatus();
     if (status.throttle_level === "emergency" || status.throttle_level === "hard") {
       return {
@@ -62,7 +66,7 @@ async function computeThrottle(env: Pick<Env, "DB">): Promise<ThrottleDecision> 
  * has no critical override, so a "critical" caller is still refused at the
  * hard/emergency level once it reaches the model call.
  */
-export async function checkCostGuard(env: Pick<Env, "DB">, critical: boolean): Promise<string | null> {
+export async function checkCostGuard(env: BudgetEnv, critical: boolean): Promise<string | null> {
   if (critical) return null;
   return (await computeThrottle(env)).reason;
 }
@@ -80,7 +84,7 @@ export async function checkCostGuard(env: Pick<Env, "DB">, critical: boolean): P
  * the D1 path every call).
  */
 export async function getAiThrottleReason(
-  env: Pick<Env, "DB"> & { CACHE?: KVNamespace },
+  env: BudgetEnv,
 ): Promise<string | null> {
   if (env.CACHE) {
     try {

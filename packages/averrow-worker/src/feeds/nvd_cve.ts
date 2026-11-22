@@ -1,4 +1,5 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
+import { feedStoreOf } from "./types";
 import { logFeedDiagnostic } from "../lib/feedDiagnostic";
 
 /**
@@ -857,7 +858,7 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
       // is re-read rather than trusted. No history → 7 days.
       let coldStartMs = run.startedAt - COLD_START_LOOKBACK_MS;
       if (!state.pub.cursor || !state.mod.cursor) {
-        const row = await env.DB.prepare(
+        const row = await feedStoreOf(ctx).prepare(
           "SELECT last_successful_pull FROM feed_status WHERE feed_name = ?",
         )
           .bind(ctx.feedName || "nvd_cve")
