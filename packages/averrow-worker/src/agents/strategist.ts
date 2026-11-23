@@ -112,6 +112,21 @@ export async function loadCampaignIdsByKey(
 }
 
 /**
+ * Both counts from ONE correlated subquery (row-value SET, 2026-11-23). The
+ * old statement had one subquery per column, so every campaign's threats
+ * were walked twice on idx_threats_campaign (prod sampled top queries
+ * 2026-11-23: ~753K rows read per full refresh). COUNT(DISTINCT x) skips
+ * NULLs and an aggregate with no GROUP BY returns 0 on an empty campaign, so
+ * the dropped `x IS NOT NULL` filters and COALESCE(…, 0) change no value
+ * (pinned against the old statement in test/strategist-d1-reads.test.ts).
+ */
+export const CAMPAIGN_COUNTS_SET_SQL = `UPDATE campaigns SET
+        (brand_count, provider_count) = (
+          SELECT COUNT(DISTINCT target_brand_id), COUNT(DISTINCT hosting_provider_id)
+            FROM threats WHERE campaign_id = campaigns.id
+        )`;
+
+/**
  * Recompute `campaigns.brand_count` / `provider_count`.
  *
  * `ids` = the campaigns this run created or grew (seeks campaigns by PK and
@@ -123,13 +138,7 @@ export async function loadCampaignIdsByKey(
  * threats that are already in a campaign.
  */
 export async function refreshCampaignCounts(db: D1Database, ids: Iterable<string> | "all"): Promise<void> {
-  const SET = `UPDATE campaigns SET
-        brand_count = COALESCE(
-          (SELECT COUNT(DISTINCT target_brand_id) FROM threats WHERE campaign_id = campaigns.id AND target_brand_id IS NOT NULL), 0
-        ),
-        provider_count = COALESCE(
-          (SELECT COUNT(DISTINCT hosting_provider_id) FROM threats WHERE campaign_id = campaigns.id AND hosting_provider_id IS NOT NULL), 0
-        )`;
+  const SET = CAMPAIGN_COUNTS_SET_SQL;
   if (ids === "all") {
     await db.prepare(SET).run();
     return;

@@ -59,7 +59,7 @@ import {
   asnKeySql,
 } from "./shared-infra-asns";
 import { DEFAULT_HUB_FANOUT_THRESHOLD } from "./cluster-components";
-import { withIndexHintFallback } from "./indexed-by-fallback";
+import { isIndexHintError, stripIndexedBy, withIndexHintFallback } from "./indexed-by-fallback";
 import { buildDormancyPivotPayload } from "./cluster-infra-movement";
 import {
   slugifyKey,
@@ -899,8 +899,13 @@ export async function runRegistrarLane(db: D1Database): Promise<LaneResult> {
 // per call in prod). Keep the inner WHERE terms and ASN_NORM_SQL as they
 // are: the planner matches the index's partial WHERE and key expression
 // against them. If they drift (or the index is missing) the hint errors and
-// withIndexHintFallback re-runs the query unhinted — correct, just
+// readAsnLaneRows runs the single statement once unhinted — correct, just
 // expensive; test/nexus-lane-covering-indexes.test.ts fails first.
+// Since 2026-11-23 runAsnLane runs that walk as one range seek per gap
+// between the shared-infra ASNs (ASN_LANE_KEY_RANGES / ASN_LANE_RANGE_SQL),
+// so the excluded landlords' index entries are never read, and merges the
+// per-range top-N (mergeAsnLaneRanges); on the first hint error it abandons
+// the ranges for that one unhinted statement (readAsnLaneRows).
 //
 // Skipped: shared-infra ASNs of either kind, IP-reputation types, NULL / ''
 // types (a '' type slugs to `_unknown`, which the retire pass supersedes as a
@@ -908,7 +913,14 @@ export async function runRegistrarLane(db: D1Database): Promise<LaneResult> {
 // brand fan-out exceeds the hub threshold (ASN_MAX_BRAND_FANOUT): one ASN
 // carrying > 150 brands' impersonations is a landlord, not an operator.
 
-export const ASN_LANE_SQL = `
+/**
+ * The ASN lane statement. `ranged` adds an exclusive key range on the
+ * normalised ASN (`asn_norm > ? AND asn_norm < ?`, bound BEFORE the fan-out
+ * cap) — see ASN_LANE_KEY_RANGES. Unranged = the original single statement
+ * (kept as ASN_LANE_SQL: the reference the parity / covering-index tests run).
+ */
+function asnLaneSql(ranged: boolean): string {
+  return `
       SELECT asn_norm                                AS asn,
              threat_type,
              COUNT(DISTINCT campaign_id)             AS campaigns,
@@ -933,12 +945,66 @@ export const ASN_LANE_SQL = `
              AND threat_type != ''
              AND threat_type NOT IN (${IP_REP_SQL_LIST})
         )
-       WHERE asn_norm IS NOT NULL
+       WHERE asn_norm IS NOT NULL${ranged ? `
+         AND asn_norm > ? AND asn_norm < ?` : ""}
          AND asn_norm NOT IN (${SHARED_INFRA_ASNS_SQL_LIST})
        GROUP BY asn_norm, threat_type
       HAVING COUNT(*) >= 10 AND COUNT(DISTINCT target_brand_id) <= ?
-       ORDER BY threats DESC
-       LIMIT 100`;
+       ORDER BY threats DESC, asn_norm, threat_type
+       LIMIT ${ASN_LANE_LIMIT}`;
+}
+
+/** Groups the ASN lane emits per run. */
+export const ASN_LANE_LIMIT = 100;
+
+export const ASN_LANE_SQL = asnLaneSql(false);
+
+/**
+ * The ranged form runAsnLane executes, once per ASN_LANE_KEY_RANGES entry.
+ * Binds: (lower bound, upper bound, ASN_MAX_BRAND_FANOUT).
+ */
+export const ASN_LANE_RANGE_SQL = asnLaneSql(true);
+
+/**
+ * Exclusive key ranges BETWEEN the shared-infra ASNs (2026-11-23 D1
+ * overload). idx_threats_asn_lane is keyed on the normalised ASN, but the
+ * shared-infra exclusion is a NOT IN, which SQLite can only test after
+ * reading each entry — so the single statement walked every active,
+ * ASN-bearing row, ~1.22M per run in prod, of which the excluded landlords
+ * (Cloudflare alone ~178K active threats, Amazon, Fastly, Google, …) are a
+ * large share that never reach a group. Seeking the gaps between them
+ * (`'' < k < first`, `first < k < second`, …, `last < k < 'AT'`; every key is
+ * `AS<digits>`, so 'AT' sorts above all of them) skips those keys' index
+ * entries entirely. Each group (asn_norm, threat_type) lies inside exactly
+ * one range, so HAVING is unchanged, and the global top ASN_LANE_LIMIT is the
+ * top of the union of each range's top ASN_LANE_LIMIT (runAsnLane merges).
+ * JS string order == SQLite BINARY order for these ASCII keys.
+ */
+export const ASN_LANE_KEY_RANGES: ReadonlyArray<readonly [string, string]> = (() => {
+  const keys = [...SHARED_INFRA_ASNS].sort();
+  const bounds = ["", ...keys, "AT"];
+  const out: Array<readonly [string, string]> = [];
+  for (let i = 0; i + 1 < bounds.length; i++) out.push([bounds[i]!, bounds[i + 1]!] as const);
+  return out;
+})();
+
+/**
+ * Merge per-range ASN lane results into the single statement's top-N:
+ * threats DESC, ties broken by asn, then threat_type — the same order as the
+ * statement's own `ORDER BY threats DESC, asn_norm, threat_type`, so each
+ * range's LIMIT cut and the merged cut are deterministic and agree with the
+ * single statement (JS string order == SQLite BINARY order for these keys).
+ */
+export function mergeAsnLaneRanges<T extends { asn: string; threat_type: string; threats: number }>(
+  parts: T[][],
+  limit: number = ASN_LANE_LIMIT,
+): T[] {
+  return parts.flat()
+    .sort((a, b) => b.threats - a.threats
+      || (a.asn < b.asn ? -1 : a.asn > b.asn ? 1 : 0)
+      || (a.threat_type < b.threat_type ? -1 : a.threat_type > b.threat_type ? 1 : 0))
+    .slice(0, limit);
+}
 
 /** An ASN group over this brand fan-out is not emitted (and an existing row is retired). */
 export const ASN_MAX_BRAND_FANOUT = DEFAULT_HUB_FANOUT_THRESHOLD;
@@ -968,9 +1034,35 @@ export interface AsnLaneResult extends LaneResult {
   clusters: AsnLaneCluster[];
 }
 
+/**
+ * The ASN lane's grouped rows. One seek per gap between shared-infra ASNs
+ * (ASN_LANE_KEY_RANGES), run one after another, merged to the single
+ * statement's top-N. If the INDEXED BY hint is unusable ("no such index" /
+ * "no query solution", e.g. the index is missing), the ranges are abandoned
+ * on the FIRST such error and the single unranged statement runs ONCE
+ * without the hint — the pre-range fallback cost (~one unhinted walk). An
+ * unhinted range can't seek the expression index, so retrying each of the
+ * 42 ranges unhinted would repeat that full walk 42 times. Partial range
+ * results are discarded. Any other error propagates.
+ */
+export async function readAsnLaneRows<T extends { asn: string; threat_type: string; threats: number }>(
+  db: D1Database,
+): Promise<T[]> {
+  const parts: T[][] = [];
+  for (const [lo, hi] of ASN_LANE_KEY_RANGES) {
+    try {
+      parts.push((await db.prepare(ASN_LANE_RANGE_SQL).bind(lo, hi, ASN_MAX_BRAND_FANOUT).all<T>()).results ?? []);
+    } catch (err) {
+      if (!isIndexHintError(err)) throw err;
+      return (await db.prepare(stripIndexedBy(ASN_LANE_SQL)).bind(ASN_MAX_BRAND_FANOUT).all<T>()).results ?? [];
+    }
+  }
+  return mergeAsnLaneRanges(parts);
+}
+
 /** `eventsDb`: where pivot_detected events are written (routed agent-runs store, Track B1c). */
 export async function runAsnLane(db: D1Database, eventsDb: D1Database = db): Promise<AsnLaneResult> {
-  const rows = (await withIndexHintFallback(ASN_LANE_SQL, (sql) => db.prepare(sql).bind(ASN_MAX_BRAND_FANOUT).all<{
+  type AsnLaneRow = {
     asn: string;
     threat_type: string;
     campaigns: number;
@@ -984,7 +1076,8 @@ export async function runAsnLane(db: D1Database, eventsDb: D1Database = db): Pro
     last_seen: string | null;
     last_7d: number;
     prev_7d: number;
-  }>())).results ?? [];
+  };
+  const rows = await readAsnLaneRows<AsnLaneRow>(db);
   const out: AsnLaneResult = {
     clustersWritten: 0, analyzed: rows.length, writeErrors: 0,
     pivotsDetected: 0, accelerating: 0, clusters: [],

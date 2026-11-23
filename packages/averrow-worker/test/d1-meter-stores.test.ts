@@ -7,7 +7,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { meterD1, meterEnv, storeBreakdownOf, withD1Meter, runWithWorkflowMeter } from "../src/lib/d1-meter";
 import { d1AttributionPoints, newTally, writeD1Attribution } from "../src/lib/analytics";
-import { fetchD1EndpointAttribution, fetchD1HourlyAttribution } from "../src/handlers/diagnostics";
+import {
+  buildD1HourlyAttributionSql,
+  D1_ENDPOINT_ATTRIBUTION_SQL,
+  fetchD1EndpointAttribution,
+  fetchD1HourlyAttribution,
+  foldAeRecordCount,
+} from "../src/handlers/diagnostics";
 import type { Env } from "../src/types";
 
 interface Point { blobs?: unknown[]; doubles?: number[]; indexes?: unknown[] }
@@ -139,7 +145,7 @@ describe("diagnostics AE readers count records, not store points", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
   const env = { CF_API_TOKEN: "tok", CF_ACCOUNT_ID: "acct" } as unknown as Env;
 
-  it("weights request_count / points by double6 (pre-v2 / store-less points count 1) and lists feed: rows", async () => {
+  it("pins the AE SQL to constructs AE accepts (no if(); per-store sums folded in code) and lists feed: rows", async () => {
     const bodies: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_u: string, init?: RequestInit) => {
       bodies.push(String(init?.body));
@@ -147,11 +153,47 @@ describe("diagnostics AE readers count records, not store points", () => {
     }));
     await fetchD1EndpointAttribution(env);
     await fetchD1HourlyAttribution(env, 6);
+    expect(bodies[0]).toBe(D1_ENDPOINT_ATTRIBUTION_SQL);
     for (const b of bodies) {
-      expect(b).toContain("if(blob2 = '', 1, double6)");
-      expect(b).toContain("GROUP BY");
-      expect(b).not.toMatch(/SUM\(_sample_interval\) AS/);
+      // The 2026-11-22 `if(blob2 = '', 1, double6)` form made AE answer 422.
+      expect(b).not.toMatch(/\bif\s*\(/i);
+      expect(b).toContain("blob2 AS store");
+      expect(b).toContain("SUM(_sample_interval) AS points");
+      expect(b).toContain("SUM(_sample_interval * double6) AS weighted");
+      expect(b).toMatch(/GROUP BY [a-z, ]*\bstore\b/);
     }
+    expect(bodies[1]).toBe(buildD1HourlyAttributionSql(bodies[1]!.match(/toDateTime\('([^']+)'\)/)![1]!));
     expect(bodies[1]).toContain("startsWith(blob1, 'feed:')");
+  });
+
+  it("counts records: '' points by SUM(_sample_interval), store points by double6", async () => {
+    expect(foldAeRecordCount({ store: "", points: 4, weighted: 1 })).toBe(4); // pre-v2 + new '' points
+    expect(foldAeRecordCount({ store: "core", points: 5, weighted: 3 })).toBe(3);
+    expect(foldAeRecordCount({ store: "-", points: 2, weighted: 0 })).toBe(0);
+    expect(foldAeRecordCount({ points: "2" })).toBe(2); // no store column = ''
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: [
+      { endpoint: "agent:analyst", store: "core", total_rows_read: 900, total_queries: 9, points: 3, weighted: 3 },
+      { endpoint: "agent:analyst", store: "audit", total_rows_read: 100, total_queries: 1, points: 2, weighted: 0 },
+      { endpoint: "GET /api/x", store: "", total_rows_read: "50", total_queries: "5", points: "10", weighted: "4" },
+    ] }), { status: 200 })));
+    const r = await fetchD1EndpointAttribution(env);
+    expect(r.by_endpoint).toEqual([
+      { endpoint: "agent:analyst", total_rows_read: 1000, total_queries: 10, request_count: 3, avg_rows_per_request: 333 },
+      { endpoint: "GET /api/x", total_rows_read: 50, total_queries: 5, request_count: 10, avg_rows_per_request: 5 },
+    ]);
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: [
+      { hour: "2026-11-02 06:00:00", endpoint: "agent:a", store: "core", rows_read: 10, rows_written: 1, queries: 2, points: 1, weighted: 1 },
+      { hour: "2026-11-02 06:00:00", endpoint: "agent:a", store: "dnsq", rows_read: 5, rows_written: 0, queries: 1, points: 1, weighted: 0 },
+    ] }), { status: 200 })));
+    const h = await fetchD1HourlyAttribution(env, 6, new Date("2026-11-02T06:30:00Z"));
+    expect(h.hours[0]!.endpoints).toEqual([{ endpoint: "agent:a", rows_read: 15, rows_written: 1, queries: 3, points: 1 }]);
+  });
+
+  it("surfaces the head of AE's error body", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unknown function   foo", { status: 422 })));
+    expect((await fetchD1EndpointAttribution(env)).error).toBe("AE SQL HTTP 422: unknown function foo");
+    expect((await fetchD1HourlyAttribution(env, 6)).error).toBe("AE SQL HTTP 422: unknown function foo");
   });
 });

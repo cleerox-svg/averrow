@@ -26,8 +26,19 @@ import type { Env } from '../types';
 import { cachedValue } from './cached-value';
 
 export const EMAIL_POSTURE_ROLLUP_KEY = 'email_posture.rollup';
-/** 1h. Inputs move on the weekly email-security rescan cadence. */
-export const EMAIL_POSTURE_ROLLUP_TTL_S = 3600;
+/**
+ * 6h (2026-11-23; was 1h). Inputs move on the weekly email-security rescan
+ * cadence. At 1h the Navigator Phase D refresh-ahead warm (every 30 min)
+ * recomputed the scan on EVERY warm (threshold 1740s < the warm's ~1800s
+ * age): ~70 scans/day × ~279K brands rows ≈ 19.5M reads/day (prod sampled
+ * top queries, 2026-11-23). At 6h the threshold is 19,740s, so every 11th
+ * warm (~5.5h) recomputes and live readers keep hitting the warmed entry:
+ * ~4-5 scans/day. The grade / DMARC distributions, scored totals and the
+ * average score on GET /api/email-security/stats, the Explore → Brands
+ * email-security aggregate and Observer's briefing can therefore lag the
+ * brands table by up to ~6h.
+ */
+export const EMAIL_POSTURE_ROLLUP_TTL_S = 21_600;
 
 export interface EmailPostureRollupRow {
   grade: string | null;

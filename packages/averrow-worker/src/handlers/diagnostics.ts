@@ -277,6 +277,82 @@ export async function fetchD1Metrics(env: Env): Promise<D1Metrics> {
   }
 }
 
+// ─── AE SQL record counting (2026-11-23 fix) ───────────────────────
+// The v2 point shape (lib/analytics.ts) needs a RECORD count, not a point
+// count: double6 is 1 on a record's first point, 0 on its extra store
+// points; pre-v2 points have blob2 '' and double6 0. The 2026-11-22 readers
+// expressed that as `SUM(_sample_interval * if(blob2 = '', 1, double6))`,
+// and from that deploy on both AE readers answered HTTP 422 (the only SQL
+// change in both). The readers now use only constructs the pre-22nd queries
+// and lib/db-health.ts already run successfully — plain
+// `SUM(_sample_interval * doubleN)` grouped by blob2 — and fold the weight in
+// code: a '' point is always its record's only point (new: double6 = 1;
+// pre-v2: double6 = 0), so its record count is SUM(_sample_interval); any
+// other store's is SUM(_sample_interval * double6). Same numbers as the
+// if() form intended.
+
+/** Top endpoints returned by d1_attribution_24h. */
+export const D1_ENDPOINT_ATTRIBUTION_TOP = 40;
+
+/** Weighted record count of one (…, store) AE row (see the block comment). */
+export function foldAeRecordCount(r: { store?: string | null; points?: unknown; weighted?: unknown }): number {
+  const store = r.store ?? "";
+  return store === "" ? Number(r.points) || 0 : Number(r.weighted) || 0;
+}
+
+/** HTTP-status error text plus the head of AE's error body (no secrets in it). */
+async function aeSqlErrorText(res: Response): Promise<string> {
+  let detail = "";
+  try {
+    detail = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 200);
+  } catch {
+    // body unreadable — status alone
+  }
+  return detail ? `AE SQL HTTP ${res.status}: ${detail}` : `AE SQL HTTP ${res.status}`;
+}
+
+/**
+ * d1_attribution_24h query: per (endpoint, store) over the past 24h. Every
+ * aggregate is weighted by _sample_interval (AE down-samples). Per-endpoint
+ * totals and the top D1_ENDPOINT_ATTRIBUTION_TOP are computed in code, so
+ * the LIMIT only guards the row count (endpoints × ≤6 stores).
+ */
+export const D1_ENDPOINT_ATTRIBUTION_SQL = `
+    SELECT
+      blob1 AS endpoint,
+      blob2 AS store,
+      SUM(_sample_interval * double1) AS total_rows_read,
+      SUM(_sample_interval * double3) AS total_queries,
+      SUM(_sample_interval) AS points,
+      SUM(_sample_interval * double6) AS weighted
+    FROM trust_radar_d1_reads
+    WHERE timestamp > NOW() - INTERVAL '1' DAY
+    GROUP BY endpoint, store
+    ORDER BY total_rows_read DESC
+    LIMIT 2000
+  `;
+
+/** d1_attribution_hourly query for a window start (`YYYY-MM-DD HH:MM:SS`, computed by us). */
+export function buildD1HourlyAttributionSql(start: string): string {
+  return `
+    SELECT
+      toStartOfInterval(timestamp, INTERVAL '1' HOUR) AS hour,
+      blob1 AS endpoint,
+      blob2 AS store,
+      SUM(_sample_interval * double1) AS rows_read,
+      SUM(_sample_interval * double2) AS rows_written,
+      SUM(_sample_interval * double3) AS queries,
+      SUM(_sample_interval) AS points,
+      SUM(_sample_interval * double6) AS weighted
+    FROM trust_radar_d1_reads
+    WHERE timestamp >= toDateTime('${start}')
+      AND (startsWith(blob1, 'agent:') OR startsWith(blob1, 'cron:') OR startsWith(blob1, 'workflow:') OR startsWith(blob1, 'feed:') OR startsWith(blob1, 'job:'))
+    GROUP BY hour, endpoint, store
+    ORDER BY hour DESC, rows_read DESC
+    LIMIT 10000
+  `;
+}
+
 // ─── Per-endpoint D1 read attribution via Workers Analytics Engine ──
 // Companion to fetchD1Metrics (database-wide) — surfaces which
 // endpoints are eating the rows-read budget. Reads from the
@@ -311,28 +387,10 @@ export async function fetchD1EndpointAttribution(env: Env): Promise<{
   }
 
   // AE SQL API: blob1 is the endpoint label (set by recordD1Reads),
-  // double1 = rowsRead, double2 = rowsWritten, double3 = queries.
-  // Aggregate over the past 24h, top 40 endpoints by rows_read (raised from
-  // 20 when the per-job `agent:` / `cron:` / `workflow:` labels landed —
-  // see lib/d1-meter.ts). Every aggregate is weighted by _sample_interval:
-  // AE down-samples high-volume datasets, and a bare SUM/COUNT under-counts
-  // once it does. Since the per-store split (lib/analytics.ts point shape
-  // v2) one record can write several points (one per store, blob2); the
-  // row sums are unchanged (GROUP BY blob1 sums the store points), but a
-  // record count must weight by double6 (1 on a record's first point) —
-  // pre-v2 and store-less points have blob2 '' and count 1.
-  const sql = `
-    SELECT
-      blob1 AS endpoint,
-      SUM(_sample_interval * double1) AS total_rows_read,
-      SUM(_sample_interval * double3) AS total_queries,
-      SUM(_sample_interval * if(blob2 = '', 1, double6)) AS request_count
-    FROM trust_radar_d1_reads
-    WHERE timestamp > NOW() - INTERVAL '1' DAY
-    GROUP BY blob1
-    ORDER BY total_rows_read DESC
-    LIMIT 40
-  `;
+  // double1 = rowsRead, double2 = rowsWritten, double3 = queries,
+  // double6 = record weight. Built by D1_ENDPOINT_ATTRIBUTION_SQL; the
+  // per-endpoint record count is folded in code (foldAeRecordCount).
+  const sql = D1_ENDPOINT_ATTRIBUTION_SQL;
 
   try {
     const res = await fetch(
@@ -351,33 +409,42 @@ export async function fetchD1EndpointAttribution(env: Env): Promise<{
       return {
         by_endpoint: [],
         setup_required: false,
-        error: `AE SQL HTTP ${res.status}`,
+        error: await aeSqlErrorText(res),
       };
     }
 
     const json = (await res.json()) as {
       data?: Array<{
         endpoint: string;
+        store?: string;
         total_rows_read: number | string;
         total_queries: number | string;
-        request_count: number | string;
+        points?: number | string;
+        weighted?: number | string;
       }>;
     };
 
-    const rows = json.data ?? [];
+    // Rows are per (endpoint, store); fold to one row per endpoint.
+    const byEndpoint = new Map<string, { read: number; queries: number; reqs: number }>();
+    for (const r of json.data ?? []) {
+      const e = byEndpoint.get(r.endpoint) ?? { read: 0, queries: 0, reqs: 0 };
+      // AE SQL can serialise sums as strings — coerce defensively.
+      e.read += Number(r.total_rows_read) || 0;
+      e.queries += Number(r.total_queries) || 0;
+      e.reqs += foldAeRecordCount(r);
+      byEndpoint.set(r.endpoint, e);
+    }
     return {
-      by_endpoint: rows.map((r) => {
-        // AE SQL can serialise sums as strings — coerce defensively.
-        const read = Number(r.total_rows_read) || 0;
-        const reqs = Number(r.request_count) || 0;
-        return {
-          endpoint: r.endpoint,
-          total_rows_read: read,
-          total_queries: Number(r.total_queries) || 0,
-          request_count: reqs,
-          avg_rows_per_request: reqs > 0 ? Math.round(read / reqs) : 0,
-        };
-      }),
+      by_endpoint: Array.from(byEndpoint.entries())
+        .map(([endpoint, e]) => ({
+          endpoint,
+          total_rows_read: e.read,
+          total_queries: e.queries,
+          request_count: e.reqs,
+          avg_rows_per_request: e.reqs > 0 ? Math.round(e.read / e.reqs) : 0,
+        }))
+        .sort((a, b) => b.total_rows_read - a.total_rows_read)
+        .slice(0, D1_ENDPOINT_ATTRIBUTION_TOP),
       setup_required: false,
     };
   } catch (err) {
@@ -423,21 +490,7 @@ export async function fetchD1HourlyAttribution(
   const start = hourlyWindowStart(hoursBack, now).toISOString().slice(0, 19).replace("T", " ");
   // ORDER BY hour DESC so that if LIMIT ever truncates, the oldest hours go,
   // not the newest.
-  const sql = `
-    SELECT
-      toStartOfInterval(timestamp, INTERVAL '1' HOUR) AS hour,
-      blob1 AS endpoint,
-      SUM(_sample_interval * double1) AS rows_read,
-      SUM(_sample_interval * double2) AS rows_written,
-      SUM(_sample_interval * double3) AS queries,
-      SUM(_sample_interval * if(blob2 = '', 1, double6)) AS points
-    FROM trust_radar_d1_reads
-    WHERE timestamp >= toDateTime('${start}')
-      AND (startsWith(blob1, 'agent:') OR startsWith(blob1, 'cron:') OR startsWith(blob1, 'workflow:') OR startsWith(blob1, 'feed:') OR startsWith(blob1, 'job:'))
-    GROUP BY hour, endpoint
-    ORDER BY hour DESC, rows_read DESC
-    LIMIT 5000
-  `;
+  const sql = buildD1HourlyAttributionSql(start);
 
   try {
     const res = await fetch(
@@ -448,29 +501,37 @@ export async function fetchD1HourlyAttribution(
         body: sql,
       },
     );
-    if (!res.ok) return { hours: [], setup_required: false, error: `AE SQL HTTP ${res.status}` };
+    if (!res.ok) return { hours: [], setup_required: false, error: await aeSqlErrorText(res) };
     const json = (await res.json()) as {
       data?: Array<{
         hour: string;
         endpoint: string;
+        store?: string;
         rows_read: number | string;
         rows_written: number | string;
         queries: number | string;
-        points: number | string;
+        points?: number | string;
+        weighted?: number | string;
       }>;
     };
+    // Rows are per (hour, endpoint, store); fold the stores per endpoint.
     const byHour = new Map<string, D1HourlyAttributionRow>();
+    const index = new Map<string, D1HourlyAttributionRow["endpoints"][number]>();
     for (const r of json.data ?? []) {
       const hour = toHourLabel(String(r.hour));
       const bucket = byHour.get(hour) ?? { hour, endpoints: [] };
-      bucket.endpoints.push({
-        endpoint: r.endpoint,
-        rows_read: Number(r.rows_read) || 0,
-        rows_written: Number(r.rows_written) || 0,
-        queries: Number(r.queries) || 0,
-        points: Number(r.points) || 0,
-      });
       byHour.set(hour, bucket);
+      const key = `${hour}\u0000${r.endpoint}`;
+      let e = index.get(key);
+      if (!e) {
+        e = { endpoint: r.endpoint, rows_read: 0, rows_written: 0, queries: 0, points: 0 };
+        index.set(key, e);
+        bucket.endpoints.push(e);
+      }
+      e.rows_read += Number(r.rows_read) || 0;
+      e.rows_written += Number(r.rows_written) || 0;
+      e.queries += Number(r.queries) || 0;
+      e.points += foldAeRecordCount(r);
     }
     const out = Array.from(byHour.values()).sort((a, b) => a.hour.localeCompare(b.hour));
     for (const h of out) {
@@ -1055,16 +1116,27 @@ function pct(numerator: number, denominator: number): number {
   return Math.round((numerator / denominator) * 1000) / 10;
 }
 
+/**
+ * TTL of the `velocity` block (12h, 2026-11-23). The GROUP BY reads every
+ * threats row (~3.3M rows read per recompute in prod, 2026-11-23 sampled
+ * top queries) and the 900s TTL it had was shorter than the gap between
+ * diagnostics calls, so every call recomputed. The block is metadata (it
+ * never gates triage); `stamped_pct_of_candidates` moves with the admin
+ * velocity backfill, which an operator can watch through that endpoint's own
+ * response. So the block may lag by up to 12h.
+ */
+export const VELOCITY_DIAG_TTL_S = 43_200;
+
 /** Build the `velocity` diagnostics block. cachedValue-wrapped (KV) so
  *  the low-cardinality GROUP BY over threats runs at most once per TTL,
  *  never a live full scan per diagnostics call. Key
- *  `diag.weaponization.distribution.v3`, TTL 900s. (Bumped to `.v2`
+ *  `diag.weaponization.distribution.v3`, TTL VELOCITY_DIAG_TTL_S (12h). (Bumped to `.v2`
  *  alongside the added `coverage` block, then to `.v3` when `stamped`
  *  was gated on `has_reg` and `stamped_orphans` added — an old cached
  *  payload deserializes into the new shape and would silently serve the
  *  pre-fix numbers, and a missing field, for a full TTL.) */
 async function buildVelocityDiag(env: Env): Promise<VelocityDiag> {
-  return cachedValue<VelocityDiag>(env, 'diag.weaponization.distribution.v3', 900, async () => {
+  return cachedValue<VelocityDiag>(env, 'diag.weaponization.distribution.v3', VELOCITY_DIAG_TTL_S, async () => {
     // ONE scan, two grouping keys. `has_reg` uses a bare `IS NULL` test —
     // not TRIM() — so `candidates_total` is byte-identical to the writer's
     // CANDIDATE_SELECT / dry-run predicate (`domain_created_at IS NOT NULL`).

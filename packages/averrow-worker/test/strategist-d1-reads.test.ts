@@ -25,7 +25,7 @@ import {
 } from "./sqlite-d1-harness";
 import { stripIndexedBy } from "../src/lib/indexed-by-fallback";
 import {
-  strategistAgent, refreshCampaignCounts, fullCountRefreshKey, shouldRunFullCountRefresh,
+  strategistAgent, refreshCampaignCounts, fullCountRefreshKey, shouldRunFullCountRefresh, CAMPAIGN_COUNTS_SET_SQL,
 } from "../src/agents/strategist";
 
 const ROOT = resolve(__dirname, "..");
@@ -376,6 +376,28 @@ describe.skipIf(!hasSqlite())("campaign brand/provider count refresh", () => {
     const db = setup();
     await refreshCampaignCounts(d1FromSqlite(db), "all");
     expect(counts(db)).toEqual([{ id: "c1", b: 2, p: 1 }, { id: "c2", b: 1, p: 1 }]);
+  });
+
+  it("single-subquery SET == the old two-subquery statement (NULLs, empty campaign) and walks threats once", () => {
+    const LEGACY = `UPDATE campaigns SET
+        brand_count = COALESCE(
+          (SELECT COUNT(DISTINCT target_brand_id) FROM threats WHERE campaign_id = campaigns.id AND target_brand_id IS NOT NULL), 0
+        ),
+        provider_count = COALESCE(
+          (SELECT COUNT(DISTINCT hosting_provider_id) FROM threats WHERE campaign_id = campaigns.id AND hosting_provider_id IS NOT NULL), 0
+        )`;
+    const seed = (db: SqliteDb) => db.exec(`
+      INSERT INTO campaigns (id, name, threat_count, brand_count, provider_count, status) VALUES ('c3', 'empty', 0, 7, 7, 'active');
+      INSERT INTO threats (id, source_feed, threat_type, severity, status, target_brand_id, hosting_provider_id, campaign_id) VALUES
+        ('x5', 'f', 'phishing', 'low', 'active', NULL, 'p3', 'c2'),
+        ('x6', 'f', 'phishing', 'low', 'active', 'bA', NULL, 'c2');`);
+    const all = (db: SqliteDb) => db.prepare("SELECT id, brand_count AS b, provider_count AS p FROM campaigns ORDER BY id").all();
+    const a = setup(); seed(a); a.exec(LEGACY);
+    const b = setup(); seed(b); b.exec(CAMPAIGN_COUNTS_SET_SQL);
+    expect(all(b)).toEqual(all(a));
+    expect(all(b)).toContainEqual({ id: "c3", b: 0, p: 0 });
+    const p = (b.prepare(`EXPLAIN QUERY PLAN ${CAMPAIGN_COUNTS_SET_SQL}`).all() as Array<{ detail: string }>).map((r) => r.detail);
+    expect(p.filter((d) => /SEARCH threats USING (COVERING )?INDEX idx_threats_campaign/.test(d))).toHaveLength(1);
   });
 
   it("empty id set issues no statement", async () => {
