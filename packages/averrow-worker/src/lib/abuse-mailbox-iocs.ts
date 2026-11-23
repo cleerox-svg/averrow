@@ -115,7 +115,7 @@ function isPrivateOrLoopback(ip: string): boolean {
 //           plausible v6 address, validated by isValidIPv6 below.
 const IP_PATTERN = /\[?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}|::[0-9a-f:]+|[0-9a-f:]+::[0-9a-f:]*|::1)\]?/i;
 
-function isValidIPv4(ip: string): boolean {
+export function isValidIPv4(ip: string): boolean {
   const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!m) return false;
   for (let i = 1; i <= 4; i++) {
@@ -125,7 +125,7 @@ function isValidIPv4(ip: string): boolean {
   return true;
 }
 
-function isValidIPv6(ip: string): boolean {
+export function isValidIPv6(ip: string): boolean {
   // Must contain at least one colon and only valid hex/colon characters.
   // Allows zero-compression (::) appearing at most once.
   if (!/^[0-9a-f:]+$/i.test(ip)) return false;

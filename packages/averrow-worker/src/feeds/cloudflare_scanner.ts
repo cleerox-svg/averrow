@@ -3,6 +3,7 @@ import { loadSafeDomainSet, isSafeDomain } from "../lib/safeDomains";
 import { toSqliteDatetime } from "../lib/backoff";
 import type { Env } from "../types";
 import { agentOutputsStore } from "../db/agent-outputs";
+import { isValidIPv4, isValidIPv6 } from "../lib/abuse-mailbox-iocs";
 
 /**
  * Cloudflare URL Scanner — two-phase enrichment of recent threat URLs.
@@ -49,11 +50,14 @@ import { agentOutputsStore } from "../db/agent-outputs";
  *   envelope (`parseSubmitUuid`; the v1 envelope is still tolerated). Until
  *   2026-11-23 the module read only the v1 envelope, so every accepted scan
  *   counted as an error, cf_scan_id was never stored and the same URLs were
- *   resubmitted every run, burning the URL Scanner quota. A 400 / 409 / 422
- *   (CF refuses that URL: unresolvable / blocked / invalid / conflict) is
- *   terminal for the threat: cf_verdict = 'failed' with cf_scan_id still NULL,
- *   and the candidate read skips rows with a verdict, so it is never
- *   resubmitted. A 429 (quota) stops submitting for the run.
+ *   resubmitted every run, burning the URL Scanner quota. A 400 / 422 (CF
+ *   refuses that URL: unresolvable / blocked / invalid) is terminal for the
+ *   threat: cf_verdict = 'failed' with cf_scan_id still NULL, and the
+ *   candidate read skips rows with a verdict, so it is never resubmitted —
+ *   unless the run's first SYSTEMIC_REJECTION_SAMPLE rejections are
+ *   identical (our request is wrong, not the URLs): then nothing is retired
+ *   and submitting stops. 409 is an ordinary error (undocumented in v2). A
+ *   429 (quota) stops submitting for the run.
  * Phase 2 (COLLECT): polls up to CF_SCAN_POLL_LIMIT submitted scans with no
  *   verdict yet (`cf_scan_id IS NOT NULL AND cf_verdict IS NULL`, served by
  *   the partial index idx_threats_cf_scan, which holds only submitted rows —
@@ -66,8 +70,10 @@ import { agentOutputsStore } from "../db/agent-outputs";
  *   (audit 0253), so the extra value is safe. v2 `GET /v2/result/{uuid}`
  *   answers 404 while the scan runs (still pending — neither an error nor
  *   expired before the expiry window) and 200 with top-level `task`, `page`,
- *   `verdicts` when done (`parseScanResult`); `task.success === false` (DNS
- *   error, blocked fetch) or a body with no `verdicts` is 'failed'.
+ *   `verdicts` when done (`parseScanResult`); a not-Finished task.status is
+ *   still pending; `task.success === false` (DNS error, blocked fetch), no
+ *   `verdicts`, or a non-boolean `verdicts.overall.malicious` is 'failed' —
+ *   only an explicit `malicious === false` reads as clean.
  *
  * Writes one summary agent_outputs diagnostic per completed run; its
  * `details` JSON carries the counters plus the FIRST submit error / rejection
@@ -223,14 +229,29 @@ export type CfScanResult =
   | { kind: "failed" }
   | { kind: "verdict"; malicious: boolean; categories: string[]; ip: string | null; country: string | null };
 
-const IP_RE = /^[0-9A-Fa-f:.]{2,45}$/;
+/**
+ * An address safe to COALESCE into threats.ip_address: a strict IPv4 / IPv6
+ * (the abuse-mailbox validators), never an unspecified all-zero address
+ * ("::", "0.0.0.0") — a junk value there would block DNS resolution.
+ */
+export function isStorableIp(ip: string): boolean {
+  if (!(isValidIPv4(ip) || isValidIPv6(ip))) return false;
+  return !/^[0:.]+$/.test(ip);
+}
 
 /**
  * A result 200 body → pending / failed / verdict. v2 (`GET /v2/result/{uuid}`)
  * is top-level `{ task, page, verdicts, … }`; the v1 envelope
  * `{ success, result: { scan: { verdicts, page } } }` is still accepted.
- * `page.country` is stored only when it is a 2-letter code (the docs call it
- * a country name in places), `page.ip` only when it looks like an IP.
+ *
+ * - `task.status` present and not `Finished` → pending (the expiry window
+ *   bounds a scan that never finishes).
+ * - `task.success === false`, no `verdicts`, or `verdicts.overall.malicious`
+ *   not a boolean → failed (no confidence / status change). Only an explicit
+ *   `malicious === false` is clean: clean can auto-remediate a threat, so a
+ *   malformed or changed response must never read as clean.
+ * - `page.country` is stored only when it is a 2-letter code (the docs call
+ *   it a country name in places), `page.ip` only when `isStorableIp`.
  */
 export function parseScanResult(body: unknown): CfScanResult {
   if (!isRecord(body)) return { kind: "failed" };
@@ -244,30 +265,45 @@ export function parseScanResult(body: unknown): CfScanResult {
   }
   const task = isRecord(scan.task) ? scan.task : null;
   if (task) {
-    const st = typeof task.status === "string" ? task.status.toLowerCase() : "";
-    if (st === "queued" || st === "inprogress" || st === "in_progress") return { kind: "pending" };
+    const st = typeof task.status === "string" ? task.status.trim().toLowerCase() : "";
+    if (st !== "" && st !== "finished") return { kind: "pending" };
     if (task.success === false) return { kind: "failed" };
   }
   const verdicts = isRecord(scan.verdicts) ? scan.verdicts : null;
-  if (!verdicts) return { kind: "failed" };
-  const overall = isRecord(verdicts.overall) ? verdicts.overall : {};
+  const overall = verdicts && isRecord(verdicts.overall) ? verdicts.overall : null;
+  if (!overall || typeof overall.malicious !== "boolean") return { kind: "failed" };
   const categories = Array.isArray(overall.categories)
     ? overall.categories.filter((c): c is string => typeof c === "string" && c.length > 0)
     : [];
   const page = isRecord(scan.page) ? scan.page : {};
-  const ip = typeof page.ip === "string" && IP_RE.test(page.ip.trim()) ? page.ip.trim() : null;
+  const rawIp = typeof page.ip === "string" ? page.ip.trim() : "";
   const cc = typeof page.country === "string" ? page.country.trim().toUpperCase() : "";
   return {
     kind: "verdict",
-    malicious: overall.malicious === true,
+    malicious: overall.malicious,
     categories,
-    ip,
+    ip: rawIp && isStorableIp(rawIp) ? rawIp : null,
     country: /^[A-Z]{2}$/.test(cc) ? cc : null,
   };
 }
 
-/** Submit statuses where Cloudflare refuses this URL for good (unresolvable / blocked / invalid / conflict). */
-const TERMINAL_SUBMIT_STATUSES = new Set([400, 409, 422]);
+/**
+ * Submit statuses where Cloudflare refuses this URL for good (unresolvable /
+ * blocked / invalid). 409 is NOT terminal: its v2 meaning is undocumented and
+ * plausibly "already scanned / in progress" (several threats can share one
+ * malicious_url), so it is an ordinary error and the row stays a candidate.
+ */
+const TERMINAL_SUBMIT_STATUSES = new Set([400, 422]);
+
+/**
+ * Systemic-rejection guard: the first SYSTEMIC_REJECTION_SAMPLE terminal
+ * rejections of a run are held, not retired. If they all carry the same
+ * status + message, the rejection is about our request (body shape, a CF
+ * validation change), not the URLs: nothing is retired, they count as
+ * errors and submitting stops for the run. Otherwise they are retired and
+ * later rejections retire at once.
+ */
+export const SYSTEMIC_REJECTION_SAMPLE = 3;
 
 interface FirstError { status: number; message: string }
 
@@ -360,6 +396,15 @@ export const cloudflare_scanner: FeedModule = {
       return true;
     });
 
+    const retireRejected = async (id: string): Promise<void> => {
+      await db.prepare(
+        "UPDATE threats SET cf_verdict = 'failed' WHERE id = ? AND cf_scan_id IS NULL AND cf_verdict IS NULL",
+      ).bind(id).run();
+      rejected++;
+    };
+    let heldRejections: Array<{ id: string; status: number; message: string }> | null = [];
+    let systemicRejection: FirstError | null = null;
+
     let first = true;
     for (const row of filteredToScan) {
       const { parsed, raw, status } = await cfFetch<unknown>(accountId, token, "/v2/scan", {
@@ -389,12 +434,26 @@ export const cloudflare_scanner: FeedModule = {
       } else if (TERMINAL_SUBMIT_STATUSES.has(status)) {
         // Cloudflare refuses this URL (unresolvable / blocked / invalid):
         // retire it so it is never resubmitted (the candidate read skips
-        // rows with a verdict; cf_scan_id stays NULL, so Phase 2 never sees it).
-        rejected++;
-        firstSubmitRejection ??= { status, message: cfErrorMessage(raw) };
-        await db.prepare(
-          "UPDATE threats SET cf_verdict = 'failed' WHERE id = ? AND cf_scan_id IS NULL AND cf_verdict IS NULL",
-        ).bind(row.id).run();
+        // rows with a verdict; cf_scan_id stays NULL, so Phase 2 never sees
+        // it) — unless the systemic-rejection guard trips.
+        const rejection = { status, message: cfErrorMessage(raw) };
+        firstSubmitRejection ??= rejection;
+        if (heldRejections) {
+          heldRejections.push({ id: row.id, ...rejection });
+          if (heldRejections.length >= SYSTEMIC_REJECTION_SAMPLE) {
+            const head = heldRejections[0]!;
+            if (heldRejections.every((r) => r.status === head.status && r.message === head.message)) {
+              errors += heldRejections.length;
+              systemicRejection = { status: head.status, message: head.message };
+              heldRejections = null;
+              break;
+            }
+            for (const held of heldRejections) await retireRejected(held.id);
+            heldRejections = null;
+          }
+        } else {
+          await retireRejected(row.id);
+        }
       } else {
         errors++;
         firstSubmitError ??= {
@@ -410,6 +469,13 @@ export const cloudflare_scanner: FeedModule = {
 
       // Brief pause between submissions
       await new Promise((r) => setTimeout(r, 200));
+    }
+
+    // Fewer than SYSTEMIC_REJECTION_SAMPLE rejections this run: too few to
+    // call systemic, so retire them (at most SAMPLE - 1 rows).
+    if (heldRejections) {
+      for (const held of heldRejections) await retireRejected(held.id);
+      heldRejections = null;
     }
 
     // ─── Phase 2: COLLECT results ────────────────────────────────
@@ -531,6 +597,7 @@ export const cloudflare_scanner: FeedModule = {
       malicious: maliciousCount,
       errors,
       quota_hit: quotaHit,
+      systemic_rejection: systemicRejection,
       first_submit_error: firstSubmitError,
       first_submit_rejection: firstSubmitRejection,
       first_poll_error: firstPollError,

@@ -14,7 +14,9 @@ import {
   parseSubmitUuid,
   parseScanResult,
   cfErrorMessage,
+  isStorableIp,
   CF_AUTH_PROBE_PATH,
+  SYSTEMIC_REJECTION_SAMPLE,
 } from "../src/feeds/cloudflare_scanner";
 import type { Env } from "../src/types";
 
@@ -92,13 +94,29 @@ describe("parseScanResult", () => {
     expect(parseScanResult({ task: { uuid: UUID_A, status: "Finished", success: true }, page: {} })).toEqual({ kind: "failed" });
     expect(parseScanResult({ success: false, errors: [{ message: "scan failed" }] })).toEqual({ kind: "failed" });
   });
-  it("a 200 still Queued / InProgress is pending", () => {
+  it("M1: only an explicit boolean malicious is a verdict — missing / null / string is 'failed', never clean", () => {
+    const base = v2Result(UUID_A, { malicious: false });
+    expect(parseScanResult({ ...base, verdicts: {} })).toEqual({ kind: "failed" });
+    expect(parseScanResult({ ...base, verdicts: { overall: { malicious: null } } })).toEqual({ kind: "failed" });
+    expect(parseScanResult({ ...base, verdicts: { overall: { malicious: "true" } } })).toEqual({ kind: "failed" });
+    expect(parseScanResult({ ...base, verdicts: { overall: { categories: ["Phishing"] } } })).toEqual({ kind: "failed" });
+    expect(parseScanResult({ ...base, verdicts: { overall: { malicious: false } } })).toMatchObject({ kind: "verdict", malicious: false });
+  });
+  it("L1: any not-Finished task status is pending (Queued / InProgress / unknown future states)", () => {
     expect(parseScanResult({ task: { uuid: UUID_A, status: "InProgress" } })).toEqual({ kind: "pending" });
     expect(parseScanResult({ task: { uuid: UUID_A, status: "Queued" } })).toEqual({ kind: "pending" });
+    expect(parseScanResult({ task: { uuid: UUID_A, status: "Processing", success: false } })).toEqual({ kind: "pending" });
+    expect(parseScanResult({ task: { uuid: UUID_A, status: "finished", success: false } })).toEqual({ kind: "failed" });
   });
-  it("only stores a 2-letter country code and an IP-shaped page.ip", () => {
+  it("L2: isStorableIp accepts strict IPv4 / IPv6 only, never junk or all-zero addresses", () => {
+    for (const ok of ["203.0.113.7", "2001:db8::1", "fe80::1"]) expect(isStorableIp(ok)).toBe(true);
+    for (const bad of ["cafe", "::", "....", "0.0.0.0", "999.1.1.1", "1.2.3", "aa:bb", "not an ip", ""]) expect(isStorableIp(bad)).toBe(false);
+  });
+  it("only stores a 2-letter country code and a valid page.ip", () => {
     expect(parseScanResult(v2Result(UUID_A, { malicious: false, country: "Netherlands", ip: "not an ip" })))
       .toMatchObject({ country: null, ip: null });
+    expect(parseScanResult(v2Result(UUID_A, { malicious: false, ip: "cafe" }))).toMatchObject({ ip: null });
+    expect(parseScanResult(v2Result(UUID_A, { malicious: false, ip: "::" }))).toMatchObject({ ip: null });
     expect(parseScanResult(v2Result(UUID_A, { malicious: false, country: "us", ip: "2001:db8::1" })))
       .toMatchObject({ country: "US", ip: "2001:db8::1" });
   });
@@ -294,5 +312,113 @@ describe.skipIf(!hasSqlite())("cloudflare_scanner ingest — v2 shapes", () => {
     await runIngest(db);
     expect(db.prepare("SELECT cf_scan_id, cf_verdict FROM threats WHERE id = 'w'").get()).toEqual({ cf_scan_id: null, cf_verdict: null });
     expect(lastDiag(db).details).toMatchObject({ errors: 1, first_submit_error: { status: 200, message: "no scan uuid in response: Submission queued" } });
+  });
+  it("M1: a malformed verdict body is 'failed' — confidence and status untouched, never remediated", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    vi.setSystemTime(NOW);
+    const db = openMigratedDb();
+    insertThreat(db, "m0", "https://m0.example/", { scanId: "scan-m0", confidence: 40 });
+    insertThreat(db, "m1", "https://m1.example/", { scanId: "scan-m1", confidence: 40 });
+    insertThreat(db, "m2", "https://m2.example/", { scanId: "scan-m2", confidence: 40 });
+    const bodies: Record<string, unknown> = {
+      "scan-m0": { ...v2Result("scan-m0", { malicious: false }), verdicts: {} },
+      "scan-m1": { ...v2Result("scan-m1", { malicious: false }), verdicts: { overall: { malicious: null } } },
+      "scan-m2": { ...v2Result("scan-m2", { malicious: false }), verdicts: { overall: { malicious: "true" } } },
+    };
+    stubFetch((url) => {
+      const b = bodies[url.split("/").pop()!];
+      return b ? { status: 200, body: b } : { status: 404, body: "" };
+    });
+    await runIngest(db);
+    expect(db.prepare("SELECT id, cf_verdict, confidence_score, status FROM threats ORDER BY id").all()).toEqual([
+      { id: "m0", cf_verdict: "failed", confidence_score: 40, status: "active" },
+      { id: "m1", cf_verdict: "failed", confidence_score: 40, status: "active" },
+      { id: "m2", cf_verdict: "failed", confidence_score: 40, status: "active" },
+    ]);
+    expect(lastDiag(db).details).toMatchObject({ failed: 3, collected: 0 });
+  });
+
+  it("M2: identical first rejections are systemic — nothing retired, counted as errors, submitting stops", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    vi.setSystemTime(NOW);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const db = openMigratedDb();
+    for (let i = 0; i < 10; i++) insertThreat(db, `s${i}`, `https://s${i}.example/`, { ageMs: 3_600_000 + i * 1000 });
+    let posts = 0;
+    stubFetch((_url, method) => {
+      if (method !== "POST") return { status: 404, body: "" };
+      posts++;
+      return { status: 400, body: { errors: [{ message: "Invalid request body: unknown field visibility" }] } };
+    });
+    const result = await runIngest(db);
+    expect(posts).toBe(SYSTEMIC_REJECTION_SAMPLE);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM threats WHERE cf_verdict IS NOT NULL").get()).toEqual({ n: 0 });
+    expect(result.itemsError).toBe(SYSTEMIC_REJECTION_SAMPLE);
+    expect(lastDiag(db).details).toMatchObject({
+      rejected: 0,
+      errors: SYSTEMIC_REJECTION_SAMPLE,
+      systemic_rejection: { status: 400, message: "Invalid request body: unknown field visibility" },
+      first_submit_rejection: { status: 400, message: "Invalid request body: unknown field visibility" },
+    });
+  });
+
+  it("M2: varied rejections are URL-specific — the held ones and every later one are retired", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    vi.setSystemTime(NOW);
+    const db = openMigratedDb();
+    for (let i = 0; i < 5; i++) insertThreat(db, `v${i}`, `https://v${i}.example/`, { ageMs: 3_600_000 + i * 1000 });
+    let posts = 0;
+    stubFetch((_url, method) => {
+      if (method !== "POST") return { status: 404, body: "" };
+      posts++;
+      const msg = posts % 2 ? "DNS Error - Could not resolve domain." : "Scan prevented: domain on blocklist";
+      return { status: 400, body: { errors: [{ message: msg }] } };
+    });
+    await runIngest(db);
+    expect(posts).toBe(5);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM threats WHERE cf_verdict = 'failed' AND cf_scan_id IS NULL").get()).toEqual({ n: 5 });
+    expect(lastDiag(db).details).toMatchObject({ rejected: 5, errors: 0, systemic_rejection: null });
+  });
+
+  it("M2: fewer rejections than the sample are retired at the end of Phase 1", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    vi.setSystemTime(NOW);
+    const db = openMigratedDb();
+    insertThreat(db, "a", "https://a.example/", { ageMs: 3_600_000 });
+    insertThreat(db, "b", "https://b.example/", { ageMs: 3_601_000 });
+    insertThreat(db, "c", "https://c.example/", { ageMs: 3_602_000 });
+    let posts = 0;
+    stubFetch((_url, method) => {
+      if (method !== "POST") return { status: 404, body: "" };
+      posts++;
+      return posts === 2
+        ? { status: 200, body: v2Submit(UUID_A, "https://b.example/") }
+        : { status: 422, body: { errors: [{ message: "Invalid URL" }] } };
+    });
+    await runIngest(db);
+    expect(db.prepare("SELECT id, cf_scan_id, cf_verdict FROM threats ORDER BY id").all()).toEqual([
+      { id: "a", cf_scan_id: null, cf_verdict: "failed" },
+      { id: "b", cf_scan_id: UUID_A, cf_verdict: null },
+      { id: "c", cf_scan_id: null, cf_verdict: "failed" },
+    ]);
+    expect(lastDiag(db).details).toMatchObject({ rejected: 2, submitted: 1, errors: 0 });
+  });
+
+  it("M3: a 409 is an ordinary error — the row is not retired and stays a candidate", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    vi.setSystemTime(NOW);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const db = openMigratedDb();
+    insertThreat(db, "dup", "https://dup.example/");
+    const calls = stubFetch((_url, method) => (method === "POST"
+      ? { status: 409, body: { errors: [{ message: "Conflict" }] } }
+      : { status: 404, body: "" }));
+    const result = await runIngest(db);
+    expect(db.prepare("SELECT cf_scan_id, cf_verdict FROM threats WHERE id = 'dup'").get()).toEqual({ cf_scan_id: null, cf_verdict: null });
+    expect(result.itemsError).toBe(1);
+    expect(lastDiag(db).details).toMatchObject({ rejected: 0, errors: 1, first_submit_error: { status: 409, message: "Conflict" } });
+    calls.length = 0;
+    await runIngest(db);
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
   });
 });
