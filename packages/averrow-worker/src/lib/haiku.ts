@@ -540,6 +540,18 @@ export interface HaikuBriefingItem {
   related_campaign_id?: string | null;
 }
 
+/**
+ * Output budget for generateInsight (Observer's daily narrative and Sunday
+ * weekly report). The helper default (1024) truncated the 3-5 item JSON: on
+ * 2026-11-22 00:42 the response stopped at exactly 1024 output tokens and the
+ * parse failed at character 3428 ("Expected ',' or ']'"), so the briefing fell
+ * back to rules. 2560 gives the observed ~1024-token answer 2.5x headroom; at
+ * ~35 calls/month the worst-case extra output is ~54K tokens, well inside
+ * observer's 2.0M monthlyTokenCap (lib/per-agent-budget.ts). max_tokens is a
+ * ceiling: a normal answer costs the same as before.
+ */
+export const INSIGHT_MAX_TOKENS = 2560;
+
 export async function generateInsight(
   env: Env,
   ctx: HaikuCallContext,
@@ -581,7 +593,7 @@ Respond with ONLY a JSON object: {"items": [...]}`;
   const userMessage = `Generate intelligence briefing items from this ${context.period} data:
 ${JSON.stringify(context, null, 2)}`;
 
-  return callJsonSafe<{ items: HaikuBriefingItem[] }>(env, ctx, systemPrompt, userMessage);
+  return callJsonSafe<{ items: HaikuBriefingItem[] }>(env, ctx, systemPrompt, userMessage, INSIGHT_MAX_TOKENS);
 }
 
 // Legacy single-insight generation (kept for backward compatibility)

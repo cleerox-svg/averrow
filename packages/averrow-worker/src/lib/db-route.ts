@@ -17,14 +17,17 @@
 //   budget  `db_route:telemetry:budget`   budget_ledger, budget_config, agent_budget_rollups
 //
 // Route flag (per family) ∈ {'core', 'telemetry'}:
-//   - unset / any other value → core (default: nothing moves by accident)
+//   - unset → core (default: nothing moves by accident)
 //   - 'telemetry' but TELEMETRY_DB unbound (dev) → core
 //   - read failure or a present-but-invalid value → the last value this
-//     isolate read, else core. Falling back to core after a cut-over would
-//     split writes across two DBs, so a KV blip keeps the known route instead.
-//     LIMIT: a COLD isolate has no last value and serves core on a KV failure;
-//     once a family is cut over, change its in-code default to 'telemetry'
-//     (a follow-up of the cut-over) so cold isolates default to telemetry.
+//     isolate read. Falling back to core after a cut-over would split writes
+//     across two DBs, so a KV blip keeps the known route instead.
+//   - a COLD isolate (no last value) on a read failure or an invalid value →
+//     the family's in-code default, FAMILY_COLD_DEFAULT_ROUTE. All three
+//     families were cut over in prod on 2026-11-23, so every default is
+//     'telemetry' (still core when TELEMETRY_DB is unbound). An explicit KV
+//     'core' always wins (the rollback path); an UNSET flag is still core, so
+//     an environment that was never cut over does not move by itself.
 //   - callers must resolve a family ONCE per unit of work (run, feed pull, AI
 //     call) and carry it: a flip mid-unit must not send the finalize to a
 //     different DB than the INSERT.
@@ -68,11 +71,28 @@ export const FAMILY_ROUTE_KV_KEYS: Record<TelemetryFamily, string> = {
 export interface TelemetryRouteState {
   /** The database the family is served from right now. */
   route: TelemetryRoute;
-  /** The parsed KV flag; null when unset, invalid or never readable. */
+  /**
+   * The parsed KV flag; null when unset. When the flag is invalid or
+   * unreadable this is the last known value, else the family's cold default
+   * (FAMILY_COLD_DEFAULT_ROUTE).
+   */
   requested: TelemetryRoute | null;
   /** Whether TELEMETRY_DB is bound in this environment. */
   bound: boolean;
 }
+
+/**
+ * What a cold isolate serves when it cannot learn a family's flag (KV read
+ * failure, or an invalid value with no last known route). Flipped to
+ * 'telemetry' after each family's prod cut-over (2026-11-23). Rolling a
+ * family back to core for good means setting its flag to 'core' AND flipping
+ * its entry here back to 'core' in the same change.
+ */
+export const FAMILY_COLD_DEFAULT_ROUTE: Record<TelemetryFamily, TelemetryRoute> = {
+  agents: "telemetry",
+  feeds: "telemetry",
+  budget: "telemetry",
+};
 
 interface CachedFlag {
   requested: TelemetryRoute | null;
@@ -178,13 +198,15 @@ async function readRequested(env: Env, family: TelemetryFamily, nowMs: number): 
     const parsed = parseTelemetryRoute(raw);
     // A present-but-invalid value (typo) keeps the last known route rather
     // than silently reverting to core — same rule as a read failure.
-    const requested = raw != null && parsed == null ? (c.flag?.requested ?? null) : parsed;
+    // A cold isolate has no last route and serves the family's cold default.
+    const requested = raw != null && parsed == null ? (c.flag?.requested ?? FAMILY_COLD_DEFAULT_ROUTE[family]) : parsed;
     c.flag = { requested, expiresAt: nowMs + TELEMETRY_ROUTE_CACHE_MS };
     return requested;
   } catch {
     // Keep the last known route (stale) rather than silently flipping back
-    // to core; retry KV on the next minute.
-    const requested = c.flag?.requested ?? null;
+    // to core; retry KV on the next minute. A cold isolate (nothing cached)
+    // serves the family's cold default.
+    const requested = c.flag?.requested ?? FAMILY_COLD_DEFAULT_ROUTE[family];
     c.flag = { requested, expiresAt: nowMs + TELEMETRY_ROUTE_CACHE_MS };
     return requested;
   }
