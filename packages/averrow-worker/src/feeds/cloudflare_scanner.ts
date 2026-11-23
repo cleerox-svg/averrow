@@ -54,9 +54,9 @@ import { isValidIPv4, isValidIPv6 } from "../lib/abuse-mailbox-iocs";
  *   refuses that URL: unresolvable / blocked / invalid) is terminal for the
  *   threat: cf_verdict = 'failed' with cf_scan_id still NULL, and the
  *   candidate read skips rows with a verdict, so it is never resubmitted —
- *   unless the run's first SYSTEMIC_REJECTION_SAMPLE rejections are
- *   identical (our request is wrong, not the URLs): then nothing is retired
- *   and submitting stops. 409 is an ordinary error (undocumented in v2). A
+ *   unless the run's first SYSTEMIC_REJECTION_SAMPLE rejections come before
+ *   any successful submit and are identical (our request is wrong, not the
+ *   URLs): then nothing is retired and submitting stops. 409 is an ordinary error (undocumented in v2). A
  *   429 (quota) stops submitting for the run.
  * Phase 2 (COLLECT): polls up to CF_SCAN_POLL_LIMIT submitted scans with no
  *   verdict yet (`cf_scan_id IS NOT NULL AND cf_verdict IS NULL`, served by
@@ -244,9 +244,11 @@ export function isStorableIp(ip: string): boolean {
  * is top-level `{ task, page, verdicts, … }`; the v1 envelope
  * `{ success, result: { scan: { verdicts, page } } }` is still accepted.
  *
+ * - `task.success === false` → failed (checked first, so a `Failed`
+ *   status with success=false is not read as pending).
  * - `task.status` present and not `Finished` → pending (the expiry window
  *   bounds a scan that never finishes).
- * - `task.success === false`, no `verdicts`, or `verdicts.overall.malicious`
+ * - no `verdicts`, or `verdicts.overall.malicious`
  *   not a boolean → failed (no confidence / status change). Only an explicit
  *   `malicious === false` is clean: clean can auto-remediate a threat, so a
  *   malformed or changed response must never read as clean.
@@ -266,8 +268,9 @@ export function parseScanResult(body: unknown): CfScanResult {
   const task = isRecord(scan.task) ? scan.task : null;
   if (task) {
     const st = typeof task.status === "string" ? task.status.trim().toLowerCase() : "";
-    if (st !== "" && st !== "finished") return { kind: "pending" };
+    // A failed task is terminal whatever its status (e.g. "Failed").
     if (task.success === false) return { kind: "failed" };
+    if (st !== "" && st !== "finished") return { kind: "pending" };
   }
   const verdicts = isRecord(scan.verdicts) ? scan.verdicts : null;
   const overall = verdicts && isRecord(verdicts.overall) ? verdicts.overall : null;
@@ -296,12 +299,16 @@ export function parseScanResult(body: unknown): CfScanResult {
 const TERMINAL_SUBMIT_STATUSES = new Set([400, 422]);
 
 /**
- * Systemic-rejection guard: the first SYSTEMIC_REJECTION_SAMPLE terminal
- * rejections of a run are held, not retired. If they all carry the same
- * status + message, the rejection is about our request (body shape, a CF
- * validation change), not the URLs: nothing is retired, they count as
- * errors and submitting stops for the run. Otherwise they are retired and
- * later rejections retire at once.
+ * Systemic-rejection guard. Until the run's first successful submit, terminal
+ * rejections are held, not retired. If SYSTEMIC_REJECTION_SAMPLE are held
+ * and all carry the same status + message — and no submit has succeeded —
+ * the rejection is about our request (body shape, a CF validation change),
+ * not the URLs: nothing is retired, they count as errors and submitting
+ * stops for the run. Once any submit succeeds the request is proven good:
+ * the held rows are retired and every later rejection is retired at once
+ * (CF's per-URL messages, e.g. a DNS failure, are generic and identical, so
+ * the message alone can't tell systemic from per-URL). Held rejections that
+ * differ are retired too, and so are fewer than the sample at run end.
  */
 export const SYSTEMIC_REJECTION_SAMPLE = 3;
 
@@ -430,6 +437,11 @@ export const cloudflare_scanner: FeedModule = {
           firstSubmitError ??= { status, message: `cf_scan_id UPDATE changed 0 rows for ${row.id}` };
         } else {
           submitted++;
+          // The request shape works: stop holding rejections.
+          if (heldRejections) {
+            for (const held of heldRejections) await retireRejected(held.id);
+            heldRejections = null;
+          }
         }
       } else if (TERMINAL_SUBMIT_STATUSES.has(status)) {
         // Cloudflare refuses this URL (unresolvable / blocked / invalid):

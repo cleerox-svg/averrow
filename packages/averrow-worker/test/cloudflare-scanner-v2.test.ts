@@ -105,8 +105,12 @@ describe("parseScanResult", () => {
   it("L1: any not-Finished task status is pending (Queued / InProgress / unknown future states)", () => {
     expect(parseScanResult({ task: { uuid: UUID_A, status: "InProgress" } })).toEqual({ kind: "pending" });
     expect(parseScanResult({ task: { uuid: UUID_A, status: "Queued" } })).toEqual({ kind: "pending" });
-    expect(parseScanResult({ task: { uuid: UUID_A, status: "Processing", success: false } })).toEqual({ kind: "pending" });
+    expect(parseScanResult({ task: { uuid: UUID_A, status: "Processing" } })).toEqual({ kind: "pending" });
     expect(parseScanResult({ task: { uuid: UUID_A, status: "finished", success: false } })).toEqual({ kind: "failed" });
+  });
+  it("N2: task.success === false is failed before the not-Finished → pending rule", () => {
+    expect(parseScanResult({ task: { uuid: UUID_A, status: "Failed", success: false } })).toEqual({ kind: "failed" });
+    expect(parseScanResult({ task: { uuid: UUID_A, status: "InProgress", success: false } })).toEqual({ kind: "failed" });
   });
   it("L2: isStorableIp accepts strict IPv4 / IPv6 only, never junk or all-zero addresses", () => {
     for (const ok of ["203.0.113.7", "2001:db8::1", "fe80::1"]) expect(isStorableIp(ok)).toBe(true);
@@ -338,7 +342,53 @@ describe.skipIf(!hasSqlite())("cloudflare_scanner ingest — v2 shapes", () => {
     expect(lastDiag(db).details).toMatchObject({ failed: 3, collected: 0 });
   });
 
-  it("M2: identical first rejections are systemic — nothing retired, counted as errors, submitting stops", async () => {
+  it("N1: identical rejections interleaved with successes are per-URL — all retired, no systemic_rejection", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    vi.setSystemTime(NOW);
+    const db = openMigratedDb();
+    // Newest first: d0 (rejected), d1 (ok), d2..d4 (rejected), d5 (ok), d6 (rejected).
+    for (let i = 0; i < 7; i++) insertThreat(db, `d${i}`, `https://d${i}.example/`, { ageMs: 3_600_000 + i * 1000 });
+    const ok = new Set(["https://d1.example/", "https://d5.example/"]);
+    let n = 0;
+    stubFetch((_url, method, body) => {
+      if (method !== "POST") return { status: 404, body: "" };
+      const url = JSON.parse(body!).url as string;
+      if (ok.has(url)) return { status: 200, body: v2Submit(n++ ? UUID_B : UUID_A, url) };
+      return { status: 400, body: { errors: [{ message: "DNS Error - Could not resolve domain." }] } };
+    });
+    await runIngest(db);
+    expect(db.prepare("SELECT id, cf_scan_id, cf_verdict FROM threats ORDER BY id").all()).toEqual([
+      { id: "d0", cf_scan_id: null, cf_verdict: "failed" },
+      { id: "d1", cf_scan_id: UUID_A, cf_verdict: null },
+      { id: "d2", cf_scan_id: null, cf_verdict: "failed" },
+      { id: "d3", cf_scan_id: null, cf_verdict: "failed" },
+      { id: "d4", cf_scan_id: null, cf_verdict: "failed" },
+      { id: "d5", cf_scan_id: UUID_B, cf_verdict: null },
+      { id: "d6", cf_scan_id: null, cf_verdict: "failed" },
+    ]);
+    expect(lastDiag(db).details).toMatchObject({ submitted: 2, rejected: 5, errors: 0, systemic_rejection: null });
+  });
+
+  it("N1: a success after the first rejection releases it even when later rejections repeat its message", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
+    vi.setSystemTime(NOW);
+    const db = openMigratedDb();
+    for (let i = 0; i < 5; i++) insertThreat(db, `e${i}`, `https://e${i}.example/`, { ageMs: 3_600_000 + i * 1000 });
+    let posts = 0;
+    stubFetch((_url, method, body) => {
+      if (method !== "POST") return { status: 404, body: "" };
+      posts++;
+      return posts === 2
+        ? { status: 200, body: v2Submit(UUID_A, JSON.parse(body!).url as string) }
+        : { status: 422, body: { errors: [{ message: "Invalid URL" }] } };
+    });
+    await runIngest(db);
+    expect(posts).toBe(5);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM threats WHERE cf_verdict = 'failed'").get()).toEqual({ n: 4 });
+    expect(lastDiag(db).details).toMatchObject({ submitted: 1, rejected: 4, systemic_rejection: null });
+  });
+
+  it("M2/N1: identical rejections before any success are systemic — nothing retired, counted as errors, submitting stops", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
     vi.setSystemTime(NOW);
     vi.spyOn(console, "error").mockImplementation(() => {});
