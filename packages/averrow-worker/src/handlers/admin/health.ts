@@ -357,6 +357,9 @@ export async function handleAdminHealth(request: Request, env: Env): Promise<Res
   }, 200, origin);
 }
 
+/** TTL of handleSystemHealth's `count.threats.week` counter (7-day range count). */
+export const THREATS_WEEK_TTL_S = 1800;
+
 export async function handleSystemHealth(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
 
@@ -402,7 +405,10 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
         .first<{ n: number }>();
       return r?.n ?? 0;
     }),
-    cachedCount(env, "count.threats.week", 300, async () => {
+    // 7-day window: ~57K-row range count. At 300s every admin-dashboard
+    // compute (Navigator's 15-min Phase B warm) missed it; THREATS_WEEK_TTL_S
+    // (30 min) halves that, and the 7-day total may lag by up to 30 min.
+    cachedCount(env, "count.threats.week", THREATS_WEEK_TTL_S, async () => {
       const r = await session
         .prepare("SELECT COUNT(*) AS n FROM threats WHERE created_at >= datetime('now','-7 days')")
         .first<{ n: number }>();
@@ -452,7 +458,7 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
   ]);
 
   // Monotonicity guard for the three independently-cached counts. Each
-  // cachedCount entry (total 3600s, today/week 300s) is sampled at a
+  // cachedCount entry (total 3600s, today 300s, week THREATS_WEEK_TTL_S) is sampled at a
   // different time and expires independently. Since threats only grow, a
   // freshly-recomputed `today` can transiently exceed a still-stale `week`
   // (the newest ~300s of threats counted in today but not yet in the

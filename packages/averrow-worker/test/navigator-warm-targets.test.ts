@@ -208,10 +208,11 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
     { name: "critical banner", phase: "B", ttl: CRITICAL_BANNER_TTL_S, everyWarm: true },
     { name: "brand stats", phase: "D", ttl: BRAND_STATS_TTL_S, everyWarm: true },
     { name: "brand movers", phase: "D", ttl: BRAND_MOVERS_TTL_S, everyWarm: true },
-    { name: "pressure aggregate", phase: "D", ttl: BRAND_AGGREGATE_TTL_S, everyWarm: true },
+    // Sources written by 6-hourly crons (3h TTL, 2026-11-23): every 5th Phase D warm (~2.5h).
+    { name: "pressure aggregate", phase: "D", ttl: BRAND_AGGREGATE_TTL_S, everyWarm: false },
     // Weekly-moving data (6h TTL): refreshed every 11th Phase D warm (~5.5h).
     { name: "email-security aggregate (shared rollup)", phase: "D", ttl: EMAIL_POSTURE_ROLLUP_TTL_S, everyWarm: false },
-    // Daily-moving data: refreshed every 3rd Phase D warm (~90 min), never lapses.
+    // Daily-moving data (6h TTL, 2026-11-23): refreshed every 11th Phase D warm (~5.5h), never lapses.
     { name: "composition / posture aggregates", phase: "D", ttl: BRAND_SLOW_AGGREGATE_TTL_S, everyWarm: false },
   ];
   for (const { name, phase, ttl, everyWarm } of TTLS) {
@@ -224,9 +225,14 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
     });
   }
 
-  it("composition / posture use the slow (daily-data) TTL: recomputed every 3rd Phase D warm", () => {
-    expect(BRAND_SLOW_AGGREGATE_TTL_S).toBe(7200);
-    expect(Math.ceil(refreshAfterSeconds(BRAND_SLOW_AGGREGATE_TTL_S) / 1800)).toBe(3);
+  it("composition / posture use the slow (daily-data) TTL: recomputed every 11th Phase D warm", () => {
+    expect(BRAND_SLOW_AGGREGATE_TTL_S).toBe(21_600);
+    expect(Math.ceil(refreshAfterSeconds(BRAND_SLOW_AGGREGATE_TTL_S) / 1800)).toBe(11);
+  });
+
+  it("pressure is recomputed every 5th Phase D warm", () => {
+    expect(BRAND_AGGREGATE_TTL_S).toBe(10_800);
+    expect(Math.ceil(refreshAfterSeconds(BRAND_AGGREGATE_TTL_S) / 1800)).toBe(5);
   });
 
   it("Phase D holds exactly the brand-catalog warms and runs them sequentially", () => {

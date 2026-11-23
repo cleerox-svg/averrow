@@ -12,7 +12,9 @@ import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics, fetchD1HourlyMetrics, clampHourlyWindow, hourlyWindowStart, toHourLabel, D1_TOP_QUERIES_SAMPLING_NOTE } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats, peekCountEntry } from "../lib/cached-count";
 import { cachedValue, type SingleFlightOptions } from "../lib/cached-value";
-import { runSequential, softSection, type SectionErrors } from "../lib/run-sequential";
+import { runSequential, softSection, sleep, type SectionErrors } from "../lib/run-sequential";
+import { isD1OverloadError } from "../lib/d1-retry";
+import { readVelocityDiag, VELOCITY_DIAG_PENDING_ERROR, type VelocityDiag } from "../lib/velocity-diag";
 import { readDmarcDrops24h, type DmarcDropCounts } from "../lib/dmarc-enrollment";
 import {
   countDnsCandidatesInThreats,
@@ -1043,114 +1045,53 @@ async function buildPageAnalysisDiag(env: Env): Promise<PageAnalysisDiag> {
   }, { singleFlight: DIAG_SINGLE_FLIGHT });
 }
 
-// ── Weaponization velocity distribution (Wave 3, rec 5) ─────────────
-// Distribution over the STORED threats.weaponization_flag column
-// (migration 0259) — the whole-hours registration→first-live band,
-// bucketed very_fast (≤24h) | fast (≤72h) | normal (>72h) | NULL. NULL
-// is compute-time not-computable (missing/unparseable WHOIS created
-// date, negative delta, pre-1985 sentinel), kept DISTINCT from `normal`.
-// This reads the pre-computed column only — never a live per-row
-// julianday(first_seen - domain_created_at) scan. Migration 0259
-// explicitly sanctions this cached diagnostics GROUP BY (at most once
-// per TTL) as the reason no index is warranted on the low-cardinality
-// column.
-interface VelocityDiag {
-  /** Counts per flag band, ordered very_fast → fast → normal → not_computable. */
-  by_flag: Array<{ flag: string; n: number }>;
-  /** Sum across all bands (= total threats rows). */
-  total: number;
-  /**
-   * Writer-coverage split (VELOCITY_DARK_2026-09). `by_flag`'s
-   * `not_computable` bucket is NULL-derived and therefore CONFLATES two
-   * states that need different responses:
-   *
-   *   * "inherently not computable" — the row carries no WHOIS
-   *     registration date at all (`domain_created_at IS NULL`), so
-   *     `decideWeaponizationVelocity` could never produce a band. Nothing
-   *     to run; this is the permanent floor.
-   *   * "never computed" — the row DOES carry a registration date but
-   *     `runVelocityBackfill` has not swept it yet (`lib/velocity-writer.ts`
-   *     is admin-endpoint-dispatched; there is no cron, so a fresh
-   *     deployment sits at 100% unstamped and looks identical to the case
-   *     above in `by_flag`).
-   *
-   * That conflation is exactly what let the feature ship 100% dark and go
-   * unnoticed. `unstamped_candidates` is the actionable number: while it is
-   * large, `POST /api/admin/velocity/backfill?dry_run=0` has real work to do.
-   * It never reaches 0 — rows whose registration date fails a decide-fn
-   * guard (negative delta, pre-1985 sentinel, unparseable) are deliberately
-   * left NULL — so after a completed sweep the residual IS the guard-rejected
-   * set, not a backlog.
-   *
-   * Free: derived from the SAME single GROUP BY scan as `by_flag` (one extra
-   * low-cardinality grouping key, ≤8 groups), not additional COUNT(*) passes.
-   */
-  coverage: {
-    /** Rows in the writer's candidate set (`domain_created_at IS NOT NULL`).
-     *  Mirrors `computeVelocityDryRun`'s `candidates_total` predicate exactly. */
-    candidates_total: number;
-    /** Rows carrying a non-NULL `weaponization_flag` AND in the candidate
-     *  set. Gating on `has_reg` is required: counting flagged non-candidates
-     *  here lets `stamped_pct_of_candidates` exceed 100 and clamps
-     *  `unstamped_candidates` to 0, reporting a completed sweep over a real
-     *  backlog. Those rows go to `stamped_orphans` instead. */
-    stamped: number;
-    /** candidates_total − stamped: never-computed backlog + guard-rejected residual. */
-    unstamped_candidates: number;
-    /** Rows with a non-NULL `weaponization_flag` but NULL `domain_created_at`
-     *  — flagged yet outside the candidate set. Counted in neither `stamped`
-     *  nor `candidates_total`. Expected 0; non-zero means the writer's
-     *  CANDIDATE_SELECT and this block's predicate have diverged. */
-    stamped_orphans: number;
-    /** total − candidates_total: no registration date, inherently not computable. */
-    no_registration_date: number;
-    /** candidates_total as a % of total — the feature's ceiling on this corpus. */
-    candidate_pct: number;
-    /** stamped as a % of candidates_total — sweep progress. 0 = never run. */
-    stamped_pct_of_candidates: number;
-  };
-}
-
 function pct(numerator: number, denominator: number): number {
   if (denominator <= 0) return 0;
   return Math.round((numerator / denominator) * 1000) / 10;
 }
 
+/** Overload retries per diagnostics request (shared by every section). */
+export const DIAG_OVERLOAD_RETRIES = 2;
+/** Wait before an overload retry: past D1's rolling 10 s window. */
+export const DIAG_OVERLOAD_RETRY_DELAY_MS = 10_500;
+
 /**
- * TTL of the `velocity` block (12h, 2026-11-23). The GROUP BY reads every
- * threats row (~3.3M rows read per recompute in prod, 2026-11-23 sampled
- * top queries) and the 900s TTL it had was shorter than the gap between
- * diagnostics calls, so every call recomputed. The block is metadata (it
- * never gates triage); `stamped_pct_of_candidates` moves with the admin
- * velocity backfill, which an operator can watch through that endpoint's own
- * response. So the block may lag by up to 12h.
+ * Per-request wrapper: runs `fn`; when it is rejected with D1's overload
+ * error and the request still has retries left, waits `delayMs` and runs it
+ * once more. Other errors (and an exhausted budget) rethrow unchanged.
  */
-export const VELOCITY_DIAG_TTL_S = 43_200;
+export function diagOverloadRetrier(
+  retries: number = DIAG_OVERLOAD_RETRIES,
+  delayMs: number = DIAG_OVERLOAD_RETRY_DELAY_MS,
+  wait: (ms: number) => Promise<void> = sleep,
+): <T>(fn: () => Promise<T>) => Promise<T> {
+  let left = retries;
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (left <= 0 || !isD1OverloadError(msg)) throw err;
+      left -= 1;
+      await wait(delayMs);
+      return fn();
+    }
+  };
+}
 
-/** Build the `velocity` diagnostics block. cachedValue-wrapped (KV) so
- *  the low-cardinality GROUP BY over threats runs at most once per TTL,
- *  never a live full scan per diagnostics call. Key
- *  `diag.weaponization.distribution.v3`, TTL VELOCITY_DIAG_TTL_S (12h). (Bumped to `.v2`
- *  alongside the added `coverage` block, then to `.v3` when `stamped`
- *  was gated on `has_reg` and `stamped_orphans` added — an old cached
- *  payload deserializes into the new shape and would silently serve the
- *  pre-fix numbers, and a missing field, for a full TTL.) */
+/** Build the `velocity` diagnostics block from KV ONLY — zero D1 reads.
+ *  The distribution is a GROUP BY over every threats row (~3.3M rows read
+ *  as one statement in prod); run inside this request it spent D1's 10 s
+ *  window by itself, so the sections read after it (dmarc_ingest,
+ *  recent_platform_alerts) failed "D1 DB is overloaded". Navigator now
+ *  computes it twice a day in bounded rowid chunks (lib/velocity-diag.ts,
+ *  UTC hours VELOCITY_DIAG_HOURS_UTC) and this block reads the stored
+ *  result: it can lag by up to ~12h (26h if a recompute was skipped). No
+ *  stored result → `velocity: null` + `velocity_error`. */
 async function buildVelocityDiag(env: Env): Promise<VelocityDiag> {
-  return cachedValue<VelocityDiag>(env, 'diag.weaponization.distribution.v3', VELOCITY_DIAG_TTL_S, async () => {
-    // ONE scan, two grouping keys. `has_reg` uses a bare `IS NULL` test —
-    // not TRIM() — so `candidates_total` is byte-identical to the writer's
-    // CANDIDATE_SELECT / dry-run predicate (`domain_created_at IS NOT NULL`).
-    // Cardinality is (3 bands + NULL) × 2 = 8 groups max.
-    const res = await env.DB.prepare(`
-      SELECT weaponization_flag AS flag,
-             CASE WHEN domain_created_at IS NULL THEN 0 ELSE 1 END AS has_reg,
-             COUNT(*) AS n
-      FROM threats
-      GROUP BY weaponization_flag, has_reg
-    `).all<{ flag: string | null; has_reg: number; n: number }>();
-
-    return foldVelocityDistribution(res.results);
-  }, { singleFlight: DIAG_SINGLE_FLIGHT });
+  const entry = await readVelocityDiag(env);
+  if (!entry) throw new Error(VELOCITY_DIAG_PENDING_ERROR);
+  return entry.value;
 }
 
 // ── nrd_domains retention (lib/nrd-retention.ts) ────────────────────
@@ -1261,64 +1202,7 @@ export async function buildDmarcIngestDiag(env: Env): Promise<DmarcIngestDiag> {
   };
 }
 
-/** Pure fold of the `(weaponization_flag, has_reg)` group rows into the
- *  `velocity` diagnostics block. Extracted from `buildVelocityDiag` so
- *  the coverage arithmetic is unit-testable without a D1 —
- *  test/geo-exhaustion-and-diag-folds.test.ts. */
-export function foldVelocityDistribution(
-  rows: Array<{ flag: string | null; has_reg: number; n: number }>,
-): VelocityDiag {
-  const flagTotals = new Map<string, number>();
-  let total = 0;
-  let candidatesTotal = 0;
-  let stamped = 0;
-  let stampedOrphans = 0;
-  for (const r of rows) {
-    const label = r.flag ?? 'not_computable';
-    flagTotals.set(label, (flagTotals.get(label) ?? 0) + r.n);
-    total += r.n;
-    if (r.has_reg === 1) {
-      candidatesTotal += r.n;
-      // `stamped` MUST be gated on has_reg too, or it counts rows that
-      // never entered `candidatesTotal`. Ungated, a row with a flag but
-      // no domain_created_at subtracted from `unstamped_candidates`
-      // without adding to the denominator: enough of them and
-      // `stamped_pct_of_candidates` exceeds 100 while
-      // `unstamped_candidates` clamps to 0 — the block reports "sweep
-      // complete" over a real backlog, defeating its own purpose.
-      if (r.flag !== null) stamped += r.n;
-    } else if (r.flag !== null) {
-      // Flagged but not a candidate. Surfaced as its own field rather
-      // than silently dropped: a non-zero value means the writer's
-      // CANDIDATE_SELECT and this block's predicate have diverged, or
-      // domain_created_at was cleared after stamping.
-      stampedOrphans += r.n;
-    }
-  }
-
-  const order = ['very_fast', 'fast', 'normal', 'not_computable'];
-  const byFlag = [...flagTotals.entries()]
-    .map(([flag, n]) => ({ flag, n }))
-    .sort((a, b) => order.indexOf(a.flag) - order.indexOf(b.flag));
-
-  return {
-    by_flag: byFlag,
-    total,
-    coverage: {
-      candidates_total: candidatesTotal,
-      // Candidates only — see the has_reg gate above.
-      stamped,
-      unstamped_candidates: Math.max(0, candidatesTotal - stamped),
-      // Flagged rows with no domain_created_at. Not in `stamped`, not
-      // in `candidates_total`. Expected 0; non-zero = writer/reader
-      // predicate divergence.
-      stamped_orphans: stampedOrphans,
-      no_registration_date: Math.max(0, total - candidatesTotal),
-      candidate_pct: pct(candidatesTotal, total),
-      stamped_pct_of_candidates: pct(stamped, candidatesTotal),
-    },
-  };
-}
+export { foldVelocityDistribution } from "../lib/velocity-diag";
 
 /** Workflow-agent run counters, derived from the `agent_activity_log`
  *  event rollup. Extracted so the disjointness rules are unit-testable —
@@ -1507,9 +1391,16 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     //   3. Every read is wrapped in softSection: a failing read degrades
     //      its section to an empty/zero fallback and reports
     //      `<section>_error` at the top of `data`, instead of 500-ing.
+    //   4. A read rejected by D1's 10-second overload window (spent by
+    //      other work on core, or by an earlier read here) is retried once
+    //      after the window rolls over (DIAG_OVERLOAD_RETRY_DELAY_MS), at
+    //      most DIAG_OVERLOAD_RETRIES times per request — a cheap indexed
+    //      read (dmarc_ingest, recent_platform_alerts) then fills instead
+    //      of reporting `<section>_error`. Any other error fails at once.
     const sectionErrors: SectionErrors = {};
+    const overloadRetry = diagOverloadRetrier();
     const soft = <T>(section: string, fallback: T | ((message: string) => T), fn: () => Promise<T>) =>
-      softSection(sectionErrors, section, fallback, fn);
+      softSection(sectionErrors, section, fallback, () => overloadRetry(fn));
     const rows = <T>(r: { results?: T[] } | null | undefined): { results: T[] } => ({ results: r?.results ?? [] });
     const noRows = <T>(): { results: T[] } => ({ results: [] });
 
@@ -2442,16 +2333,21 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // feed_configs is in the feeds family (Track B1d): its two counts are
     // read from the routed feeds store, the rest from core, then merged.
     const totalsT = soft("platform_totals", null, () => cachedValue(env, 'diag.platform_totals.v1', DIAG_SLOW_SECTION_TTL_S, async () => {
-      const core = await env.DB.prepare(`
+      // brands (~139K-row scan, half of this statement's reads) comes from
+      // the shared `count.brands.total` counter (1h, same key + TTL as
+      // brand_stats / brand_list / admin stats), so it may lag by up to 1h.
+      const brands = await cachedCount(env, 'count.brands.total', 3600, async () => {
+        const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM brands").first<{ n: number }>();
+        return r?.n ?? 0;
+      });
+      const coreRest = await env.DB.prepare(`
       SELECT
-        (SELECT COUNT(*) FROM brands) AS brands,
         (SELECT COUNT(*) FROM hosting_providers) AS providers,
         (SELECT COUNT(*) FROM campaigns) AS campaigns,
         (SELECT COUNT(*) FROM infrastructure_clusters WHERE ${notRetiredClusterSql()}) AS clusters,
         (SELECT COUNT(*) FROM infrastructure_clusters WHERE ${retiredClusterSql()}) AS clusters_retired,
         (SELECT COUNT(*) FROM lookalike_domains) AS lookalike_domains
     `).first<{
-        brands: number;
         providers: number;
         campaigns: number;
         clusters: number;
@@ -2463,6 +2359,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         (SELECT COUNT(*) FROM feed_configs WHERE enabled = 1) AS feeds_enabled,
         (SELECT COUNT(*) FROM feed_configs WHERE enabled = 0) AS feeds_disabled
     `).first<{ feeds_enabled: number; feeds_disabled: number }>();
+      const core = coreRest ? { brands, ...coreRest } : null;
       return core ? { ...core, feeds_enabled: feeds?.feeds_enabled ?? 0, feeds_disabled: feeds?.feeds_disabled ?? 0 } : null;
     }, { singleFlight: DIAG_SINGLE_FLIGHT }));
 
@@ -2548,11 +2445,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     }>()));
 
     // Wave 3 signals — cloaking blind-spot rate (rec 4) + weaponization
-    // velocity distribution (rec 5). Both cachedValue-wrapped inside their
-    // builders (KV-cached, single-flight, bounded per TTL) so they don't
-    // re-scan on every diagnostics call — hit/miss feeds the same
-    // cached_count.hit_rate ring. velocity's miss is a GROUP BY over all
-    // of threats, so it runs in the sequence like every other main read.
+    // velocity distribution (rec 5). page_analysis is cachedValue-wrapped
+    // (KV-cached, single-flight, bounded per TTL); velocity is read from KV
+    // only — Navigator computes it twice a day in rowid chunks
+    // (lib/velocity-diag.ts), never this request.
     const pageAnalysisT = soft<PageAnalysisDiag | null>("page_analysis", null, () => buildPageAnalysisDiag(env));
     const velocityT = soft<VelocityDiag | null>("velocity", null, () => buildVelocityDiag(env));
     const pausedAgentsT = () => fetchPausedAgentsSafe(env.DB, Date.now(), env);
@@ -3048,10 +2944,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // Weaponization velocity distribution (Wave 3, rec 5). Counts of
         // threats per registration→first-live band from the STORED
         // threats.weaponization_flag column (migration 0259), NULL mapped
-        // to `not_computable` (kept distinct from `normal`). cachedValue-
-        // wrapped (diag.weaponization.distribution.v2, 900s) so the low-
-        // cardinality GROUP BY over threats runs at most once per TTL,
-        // never a live per-row julianday scan.
+        // to `not_computable` (kept distinct from `normal`). Computed by
+        // Navigator twice a day (UTC 05/17) in bounded rowid chunks and
+        // stored in KV (lib/velocity-diag.ts); this request only reads it,
+        // so the block can lag by up to ~12h.
         //
         // `velocity.coverage` (VELOCITY_DARK_2026-09) splits the NULL bucket
         // into "no registration date" (inherently not computable — the

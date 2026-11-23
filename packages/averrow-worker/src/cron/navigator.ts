@@ -33,6 +33,7 @@ import { reconcileDnsQueue, backfillDnsQueueHistory, type ReconcileResult } from
 import { reapDnsQueue, type ReaperResult } from '../lib/dns-queue-reaper';
 import { countDnsCandidatesInThreats, isDnsDrainableRecountHour, runDnsDrainableRecount } from '../lib/dns-drainable';
 import { isDbInventoryHour, runDbInventory } from '../lib/db-inventory';
+import { isVelocityDiagHour, runVelocityDiagRecount } from '../lib/velocity-diag';
 import {
   purgeNrdDomains,
   parseNrdRetentionLastResult,
@@ -49,6 +50,7 @@ import { reconcileDarkWeb } from '../lib/dark-web-reconciler';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
 import { telemetryFamilyDbs } from '../lib/db-route';
+import { withD1Meter } from '../lib/d1-meter';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour, buildArcsCubeForHour, getCubeSourceWatermark } from '../lib/cube-builder';
 import type { CubeBuildResult } from '../lib/cube-builder';
 import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive, handleObservatoryHeatmap } from '../handlers/observatory';
@@ -206,9 +208,11 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   // started beside it). The start target rotates per tick
   // (sequentialWarmStartIndex) so a slow head can't starve the tail. All
   // requireStaff + unscoped (one global key).
-  // TTLs (refresh-ahead): stats / movers / pressure / email-security rollup
-  // 3600s → recomputed every tick (threshold 1740s); composition / posture
-  // 7200s (BRAND_SLOW_AGGREGATE_TTL_S, data moves ~daily) → every 3rd tick.
+  // TTLs (refresh-ahead): stats / movers 3600s → recomputed every tick
+  // (threshold 1740s; stats' sector mix has its own 6h cachedValue);
+  // pressure 10800s (BRAND_AGGREGATE_TTL_S) → every 5th tick; composition /
+  // posture 21600s (BRAND_SLOW_AGGREGATE_TTL_S) and the email-security
+  // rollup 21600s → every 11th tick.
   { phase: 'D', path: '/api/brands/stats', consumer: 'ops Brands (useBrandStats)', handler: handleBrandStats },
   { phase: 'D', path: '/api/brands/movers', consumer: 'ops Explore → Brands movers (useBrandMovers; Home digest reads the same React Query entry)', handler: handleBrandMovers },
   { phase: 'D', path: '/api/brands/aggregate/email-security', consumer: 'ops Explore → Brands (useEmailSecurityAggregate)', handler: handleBrandsAggregateEmailSecurity },
@@ -290,6 +294,15 @@ export function navigatorWarmPhases(minute: number): Record<NavigatorWarmPhase, 
   };
 }
 
+/**
+ * D1-meter endpoint for one warm phase's reads (lib/d1-meter.ts). Shows up in
+ * diagnostics `d1_attribution_hourly` / `d1_attribution_24h` next to
+ * `agent:navigator`, which since 2026-11-23 holds only the non-warm stages.
+ */
+export function navigatorWarmMeterLabel(phase: NavigatorWarmPhase): string {
+  return `agent:navigator:warm_${phase}`;
+}
+
 /** Outcome of one runWarmTargets call. */
 export interface WarmRunResult {
   /** Handlers that resolved with a 2xx Response (the KV key was written). */
@@ -311,6 +324,13 @@ export interface WarmRunOptions {
   startIndex?: number;
   /** Label for the budget-exhausted log line. */
   phase?: NavigatorWarmPhase;
+  /**
+   * Sequential only: the invocation's ExecutionContext (the D1-meter
+   * TRACKED ctx when metered). A call abandoned at the per-call timeout is
+   * handed to its waitUntil, so the invocation keeps it alive and the
+   * meter records its late reads in the phase's `:bg` point.
+   */
+  ctx?: Pick<ExecutionContext, 'waitUntil'>;
 }
 
 const WARM_TIMED_OUT = Symbol('warm_timed_out');
@@ -319,22 +339,28 @@ const WARM_TIMED_OUT = Symbol('warm_timed_out');
  * Run one warm handler, giving up after `timeoutMs`. The handler promise
  * can't be cancelled: if it settles after the timeout its value is ignored
  * and a late rejection is swallowed here (never an unhandled rejection).
+ * On a timeout the abandoned call is handed to `ctx.waitUntil` (when given),
+ * so its late D1 reads are kept alive and land in the metered layer's `:bg`
+ * point instead of being lost.
  */
 async function warmWithTimeout(
   t: NavigatorWarmTarget,
   env: Env,
   overBudget: boolean,
   timeoutMs: number,
+  ctx?: Pick<ExecutionContext, 'waitUntil'>,
 ): Promise<Response | typeof WARM_TIMED_OUT> {
   // Promise.resolve().then(): a handler that throws synchronously becomes a rejection.
   const call = Promise.resolve().then(() => t.handler(warmRequest(t.path, overBudget), env));
-  call.catch(() => { /* late rejection after a timeout — already counted as failed */ });
+  const settled = call.then(() => undefined, () => { /* late rejection after a timeout — already counted as failed */ });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<typeof WARM_TIMED_OUT>((resolve) => {
     timer = setTimeout(() => resolve(WARM_TIMED_OUT), Math.max(0, timeoutMs));
   });
   try {
-    return await Promise.race([call, timeout]);
+    const res = await Promise.race([call, timeout]);
+    if (res === WARM_TIMED_OUT) ctx?.waitUntil(settled);
+    return res;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -396,7 +422,7 @@ export async function runWarmTargets(
       }
       let res: Response | typeof WARM_TIMED_OUT | null = null;
       try {
-        res = await warmWithTimeout(t, env, overBudget, Math.min(callTimeoutMs, remaining));
+        res = await warmWithTimeout(t, env, overBudget, Math.min(callTimeoutMs, remaining), opts.ctx);
       } catch {
         // Counted as failed below; the next target still runs.
       }
@@ -414,6 +440,36 @@ export async function runWarmTargets(
     ok = results.filter((r) => r.status === 'fulfilled' && r.value.ok).length;
   }
   return { ok, failed: targets.length - skipped.length - ok, timedOut, skipped };
+}
+
+/**
+ * One warm phase under its own D1-meter layer (navigatorWarmMeterLabel).
+ * `ctx` is the invocation's ExecutionContext: withD1Meter hands the callback
+ * a TRACKED copy, which runWarmTargets passes to warmWithTimeout, so a Phase
+ * D call abandoned at its timeout is waitUntil'd on the tracked ctx and its
+ * late reads are recorded once, in `<label>:bg` — never lost, never counted
+ * in `agent:navigator` (the layers are exclusive). Exported for tests.
+ */
+export function runMeteredWarmPhase(
+  env: Env,
+  phase: NavigatorWarmPhase,
+  targets: readonly NavigatorWarmTarget[],
+  overBudget: boolean,
+  opts: Omit<WarmRunOptions, 'phase' | 'ctx'>,
+  ctx: ExecutionContext,
+): Promise<WarmRunResult> {
+  return withD1Meter(
+    env,
+    navigatorWarmMeterLabel(phase),
+    (meteredEnv, trackedCtx) => runWarmTargets(
+      targets,
+      meteredEnv,
+      overBudget,
+      NAVIGATOR_SEQUENTIAL_PHASES.has(phase),
+      { ...opts, phase, ctx: trackedCtx },
+    ),
+    ctx,
+  );
 }
 
 /**
@@ -995,10 +1051,11 @@ async function runNavigatorImpl(
   //     accept 75s / 300s / 60s old entries and have the refill-lock holder
   //     refresh older ones in the background — the same compute rate the
   //     old short TTLs had, minus the cold first paint;
-  //   - D brand stats / movers / pressure (3600s): threshold 1740s, every D
-  //     warm (age ≈1800s) recomputes (2/h per key); composition / posture
-  //     (7200s): threshold 5340s → every 3rd warm; the email-security rollup
-  //     (21600s, 2026-11-23): threshold 19740s → every 11th warm (~5.5h).
+  //   - D brand stats / movers (3600s): threshold 1740s, every D warm (age
+  //     ≈1800s) recomputes (2/h per key); pressure (10800s, 2026-11-23):
+  //     threshold 8940s → every 5th warm (~2.5h); composition / posture and
+  //     the email-security rollup (21600s, 2026-11-23): threshold 19740s →
+  //     every 11th warm (~5.5h).
   //     Navigator starts one target at a time and ends the phase on the first
   //     per-call timeout, so it never starts a scan beside another (an
   //     abandoned scan may finish on its own). The start target rotates
@@ -1042,12 +1099,19 @@ async function runNavigatorImpl(
     // NAVIGATOR_SEQUENTIAL_PHASES (runWarmTargets).
     const warmPhase = async (phase: NavigatorWarmPhase): Promise<number> => {
       const targets = NAVIGATOR_WARM_TARGETS.filter(t => t.phase === phase);
-      const { ok, failed, skipped } = await runWarmTargets(
-        targets,
+      // Own D1-meter row per phase (navigatorWarmMeterLabel): the warms'
+      // page-load recomputes are split out of `agent:navigator`, so the
+      // hourly attribution separates warm spend from the DNS / cube / reaper
+      // stages. Layers are exclusive — nothing is counted twice. With _ctx,
+      // reads an abandoned (timed-out) Phase D call issues after the phase
+      // returns land in the same label's `:bg` row instead of being lost.
+      const { ok, failed, skipped } = await runMeteredWarmPhase(
         env,
+        phase,
+        targets,
         skipNonEssential,
-        NAVIGATOR_SEQUENTIAL_PHASES.has(phase),
-        { phase, startIndex: sequentialWarmStartIndex(scheduledTime.getTime(), targets.length) },
+        { startIndex: sequentialWarmStartIndex(scheduledTime.getTime(), targets.length) },
+        _ctx,
       );
       cacheWarmFailed += failed;
       cacheWarmSkipped += skipped.length;
@@ -1124,6 +1188,26 @@ async function runNavigatorImpl(
           console.log(`[navigator] dns-drainable recount: drainable=${r.drainable} duration=${r.durationMs}ms`);
         } else if (r.reason === 'error' || r.reason === 'over_budget') {
           console.warn(`[navigator] dns-drainable recount skipped: ${r.reason}${r.error ? ` (${r.error})` : ''}`);
+        }
+      }),
+    );
+  }
+
+  // ── 4b-2. Diagnostics `velocity` block (UTC hours 5 and 17) ──
+  // The (weaponization_flag, has_reg) distribution over every threats row
+  // (lib/velocity-diag.ts). As one in-request statement it read ~3.3M rows
+  // and tripped D1's overload window for the diagnostics sections after it;
+  // here it walks threats in bounded rowid chunks with pauses and stores the
+  // block in KV for diagnostics to read. Hour-only gate (cron-audit rule),
+  // KV claim + freshness skip so it runs once per window, skipped over the
+  // D1 read-budget soft-cap. waitUntil tail; never throws.
+  if (isVelocityDiagHour(scheduledTime.getTime())) {
+    _ctx.waitUntil(
+      runVelocityDiagRecount({ env, nowMs: scheduledTime.getTime(), overBudget: skipNonEssential }).then((r) => {
+        if (r.ran) {
+          console.log(`[navigator] velocity-diag recount: total=${r.total} duration=${r.durationMs}ms`);
+        } else if (r.reason === 'error' || r.reason === 'over_budget') {
+          console.warn(`[navigator] velocity-diag recount skipped: ${r.reason}${r.error ? ` (${r.error})` : ''}`);
         }
       }),
     );

@@ -305,6 +305,9 @@ export async function handleTrendBrandMomentum(request: Request, env: Env, execC
     // active-only, and buckets by created_at rather than first_seen) —
     // both are immaterial to a top-10 momentum ranking of recent
     // inflow, where newly-created threats are effectively all active.
+    // `GROUP BY +target_brand_id` seeks the 14-day window on
+    // idx_cube_brand_hour instead of walking all of idx_cube_brand_id_hour
+    // (see handleBrandMovers).
     const rows = await cachedTrend(env, execCtx, "brand_momentum", async () => (await env.DB.prepare(`
       WITH inflow AS (
         SELECT target_brand_id,
@@ -315,7 +318,7 @@ export async function handleTrendBrandMomentum(request: Request, env: Env, execC
               THEN threat_count ELSE 0 END) as last_week
         FROM threat_cube_brand
         WHERE hour_bucket >= datetime('now','-14 days')
-        GROUP BY target_brand_id
+        GROUP BY +target_brand_id
       )
       SELECT i.target_brand_id, b.name as brand_name,
         b.canonical_domain,

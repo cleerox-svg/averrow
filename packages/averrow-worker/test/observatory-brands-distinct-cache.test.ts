@@ -19,7 +19,7 @@ import {
 import { handleObservatoryStats, OBSERVATORY_BRANDS_DISTINCT_TTL_S } from "../src/handlers/observatory";
 import type { Env } from "../src/types";
 
-const DISTINCT_RE = /COUNT\(DISTINCT target_brand_id\)/;
+const DISTINCT_RE = /COUNT\(DISTINCT \+?target_brand_id\)/;
 
 function hourBucket(hoursAgo: number): string {
   return sqliteTimestampHoursAgo(hoursAgo).slice(0, 13) + ":00:00";

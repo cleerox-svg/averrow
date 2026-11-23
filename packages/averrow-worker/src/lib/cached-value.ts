@@ -384,6 +384,30 @@ export function cachedValueKvKey(key: string): string {
 }
 
 /**
+ * Read a `cachedValue` entry WITHOUT computing on a miss: the stored value and
+ * when it was computed (epoch ms), or null when absent, unparsable or older
+ * than `ttlSeconds`. For readers whose value is produced only by a background
+ * job (seedValue) and must never run the expensive compute in-request. No
+ * hit/miss stat. Never throws.
+ */
+export async function peekValue<T>(
+  env: { CACHE?: KVNamespace },
+  key: string,
+  ttlSeconds: number,
+): Promise<{ v: T; t: number } | null> {
+  if (ttlSeconds <= 0 || !env.CACHE) return null;
+  try {
+    const raw = await env.CACHE.get(CACHE_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CachedEntry<T>>;
+    if (typeof parsed?.t !== "number" || parsed.v === undefined) return null;
+    return (Date.now() - parsed.t) / 1000 < ttlSeconds ? { v: parsed.v as T, t: parsed.t } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Write a value into the `cachedValue` cache from an authoritative path,
  * so the next `cachedValue(env, key, ttlSeconds, …)` read is a hit. Sister
  * of `seedCount` (lib/cached-count.ts): same envelope, key prefix and padded

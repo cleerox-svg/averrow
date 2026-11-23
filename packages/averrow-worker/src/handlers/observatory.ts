@@ -1332,8 +1332,12 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
           // filter (without brand) would make the whole-index walk of
           // idx_cube_brand_id_hour non-covering, so pin the hour range. With
           // `brand` the equality seeks idx_cube_brand_id_hour by itself.
+          // Unfiltered, the covering whole-index walk still reads the ENTIRE
+          // brand cube (~123K rows) for any window; `+target_brand_id` (a
+          // value no-op) makes the hour range on idx_cube_brand_hour the
+          // only usable plan (prod 2026-11-23, 7d: 122,901 -> 2,765 rows).
           return session.prepare(
-            `SELECT COUNT(DISTINCT target_brand_id) AS n FROM threat_cube_brand${
+            `SELECT COUNT(DISTINCT ${byBrand ? "" : "+"}target_brand_id) AS n FROM threat_cube_brand${
               !byBrand && cf.sql ? " INDEXED BY idx_cube_brand_hour" : ""
             } WHERE hour_bucket >= ?${sf.sql}${cf.sql}`
           ).bind(windowStart, ...sf.params, ...cf.params).first<{ n: number }>();
