@@ -57,6 +57,10 @@ function stubContext(): CanvasRenderingContext2D {
 const particleArcs = () => arcs.filter((a) => a[2] === 2.2).length;
 
 let frames: Array<() => void> = [];
+// requestAnimationFrame id -> the entry queued in `frames`, so the cancelAnimationFrame
+// stub can really cancel it (see beforeEach).
+let frameById = new Map<number, () => void>();
+let nextFrameId = 1;
 let reduced = false;
 
 function installMatchMedia() {
@@ -106,17 +110,35 @@ beforeEach(() => {
   fills.length = 0;
   strokes.length = 0;
   frames = [];
+  frameById = new Map();
+  nextFrameId = 1;
   reduced = false;
   installMatchMedia();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => stubContext());
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
-    frames.push(() => cb(performance.now()));
-    return frames.length;
+    const id = nextFrameId++;
+    const entry = () => { frameById.delete(id); cb(performance.now()); };
+    frameById.set(id, entry);
+    frames.push(entry);
+    return id;
   });
-  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+  // A real cancel: a frame cancelled by an effect cleanup (unmount, deps change) must
+  // never run. A no-op stub left it queued, so a test's runFrames() invoked the dead
+  // loop, whose idle-repaint setTimeout then leaked past unmount and drew a stale
+  // canvas into a later test's `texts`.
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+    const entry = frameById.get(id);
+    if (!entry) return;
+    frameById.delete(id);
+    const i = frames.indexOf(entry);
+    if (i >= 0) frames.splice(i, 1);
+  });
   mockApi('ok');
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => {
+  window.localStorage.clear(); // a failing test must not leak its stored tape window
+  vi.restoreAllMocks();
+});
 
 const renderView = (onSelect = vi.fn(), selected: string | null = null) =>
   renderWithProviders(<AgentNetworkView agents={AGENTS_FIXTURE} selectedAgent={selected} onSelect={onSelect} />);
@@ -1183,6 +1205,7 @@ describe('AgentNetworkView', () => {
       renderView();
       await tapeCanvas();
       await waitFor(() => expect(frames.length).toBeGreaterThan(1));
+      texts.length = 0; // only this frame's tape draw counts
       act(() => { frames.splice(0).forEach((f) => f()); });
       expect(texts.some((s) => s.endsWith('· on demand'))).toBe(true);
       const lane = texts.find((s) => s.endsWith('· on demand'))!;
