@@ -106,7 +106,7 @@ async function computeBrandMovers(
   // column the planner walks ALL of idx_cube_brand_id_hour (~123K rows,
   // the whole brand cube) to avoid a GROUP BY sort, instead of seeking the
   // window on idx_cube_brand_hour (prod 2026-11-23: 14d 124K -> 10K rows,
-  // 1d 123K -> ~1K). Pinned by test/brand-cube-window-plans.test.ts.
+  // 1d 123K -> ~1K). Pinned by test/d1-read-spend-navigator-2026-11-23.test.ts.
   const rows = await session.prepare(`
     WITH inflow AS (
       SELECT
@@ -201,7 +201,7 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
     // column the planner walks ALL of idx_cube_brand_id_hour (~123K rows,
     // the whole brand cube) to avoid a GROUP BY sort, instead of seeking the
     // window on idx_cube_brand_hour (prod 2026-11-23: 14d 124K -> 10K rows,
-    // 1d 123K -> ~1K). Pinned by test/brand-cube-window-plans.test.ts.
+    // 1d 123K -> ~1K). Pinned by test/d1-read-spend-navigator-2026-11-23.test.ts.
     // `, target_brand_id` makes a count tie deterministic.
     const topBrandRow = await session.prepare(`
       SELECT target_brand_id, SUM(threat_count) AS cnt

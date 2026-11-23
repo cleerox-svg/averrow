@@ -31,7 +31,8 @@ import {
   VELOCITY_DIAG_TTL_S,
 } from "../src/lib/velocity-diag";
 import { diagOverloadRetrier, DIAG_OVERLOAD_RETRIES } from "../src/handlers/diagnostics";
-import { navigatorWarmMeterLabel } from "../src/cron/navigator";
+import { navigatorWarmMeterLabel, runMeteredWarmPhase } from "../src/cron/navigator";
+import { withD1Meter } from "../src/lib/d1-meter";
 import { peekValue, seedValue } from "../src/lib/cached-value";
 import { BRAND_AGGREGATE_TTL_S, BRAND_SLOW_AGGREGATE_TTL_S, BRAND_TYPOSQUAT_PRESSURE_TTL_S } from "../src/lib/brand-aggregates";
 import {
@@ -150,10 +151,61 @@ describe("Navigator meters each warm phase separately", () => {
     expect(navigatorWarmMeterLabel("A")).toBe("agent:navigator:warm_A");
     expect(navigatorWarmMeterLabel("D")).toBe("agent:navigator:warm_D");
   });
-  it("runWarmTargets runs under withD1Meter with the invocation ctx", () => {
-    const nav = read("cron/navigator.ts");
-    expect(nav).toMatch(/await withD1Meter\(\s*env,\s*navigatorWarmMeterLabel\(phase\),\s*\(meteredEnv\) => runWarmTargets\(\s*targets,\s*meteredEnv,/);
-    expect(nav).toMatch(/navigatorWarmMeterLabel\(phase\),[\s\S]{0,400}?\),\s*_ctx,\s*\);/);
+  it("an abandoned Phase D call's late reads land once, in warm_D:bg", async () => {
+    // AE stub: rows_read per endpoint label.
+    const rowsByLabel = new Map<string, number>();
+    const AE = {
+      writeDataPoint: (p: { blobs?: string[]; doubles?: number[] }) => {
+        const label = String(p.blobs?.[0]);
+        rowsByLabel.set(label, (rowsByLabel.get(label) ?? 0) + (p.doubles?.[0] ?? 0));
+      },
+    };
+    const stmt = {
+      bind: () => stmt,
+      all: async () => ({ results: [], meta: { rows_read: 7, rows_written: 0 } }),
+    };
+    const DB = { prepare: () => stmt, batch: async () => [] };
+    const env = { DB, AE, CACHE: fakeKv() } as unknown as Env;
+
+    // The invocation ctx (what the cron runtime gives executeAgent).
+    const pending: Promise<unknown>[] = [];
+    const rootCtx = { waitUntil: (p: Promise<unknown>) => { pending.push(p); }, passThroughOnException: () => {} } as unknown as ExecutionContext;
+
+    // A warm that outlives its 20 ms timeout, then issues a metered read.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let lateReadDone = false;
+    const target = {
+      phase: "D" as const,
+      path: "/api/brands/stats",
+      consumer: "test",
+      handler: async (_req: Request, e: Env) => {
+        await gate;
+        await e.DB.prepare("SELECT 1").all();
+        lateReadDone = true;
+        return new Response("{}");
+      },
+    };
+
+    // executeAgent's layer around Navigator.
+    const result = await withD1Meter(env, "agent:navigator", (navEnv, navCtx) =>
+      runMeteredWarmPhase(navEnv, "D", [target], false,
+        { callTimeoutMs: 20, budgetMs: 10_000, minRemainingMs: 0 }, navCtx!), rootCtx);
+    expect(result.timedOut).toEqual(["/api/brands/stats"]);
+    expect(lateReadDone).toBe(false);
+
+    // The call finishes after the phase returned.
+    release();
+    for (let seen = 0; seen < pending.length;) {
+      const batch = pending.slice(seen);
+      seen = pending.length;
+      await Promise.allSettled(batch);
+    }
+    expect(lateReadDone).toBe(true);
+    expect(rowsByLabel.get("agent:navigator:warm_D:bg")).toBe(7);
+    expect(rowsByLabel.get("agent:navigator:warm_D") ?? 0).toBe(0);
+    expect(rowsByLabel.get("agent:navigator") ?? 0).toBe(0);
+    expect(rowsByLabel.get("agent:navigator:bg") ?? 0).toBe(0);
   });
 });
 

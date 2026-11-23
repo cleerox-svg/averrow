@@ -324,6 +324,13 @@ export interface WarmRunOptions {
   startIndex?: number;
   /** Label for the budget-exhausted log line. */
   phase?: NavigatorWarmPhase;
+  /**
+   * Sequential only: the invocation's ExecutionContext (the D1-meter
+   * TRACKED ctx when metered). A call abandoned at the per-call timeout is
+   * handed to its waitUntil, so the invocation keeps it alive and the
+   * meter records its late reads in the phase's `:bg` point.
+   */
+  ctx?: Pick<ExecutionContext, 'waitUntil'>;
 }
 
 const WARM_TIMED_OUT = Symbol('warm_timed_out');
@@ -332,22 +339,28 @@ const WARM_TIMED_OUT = Symbol('warm_timed_out');
  * Run one warm handler, giving up after `timeoutMs`. The handler promise
  * can't be cancelled: if it settles after the timeout its value is ignored
  * and a late rejection is swallowed here (never an unhandled rejection).
+ * On a timeout the abandoned call is handed to `ctx.waitUntil` (when given),
+ * so its late D1 reads are kept alive and land in the metered layer's `:bg`
+ * point instead of being lost.
  */
 async function warmWithTimeout(
   t: NavigatorWarmTarget,
   env: Env,
   overBudget: boolean,
   timeoutMs: number,
+  ctx?: Pick<ExecutionContext, 'waitUntil'>,
 ): Promise<Response | typeof WARM_TIMED_OUT> {
   // Promise.resolve().then(): a handler that throws synchronously becomes a rejection.
   const call = Promise.resolve().then(() => t.handler(warmRequest(t.path, overBudget), env));
-  call.catch(() => { /* late rejection after a timeout — already counted as failed */ });
+  const settled = call.then(() => undefined, () => { /* late rejection after a timeout — already counted as failed */ });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<typeof WARM_TIMED_OUT>((resolve) => {
     timer = setTimeout(() => resolve(WARM_TIMED_OUT), Math.max(0, timeoutMs));
   });
   try {
-    return await Promise.race([call, timeout]);
+    const res = await Promise.race([call, timeout]);
+    if (res === WARM_TIMED_OUT) ctx?.waitUntil(settled);
+    return res;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -409,7 +422,7 @@ export async function runWarmTargets(
       }
       let res: Response | typeof WARM_TIMED_OUT | null = null;
       try {
-        res = await warmWithTimeout(t, env, overBudget, Math.min(callTimeoutMs, remaining));
+        res = await warmWithTimeout(t, env, overBudget, Math.min(callTimeoutMs, remaining), opts.ctx);
       } catch {
         // Counted as failed below; the next target still runs.
       }
@@ -427,6 +440,36 @@ export async function runWarmTargets(
     ok = results.filter((r) => r.status === 'fulfilled' && r.value.ok).length;
   }
   return { ok, failed: targets.length - skipped.length - ok, timedOut, skipped };
+}
+
+/**
+ * One warm phase under its own D1-meter layer (navigatorWarmMeterLabel).
+ * `ctx` is the invocation's ExecutionContext: withD1Meter hands the callback
+ * a TRACKED copy, which runWarmTargets passes to warmWithTimeout, so a Phase
+ * D call abandoned at its timeout is waitUntil'd on the tracked ctx and its
+ * late reads are recorded once, in `<label>:bg` — never lost, never counted
+ * in `agent:navigator` (the layers are exclusive). Exported for tests.
+ */
+export function runMeteredWarmPhase(
+  env: Env,
+  phase: NavigatorWarmPhase,
+  targets: readonly NavigatorWarmTarget[],
+  overBudget: boolean,
+  opts: Omit<WarmRunOptions, 'phase' | 'ctx'>,
+  ctx: ExecutionContext,
+): Promise<WarmRunResult> {
+  return withD1Meter(
+    env,
+    navigatorWarmMeterLabel(phase),
+    (meteredEnv, trackedCtx) => runWarmTargets(
+      targets,
+      meteredEnv,
+      overBudget,
+      NAVIGATOR_SEQUENTIAL_PHASES.has(phase),
+      { ...opts, phase, ctx: trackedCtx },
+    ),
+    ctx,
+  );
 }
 
 /**
@@ -1062,16 +1105,12 @@ async function runNavigatorImpl(
       // stages. Layers are exclusive — nothing is counted twice. With _ctx,
       // reads an abandoned (timed-out) Phase D call issues after the phase
       // returns land in the same label's `:bg` row instead of being lost.
-      const { ok, failed, skipped } = await withD1Meter(
+      const { ok, failed, skipped } = await runMeteredWarmPhase(
         env,
-        navigatorWarmMeterLabel(phase),
-        (meteredEnv) => runWarmTargets(
-          targets,
-          meteredEnv,
-          skipNonEssential,
-          NAVIGATOR_SEQUENTIAL_PHASES.has(phase),
-          { phase, startIndex: sequentialWarmStartIndex(scheduledTime.getTime(), targets.length) },
-        ),
+        phase,
+        targets,
+        skipNonEssential,
+        { startIndex: sequentialWarmStartIndex(scheduledTime.getTime(), targets.length) },
         _ctx,
       );
       cacheWarmFailed += failed;
