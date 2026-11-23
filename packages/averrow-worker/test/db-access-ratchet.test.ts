@@ -21,7 +21,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 /** Recorded 2026-11-22 (B1a/B1b: 2293; B1c agent-runs family moved: 2207; B1c review fixes: 2205; B1d feeds + budget families moved: 2106; dead batchInsertOutputs removed 2026-11-23: 2104; B1 wave 2 agent_outputs moved to the agents family: 2058). Lower it as callers move; never raise it. */
-const ENV_DB_BASELINE = 2058;
+const ENV_DB_BASELINE = 2051;
 
 const SRC = resolve(__dirname, "..", "src");
 const TELEMETRY_BINDING_ALLOWED = new Set(["lib/db-registry.ts", "lib/db-route.ts"]);

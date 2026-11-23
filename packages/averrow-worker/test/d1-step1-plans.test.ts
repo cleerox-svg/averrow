@@ -392,7 +392,11 @@ describe.skipIf(!hasSqlite())("cloudflare_scanner auth gate", () => {
     vi.setSystemTime(NOW);
     const submittedUrls: string[] = [];
     stubFetch((url, method) => {
-      if (method === "POST") return { status: 200, body: { success: true, result: { uuid: `u-${submittedUrls.length}` } } };
+      // Real v2 shape: top-level uuid, no success/result envelope.
+      if (method === "POST") {
+        const uuid = `u-${submittedUrls.length}`;
+        return { status: 200, body: { uuid, api: `https://api.cloudflare.com/client/v4/accounts/acct/urlscanner/v2/result/${uuid}`, visibility: "unlisted", url: "https://x.example/", message: "Submission successful", result: `https://radar.cloudflare.com/scan/${uuid}` } };
+      }
       return { status: 404, body: "" };
     });
     const realFetch = globalThis.fetch;
