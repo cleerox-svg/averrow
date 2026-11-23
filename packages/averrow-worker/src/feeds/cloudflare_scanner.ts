@@ -44,6 +44,16 @@ import { agentOutputsStore } from "../db/agent-outputs";
  *   with `cf_scan_id IS NULL` — an unindexed full scan + sort per run that
  *   tripped D1's overload window.) Older threats are not submitted: a scan of
  *   a weeks-old phishing URL is mostly a dead page.
+ *   v2 submit answers 200 with a TOP-LEVEL body `{ uuid, api, visibility,
+ *   url, message, result: "<report URL>" }` — no `success`/`result.uuid`
+ *   envelope (`parseSubmitUuid`; the v1 envelope is still tolerated). Until
+ *   2026-11-23 the module read only the v1 envelope, so every accepted scan
+ *   counted as an error, cf_scan_id was never stored and the same URLs were
+ *   resubmitted every run, burning the URL Scanner quota. A 400 / 409 / 422
+ *   (CF refuses that URL: unresolvable / blocked / invalid / conflict) is
+ *   terminal for the threat: cf_verdict = 'failed' with cf_scan_id still NULL,
+ *   and the candidate read skips rows with a verdict, so it is never
+ *   resubmitted. A 429 (quota) stops submitting for the run.
  * Phase 2 (COLLECT): polls up to CF_SCAN_POLL_LIMIT submitted scans with no
  *   verdict yet (`cf_scan_id IS NOT NULL AND cf_verdict IS NULL`, served by
  *   the partial index idx_threats_cf_scan, which holds only submitted rows —
@@ -53,9 +63,16 @@ import { agentOutputsStore } from "../db/agent-outputs";
  *   cf_verdict = 'expired' without a poll, and a 200 with no scan body is
  *   marked 'failed' (no confidence/status change for either), so
  *   it leaves the pending set. cf_verdict has no reader outside this module
- *   (audit 0253), so the extra value is safe.
+ *   (audit 0253), so the extra value is safe. v2 `GET /v2/result/{uuid}`
+ *   answers 404 while the scan runs (still pending — neither an error nor
+ *   expired before the expiry window) and 200 with top-level `task`, `page`,
+ *   `verdicts` when done (`parseScanResult`); `task.success === false` (DNS
+ *   error, blocked fetch) or a body with no `verdicts` is 'failed'.
  *
- * Writes one summary agent_outputs diagnostic per completed run. Uses the
+ * Writes one summary agent_outputs diagnostic per completed run; its
+ * `details` JSON carries the counters plus the FIRST submit error / rejection
+ * / poll error (HTTP status + Cloudflare's message, truncated) so a failing
+ * run is diagnosable from D1, not only from worker logs. Uses the
  * CF_ACCOUNT_ID secret + CF_OPS_API_TOKEN (fallback CF_API_TOKEN). Schedule:
  * feed_configs interval.
  */
@@ -105,13 +122,14 @@ export class CfScannerAuthError extends Error {
 /** Phase 1 candidate read: bounded index range, priority sort on the bounded set. */
 export const CF_SCAN_CANDIDATES_SQL = `
   SELECT id, malicious_url FROM (
-    SELECT id, malicious_url, target_brand_id, threat_type, created_at, cf_scan_id
+    SELECT id, malicious_url, target_brand_id, threat_type, created_at, cf_scan_id, cf_verdict
       FROM threats
      WHERE created_at >= ?
      ORDER BY created_at DESC
      LIMIT ?
   ) AS recent
   WHERE cf_scan_id IS NULL
+    AND cf_verdict IS NULL
     AND malicious_url IS NOT NULL
   ORDER BY
     CASE WHEN target_brand_id IS NOT NULL THEN 0 ELSE 1 END,
@@ -152,37 +170,106 @@ export const CF_SCAN_PENDING_SQL = `
    ORDER BY +created_at ASC
    LIMIT ?`;
 
-interface CfScanSubmitResponse {
-  success: boolean;
-  result?: { uuid: string };
-  errors?: Array<{ message: string }>;
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+const SCAN_ID_RE = /^[A-Za-z0-9-]{1,128}$/;
+
+/**
+ * The scan id from a submit 2xx body. v2 (`POST /v2/scan`) returns it
+ * top-level: `{ uuid, api, visibility, url, message, result: "<report URL>" }`
+ * (`result` is a string there). The v1 envelope `{ success: true, result:
+ * { uuid } }` is still accepted. Anything else → null.
+ */
+export function parseSubmitUuid(body: unknown): string | null {
+  if (!isRecord(body)) return null;
+  if (typeof body.uuid === "string" && SCAN_ID_RE.test(body.uuid)) return body.uuid;
+  if (body.success === true && isRecord(body.result)) {
+    const legacy = body.result.uuid;
+    if (typeof legacy === "string" && SCAN_ID_RE.test(legacy)) return legacy;
+  }
+  return null;
 }
 
-interface CfScanResultResponse {
-  success: boolean;
-  result?: {
-    scan?: {
-      verdicts?: {
-        overall?: {
-          malicious: boolean;
-          categories?: string[];
-        };
-      };
-      meta?: {
-        processors?: {
-          phishing?: { phishingDetected?: boolean; brand?: string };
-          rank?: { bucket?: string; rank?: number };
-        };
-      };
-      page?: {
-        url?: string;
-        country?: string;
-        ip?: string;
-      };
-    };
-  };
-  errors?: Array<{ message: string }>;
+/** Cloudflare's error text from a non-2xx body (v4 `errors[]` or top-level fields), truncated. */
+export function cfErrorMessage(raw: string, max = 200): string {
+  let msg = "";
+  try {
+    const body: unknown = JSON.parse(raw);
+    if (isRecord(body)) {
+      const errs = Array.isArray(body.errors) ? body.errors : [];
+      const parts: string[] = [];
+      for (const e of errs) {
+        if (!isRecord(e)) continue;
+        for (const k of ["message", "title", "detail"] as const) {
+          if (typeof e[k] === "string" && e[k]) { parts.push(e[k] as string); break; }
+        }
+      }
+      if (parts.length === 0) {
+        for (const k of ["message", "title", "description", "error"] as const) {
+          if (typeof body[k] === "string" && body[k]) { parts.push(body[k] as string); break; }
+        }
+      }
+      msg = parts.join("; ");
+    }
+  } catch { /* not JSON — fall back to the raw text */ }
+  if (!msg) msg = raw;
+  msg = msg.replace(/\s+/g, " ").trim();
+  return msg.length > max ? `${msg.slice(0, max)}…` : msg;
 }
+
+export type CfScanResult =
+  | { kind: "pending" }
+  | { kind: "failed" }
+  | { kind: "verdict"; malicious: boolean; categories: string[]; ip: string | null; country: string | null };
+
+const IP_RE = /^[0-9A-Fa-f:.]{2,45}$/;
+
+/**
+ * A result 200 body → pending / failed / verdict. v2 (`GET /v2/result/{uuid}`)
+ * is top-level `{ task, page, verdicts, … }`; the v1 envelope
+ * `{ success, result: { scan: { verdicts, page } } }` is still accepted.
+ * `page.country` is stored only when it is a 2-letter code (the docs call it
+ * a country name in places), `page.ip` only when it looks like an IP.
+ */
+export function parseScanResult(body: unknown): CfScanResult {
+  if (!isRecord(body)) return { kind: "failed" };
+  let scan: Record<string, unknown> = body;
+  if (!("verdicts" in body) && !("task" in body) && "success" in body) {
+    // v1 envelope.
+    const result = isRecord(body.result) ? body.result : null;
+    const legacyScan = result && isRecord(result.scan) ? result.scan : null;
+    if (body.success !== true || !legacyScan) return { kind: "failed" };
+    scan = legacyScan;
+  }
+  const task = isRecord(scan.task) ? scan.task : null;
+  if (task) {
+    const st = typeof task.status === "string" ? task.status.toLowerCase() : "";
+    if (st === "queued" || st === "inprogress" || st === "in_progress") return { kind: "pending" };
+    if (task.success === false) return { kind: "failed" };
+  }
+  const verdicts = isRecord(scan.verdicts) ? scan.verdicts : null;
+  if (!verdicts) return { kind: "failed" };
+  const overall = isRecord(verdicts.overall) ? verdicts.overall : {};
+  const categories = Array.isArray(overall.categories)
+    ? overall.categories.filter((c): c is string => typeof c === "string" && c.length > 0)
+    : [];
+  const page = isRecord(scan.page) ? scan.page : {};
+  const ip = typeof page.ip === "string" && IP_RE.test(page.ip.trim()) ? page.ip.trim() : null;
+  const cc = typeof page.country === "string" ? page.country.trim().toUpperCase() : "";
+  return {
+    kind: "verdict",
+    malicious: overall.malicious === true,
+    categories,
+    ip,
+    country: /^[A-Z]{2}$/.test(cc) ? cc : null,
+  };
+}
+
+/** Submit statuses where Cloudflare refuses this URL for good (unresolvable / blocked / invalid / conflict). */
+const TERMINAL_SUBMIT_STATUSES = new Set([400, 409, 422]);
+
+interface FirstError { status: number; message: string }
 
 async function cfFetch<T>(accountId: string, token: string, path: string, init?: RequestInit): Promise<{ parsed: T | null; raw: string; status: number }> {
   const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/urlscanner${path}`;
@@ -197,11 +284,9 @@ async function cfFetch<T>(accountId: string, token: string, path: string, init?:
       signal: AbortSignal.timeout(10000),
     });
     const raw = await res.text();
-    if (res.status === 404) return { parsed: null, raw, status: 404 };
-    if (!res.ok) {
-      console.error(`[cf_scanner] HTTP ${res.status} for ${path}: ${raw.slice(0, 300)}`);
-      return { parsed: null, raw, status: res.status };
-    }
+    // 404 = no such scan / still in progress; any other non-2xx is reported
+    // by the caller (first error lands in the run diagnostic).
+    if (!res.ok) return { parsed: null, raw, status: res.status };
     try {
       return { parsed: JSON.parse(raw) as T, raw, status: res.status };
     } catch {
@@ -245,32 +330,39 @@ export const cloudflare_scanner: FeedModule = {
     // ─── Step 0: auth gate — before ANY D1 read ──────────────────
     await assertScannerAccess(accountId, token, tokenName);
 
-    let submitted = 0, collected = 0, errors = 0, maliciousCount = 0;
+    // Threats are core-DB rows; one handle for every read and write below.
+    const db = ctx.env.DB;
+
+    let submitted = 0, rejected = 0, collected = 0, errors = 0, maliciousCount = 0;
+    let firstSubmitError: FirstError | null = null;
+    let firstSubmitRejection: FirstError | null = null;
+    let firstPollError: FirstError | null = null;
+    let quotaHit = false;
 
     // ─── Phase 1: SUBMIT recent unscanned URLs ───────────────────
     const windowStart = toSqliteDatetime(new Date(Date.now() - CF_SCAN_WINDOW_DAYS * 86_400_000));
-    const toScan = await ctx.env.DB.prepare(CF_SCAN_CANDIDATES_SQL)
+    const toScan = await db.prepare(CF_SCAN_CANDIDATES_SQL)
       .bind(windowStart, CF_SCAN_CANDIDATE_CAP, CF_SCAN_SUBMIT_LIMIT)
       .all<{ id: string; malicious_url: string }>();
 
     // Filter out threats whose URL domain is in the safe domain allowlist.
     // The allowlist is only loaded when there is something to submit.
-    const safeSet = toScan.results.length > 0 ? await loadSafeDomainSet(ctx.env.DB) : new Set<string>();
+    const safeSet = toScan.results.length > 0 ? await loadSafeDomainSet(db) : new Set<string>();
     const filteredToScan = toScan.results.filter((row) => {
       try {
         const domain = new URL(row.malicious_url).hostname;
         if (isSafeDomain(domain, safeSet)) {
           return false;
         }
-      } catch (e) {
-        console.warn(`[cf_scanner] failed to parse URL for safe-domain check: ${row.malicious_url}`, e);
+      } catch {
+        // Unparseable URL: let Cloudflare judge it (a 400 retires it).
       }
       return true;
     });
 
     let first = true;
     for (const row of filteredToScan) {
-      const { parsed: resp, raw, status } = await cfFetch<CfScanSubmitResponse>(accountId, token, "/v2/scan", {
+      const { parsed, raw, status } = await cfFetch<unknown>(accountId, token, "/v2/scan", {
         method: "POST",
         body: JSON.stringify({ url: row.malicious_url, visibility: "Unlisted" }),
       });
@@ -282,20 +374,38 @@ export const cloudflare_scanner: FeedModule = {
         if (isAuthStatus(status)) throw new CfScannerAuthError(status, tokenName);
       }
 
-      if (resp?.success && resp.result?.uuid) {
-        const updateResult = await ctx.env.DB.prepare(
+      const uuid = status >= 200 && status < 300 ? parseSubmitUuid(parsed) : null;
+      if (uuid) {
+        const updateResult = await db.prepare(
           "UPDATE threats SET cf_scan_id = ? WHERE id = ?",
-        ).bind(resp.result.uuid, row.id).run();
+        ).bind(uuid, row.id).run();
 
         if (updateResult.meta.changes === 0) {
-          console.error(`[cf_scanner] UPDATE cf_scan_id FAILED — 0 rows changed for id=${row.id}`);
           errors++;
+          firstSubmitError ??= { status, message: `cf_scan_id UPDATE changed 0 rows for ${row.id}` };
         } else {
           submitted++;
         }
+      } else if (TERMINAL_SUBMIT_STATUSES.has(status)) {
+        // Cloudflare refuses this URL (unresolvable / blocked / invalid):
+        // retire it so it is never resubmitted (the candidate read skips
+        // rows with a verdict; cf_scan_id stays NULL, so Phase 2 never sees it).
+        rejected++;
+        firstSubmitRejection ??= { status, message: cfErrorMessage(raw) };
+        await db.prepare(
+          "UPDATE threats SET cf_verdict = 'failed' WHERE id = ? AND cf_scan_id IS NULL AND cf_verdict IS NULL",
+        ).bind(row.id).run();
       } else {
         errors++;
-        console.error(`[cf_scanner] submit failed for ${row.malicious_url}: status=${status}, errors=${JSON.stringify(resp?.errors ?? [])}, raw=${raw.slice(0, 300)}`);
+        firstSubmitError ??= {
+          status,
+          message: status >= 200 && status < 300 ? `no scan uuid in response: ${cfErrorMessage(raw)}` : cfErrorMessage(raw),
+        };
+        if (status === 429) {
+          // Quota / rate limit: every further submit this run would fail too.
+          quotaHit = true;
+          break;
+        }
       }
 
       // Brief pause between submissions
@@ -303,7 +413,7 @@ export const cloudflare_scanner: FeedModule = {
     }
 
     // ─── Phase 2: COLLECT results ────────────────────────────────
-    const pending = await ctx.env.DB.prepare(CF_SCAN_PENDING_SQL)
+    const pending = await db.prepare(CF_SCAN_PENDING_SQL)
       .bind(CF_SCAN_POLL_LIMIT)
       .all<{ id: string; cf_scan_id: string; created_at: string }>();
 
@@ -312,17 +422,17 @@ export const cloudflare_scanner: FeedModule = {
     const expireBefore = toSqliteDatetime(
       new Date(Date.now() - (CF_SCAN_WINDOW_DAYS + CF_SCAN_PENDING_EXPIRE_DAYS) * 86_400_000),
     );
-    let expired = 0;
+    let expired = 0, stillPending = 0, failed = 0;
     let firstPoll = true;
     for (const row of pending.results) {
       if (row.created_at < expireBefore) {
-        await ctx.env.DB.prepare(
+        await db.prepare(
           "UPDATE threats SET cf_verdict = 'expired' WHERE id = ? AND cf_verdict IS NULL",
         ).bind(row.id).run();
         expired++;
         continue;
       }
-      const { parsed: resp, status } = await cfFetch<CfScanResultResponse>(accountId, token, `/v2/result/${row.cf_scan_id}`);
+      const { parsed, raw, status } = await cfFetch<unknown>(accountId, token, `/v2/result/${encodeURIComponent(row.cf_scan_id)}`);
 
       // Same rule as the first submit: a 401/403 here is an auth failure
       // (e.g. the token was revoked mid-run), not a per-scan error.
@@ -331,30 +441,40 @@ export const cloudflare_scanner: FeedModule = {
         if (isAuthStatus(status)) throw new CfScannerAuthError(status, tokenName);
       }
 
-      if (!resp) {
-        // 404 = still in progress, skip
-        if (status !== 404) console.error(`[cf_scanner] ${row.cf_scan_id}: poll failed status=${status}`);
+      if (status === 404) {
+        // v2: the scan is still running. Not an error; expiry handles a
+        // scan that never finishes.
+        stillPending++;
+        continue;
+      }
+      if (status < 200 || status >= 300 || parsed === null) {
+        errors++;
+        firstPollError ??= { status, message: cfErrorMessage(raw) };
+        if (status === 429) break;
         continue;
       }
 
-      if (!resp.success || !resp.result?.scan) {
-        // A finished request with no scan body is a terminal failure (dead
-        // URL, blocked fetch): retire it now so it can't hold a poll slot.
-        errors++;
-        await ctx.env.DB.prepare(
+      const res = parseScanResult(parsed);
+      if (res.kind === "pending") {
+        stillPending++;
+        continue;
+      }
+      if (res.kind === "failed") {
+        // A finished scan with no usable verdict (dead URL, blocked fetch,
+        // DNS error): retire it now so it can't hold a poll slot.
+        failed++;
+        await db.prepare(
           "UPDATE threats SET cf_verdict = 'failed' WHERE id = ? AND cf_verdict IS NULL",
         ).bind(row.id).run();
         continue;
       }
 
-      const scan = resp.result.scan;
-      const isMalicious = scan.verdicts?.overall?.malicious ?? false;
-      const categories = scan.verdicts?.overall?.categories ?? [];
+      const isMalicious = res.malicious;
       const verdict = isMalicious ? "malicious" : "clean";
       if (isMalicious) maliciousCount++;
 
       // Update threat with verdict and adjust confidence + auto-remediate
-      await ctx.env.DB.prepare(
+      await db.prepare(
         `UPDATE threats SET
           cf_verdict = ?,
           cf_categories = ?,
@@ -370,7 +490,7 @@ export const cloudflare_scanner: FeedModule = {
         WHERE id = ?`,
       ).bind(
         verdict,
-        categories.length > 0 ? JSON.stringify(categories) : null,
+        res.categories.length > 0 ? JSON.stringify(res.categories) : null,
         isMalicious ? 1 : 0,
         isMalicious ? 1 : 0,
         isMalicious ? 1 : 0,
@@ -380,26 +500,45 @@ export const cloudflare_scanner: FeedModule = {
       collected++;
 
       // If CF provides hosting IP/country, update if missing
-      if (scan.page?.ip || scan.page?.country) {
+      if (res.ip || res.country) {
         try {
-          await ctx.env.DB.prepare(
+          await db.prepare(
             `UPDATE threats SET
               ip_address = COALESCE(ip_address, ?),
               country_code = COALESCE(country_code, ?)
             WHERE id = ? AND (ip_address IS NULL OR country_code IS NULL)`,
-          ).bind(scan.page.ip ?? null, scan.page.country ?? null, row.id).run();
+          ).bind(res.ip, res.country, row.id).run();
         } catch { /* non-fatal */ }
       }
 
       await new Promise((r) => setTimeout(r, 100));
     }
 
+    if (firstSubmitError || firstPollError) {
+      console.error(`[cf_scanner] run errors=${errors}`, { firstSubmitError, firstPollError });
+    }
+
     // The one diagnostic per run: a summary of a run that got past the auth gate.
-    const summary = `CF Scanner done: candidates=${toScan.results.length}, submitted=${submitted}, collected=${collected}, expired=${expired}, malicious=${maliciousCount}, errors=${errors}`;
+    const summary = `CF Scanner done: candidates=${toScan.results.length}, submitted=${submitted}, rejected=${rejected}, collected=${collected}, pending=${stillPending}, failed=${failed}, expired=${expired}, malicious=${maliciousCount}, errors=${errors}`;
+    const details = JSON.stringify({
+      candidates: toScan.results.length,
+      submitted,
+      rejected,
+      collected,
+      pending: stillPending,
+      failed,
+      expired,
+      malicious: maliciousCount,
+      errors,
+      quota_hit: quotaHit,
+      first_submit_error: firstSubmitError,
+      first_submit_rejection: firstSubmitRejection,
+      first_poll_error: firstPollError,
+    });
     try {
       await (await agentOutputsStore(ctx.env)).prepare(
-        "INSERT INTO agent_outputs (id, agent_id, type, summary, created_at) VALUES (?, 'sentinel', 'diagnostic', ?, datetime('now'))"
-      ).bind('diag_cf_done_' + Date.now(), summary).run();
+        "INSERT INTO agent_outputs (id, agent_id, type, summary, details, created_at) VALUES (?, 'sentinel', 'diagnostic', ?, ?, datetime('now'))"
+      ).bind('diag_cf_done_' + Date.now(), summary, details).run();
     } catch { /* non-fatal */ }
 
     return {
