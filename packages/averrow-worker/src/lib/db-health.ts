@@ -42,7 +42,7 @@ import {
 } from "./db-registry";
 import { getDatabaseSizes, type DbSizeRow } from "./db-sizes";
 import { readInventory, readSizeHistory, type DbInventory, type SizePoint } from "./db-inventory";
-import { telemetryRouteState, type TelemetryRoute, type TelemetryRouteState } from "./db-route";
+import { telemetryRouteState, type TelemetryRoute, type TelemetryRouteSource, type TelemetryRouteState } from "./db-route";
 
 // ─── Contract types (scratchpad CONTRACT.md v1) ──────────────────────
 
@@ -103,6 +103,11 @@ export interface DatabaseCard {
    * (lib/db-route.ts). 'core' until the cut-over flag is flipped.
    */
   route?: TelemetryRoute;
+  /**
+   * telemetry store only: where that route came from (a real KV flag, the
+   * last known value, the environment's cold default, or unset).
+   */
+  route_source?: TelemetryRouteSource;
 }
 
 export interface DbEdge {
@@ -633,7 +638,7 @@ export function applyTelemetryRoute(payload: DatabasesPayload, state: TelemetryR
       if (d.store !== "telemetry") return d;
       // Never hide a real problem note (e.g. size not measured) behind the route note.
       const note = d.note ?? (state.bound && state.route === "core" ? TELEMETRY_NOT_IN_USE_NOTE : null);
-      return { ...d, route: state.route, note };
+      return { ...d, route: state.route, ...(state.source ? { route_source: state.source } : {}), note };
     }),
   };
 }

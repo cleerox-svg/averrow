@@ -1150,7 +1150,8 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
 
       // Flight Control health snapshot endpoint
       if (url.pathname === '/api/v1/agents/health' && request.method === 'GET') {
-        const { requireAuth: reqAuth, isAuthContext: isAuth } = await import('./middleware/auth');
+        // Staff only: the snapshot is platform-wide agent / feed / backlog state.
+        const { requireStaff: reqAuth, isAuthContext: isAuth } = await import('./middleware/auth');
         const authResult = await reqAuth(request, env);
         if (!isAuth(authResult)) return authResult;
 

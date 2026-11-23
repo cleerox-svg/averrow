@@ -57,6 +57,27 @@ export const OBSERVER_TYPE_BREAKDOWN_24H_SQL = `
   GROUP BY threat_type
   ORDER BY count DESC`;
 
+/**
+ * "A weekly report already exists this week" check. The weekly run writes
+ * two rows: the compact `type='trend_report'` row (inline, right after the AI
+ * call, OBSERVER_WEEKLY_TREND_REPORT_INSERT_SQL) and an `insight` row with
+ * `details.type='weekly_intel'` (persisted by executeAgent at the end of the
+ * run). Until 2026-11-23 this check looked for `type='weekly_intel'`, which no
+ * code writes, so it never matched and every Sunday run before 07:00 UTC
+ * (the 00:41 cron, an FC catch-up, a manual trigger) generated another weekly
+ * report and paid for another AI call. `type='weekly_intel'` is still
+ * accepted (the CHECK allows it). Seeks idx_agent_outputs_agent
+ * (agent_id, created_at).
+ */
+export const OBSERVER_WEEKLY_EXISTS_SQL = `SELECT COUNT(*) AS n FROM agent_outputs
+   WHERE agent_id = 'observer'
+     AND created_at >= datetime('now', '-6 days')
+     AND (type IN ('trend_report', 'weekly_intel')
+          OR (type = 'insight' AND json_extract(details, '$.type') = 'weekly_intel'))`;
+
+export const OBSERVER_WEEKLY_TREND_REPORT_INSERT_SQL = `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at)
+   VALUES (?, 'observer', 'trend_report', ?, ?, ?, datetime('now'))`;
+
 export const observerAgent: AgentModule = {
   name: "observer",
   displayName: "Observer",
@@ -1006,11 +1027,7 @@ export const observerAgent: AgentModule = {
     if (isSunday && isMorning && !triggeredByEvent) {
       try {
         // Check if we already generated one this week
-        const existingWeekly = await env.DB.prepare(
-          `SELECT COUNT(*) as n FROM agent_outputs
-           WHERE agent_id = 'observer' AND type = 'weekly_intel'
-           AND created_at >= datetime('now', '-6 days')`
-        ).first<{ n: number }>();
+        const existingWeekly = await env.DB.prepare(OBSERVER_WEEKLY_EXISTS_SQL).first<{ n: number }>();
 
         if ((existingWeekly?.n ?? 0) === 0) {
           // Gather weekly data
@@ -1093,11 +1110,11 @@ export const observerAgent: AgentModule = {
             });
             weeklyGenerated = true;
 
-            // Also save directly as type='weekly_intel' for easy querying
-            await env.DB.prepare(
-              `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at)
-               VALUES (?, 'observer', 'trend_report', ?, ?, ?, datetime('now'))`
-            ).bind(
+            // Also save the compact weekly marker row (type='trend_report',
+            // only this site writes it) — it is what OBSERVER_WEEKLY_EXISTS_SQL
+            // finds on the next Sunday-morning run, and it lands right after
+            // the AI call rather than at the end of the run.
+            await env.DB.prepare(OBSERVER_WEEKLY_TREND_REPORT_INSERT_SQL).bind(
               crypto.randomUUID(),
               `Weekly Intel: ${weeklyThreats?.total ?? 0} threats, ${newCampaigns?.n ?? 0} new campaigns, top target: ${weeklyTopBrands.results[0]?.name ?? 'none'}`,
               topSeverity,

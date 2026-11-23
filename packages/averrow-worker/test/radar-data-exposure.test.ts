@@ -7,7 +7,9 @@
 // hold: until 2026-11-14 `GET /api/v1/agents/outputs` in src/index.ts was
 // requireAuth and returned agent_outputs rows — including the Radar-derived
 // cloudflare_email summary — to `client` users. It and
-// `GET /api/v1/agents/activity` are now requireStaff and pinned below.
+// `GET /api/v1/agents/activity` are now requireStaff and pinned below, as is
+// `GET /api/v1/agents/health` (requireAuth until 2026-11-23; it returns the
+// Flight Control agent_outputs diagnostic snapshot).
 // The readers:
 //
 //   bot_traffic_snapshots / radar_country_snapshots (feed cf_radar_bots)
@@ -122,7 +124,7 @@ describe("Radar-derived data: source graph stays staff-only", () => {
     expect(body).toMatch(/=>\s*\{\s*const ctx = await requireStaff\(request, env\);\s*if \(!isAuthContext\(ctx\)\) return ctx;/);
   });
 
-  it.each(["/api/v1/agents/outputs", "/api/v1/agents/activity"])(
+  it.each(["/api/v1/agents/outputs", "/api/v1/agents/activity", "/api/v1/agents/health"])(
     "src/index.ts %s is requireStaff-guarded before any query",
     (path) => {
       const text = readFileSync(join(SRC, "index.ts"), "utf8");

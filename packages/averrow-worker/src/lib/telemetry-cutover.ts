@@ -69,6 +69,7 @@ import {
   telemetryDbFor,
   type TelemetryFamily,
   type TelemetryRoute,
+  type TelemetryRouteSource,
 } from "./db-route";
 import {
   backfillCursorKey,
@@ -801,7 +802,7 @@ export interface TelemetryPreflight {
   ok: boolean;
   blocking: string[];
   warnings: string[];
-  route: { route: string; requested: string | null; bound: boolean };
+  route: { route: string; requested: string | null; bound: boolean; source?: TelemetryRouteSource };
   tables: TablePreflight[];
   config: ConfigPreflight[];
   /** Telemetry-side counts only: a COUNT(*) over core's history tables is a full scan. */
@@ -903,7 +904,7 @@ export async function telemetryPreflight(env: Env, family: TelemetryFamily = "ag
     ok: false,
     blocking,
     warnings,
-    route: { route: state.route, requested: state.requested, bound: state.bound },
+    route: { route: state.route, requested: state.requested, bound: state.bound, source: state.source },
     tables: [],
     config: [],
     history: [],
@@ -977,10 +978,14 @@ export async function telemetryPreflight(env: Env, family: TelemetryFamily = "ag
 export interface FamilyRouteInfo {
   family: TelemetryFamily;
   kv_key: string;
-  /** The parsed flag as KV holds it now (null = unset / invalid). */
+  /** The parsed flag as KV holds it now (null = unset / invalid, or KV unreadable — see flag_read_ok). */
   flag: TelemetryRoute | null;
+  /** False when the direct KV read of the flag failed (flag is then null = unknown). */
+  flag_read_ok: boolean;
   /** The route this isolate serves (≤ 60 s behind the flag). */
   route: TelemetryRoute;
+  /** Where this isolate's route came from: a real flag, the last known value, the cold default, or unset. */
+  source?: TelemetryRouteSource;
   bound: boolean;
   /** The family's durable 'used' marker (ISO time of the first telemetry use), if any. */
   used_at: string | null;
@@ -992,10 +997,16 @@ export async function telemetryRoutes(env: Env): Promise<FamilyRouteInfo[]> {
   for (const family of TELEMETRY_FAMILIES) {
     const state = await familyRouteState(env, family);
     let flag: TelemetryRoute | null = null;
+    let flagReadOk = true;
     let usedAt: string | null = null;
-    try { flag = parseTelemetryRoute(await env.CACHE.get(FAMILY_ROUTE_KV_KEYS[family])); } catch { flag = state.requested; }
+    // A failed read reports the flag as unknown (null + flag_read_ok=false),
+    // never this isolate's route — that may be a synthetic cold default.
+    try { flag = parseTelemetryRoute(await env.CACHE.get(FAMILY_ROUTE_KV_KEYS[family])); } catch { flag = null; flagReadOk = false; }
     try { usedAt = await env.CACHE.get(FAMILY_USED_KV_KEYS[family]); } catch { usedAt = null; }
-    out.push({ family, kv_key: FAMILY_ROUTE_KV_KEYS[family], flag, route: state.route, bound: state.bound, used_at: usedAt });
+    out.push({
+      family, kv_key: FAMILY_ROUTE_KV_KEYS[family], flag, flag_read_ok: flagReadOk,
+      route: state.route, source: state.source, bound: state.bound, used_at: usedAt,
+    });
   }
   return out;
 }
@@ -1043,7 +1054,10 @@ export interface SetRouteResult {
   /** true = the flag was (or, on a dry run, would be) written. */
   allowed: boolean;
   written: boolean;
+  /** The flag before the flip; null = unset, or unknown when from_read_ok is false. */
   from: TelemetryRoute | null;
+  /** False when the KV read of the current flag failed (`from` is then unknown). */
+  from_read_ok: boolean;
   to: TelemetryRoute;
   refused_reasons: string[];
   /** Flip-to-telemetry gate. */
@@ -1068,10 +1082,18 @@ export async function setTelemetryRoute(env: Env, params: SetRouteParams): Promi
   let reverse: ConfigPreflight[] | undefined;
   const state = await familyRouteState(env, family);
   if (!state.bound) refused.push("TELEMETRY_DB is not bound in this environment");
+  // `from` is what KV holds now. A failed read leaves it null (unknown) — never
+  // this isolate's route, which may be a synthetic cold default — and an
+  // expect_from guard cannot be checked, so the flip is refused.
   let from: TelemetryRoute | null = null;
-  try { from = parseTelemetryRoute(await env.CACHE.get(FAMILY_ROUTE_KV_KEYS[family])); } catch { from = state.requested; }
-  if (params.expectFrom !== undefined && (from ?? "unset") !== params.expectFrom) {
-    refused.push(`expect_from=${params.expectFrom} but the ${family} flag is ${from ?? "unset"}`);
+  let fromReadOk = true;
+  try { from = parseTelemetryRoute(await env.CACHE.get(FAMILY_ROUTE_KV_KEYS[family])); } catch { from = null; fromReadOk = false; }
+  if (params.expectFrom !== undefined) {
+    if (!fromReadOk) {
+      refused.push(`expect_from=${params.expectFrom} cannot be checked: the ${family} flag could not be read from KV`);
+    } else if ((from ?? "unset") !== params.expectFrom) {
+      refused.push(`expect_from=${params.expectFrom} but the ${family} flag is ${from ?? "unset"}`);
+    }
   }
 
   if (state.bound && to === "telemetry") {
@@ -1102,6 +1124,7 @@ export async function setTelemetryRoute(env: Env, params: SetRouteParams): Promi
     allowed,
     written,
     from,
+    from_read_ok: fromReadOk,
     to,
     refused_reasons: refused,
     ...(preflight ? { preflight } : {}),

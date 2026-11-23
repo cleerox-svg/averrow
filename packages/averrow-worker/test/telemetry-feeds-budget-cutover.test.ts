@@ -743,6 +743,34 @@ describe.skipIf(!hasSqlite())("AppSec fixes (audit / fail-open / redaction / exp
     const ok = await setTelemetryRoute(w.env, { ...p.params, expectFrom: "telemetry" });
     expect(ok.written).toBe(true);
   });
+
+  it("review L2: an unreadable flag reports from/flag as unknown (never the cold default) and refuses an expect_from flip", async () => {
+    const w = world();
+    (w.env as unknown as { ENVIRONMENT: string }).ENVIRONMENT = "production";
+    const kv = w.env.CACHE as unknown as { get: (...a: unknown[]) => Promise<string | null> };
+    const realGet = kv.get.bind(kv);
+    kv.get = async (...a: unknown[]) => {
+      if (String(a[0]).startsWith("db_route:telemetry") && !String(a[0]).includes("used")) throw new Error("kv down");
+      return realGet(...a);
+    };
+    const r = await setTelemetryRoute(w.env, { family: "budget", to: "core", dryRun: true, force: true, expectFrom: "telemetry" });
+    expect(r.allowed).toBe(false);
+    expect(r.from).toBeNull();
+    expect(r.from_read_ok).toBe(false);
+    expect(r.refused_reasons.some((x) => /cannot be checked: the budget flag could not be read/.test(x))).toBe(true);
+    const budget = r.routes.find((x) => x.family === "budget")!;
+    // This isolate serves prod's cold default, labelled as such; the flag itself is unknown.
+    expect(budget).toMatchObject({ flag: null, flag_read_ok: false, route: "telemetry", source: "cold_default" });
+    const pre = await telemetryPreflight(w.env, "budget");
+    expect(pre.route.source).toBe("cold_default");
+  });
+
+  it("review L3: routes / preflight label a real flag 'kv' and an absent one 'unset'", async () => {
+    const w = world({ feeds: "telemetry" });
+    const routes = await telemetryRoutes(w.env);
+    expect(routes.find((x) => x.family === "feeds")).toMatchObject({ flag: "telemetry", flag_read_ok: true, source: "kv" });
+    expect(routes.find((x) => x.family === "budget")).toMatchObject({ flag: null, flag_read_ok: true, source: "unset" });
+  });
 });
 
 describe.skipIf(!hasSqlite())("QA fixes (empty family / feed missing on telemetry)", () => {

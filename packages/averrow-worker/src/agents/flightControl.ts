@@ -88,6 +88,18 @@ import {
 const BACKLOG_TTL_LIVE_S = 3900;       // 65 min — survives to next hourly tick
 const BACKLOG_TTL_MONITORING_S = 14400; // 4h   — refresh every ~4th tick
 
+/**
+ * Per-agent AI spend over the last 24h for the spend-burst alert body. Runs
+ * per part of the budget_ledger union (telemetry ∪ core; the core part's
+ * backfill split goes at the marker) and is merged with unionGrouped. Seeks
+ * idx_budget_ledger_created_agent (created_at, agent_id).
+ */
+export const FC_SPEND_BURST_TOP_AGENT_SQL = `SELECT agent_id, SUM(cost_usd) AS cost FROM budget_ledger
+            WHERE created_at >= datetime('now', '-24 hours')
+              AND cost_usd > 0/*split*/
+            GROUP BY agent_id
+            ORDER BY cost DESC`;
+
 // Analyst scaling tiers on the total unlinked-active backlog (scaleAgents).
 // `backlog.total_unlinked.probe` is a BOUNDED probe capped at
 // UNLINKED_PROBE_CAP = HIGH + 1, so it answers every tier comparison
@@ -680,15 +692,15 @@ export const flightControlAgent: AgentModule = {
         : 0;
       if (overshootRatio >= 1.5) {
         // Find the top-cost agent in the last 24h for the message body.
-        const costParts = await historyParts(env, 'agent_runs', { core: db });
+        // Spend lives in budget_ledger (budget family, telemetry ∪ core);
+        // agent_runs has no cost_usd column — until 2026-11-23 this read
+        // agent_runs.cost_usd, threw "no such column", and the catch below
+        // swallowed the whole spend-burst alert.
+        const costParts = await historyParts(env, 'budget_ledger', { core: db });
         const topAgent = (await unionGrouped<{ agent_id: string; cost: number }>(
           costParts,
-          (p) => ({
-            sql: `SELECT agent_id, SUM(cost_usd) AS cost FROM agent_runs
-            WHERE started_at >= datetime('now', '-24 hours')
-              AND cost_usd > 0/*split*/
-            GROUP BY agent_id
-            ORDER BY cost DESC`,
+          () => ({
+            sql: FC_SPEND_BURST_TOP_AGENT_SQL,
             binds: [],
           }),
           { groupBy: ['agent_id'], sum: ['cost'], sort: (a, b) => b.cost - a.cost, limit: 1 },
