@@ -9,9 +9,23 @@ import { getWorkflowAgentStats, type WorkflowAgentStats } from "../lib/workflow-
 import type { Env } from "../types";
 import { telemetryStore } from "../lib/db-route";
 import {
-  byDesc, historyParts, preferFinalizedRun, unionAggregateFirst, unionGrouped,
+  byDesc, byId, historyParts, preferFinalizedRun, unionAggregateFirst, unionGrouped,
   unionGroupedResult, unionRows, unionRowsResult,
 } from "../lib/telemetry-read";
+
+/** An agent_outputs list row (handleGetAgent / handleAgentOutputs / handleAgentOutputsByName). */
+type OutputListRow = {
+  id: string;
+  agent_id?: string;
+  type: string;
+  summary: string;
+  severity: string | null;
+  details: string | null;
+  related_brand_ids: string | null;
+  related_campaign_id: string | null;
+  related_provider_ids: string | null;
+  created_at: string;
+};
 
 // ─── Derive agent definitions from modules ──────────────────────
 function getAgentDefinitions(): Array<{
@@ -123,6 +137,8 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
   // db_route:telemetry is 'core'); agent_configs from the routed store.
   const runParts = await historyParts(env, "agent_runs");
   const multi = runParts.length > 1;
+  // agent_outputs (Track B1 wave 2) is in the same family: same parts shape.
+  const outParts = await historyParts(env, "agent_outputs");
   const configDb = await telemetryStore(env);
 
   const [latestRuns, runStats24h, outputStats24h, hourlyActivity, hourlyOutputs, recentTickRows, lastOutputTimes, avgDurations, agentConfigs, workflowAgentStats] = await Promise.all([
@@ -186,13 +202,14 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
       binds: [],
     }), { groupBy: ["agent_id"], sum: ["jobs_24h", "error_count_24h"] }),
 
-    env.DB.prepare(
-      `SELECT agent_id,
+    unionGroupedResult<{ agent_id: string; outputs_24h: number }>(outParts, () => ({
+      sql: `SELECT agent_id,
               COUNT(*) as outputs_24h
        FROM agent_outputs
-       WHERE created_at >= datetime('now', '-1 day')
-       GROUP BY agent_id`
-    ).all<{ agent_id: string; outputs_24h: number }>(),
+       WHERE created_at >= datetime('now', '-1 day')/*split*/
+       GROUP BY agent_id`,
+      binds: [],
+    }), { groupBy: ["agent_id"], sum: ["outputs_24h"] }),
 
     // hourlyActivity — runs + errors per (agent, hour) bucket. Used
     // by the cards' 24h area chart (multi-series). Errors are derived
@@ -213,14 +230,15 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     // table so it can't be folded into hourlyActivity. Same 24h
     // window + bounded-index pattern as the existing aggregation
     // against agent_outputs.
-    env.DB.prepare(
-      `SELECT agent_id,
+    unionGroupedResult<{ agent_id: string; hour: number; cnt: number }>(outParts, () => ({
+      sql: `SELECT agent_id,
               CAST(strftime('%H', created_at) AS INTEGER) AS hour,
               COUNT(*) AS cnt
        FROM agent_outputs
-       WHERE created_at >= datetime('now', '-1 day')
-       GROUP BY agent_id, hour`
-    ).all<{ agent_id: string; hour: number; cnt: number }>(),
+       WHERE created_at >= datetime('now', '-1 day')/*split*/
+       GROUP BY agent_id, hour`,
+      binds: [],
+    }), { groupBy: ["agent_id", "hour"], sum: ["cnt"] }),
 
     // Recent ticks for the run-status-blocks 2D timeline. We bucket by
     // hour and group by status so a (bucket, status) tile is emitted
@@ -277,12 +295,13 @@ export const handleListAgents = handler(async (_request, env, ctx) => {
     // scan); with the time filter idx_agent_outputs_agent
     // (agent_id, created_at DESC) becomes index-only over a bounded
     // window.
-    env.DB.prepare(
-      `SELECT agent_id, MAX(created_at) as last_output_at
+    unionGroupedResult<{ agent_id: string; last_output_at: string }>(outParts, () => ({
+      sql: `SELECT agent_id, MAX(created_at) as last_output_at
        FROM agent_outputs
        WHERE created_at >= datetime('now', '-30 days')
-       GROUP BY agent_id`
-    ).all<{ agent_id: string; last_output_at: string }>(),
+       GROUP BY agent_id`,
+      binds: [],
+    }), { groupBy: ["agent_id"], max: ["last_output_at"] }),
 
     // Scope to last 24h so this doesn't scan all-time agent_runs history —
     // the table grows unboundedly (~288 Navigator runs/day alone) and this
@@ -669,12 +688,13 @@ export async function handleGetAgent(request: Request, env: Env, agentName: stri
          ORDER BY started_at DESC LIMIT ?`,
         binds: [...ids, p.limit],
       }), { key: (r) => r.id, prefer: preferFinalizedRun, sort: byDesc<RunListRow>("started_at"), limit: 50 }),
-      env.DB.prepare(
-        `SELECT id, type, summary, severity, details, related_brand_ids,
+      historyParts(env, "agent_outputs").then((outParts) => unionRowsResult<OutputListRow>(outParts, (p) => ({
+        sql: `SELECT id, type, summary, severity, details, related_brand_ids,
                 related_campaign_id, related_provider_ids, created_at
          FROM agent_outputs WHERE agent_id IN (${placeholders})
-         ORDER BY created_at DESC LIMIT 20`
-      ).bind(...ids).all(),
+         ORDER BY created_at DESC LIMIT ?`,
+        binds: [...ids, p.limit],
+      }), { key: byId, sort: byDesc<OutputListRow>("created_at", "id"), limit: 20 })),
       unionAggregateFirst<Record<string, unknown>>(runParts, (p) => ({
         sql: `SELECT
            COUNT(*) as total_runs,
@@ -828,14 +848,19 @@ export const handleAgentOutputs = handler(async (request, env, ctx) => {
   const where = clause !== "1=1" ? `WHERE ${clause}` : "";
   bindings.push(limit);
 
-  const rows = await env.DB.prepare(
-    `SELECT id, agent_id, type, summary, severity, details,
+  // agent_outputs spans telemetry ∪ core (Track B1 wave 2): deduped by id.
+  // `where` is built by buildWhereClause from fixed column names; every
+  // value is a bind. The last bind is the per-part limit.
+  const filterBinds = bindings.slice(0, -1);
+  const rows = await unionRows<OutputListRow>(await historyParts(env, "agent_outputs"), (p) => ({
+    sql: `SELECT id, agent_id, type, summary, severity, details,
             related_brand_ids, related_campaign_id, related_provider_ids, created_at
      FROM agent_outputs ${where}
-     ORDER BY created_at DESC LIMIT ?`
-  ).bind(...bindings).all();
+     ORDER BY created_at DESC LIMIT ?`,
+    binds: [...filterBinds, p.limit],
+  }), { key: byId, sort: byDesc<OutputListRow>("created_at", "id"), limit });
 
-  return success(rows.results, ctx.origin);
+  return success(rows, ctx.origin);
 });
 
 // ─── Agent outputs by name ───────────────────────────────────────
@@ -847,14 +872,16 @@ export async function handleAgentOutputsByName(request: Request, env: Env, agent
     const ids = agentName === NAVIGATOR_DEF.name ? NAVIGATOR_IDS : [agentName];
     const placeholders = ids.map(() => '?').join(',');
 
-    const rows = await env.DB.prepare(
-      `SELECT id, agent_id, type, summary, severity, details,
+    // agent_outputs spans telemetry ∪ core (Track B1 wave 2): deduped by id.
+    const rows = await unionRows<OutputListRow>(await historyParts(env, "agent_outputs"), (p) => ({
+      sql: `SELECT id, agent_id, type, summary, severity, details,
               related_brand_ids, related_campaign_id, related_provider_ids, created_at
        FROM agent_outputs WHERE agent_id IN (${placeholders})
-       ORDER BY created_at DESC LIMIT ?`
-    ).bind(...ids, limit).all();
+       ORDER BY created_at DESC LIMIT ?`,
+      binds: [...ids, p.limit],
+    }), { key: byId, sort: byDesc<OutputListRow>("created_at", "id"), limit });
 
-    return success(rows.results, origin);
+    return success(rows, origin);
   } catch (err) {
     return error(String(err), 500, origin);
   }
@@ -1062,15 +1089,18 @@ export const handleAgentStats = handler(async (_request, env, ctx) => {
     binds: [],
   }), { groupBy: ["agent_id"], sum: ["runs", "successes"] }) };
 
-  const latestOutputs = await env.DB.prepare(
-    `SELECT id, agent_id, type, summary, severity, created_at
-     FROM agent_outputs ORDER BY created_at DESC LIMIT 10`
-  ).all();
+  // agent_outputs spans telemetry ∪ core (Track B1 wave 2): deduped by id.
+  type LatestOutputRow = { id: string; agent_id: string; type: string; summary: string; severity: string | null; created_at: string };
+  const latestOutputs = await unionRows<LatestOutputRow>(await historyParts(env, "agent_outputs"), (p) => ({
+    sql: `SELECT id, agent_id, type, summary, severity, created_at
+     FROM agent_outputs ORDER BY created_at DESC LIMIT ?`,
+    binds: [p.limit],
+  }), { key: byId, sort: byDesc<LatestOutputRow>("created_at", "id"), limit: 10 });
 
   return success({
     summary,
     todayByAgent: todayRuns.results,
-    latestOutputs: latestOutputs.results,
+    latestOutputs,
   }, ctx.origin);
 });
 

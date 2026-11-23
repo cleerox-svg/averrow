@@ -37,6 +37,12 @@
 // and read through unionRows / unionFirst / unionGrouped.
 
 //
+// agent_outputs (wave 2) is an agents-family history table: it follows
+// `db_route:telemetry` and the agents 'used' marker like agent_runs. It is
+// append-only (no writer UPDATEs a row), so a row read from either part is
+// final; JOINs to core tables (campaigns, brands) are never written in SQL —
+// read the outputs through the union, then look the core rows up separately.
+//
 // Feeds / budget families (Track B1d) use the same machinery: their history
 // tables are feed_pull_history, budget_ledger and agent_budget_rollups, and
 // each table's union follows ITS family's route + 'used' marker
@@ -55,7 +61,7 @@ export type ReadDb = Pick<D1Database, "prepare">;
 
 /** History tables per family (append / finalize-in-place; rollups: keyed counters). */
 export type TelemetryHistoryTable =
-  | "agent_runs" | "agent_events" | "agent_activity_log"
+  | "agent_runs" | "agent_events" | "agent_activity_log" | "agent_outputs"
   | "feed_pull_history"
   | "budget_ledger" | "agent_budget_rollups";
 
@@ -64,6 +70,7 @@ export const HISTORY_TIME_COLUMN: Record<TelemetryHistoryTable, string> = {
   agent_runs: "started_at",
   agent_events: "created_at",
   agent_activity_log: "created_at",
+  agent_outputs: "created_at",
   feed_pull_history: "started_at",
   budget_ledger: "created_at",
   // 'YYYY-MM' — the backfill window is in whole months (closed months only).
@@ -75,13 +82,19 @@ export const HISTORY_TABLE_FAMILY: Record<TelemetryHistoryTable, TelemetryFamily
   agent_runs: "agents",
   agent_events: "agents",
   agent_activity_log: "agents",
+  agent_outputs: "agents",
   feed_pull_history: "feeds",
   budget_ledger: "budget",
   agent_budget_rollups: "budget",
 };
 
-/** The agents family's history tables (B1c; the default backfill / preflight set). */
-export const TELEMETRY_HISTORY_TABLES: readonly TelemetryHistoryTable[] = ["agent_runs", "agent_events", "agent_activity_log"];
+/**
+ * The agents family's history tables (B1c; the default backfill / preflight
+ * set). agent_outputs (wave 2) is append-only: every row is final on insert,
+ * so the 24 h backfill horizon only keeps the window consistent with the
+ * other tables.
+ */
+export const TELEMETRY_HISTORY_TABLES: readonly TelemetryHistoryTable[] = ["agent_runs", "agent_events", "agent_activity_log", "agent_outputs"];
 
 /** History tables per family. */
 export const FAMILY_HISTORY_TABLES: Record<TelemetryFamily, readonly TelemetryHistoryTable[]> = {

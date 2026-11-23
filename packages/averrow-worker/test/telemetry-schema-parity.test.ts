@@ -1,5 +1,5 @@
 /**
- * migrations-telemetry/ vs migrations/: the wave-1 tables must have the same
+ * migrations-telemetry/ vs migrations/: the telemetry tables (wave 1 + agent_outputs) must have the same
  * shape on both DBs until the cut-over (Track B1a).
  *
  * Core is built by replaying every migrations/*.sql file; telemetry by
@@ -12,9 +12,10 @@
  * matching migrations-telemetry/NNNN_*.sql. When this test fails, that is
  * what is missing.
  *
- * The one allowed difference: FKs pointing OUTSIDE the cluster
- * (feed_configs.updated_by -> users) are dropped on telemetry, because D1
- * enforces foreign keys and users stays on core.
+ * The only allowed differences: FKs pointing OUTSIDE the cluster
+ * (feed_configs.updated_by -> users, agent_outputs.related_campaign_id ->
+ * campaigns) are dropped on telemetry, because D1 enforces foreign keys and
+ * users / campaigns stay on core.
  */
 
 import { describe, it, expect } from "vitest";
@@ -24,7 +25,7 @@ import { resolve } from "node:path";
 import { hasSqlite, openMigratedDb, type SqliteDb } from "./sqlite-d1-harness";
 import { splitStatements } from "./migration-schema";
 
-const WAVE1_TABLES = [
+const TELEMETRY_TABLES = [
   "agent_runs",
   "agent_configs",
   "agent_events",
@@ -36,6 +37,8 @@ const WAVE1_TABLES = [
   "budget_ledger",
   "budget_config",
   "agent_budget_rollups",
+  // Wave 2 (migrations-telemetry/0002_agent_outputs.sql): agents family.
+  "agent_outputs",
 ] as const;
 
 const MIRROR_HINT =
@@ -111,17 +114,17 @@ function shapeOf(db: SqliteDb, table: string): Shape | null {
   return { columns, checks: checks(master[0]!.sql), indexes, fks };
 }
 
-describe.skipIf(!hasSqlite())("telemetry schema parity (migrations-telemetry/ == migrations/ for wave-1 tables)", () => {
+describe.skipIf(!hasSqlite())("telemetry schema parity (migrations-telemetry/ == migrations/ for the telemetry tables)", () => {
   const core = hasSqlite() ? openMigratedDb() : null;
   const tel = hasSqlite() ? openTelemetryDb() : null;
-  const cluster = new Set<string>(WAVE1_TABLES);
+  const cluster = new Set<string>(TELEMETRY_TABLES);
 
-  it("telemetry holds exactly the wave-1 tables", () => {
+  it("telemetry holds exactly the telemetry tables", () => {
     const tables = (tel!.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>).map((r) => r.name);
-    expect(tables, MIRROR_HINT).toEqual([...WAVE1_TABLES].sort());
+    expect(tables, MIRROR_HINT).toEqual([...TELEMETRY_TABLES].sort());
   });
 
-  for (const table of WAVE1_TABLES) {
+  for (const table of TELEMETRY_TABLES) {
     it(`${table}: same columns, CHECKs, indexes and in-cluster FKs`, () => {
       const c = shapeOf(core!, table);
       const t = shapeOf(tel!, table);
@@ -135,14 +138,16 @@ describe.skipIf(!hasSqlite())("telemetry schema parity (migrations-telemetry/ ==
     });
   }
 
-  it("the only FK dropped on telemetry is feed_configs.updated_by -> users", () => {
-    const dropped = WAVE1_TABLES.flatMap((t) => shapeOf(core!, t)!.fks.filter((f) => !cluster.has(f.table)).map((f) => `${t}.${f.from}->${f.table}`));
-    expect(dropped).toEqual(["feed_configs.updated_by->users"]);
+  it("the only FKs dropped on telemetry are feed_configs.updated_by -> users and agent_outputs.related_campaign_id -> campaigns", () => {
+    const dropped = TELEMETRY_TABLES.flatMap((t) => shapeOf(core!, t)!.fks.filter((f) => !cluster.has(f.table)).map((f) => `${t}.${f.from}->${f.table}`));
+    expect(dropped.sort()).toEqual(["agent_outputs.related_campaign_id->campaigns", "feed_configs.updated_by->users"]);
   });
 
   it("telemetry accepts rows with FK enforcement on (no FK to a table it lacks)", () => {
     tel!.exec("INSERT INTO feed_configs (feed_name, display_name, schedule_cron, updated_by) VALUES ('f', 'F', '* * * * *', 'usr_1')");
     tel!.exec("INSERT INTO feed_pull_history (id, feed_name) VALUES ('p1', 'f')");
     expect(() => tel!.exec("INSERT INTO feed_pull_history (id, feed_name) VALUES ('p2', 'missing')")).toThrow();
+    // agent_outputs.related_campaign_id names a core campaign: no FK here.
+    tel!.exec("INSERT INTO agent_outputs (id, agent_id, type, summary, related_campaign_id) VALUES ('o1', 'strategist', 'insight', 's', 'camp_on_core')");
   });
 });

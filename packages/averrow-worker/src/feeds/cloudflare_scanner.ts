@@ -2,6 +2,7 @@ import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { loadSafeDomainSet, isSafeDomain } from "../lib/safeDomains";
 import { toSqliteDatetime } from "../lib/backoff";
 import type { Env } from "../types";
+import { agentOutputsStore } from "../db/agent-outputs";
 
 /**
  * Cloudflare URL Scanner — two-phase enrichment of recent threat URLs.
@@ -396,7 +397,7 @@ export const cloudflare_scanner: FeedModule = {
     // The one diagnostic per run: a summary of a run that got past the auth gate.
     const summary = `CF Scanner done: candidates=${toScan.results.length}, submitted=${submitted}, collected=${collected}, expired=${expired}, malicious=${maliciousCount}, errors=${errors}`;
     try {
-      await ctx.env.DB.prepare(
+      await (await agentOutputsStore(ctx.env)).prepare(
         "INSERT INTO agent_outputs (id, agent_id, type, summary, created_at) VALUES (?, 'sentinel', 'diagnostic', ?, datetime('now'))"
       ).bind('diag_cf_done_' + Date.now(), summary).run();
     } catch { /* non-fatal */ }

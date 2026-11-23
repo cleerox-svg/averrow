@@ -56,7 +56,7 @@ export const advisories: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const feedUrl = ctx.feedUrl || DEFAULT_FEED_URL;
 
-    const res = await diagnosticFetch(ctx.env.DB, "advisories", feedUrl, {
+    const res = await diagnosticFetch(ctx.env, "advisories", feedUrl, {
       headers: { "User-Agent": "Averrow-ThreatIntel/1.0", Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml" },
     });
     if (!res.ok) throw new Error(`Advisories HTTP ${res.status}`);

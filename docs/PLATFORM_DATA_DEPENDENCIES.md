@@ -62,7 +62,13 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 > `env.TELEMETRY_DB` directly (`test/db-access-ratchet.test.ts`), do not
 > add a JOIN from a cluster table to a table of another family or of core,
 > and do not batch two families together (`test/telemetry-batch-isolation.test.ts`).
-> `agent_outputs` is wave 2 and stays on core for now. A core migration
+> `agent_outputs` joined the AGENTS family in wave 2 (same flag and `used`
+> marker; `migrations-telemetry/0002`): runs write it on the run's DB
+> (`executeAgent`, `AgentContext.telemetryRoute`), standalone writers resolve
+> once (`db/agent-outputs.ts` `agentOutputsStore`), and every reader —
+> dedupe checks and Flight Control's AI-outage rollup included — reads the
+> telemetry ∪ core union, merging per-part partials before any threshold.
+> Never JOIN it to a core table (`campaigns`, `brands`) in SQL. A core migration
 > changing a cluster table must be mirrored in `migrations-telemetry/`
 > (`test/telemetry-schema-parity.test.ts`, `test/telemetry-migration-guard.test.ts`).
 
@@ -70,7 +76,7 @@ This doc exists because the codebase has multiple status-of-the-system surfaces 
 |---|---|---|---|
 | `agent_runs` | `lib/agentRunner.executeAgent` at start/end | API, status, FC, diagnostics | Per-execution lifecycle for inline agents. Always seeded as status=`partial` (`completed_at` NULL) at start, then UPDATEd at end to `success` / `failed`, or to `partial` again when the run finished degraded (`AgentResult.degraded` — every AI call failed) or is held for approval. A finished run always has `completed_at`; **`partial` + `completed_at IS NULL` is in flight**, so never count `status='partial'` alone as either a failure or a success. |
 | `agent_activity_log` | Workflow bodies (`workflows/*.ts`) AND `lib/workflow-dispatch.dispatchWorkflow` AND FC logActivity | API, status, FC, diagnostics, notification narrator | Per-event log. **Sole source of truth for workflow-dispatched agents** because they don't write to `agent_runs`. Event types: `workflow_dispatched`, `batch_complete`, `workflow_dispatch_failed`, `workflow_cooldown_skip`, `started`, `recovery`, `batch_complete` (FC tick), etc. |
-| `agent_outputs` | Agent execute() bodies | Briefing, narrator, diagnostics (`/api/insights/latest` + Home "Latest Intel" retired in PR-D, 2026-10) | Per-agent insights / diagnostics. AI-generated content. Type column: `insight`, `correlation`, `diagnostic`. The legacy `score` (Cartographer) and `classification` (Analyst) types were folded into `insight` in the 2026-05-16 platform audit so they surfaced through the (since-retired) `/api/insights/latest`. Cartographer additionally gates Haiku scoring to providers with ≥5 active threats OR repeat-offender status (≥3 campaigns) — saves ~40% of its daily AI spend. |
+| `agent_outputs` (TELEMETRY_DB agents family since wave 2; read as telemetry ∪ core) | Agent execute() bodies (persisted by `executeAgent` on the run's DB), feed insights / diagnostics | Briefing, narrator, diagnostics (`/api/insights/latest` + Home "Latest Intel" retired in PR-D, 2026-10) | Per-agent insights / diagnostics. AI-generated content. Type column: `insight`, `correlation`, `diagnostic`. The legacy `score` (Cartographer) and `classification` (Analyst) types were folded into `insight` in the 2026-05-16 platform audit so they surfaced through the (since-retired) `/api/insights/latest`. Cartographer additionally gates Haiku scoring to providers with ≥5 active threats OR repeat-offender status (≥3 campaigns) — saves ~40% of its daily AI spend. |
 | `agent_outputs.details` AI counters (`aiCallsAttempted` / `aiCallsSucceeded` / `aiCallsSkipped` / `aiFirstFailureKind` / `aiFirstError`) | analyst, sentinel, cartographer via `lib/haiku.ts` `newAiCallCounters` / `recordAiCall` — once per real API call, never per item | FC `platform_ai_calls_failing` and diagnostics `ai_health` (both `json_extract`, `json_valid`-guarded, agent-agnostic) | Strictly-API call outcomes. **Not** the legacy `haikuSuccesses` counters, which count rules-based skips as successes. Key names are a contract between the three writers and the two readers. |
 | `agent_events` | Agents on completion | Orchestrator's `processAgentEvents` | Event-driven dispatch trigger. **Mostly telemetry** post-PR-L — only `pivot_detected` → Observer is wired. See CLAUDE.md §6 for the canonical chain vs the historical declared chain. |
 | `agent_configs` | Admin endpoints, FC auto-pause logic | All status surfaces | Circuit breaker state (`enabled`, `paused_reason`, `consecutive_failures`, etc). |

@@ -165,11 +165,13 @@ export class CampaignHunterWorkflow extends WorkflowEntrypoint<Env, CampaignHunt
     }
 
     // ── Persist outputs + finalize the run (one durable step) ─────
+    // Outputs go to the run's telemetry DB (agent_outputs is in the agents
+    // family, Track B1 wave 2) — the route the init step resolved.
     await step.do("persist", async () => {
       let outputsGenerated = 0;
       for (const output of summary.agentOutputs) {
         try {
-          await this.env.DB.prepare(
+          await runDb().prepare(
             `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, related_brand_ids, related_campaign_id, related_provider_ids, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
           ).bind(

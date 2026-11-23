@@ -44,7 +44,7 @@ export const cisa_iran_iocs: FeedModule = {
 
     // ─── 1. Fetch structured IOCs from GitHub repo ──────────────
     try {
-      const res = await diagnosticFetch(ctx.env.DB, "cisa_iran_iocs", feedUrl, {
+      const res = await diagnosticFetch(ctx.env, "cisa_iran_iocs", feedUrl, {
         headers: {
           "User-Agent": "Averrow-ThreatIntel/1.0",
           Accept: "application/json",

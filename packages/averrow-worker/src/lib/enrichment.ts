@@ -19,6 +19,7 @@ import { batchRDAPLookup } from "./whois";
 import { enrichBrands } from "./brandDetect";
 import { prioritizeIdpDns } from "./dns-queue-priority";
 import { cachedCount, THREATS_TOTAL_TTL_S } from "./cached-count";
+import { agentOutputsStore } from "../db/agent-outputs";
 
 export interface EnrichmentResult {
   dnsResolved: number;
@@ -112,7 +113,8 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
 
   // Write diagnostic agent_output every run for visibility
   try {
-    await env.DB.prepare(
+    // agents telemetry family (agent_outputs, Track B1 wave 2).
+    await (await agentOutputsStore(env)).prepare(
       `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at)
        VALUES (?, 'enrichment', 'diagnostic', ?, 'info', ?, datetime('now'))`,
     ).bind(
@@ -190,7 +192,7 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
       if (geoMap.size === 0 && ips.length > 0) {
         console.error("[enrich] WARNING: GeoIP returned 0 results — ipinfo.io may be rate limiting or blocking");
         try {
-          await env.DB.prepare(
+          await (await agentOutputsStore(env)).prepare(
             `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, created_at)
              VALUES (?, 'enrichment', 'diagnostic', ?, 'high', datetime('now'))`,
           ).bind(

@@ -16,6 +16,7 @@ import { computeBrandExposureScore } from "../lib/brand-scoring";
 import { getBrandById, bumpBrandThreatCountStmt } from "../db/brands";
 import { loadBrandEnrichment } from "../lib/analyst-brand-enrichment";
 import { GenericBrandSet, isGenericBrand, isGenericBrandName, keywordMatchesHost, matchGenericBrand } from "../lib/brandDetect";
+import { agentOutputsDbForRun } from "../db/agent-outputs";
 
 // ─── Domain parsing utilities ─────────────────────────────────────
 
@@ -341,7 +342,8 @@ export const analystAgent: AgentModule = {
       if (itemsProcessed === 1) {
         const diagSummary = `ANTHROPIC_API_KEY set=${!!env.ANTHROPIC_API_KEY}, LRX_API_KEY set=${!!env.LRX_API_KEY}, key_source=${keySource}, haiku_success=${result.success}, haiku_error=${result.error ?? "none"}, domain=${threat.malicious_domain}`;
         try {
-          await env.DB.prepare(
+          // On the run's telemetry DB (agents family, Track B1 wave 2).
+          await (await agentOutputsDbForRun(env, ctx.telemetryRoute)).prepare(
             `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at)
              VALUES (?, 'analyst', 'diagnostic', ?, 'info', ?, datetime('now'))`
           ).bind(

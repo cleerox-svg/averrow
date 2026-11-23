@@ -5,6 +5,7 @@
  */
 
 import type { Env } from "../types";
+import { agentOutputsStore } from "../db/agent-outputs";
 
 export interface DiagnosticEntry {
   feedName: string;
@@ -17,10 +18,11 @@ export interface DiagnosticEntry {
 
 /**
  * Log a diagnostic entry to agent_outputs with type='diagnostic'.
- * Non-fatal — swallows errors so it never breaks the feed.
+ * Non-fatal — swallows errors so it never breaks the feed. Written on the
+ * agents family's routed store (agent_outputs, Track B1 wave 2).
  */
 export async function logFeedDiagnostic(
-  db: D1Database,
+  env: Env,
   entry: DiagnosticEntry,
 ): Promise<void> {
   try {
@@ -34,7 +36,7 @@ export async function logFeedDiagnostic(
       .filter(Boolean)
       .join("\n");
 
-    await db.prepare(
+    await (await agentOutputsStore(env)).prepare(
       `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, created_at)
        VALUES (?, 'feed_diagnostics', 'diagnostic', ?, ?, datetime('now'))`,
     )
@@ -60,7 +62,7 @@ export async function logFeedDiagnostic(
  * is re-thrown with the redacted message so feedRunner never stores it.
  */
 export async function diagnosticFetch(
-  db: D1Database,
+  env: Env,
   feedName: string,
   fetchUrl: string,
   init?: RequestInit,
@@ -78,7 +80,7 @@ export async function diagnosticFetch(
     res = await fetch(fetchUrl, init);
   } catch (err) {
     const errorMessage = redact(err instanceof Error ? err.message : String(err));
-    await logFeedDiagnostic(db, {
+    await logFeedDiagnostic(env, {
       feedName,
       url,
       method,
@@ -101,7 +103,7 @@ export async function diagnosticFetch(
     bodyPreview = "<could not read body>";
   }
 
-  await logFeedDiagnostic(db, {
+  await logFeedDiagnostic(env, {
     feedName,
     url,
     method,

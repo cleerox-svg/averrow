@@ -15,7 +15,7 @@ import {
 import { isTransientD1Error, withD1Retry } from "../lib/d1-retry";
 import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 import type { Env } from "../types";
-import { historyParts, unionGrouped } from "../lib/telemetry-read";
+import { byDesc, historyParts, unionFirst, unionGrouped } from "../lib/telemetry-read";
 import { familyStore } from "../lib/db-route";
 
 // ─── Agent-run contract wrapper ─────────────────────────────────
@@ -788,13 +788,20 @@ export async function fetchComprehensiveBriefing(
     //    (readEnrichmentTotals) instead of one full threats scan.
     () => readEnrichmentTotals(rc),
 
-    // E) Flight Controller
-    () => safeFirst(
-      rc, "flight_controller",
-      `SELECT summary, created_at FROM agent_outputs
+    // E) Flight Controller — newest FC diagnostic on EITHER DB
+    //    (agent_outputs spans telemetry ∪ core, Track B1 wave 2).
+    () => guardedRead<{ summary: string | null; created_at: string | null }>(
+      rc, "flight_controller", { summary: null, created_at: null },
+      async () => (await unionFirst<{ summary: string | null; created_at: string | null }>(
+        await historyParts(rc.env, "agent_outputs", { core: rc.db }),
+        () => ({
+          sql: `SELECT summary, created_at FROM agent_outputs
        WHERE agent_id = 'flight_control' AND type = 'diagnostic'
        ORDER BY created_at DESC LIMIT 1`,
-      { summary: null, created_at: null },
+          binds: [],
+        }),
+        { sort: byDesc<{ summary: string | null; created_at: string | null }>("created_at") },
+      )) ?? { summary: null, created_at: null },
     ),
 
     // F) Agent Activity (12h)

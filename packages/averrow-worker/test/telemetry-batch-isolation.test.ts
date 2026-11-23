@@ -3,7 +3,8 @@
  *
  * Each family moves to TELEMETRY_DB on its own flag (lib/db-route.ts
  * FAMILY_TABLES): agents (agent_runs, agent_configs, agent_events,
- * agent_activity_log, agent_approvals — `db_route:telemetry`), feeds
+ * agent_activity_log, agent_approvals, agent_outputs (wave 2) —
+ * `db_route:telemetry`), feeds
  * (feed_configs, feed_status, feed_pull_history —
  * `db_route:telemetry:feeds`) and budget (budget_ledger, budget_config,
  * agent_budget_rollups — `db_route:telemetry:budget`); every other table
@@ -155,6 +156,19 @@ describe("telemetry batch isolation", () => {
     expect(offenders).toHaveLength(2);
     expect(offenders[0]).toMatch(/agent_runs with brands/);
     expect(offenders[1]).toMatch(/agent_events with threats/);
+  });
+
+  it("agent_outputs is an agents-family table: batched with agent_runs is fine, with a core table is flagged (self-test)", () => {
+    expect(groupOf("agent_outputs")).toBe("agents");
+    const text = [
+      "async function h(db: D1Database) {",
+      "  await db.batch([db.prepare(`INSERT INTO agent_outputs (id) VALUES (?)`), db.prepare(`UPDATE agent_runs SET outputs_generated = 1`)]);",
+      "  await db.batch([db.prepare(`INSERT INTO agent_outputs (id) VALUES (?)`), db.prepare(`UPDATE campaigns SET x = 1`)]);",
+      "}",
+    ].join("\n");
+    const { offenders } = scanBatches([{ rel: "z.ts", text }]);
+    expect(offenders).toHaveLength(1);
+    expect(offenders[0]).toMatch(/agent_outputs with campaigns/);
   });
 
   it("flags a batch that mixes two families, not one that stays inside a family (self-test)", () => {

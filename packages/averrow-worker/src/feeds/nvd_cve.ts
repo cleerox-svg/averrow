@@ -1,6 +1,7 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { feedStoreOf } from "./types";
 import { logFeedDiagnostic } from "../lib/feedDiagnostic";
+import { agentOutputsStore } from "../db/agent-outputs";
 
 /**
  * NIST National Vulnerability Database — CVE 2.0 JSON API.
@@ -643,7 +644,7 @@ async function fetchPage(
       }
     } catch (err) {
       if (err instanceof NonTransientError) {
-        await logFeedDiagnostic(run.ctx.env.DB, {
+        await logFeedDiagnostic(run.ctx.env, {
           feedName: "nvd_cve", url, method: "GET", httpStatus: null, bodyPreview: "", errorMessage: err.message,
         });
         throw err;
@@ -656,7 +657,7 @@ async function fetchPage(
       const timedOut = errName === "TimeoutError" || /timeout|timed out|aborted/i.test(lastError);
       if (timedOut) run.pageSize = Math.max(MIN_PAGE_SIZE, Math.floor(run.pageSize / 2));
     }
-    await logFeedDiagnostic(run.ctx.env.DB, {
+    await logFeedDiagnostic(run.ctx.env, {
       feedName: "nvd_cve", url, method: "GET", httpStatus: null, bodyPreview: "",
       errorMessage: `attempt ${attempt}/${FETCH_ATTEMPTS}: ${lastError}`,
     });
@@ -874,7 +875,7 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
         try {
           await env.CACHE.put(CURSOR_KEY, JSON.stringify(state));
         } catch (kvErr) {
-          await logFeedDiagnostic(env.DB, {
+          await logFeedDiagnostic(env, {
             feedName: "nvd_cve", url: CURSOR_KEY, method: "KV_PUT", httpStatus: null, bodyPreview: "",
             errorMessage: `cursor not saved while failing the pull (${original.message}): ${
               kvErr instanceof Error ? kvErr.message : String(kvErr)
@@ -1042,7 +1043,7 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
       // Digest severity = the worst tier present.
       const digestSeverity: Severity = ranked[0]?.severity === "info" ? "low" : (ranked[0]?.severity ?? "info");
 
-      await env.DB.prepare(
+      await (await agentOutputsStore(env)).prepare(
         "INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at) VALUES (?, 'sentinel', 'insight', ?, ?, ?, datetime('now'))",
       )
         .bind(`nvd_${nowMs}`, summary, digestSeverity, details)

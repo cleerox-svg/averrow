@@ -39,7 +39,7 @@ export const otx_alienvault: FeedModule = {
       Accept: "application/json",
       "X-OTX-API-KEY": ctx.env.OTX_API_KEY,
     };
-    const res = await diagnosticFetch(ctx.env.DB, "otx_alienvault", feedUrl, { headers });
+    const res = await diagnosticFetch(ctx.env, "otx_alienvault", feedUrl, { headers });
     if (!res.ok) throw new Error(`OTX HTTP ${res.status}`);
 
     let body: {

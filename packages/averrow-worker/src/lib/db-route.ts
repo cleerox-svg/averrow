@@ -12,7 +12,8 @@
 // (POST /api/internal/telemetry/route, lib/telemetry-cutover.ts):
 //
 //   agents  `db_route:telemetry`          agent_runs, agent_configs, agent_events,
-//                                          agent_activity_log, agent_approvals (B1c)
+//                                          agent_activity_log, agent_approvals (B1c),
+//                                          agent_outputs (wave 2)
 //   feeds   `db_route:telemetry:feeds`    feed_configs, feed_status, feed_pull_history
 //   budget  `db_route:telemetry:budget`   budget_ledger, budget_config, agent_budget_rollups
 //
@@ -55,7 +56,8 @@ export const TELEMETRY_FAMILIES: readonly TelemetryFamily[] = ["agents", "feeds"
 
 /** The tables each family moves. A D1 batch never mixes two families (test/telemetry-batch-isolation.test.ts). */
 export const FAMILY_TABLES: Record<TelemetryFamily, readonly string[]> = {
-  agents: ["agent_runs", "agent_configs", "agent_events", "agent_activity_log", "agent_approvals"],
+  // agent_outputs joined in wave 2 (migrations-telemetry/0002): same flag, same 'used' marker.
+  agents: ["agent_runs", "agent_configs", "agent_events", "agent_activity_log", "agent_approvals", "agent_outputs"],
   feeds: ["feed_configs", "feed_status", "feed_pull_history"],
   budget: ["budget_ledger", "budget_config", "agent_budget_rollups"],
 };

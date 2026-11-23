@@ -7,6 +7,7 @@
  * Writes to agent_outputs for analyst consumption on the HUD and insights panel.
  */
 
+import type { Env } from "../types";
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
 import { generateInsight, newAiCallCounters, recordAiCall, isAiAllFailing } from "../lib/haiku";
 import { createNotification } from "../lib/notifications";
@@ -15,6 +16,8 @@ import { renderIntelSectorTrend } from "../lib/intel-templates";
 import { emailPostureRollup, gradeDistributionByCount } from "../lib/email-posture-rollup";
 import { buildPivotReport, pivotsFromInput } from "../lib/observer-pivot-report";
 import { stampObserverScheduledSuccess } from "../lib/observer-schedule-marker";
+import { agentOutputsDbForRun } from "../db/agent-outputs";
+import { byDesc, historyParts, unionAggregateFirst, unionRows } from "../lib/telemetry-read";
 
 /** Cube window shared by the three 24h aggregates below: the last 24 cube hours. */
 const CUBE_24H_SQL = "strftime('%Y-%m-%d %H:00:00', 'now', '-24 hours')";
@@ -68,12 +71,26 @@ export const OBSERVER_TYPE_BREAKDOWN_24H_SQL = `
  * report and paid for another AI call. `type='weekly_intel'` is still
  * accepted (the CHECK allows it). Seeks idx_agent_outputs_agent
  * (agent_id, created_at).
+ *
+ * agent_outputs spans telemetry ∪ core (Track B1 wave 2): the check runs on
+ * both parts (observerWeeklyExists), so last week's row counts whichever DB
+ * holds it. The split marker keeps a backfilled copy from counting twice.
  */
 export const OBSERVER_WEEKLY_EXISTS_SQL = `SELECT COUNT(*) AS n FROM agent_outputs
    WHERE agent_id = 'observer'
      AND created_at >= datetime('now', '-6 days')
      AND (type IN ('trend_report', 'weekly_intel')
-          OR (type = 'insight' AND json_extract(details, '$.type') = 'weekly_intel'))`;
+          OR (type = 'insight' AND json_extract(details, '$.type') = 'weekly_intel'))/*split*/`;
+
+/** Whether a weekly report row exists on EITHER DB (see OBSERVER_WEEKLY_EXISTS_SQL). */
+export async function observerWeeklyExists(env: Env): Promise<boolean> {
+  const row = await unionAggregateFirst<{ n: number }>(
+    await historyParts(env, "agent_outputs"),
+    () => ({ sql: OBSERVER_WEEKLY_EXISTS_SQL, binds: [] }),
+    { sum: ["n"] },
+  );
+  return (row?.n ?? 0) > 0;
+}
 
 export const OBSERVER_WEEKLY_TREND_REPORT_INSERT_SQL = `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at)
    VALUES (?, 'observer', 'trend_report', ?, ?, ?, datetime('now'))`;
@@ -336,12 +353,14 @@ export const observerAgent: AgentModule = {
     }
 
     // ─── Recent agent outputs for context ────────────────────────
-    const recentOutputs = await env.DB.prepare(`
-      SELECT agent_id as agent, summary
+    // telemetry ∪ core (Track B1 wave 2), deduped by id, newest 10.
+    type RecentOutputRow = { id: string; agent: string; summary: string; created_at: string };
+    const recentOutputs = { results: await unionRows<RecentOutputRow>(await historyParts(env, "agent_outputs"), (p) => ({ sql: `
+      SELECT id, agent_id as agent, summary, created_at
       FROM agent_outputs
       WHERE agent_id != 'observer' AND created_at >= datetime('now', '-24 hours')
-      ORDER BY created_at DESC LIMIT 10
-    `).all<{ agent: string; summary: string }>();
+      ORDER BY created_at DESC LIMIT ?
+    `, binds: [p.limit] }), { key: (r) => r.id, sort: byDesc<RecentOutputRow>("created_at", "id"), limit: 10, drop: ["id", "created_at"] }) };
 
     // ─── Email security posture ───────────────────────────────────
     // Derived from the shared, 1h-cached email-posture rollup
@@ -1027,9 +1046,9 @@ export const observerAgent: AgentModule = {
     if (isSunday && isMorning && !triggeredByEvent) {
       try {
         // Check if we already generated one this week
-        const existingWeekly = await env.DB.prepare(OBSERVER_WEEKLY_EXISTS_SQL).first<{ n: number }>();
+        const weeklyAlreadyExists = await observerWeeklyExists(env);
 
-        if ((existingWeekly?.n ?? 0) === 0) {
+        if (!weeklyAlreadyExists) {
           // Gather weekly data
           const weeklyThreats = await env.DB.prepare(`
             SELECT COUNT(*) as total,
@@ -1114,7 +1133,7 @@ export const observerAgent: AgentModule = {
             // only this site writes it) — it is what OBSERVER_WEEKLY_EXISTS_SQL
             // finds on the next Sunday-morning run, and it lands right after
             // the AI call rather than at the end of the run.
-            await env.DB.prepare(OBSERVER_WEEKLY_TREND_REPORT_INSERT_SQL).bind(
+            await (await agentOutputsDbForRun(env, ctx.telemetryRoute)).prepare(OBSERVER_WEEKLY_TREND_REPORT_INSERT_SQL).bind(
               crypto.randomUUID(),
               `Weekly Intel: ${weeklyThreats?.total ?? 0} threats, ${newCampaigns?.n ?? 0} new campaigns, top target: ${weeklyTopBrands.results[0]?.name ?? 'none'}`,
               topSeverity,

@@ -17,7 +17,7 @@ import { json } from "../lib/cors";
 import { handler, parsePagination, success, error, parseBody } from "../lib/handler-utils";
 import type { Env } from "../types";
 import { executePasteSeeding } from "../seeders/paste-seeder";
-import { byDesc, historyParts, preferFinalizedRun, unionFirst } from '../lib/telemetry-read';
+import { byDesc, byId, historyParts, preferFinalizedRun, unionFirst, unionRows } from '../lib/telemetry-read';
 
 // ── GET /api/spam-trap/stats ──────────────────────────────────────
 
@@ -611,16 +611,21 @@ export const handleSpamTrapInsights = handler(async (_request, env, ctx) => {
       AND seeded_at > datetime('now', '-30 days')
   `).first<{ n: number }>();
 
-  const recentOutputs = await env.DB.prepare(`
+  // agent_outputs spans telemetry ∪ core (Track B1 wave 2).
+  type SeedOutputRow = {
+    id: string; type: string; summary: string; severity: string | null;
+    details: string | null; created_at: string;
+  };
+  const recentOutputs = { results: await unionRows<SeedOutputRow>(await historyParts(env, 'agent_outputs'), (p) => ({
+    sql: `
     SELECT id, type, summary, severity, details, created_at
     FROM agent_outputs
     WHERE agent_id = 'seed_strategist'
     ORDER BY created_at DESC
-    LIMIT 5
-  `).all<{
-    id: string; type: string; summary: string; severity: string | null;
-    details: string | null; created_at: string;
-  }>();
+    LIMIT ?
+  `,
+    binds: [p.limit],
+  }), { key: byId, sort: byDesc<SeedOutputRow>('created_at', 'id'), limit: 5 }) };
 
   return success({
     trends: {
