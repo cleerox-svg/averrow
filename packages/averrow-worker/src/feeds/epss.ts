@@ -1,5 +1,7 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { diagnosticFetch } from "../lib/feedDiagnostic";
+import { agentOutputsStore } from "../db/agent-outputs";
+import { byDesc, historyParts, unionFirst } from "../lib/telemetry-read";
 
 /**
  * EPSS — Exploit Prediction Scoring System (FIRST.org).
@@ -29,7 +31,7 @@ export const epss: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const feedUrl = ctx.feedUrl || `https://api.first.org/data/v1/epss?order=!epss&limit=${TOP_N}`;
 
-    const res = await diagnosticFetch(ctx.env.DB, "epss", feedUrl, {
+    const res = await diagnosticFetch(ctx.env, "epss", feedUrl, {
       headers: { "User-Agent": "Averrow-ThreatIntel/1.0", Accept: "application/json" },
     });
     if (!res.ok) throw new Error(`EPSS HTTP ${res.status}`);
@@ -51,9 +53,12 @@ export const epss: FeedModule = {
     // scoring run (dedup on the scoring date, mirrors cisa_kev's
     // newest-CVE guard).
     const scoreDate = rows[0]?.date ?? "";
-    const lastDigest = await ctx.env.DB.prepare(
-      "SELECT summary FROM agent_outputs WHERE agent_id = 'sentinel' AND type = 'insight' AND summary LIKE 'EPSS%' ORDER BY created_at DESC LIMIT 1",
-    ).first<{ summary: string }>();
+    // agent_outputs spans telemetry ∪ core (Track B1 wave 2): the newest
+    // digest on EITHER DB counts, or a flip would re-post today's scores.
+    const lastDigest = await unionFirst<{ summary: string; created_at: string }>(await historyParts(ctx.env, "agent_outputs"), () => ({
+      sql: "SELECT summary, created_at FROM agent_outputs WHERE agent_id = 'sentinel' AND type = 'insight' AND summary LIKE 'EPSS%' ORDER BY created_at DESC LIMIT 1",
+      binds: [],
+    }), { sort: byDesc<{ summary: string; created_at: string }>("created_at") });
     if (scoreDate && lastDigest?.summary?.includes(scoreDate)) {
       return { itemsFetched: rows.length, itemsNew: 0, itemsDuplicate: rows.length, itemsError: 0 };
     }
@@ -79,7 +84,7 @@ export const epss: FeedModule = {
 
     const epssId = "epss_" + Date.now();
     try {
-      await ctx.env.DB.prepare(
+      await (await agentOutputsStore(ctx.env)).prepare(
         "INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at) VALUES (?, 'sentinel', 'insight', ?, 'high', ?, datetime('now'))",
       ).bind(epssId, summary, details).run();
     } catch (insertErr) {

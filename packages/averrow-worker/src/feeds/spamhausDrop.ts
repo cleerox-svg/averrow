@@ -1,6 +1,7 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { threatId } from "./types";
 import { dedupeBy, parseDropV4Json } from "../lib/spamhaus-drop-json";
+import { agentOutputsStore } from "../db/agent-outputs";
 
 /**
  * drop_v4.json (NDJSON + trailing metadata line). The text files
@@ -150,7 +151,7 @@ export const spamhaus_drop: FeedModule = {
 
     if (overlapCount > 0) {
       try {
-        await db.prepare(
+        await (await agentOutputsStore(ctx.env)).prepare(
           `INSERT INTO agent_outputs (id, agent_id, type, summary, created_at)
            VALUES (?, 'sentinel', 'diagnostic', ?, datetime('now'))`,
         ).bind(

@@ -1,4 +1,5 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
+import { agentOutputsStore } from "../db/agent-outputs";
 
 /**
  * Cloudflare Radar Email Security Trends — Daily intelligence feed.
@@ -100,7 +101,7 @@ export const cloudflare_email: FeedModule = {
 
     // Store as agent_output intelligence
     try {
-      await ctx.env.DB.prepare(
+      await (await agentOutputsStore(ctx.env)).prepare(
         `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at)
          VALUES (?, 'observer', 'insight', ?, 'info', ?, datetime('now'))`,
       ).bind(

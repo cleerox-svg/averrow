@@ -1,5 +1,7 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { diagnosticFetch } from "../lib/feedDiagnostic";
+import { agentOutputsStore } from "../db/agent-outputs";
+import { byDesc, historyParts, unionFirst } from "../lib/telemetry-read";
 
 /**
  * CISA Known Exploited Vulnerabilities — Daily catalog.
@@ -25,7 +27,7 @@ export const cisa_kev: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const feedUrl = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
 
-    const res = await diagnosticFetch(ctx.env.DB, "cisa_kev", feedUrl, {
+    const res = await diagnosticFetch(ctx.env, "cisa_kev", feedUrl, {
       headers: { "User-Agent": "Averrow-ThreatIntel/1.0", Accept: "application/json" },
     });
     if (!res.ok) throw new Error(`CISA KEV HTTP ${res.status}`);
@@ -46,9 +48,12 @@ export const cisa_kev: FeedModule = {
       .slice(0, 50);
 
     // Check what we already stored to avoid duplicates
-    const lastDigest = await ctx.env.DB.prepare(
-      "SELECT summary FROM agent_outputs WHERE agent_id = 'sentinel' AND type = 'insight' AND summary LIKE 'CISA KEV%' ORDER BY created_at DESC LIMIT 1"
-    ).first<{ summary: string }>();
+    // agent_outputs spans telemetry ∪ core (Track B1 wave 2): the newest
+    // digest on EITHER DB counts, or a flip would re-post the same KEV list.
+    const lastDigest = await unionFirst<{ summary: string; created_at: string }>(await historyParts(ctx.env, "agent_outputs"), () => ({
+      sql: "SELECT summary, created_at FROM agent_outputs WHERE agent_id = 'sentinel' AND type = 'insight' AND summary LIKE 'CISA KEV%' ORDER BY created_at DESC LIMIT 1",
+      binds: [],
+    }), { sort: byDesc<{ summary: string; created_at: string }>("created_at") });
 
     const newestCve = recent[0]?.cveID ?? "none";
     if (lastDigest?.summary?.includes(newestCve)) {
@@ -79,7 +84,7 @@ export const cisa_kev: FeedModule = {
     // Use type='insight' — matches agent_outputs CHECK constraint
     const kevId = 'kev_' + Date.now();
     try {
-      const insertResult = await ctx.env.DB.prepare(
+      await (await agentOutputsStore(ctx.env)).prepare(
         "INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, created_at) VALUES (?, 'sentinel', 'insight', ?, 'high', ?, datetime('now'))"
       ).bind(kevId, summary, details).run();
     } catch (insertErr) {

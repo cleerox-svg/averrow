@@ -16,9 +16,11 @@
  * too — a permanently dead check and a correctly-silent one are
  * indistinguishable from the outside. Every negative assertion here is
  * therefore paired with `expectCheckRanCleanly`, which proves from the
- * statement log that the check's own SQL executed without error (and, where
- * it should have, returned zero qualifying rows) and that FC did not log
- * "AI call-failure check failed".
+ * statement log that the check's own SQL executed without error, that zero
+ * agents qualified (the thresholds are applied in code to the per-agent sums
+ * merged across telemetry ∪ core — readAiFailingAgents, Track B1 wave 2 — so
+ * the renderer is observed instead of a HAVING row count) and that FC did
+ * not log "AI call-failure check failed".
  *
  * ── Test lane ───────────────────────────────────────────────────────
  * `flightControlAgent.execute` itself, over real `node:sqlite` with the
@@ -36,10 +38,15 @@ import { fileURLToPath } from "node:url";
 
 vi.mock("../src/lib/platform-templates", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/platform-templates")>();
-  return { ...actual, emitPlatformNotification: vi.fn(async () => undefined) };
+  return {
+    ...actual,
+    emitPlatformNotification: vi.fn(async () => undefined),
+    // Observed (not replaced): its failing_agents is the qualifying set.
+    renderPlatformAiCallsFailing: vi.fn(actual.renderPlatformAiCallsFailing),
+  };
 });
 
-import { emitPlatformNotification } from "../src/lib/platform-templates";
+import { emitPlatformNotification, renderPlatformAiCallsFailing } from "../src/lib/platform-templates";
 import { flightControlAgent } from "../src/agents/flightControl";
 import { parseNewestFailure, AI_OUTAGE_MIN_ATTEMPTS } from "../src/lib/haiku";
 import { executeAgent } from "../src/lib/agentRunner";
@@ -60,7 +67,10 @@ const DIAG_SRC = readSrc("../src/handlers/diagnostics.ts");
 // Extracted from source, not retyped: a reworded query changes what is
 // tested instead of silently dropping out of coverage.
 const LEDGER_SQL = sqlContaining(FC_SRC, ["SELECT MAX(created_at) AS last_at FROM budget_ledger"]);
-const FAILING_SQL = sqlContaining(FC_SRC, ["FROM agent_outputs", "HAVING", "$.aiCallsAttempted"]);
+// readAiFailingAgents' literal carries the union split marker; on the
+// single-part (core) path the executed statement is the literal without it.
+const FAILING_SQL_LITERAL = sqlContaining(FC_SRC, ["FROM agent_outputs", "$.aiCallsAttempted", "aiFirstFailureKind"]);
+const FAILING_SQL = FAILING_SQL_LITERAL.split("/*split*/").join("");
 const DIAG_AI_HEALTH_SQL = sqlContaining(DIAG_SRC, ["FROM agent_outputs", "$.aiCallsSkipped", "GROUP BY +agent_id"]);
 
 const TABLES = [...ANALYST_TABLES];
@@ -86,12 +96,14 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
   let log: StatementLogEntry[];
   let warn: { mock: { calls: unknown[][] } };
   const emit = vi.mocked(emitPlatformNotification);
+  const render = vi.mocked(renderPlatformAiCallsFailing);
 
   beforeEach(() => {
     // FC pins these two partial indexes with INDEXED BY (D1 read-spend fix).
     raw = openDerivedDb(TABLES, { indexes: ["idx_threats_carto_phase0", "idx_threats_stuck_geo"] });
     log = [];
     emit.mockClear();
+    render.mockClear();
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -152,7 +164,7 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
     if (opts.failingQueryShouldRun) {
       expect(failing, "the attempted/succeeded rollup never executed").toHaveLength(1);
       expect(failing[0]!.error, "the attempted/succeeded rollup RAISED — a swallowed throw reads as 'silent'").toBeUndefined();
-      expect(failing[0]!.rows, "a clean negative case must have returned zero qualifying agents").toBe(0);
+      expect(render, "a clean negative case must have qualified zero agents").not.toHaveBeenCalled();
     } else {
       expect(failing, "leg 2 must not even run while the ledger is fresh").toHaveLength(0);
     }
@@ -165,7 +177,8 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
     const failing = log.filter((e) => e.sql === FAILING_SQL);
     expect(failing).toHaveLength(1);
     expect(failing[0]!.error).toBeUndefined();
-    expect(failing[0]!.rows).toBe(n);
+    expect(render).toHaveBeenCalledTimes(1);
+    expect(render.mock.calls[0]![0].failing_agents).toHaveLength(n);
   }
 
   /**
@@ -398,21 +411,24 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
       expectCheckRanCleanly({ failingQueryShouldRun: true });
     });
 
-    it("the failing-run query binds BOTH its parameters (an unbound `?` would silently match nothing)", () => {
+    it("the failing-run query binds its window parameter (an unbound `?` would silently match nothing)", () => {
       // Behavioural proof is the 1.5h-emits test above (datetime('now', NULL)
-      // is NULL, so an unbound window qualifies no rows) plus the floor
-      // tests below (an unbound floor makes HAVING ... >= NULL never true).
-      // This pins arity statically so a third placeholder added later
-      // cannot go unbound: FC binds the window AND the attempts floor.
-      expect(FAILING_SQL.match(/\?/g)).toHaveLength(2);
+      // is NULL, so an unbound window qualifies no rows). This pins arity
+      // statically so a second placeholder added later cannot go unbound.
+      // The attempts floor is applied in code after the telemetry ∪ core
+      // merge (readAiFailingAgents), not in SQL.
+      expect(FAILING_SQL.match(/\?/g)).toHaveLength(1);
       expect(DIAG_AI_HEALTH_SQL.match(/\?/g)).toHaveLength(1);
     });
 
     it("the attempts floor is bound from AI_OUTAGE_MIN_ATTEMPTS, not inlined", () => {
       // An inlined literal would silently drift from the exported const
       // that the agents' own verdicts and the alert copy reference.
-      expect(FAILING_SQL).toMatch(/HAVING[\s\S]*>= \?/);
-      expect(FC_SRC).toMatch(/\.bind\(`-\$\{AI_ATTEMPT_WINDOW_HOURS\} hours`, AI_OUTAGE_MIN_ATTEMPTS\)/);
+      // Thresholds must apply to the MERGED per-agent sums: a per-DB HAVING
+      // would miss an agent whose attempts straddle the telemetry flip.
+      expect(FAILING_SQL).not.toMatch(/\bHAVING\b/);
+      expect(FC_SRC).toMatch(/readAiFailingAgents\(env, db, AI_ATTEMPT_WINDOW_HOURS, AI_OUTAGE_MIN_ATTEMPTS\)/);
+      expect(FC_SRC).toMatch(/binds: \[`-\$\{windowHours\} hours`\]/);
     });
   });
 

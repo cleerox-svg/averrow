@@ -25,7 +25,7 @@ export const urlhaus: FeedModule = {
     // Shared abuse.ch key (ThreatFox / MalwareBazaar / Feodo / SSLBL).
     // It sits in the URL path, so diagnosticFetch redacts it from logs.
     const res = await diagnosticFetch(
-      ctx.env.DB,
+      ctx.env,
       "urlhaus",
       urlhausExportUrl(authKey),
       { headers: { "User-Agent": "Averrow-ThreatIntel/1.0" } },

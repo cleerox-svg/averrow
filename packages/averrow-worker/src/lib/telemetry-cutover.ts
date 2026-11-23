@@ -23,7 +23,7 @@
 //   backfillTelemetryHistory  POST /api/internal/telemetry/backfill?table=…&days=30[&dry_run=0]  (dry run unless dry_run=0)
 //       Copies recent history of one table core → telemetry so the union
 //       reads (lib/telemetry-read.ts) can later drop core: agent_runs /
-//       agent_events / agent_activity_log (agents), feed_pull_history
+//       agent_events / agent_activity_log / agent_outputs (agents), feed_pull_history
 //       (feeds), budget_ledger / agent_budget_rollups (budget). The family
 //       follows from the table. One bounded call: ≤ 500 rows in chunks of
 //       100 with a pause between chunks, keyset on core rowid, KV cursor
@@ -40,7 +40,7 @@
 //   telemetryPreflight  GET /api/internal/telemetry/preflight[?family=…]
 //       The flip gate for one family: ok:true only when TELEMETRY_DB is
 //       bound, the family's tables exist there with core's columns and
-//       indexes (agents: every wave-1 table, as in B1c), and every config
+//       indexes (agents: every wave-1 table, as in B1c, plus agent_outputs), and every config
 //       row on core is present on telemetry with the same flip-relevant
 //       content (budget: also the budget_config id=1 row). Telemetry-side
 //       history row counts and backfill cursors are reported, not blocking.
@@ -97,6 +97,9 @@ export const WAVE1_TABLES = [
   "agent_budget_rollups",
 ] as const;
 
+/** Every table on TELEMETRY_DB: wave 1 plus agent_outputs (wave 2, agents family; migrations-telemetry/0002). */
+export const TELEMETRY_TABLES = [...WAVE1_TABLES, "agent_outputs"] as const;
+
 /**
  * Columns copied per table — exactly the telemetry schema's columns
  * (pinned against migrations-telemetry/ by test/telemetry-agent-runs-cutover.test.ts).
@@ -120,6 +123,10 @@ export const COPY_COLUMNS = {
   ],
   agent_activity_log: [
     "id", "agent_id", "run_id", "event_type", "message", "metadata_json", "severity", "created_at",
+  ],
+  agent_outputs: [
+    "id", "agent_id", "type", "summary", "severity", "details", "related_brand_ids",
+    "related_campaign_id", "related_provider_ids", "created_at",
   ],
   feed_configs: [
     "feed_name", "display_name", "description", "source_url", "api_key_encrypted", "schedule_cron",
@@ -173,6 +180,7 @@ const HISTORY_CONFLICT_KEY: Record<TelemetryHistoryTable, string> = {
   agent_runs: "id",
   agent_events: "id",
   agent_activity_log: "id",
+  agent_outputs: "id",
   feed_pull_history: "id",
   budget_ledger: "id",
   agent_budget_rollups: "agent_id, year_month",
@@ -823,9 +831,9 @@ export const PREFLIGHT_CONTENT_COLUMNS: Record<ConfigTable, readonly string[]> =
   budget_config: ["monthly_limit_usd", "soft_pct", "hard_pct", "emergency_pct"],
 };
 
-/** Schema the preflight checks: agents keeps B1c's full wave-1 check; the others their own tables. */
+/** Schema the preflight checks: agents keeps B1c's full wave-1 check (plus agent_outputs); the others their own tables. */
 const PREFLIGHT_SCHEMA_TABLES: Record<TelemetryFamily, readonly string[]> = {
-  agents: WAVE1_TABLES,
+  agents: TELEMETRY_TABLES,
   feeds: FAMILY_TABLES.feeds,
   budget: FAMILY_TABLES.budget,
 };

@@ -11,7 +11,7 @@ import type { Env } from "../types";
 import { createNotification } from "./notifications";
 import { withD1Retry, D1_OVERLOAD_RETRY_BASE_MS } from "./d1-retry";
 import { withD1Meter, isExecutionContextLike } from "./d1-meter";
-import { resolveTelemetry } from "./db-route";
+import { resolveTelemetry, type TelemetryRoute } from "./db-route";
 import { seedConfigRowFromCore } from "./telemetry-cutover";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -100,6 +100,14 @@ export interface AgentContext {
   agentName: string;
   input: Record<string, unknown>;
   triggeredBy: string | null;
+  /**
+   * The agents-family telemetry route the run resolved at start (Track B1).
+   * An agent that writes agent_outputs itself (instead of returning
+   * agentOutputs) passes it to db/agent-outputs.ts agentOutputsDbForRun so
+   * the row lands on the run's DB. Absent when a caller builds a context by
+   * hand (tests, legacy direct calls) — the write then resolves the route.
+   */
+  telemetryRoute?: TelemetryRoute;
 }
 
 export interface AgentResult {
@@ -551,7 +559,7 @@ async function executeAgentMetered(
      VALUES (?, ?, datetime('now'), 'partial', 0, 0)`
   ).bind(runId, agentId).run();
 
-  const ctx: AgentContext = { env, runId, agentName: agentId, input, triggeredBy };
+  const ctx: AgentContext = { env, runId, agentName: agentId, input, triggeredBy, telemetryRoute: tRoute };
   const start = Date.now();
 
   try {
@@ -563,13 +571,14 @@ async function executeAgentMetered(
     await drainAlertScope(alertScope, ALERT_SCOPE_DRAIN_DEADLINE_MS);
     const durationMs = Date.now() - start;
 
-    // Persist agent outputs if any
+    // Persist agent outputs if any — on the run's telemetry DB (agents
+    // family, Track B1 wave 2), the same DB as its agent_runs row.
     let outputsGenerated = 0;
     if (result.agentOutputs && result.agentOutputs.length > 0) {
       for (const output of result.agentOutputs) {
         const outputId = crypto.randomUUID();
         try {
-          await env.DB.prepare(
+          await tdb.prepare(
             `INSERT INTO agent_outputs (id, agent_id, type, summary, severity, details, related_brand_ids, related_campaign_id, related_provider_ids, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
           ).bind(

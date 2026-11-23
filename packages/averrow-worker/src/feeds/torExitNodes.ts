@@ -1,4 +1,5 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
+import { agentOutputsStore } from "../db/agent-outputs";
 
 const TOR_EXIT_URL = "https://check.torproject.org/torbulkexitlist";
 const BATCH_SIZE = 50;
@@ -67,7 +68,7 @@ export const tor_exit_nodes: FeedModule = {
 
     if (taggedCount > 0) {
       try {
-        await db.prepare(
+        await (await agentOutputsStore(ctx.env)).prepare(
           `INSERT INTO agent_outputs (id, agent_id, type, summary, created_at)
            VALUES (?, 'sentinel', 'diagnostic', ?, datetime('now'))`,
         ).bind(

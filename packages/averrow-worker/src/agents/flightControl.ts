@@ -544,11 +544,12 @@ export const flightControlAgent: AgentModule = {
       getNavigatorHealth(db, env),
       budgetMgr.getStatus(anthropicReported),
       budgetMgr.getAgentLimits(),
-      db.prepare(`
+      // agent_outputs spans telemetry ∪ core (Track B1 wave 2); a MAX needs no split.
+      historyParts(env, 'agent_outputs', { core: db }).then((parts) => unionAggregateFirst<{ last_run: string | null }>(parts, () => ({ sql: `
         SELECT MAX(created_at) as last_run
         FROM agent_outputs
         WHERE agent_id = 'curator' AND type = 'hygiene_report'
-      `).first<{ last_run: string | null }>(),
+      `, binds: [] }), { max: ['last_run'] })),
       // Curator dispatch-gate health: count recent reaper-stamped
       // failures and find the most recent agent_runs success. The
       // dispatch gate below uses these to back off when curator is
@@ -1046,7 +1047,9 @@ export const flightControlAgent: AgentModule = {
         // was FULL and enqueued something, or the fresh daily count
         // exceeds the queue) — a quiet platform legitimately grows lag.
         // Decision lives in classifyDnsQueueStall (lib/dns-drainable.ts).
-        const lastReconciler = await db.prepare(`
+        // Newest reconciler diagnostic on EITHER DB (agent_outputs, Track B1 wave 2).
+        const lastReconciler = await unionFirst<{ details: string | null; created_at: string }>(
+          await historyParts(env, 'agent_outputs', { core: db }), () => ({ sql: `
           SELECT details, created_at
           FROM agent_outputs
           WHERE agent_id = 'navigator'
@@ -1054,7 +1057,7 @@ export const flightControlAgent: AgentModule = {
             AND summary LIKE 'dns-queue-reconcile%'
           ORDER BY created_at DESC
           LIMIT 1
-        `).first<{ details: string | null; created_at: string }>();
+        `, binds: [] }), { sort: byDesc<{ details: string | null; created_at: string }>('created_at') });
 
         if (lastReconciler?.details) {
           try {
@@ -1243,70 +1246,12 @@ export const flightControlAgent: AgentModule = {
 
       if (hoursSinceLastCall === null || hoursSinceLastCall > AI_SILENCE_THRESHOLD_HOURS) {
         // Strictly-API counters, written into agent_outputs.details by
-        // the instrumented agents (analyst, sentinel). Agent-agnostic on
-        // purpose: any agent that starts emitting aiCallsAttempted /
-        // aiCallsSucceeded is picked up here with no change.
-        //
-        // The json_valid() CASE wrapper is load-bearing, not decorative:
-        // json_extract() RAISES on a malformed JSON payload, which would
-        // abort the whole query and leave this check permanently dead —
-        // the exact failure class being fixed here. Every agent_outputs
-        // writer goes through JSON.stringify today, but this query must
-        // not depend on that staying true, and SQLite does not guarantee
-        // left-to-right short-circuiting of AND terms (CASE branches, by
-        // contrast, are documented not to evaluate unselected arms).
-        // Rows surviving the WHERE all have valid JSON, so the SELECT-list
-        // extracts need no wrapper.
-        //
-        // Written flat rather than as a CTE on purpose: the resource-drift
-        // extractor (architect/collectors/repo-fs.ts extractReadTables)
-        // matches the uppercase SQL verbs followed by an identifier, with
-        // no CTE awareness — so selecting out of a named CTE registers
-        // that CTE's name as a phantom d1 table and fails
-        // `npm run check:resource-drift`. It scans comments too, so this
-        // note deliberately avoids spelling the verb out next to a word.
-        // `newest_failure` pairs the failure KIND with the failure MESSAGE
-        // from THE SAME ROW. Taking them as two independent MAX()
-        // aggregates (the first version) was wrong twice over: MAX on text
-        // is lexicographic, not temporal, so neither field was the newest,
-        // and the two could come from different rows — an operator would
-        // read a 'parse_error' kind beside an unrelated HTTP-400 message
-        // and chase the wrong cause, which is worse than no diagnostic.
-        //
-        // Prefixing with created_at makes the lexicographic MAX genuinely
-        // temporal (sqlite's 'YYYY-MM-DD HH:MM:SS' is fixed-width and
-        // sorts chronologically as text), and bundling both fields into
-        // one json_object means the winner is one row by construction.
-        // The CASE restricts the aggregate to rows that actually recorded
-        // a failure, so a healthy row in the same group cannot win it and
-        // blank the diagnosis. char(31) is the unit separator — it cannot
-        // occur in a JSON-encoded payload.
-        const failingRows = await db.prepare(`
-          SELECT agent_id,
-                 SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) AS attempted,
-                 SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) AS succeeded,
-                 MAX(CASE WHEN json_extract(details, '$.aiFirstError') IS NOT NULL
-                          THEN created_at || char(31) || json_object(
-                                 'kind',  json_extract(details, '$.aiFirstFailureKind'),
-                                 'error', json_extract(details, '$.aiFirstError'))
-                          END) AS newest_failure
-            FROM agent_outputs
-           WHERE created_at >= datetime('now', ?)
-             AND (CASE WHEN json_valid(details)
-                       THEN json_extract(details, '$.aiCallsAttempted')
-                       ELSE NULL END) IS NOT NULL
-           GROUP BY agent_id
-          HAVING SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) >= ?
-             AND SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) = 0
-           ORDER BY attempted DESC
-        `).bind(`-${AI_ATTEMPT_WINDOW_HOURS} hours`, AI_OUTAGE_MIN_ATTEMPTS).all<{
-          agent_id: string;
-          attempted: number;
-          succeeded: number;
-          newest_failure: string | null;
-        }>();
-
-        const failing = failingRows.results ?? [];
+        // the instrumented agents. Agent-agnostic on purpose: any agent
+        // that starts emitting aiCallsAttempted / aiCallsSucceeded is picked
+        // up here with no change. The query, its json_valid() guard, the
+        // newest_failure encoding and the telemetry ∪ core merge are
+        // documented on readAiFailingAgents.
+        const failing = await readAiFailingAgents(env, db, AI_ATTEMPT_WINDOW_HOURS, AI_OUTAGE_MIN_ATTEMPTS);
         if (failing.length > 0) {
           await emitPlatformNotification(env, 'platform_ai_calls_failing',
             renderPlatformAiCallsFailing({
@@ -2215,6 +2160,83 @@ export const flightControlAgent: AgentModule = {
  * not match `LIKE 'manual:%'`, and is still counted: a temporarily paused
  * feed's growing backlog is something an operator should keep seeing.
  */
+/** One agent's strictly-API AI counters in the outage window (see readAiFailingAgents). */
+export interface AiFailingAgentRow {
+  agent_id: string;
+  attempted: number;
+  succeeded: number;
+  newest_failure: string | null;
+}
+
+/**
+ * Agents whose counter-instrumented runs in the last `windowHours` made at
+ * least `minAttempts` AI calls with zero successes (FC's
+ * platform_ai_calls_failing condition 2), attempted DESC.
+ *
+ * agent_outputs spans telemetry ∪ core (Track B1 wave 2), so the query
+ * returns per-part SUMs / MAX without HAVING; the parts are merged per agent
+ * (backfilled rows excluded from core by the split) and the thresholds are
+ * applied to the merged totals here. A per-DB HAVING would miss an agent
+ * whose attempts straddle the flip (2 on core + 2 on telemetry), and a
+ * per-DB `succeeded = 0` would flag an agent that succeeded on the other DB.
+ *
+ * The json_valid() CASE wrapper is load-bearing, not decorative:
+ * json_extract() RAISES on a malformed JSON payload, which would abort the
+ * whole query and leave this check permanently dead. SQLite does not
+ * guarantee left-to-right short-circuiting of AND terms (CASE branches, by
+ * contrast, are documented not to evaluate unselected arms). Rows surviving
+ * the WHERE all have valid JSON, so the SELECT-list extracts need no
+ * wrapper.
+ *
+ * Written flat rather than as a CTE on purpose: the resource-drift extractor
+ * (architect/collectors/repo-fs.ts extractReadTables) matches the uppercase
+ * SQL verbs followed by an identifier, with no CTE awareness — a named CTE
+ * would register as a phantom d1 table and fail `npm run
+ * check:resource-drift`. It scans comments too, so this note avoids spelling
+ * the verb out next to a word.
+ *
+ * `newest_failure` pairs the failure KIND with the failure MESSAGE from THE
+ * SAME ROW (two independent MAX() aggregates once paired a kind from one row
+ * with a message from another): created_at-prefixed so the lexicographic MAX
+ * is temporal (also across the two parts), bundled in one json_object
+ * (parseNewestFailure decodes it). The CASE restricts it to rows that
+ * recorded a failure, so a healthy row cannot win and blank the diagnosis. char(31) is the unit separator — it cannot occur in a
+ * JSON-encoded payload.
+ */
+export async function readAiFailingAgents(
+  env: Env | undefined,
+  core: D1Database,
+  windowHours: number,
+  minAttempts: number,
+): Promise<AiFailingAgentRow[]> {
+  const merged = await unionGrouped<AiFailingAgentRow>(
+    await historyParts(env, 'agent_outputs', { core }),
+    () => ({
+      sql: `
+        SELECT agent_id,
+               SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) AS attempted,
+               SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) AS succeeded,
+               MAX(CASE WHEN json_extract(details, '$.aiFirstError') IS NOT NULL
+                        THEN created_at || char(31) || json_object(
+                               'kind',  json_extract(details, '$.aiFirstFailureKind'),
+                               'error', json_extract(details, '$.aiFirstError'))
+                        END) AS newest_failure
+          FROM agent_outputs
+         WHERE created_at >= datetime('now', ?)
+           AND (CASE WHEN json_valid(details)
+                     THEN json_extract(details, '$.aiCallsAttempted')
+                     ELSE NULL END) IS NOT NULL/*split*/
+         GROUP BY agent_id
+      `,
+      binds: [`-${windowHours} hours`],
+    }),
+    { groupBy: ['agent_id'], sum: ['attempted', 'succeeded'], max: ['newest_failure'] },
+  );
+  return merged
+    .filter((r) => Number(r.attempted ?? 0) >= minAttempts && Number(r.succeeded ?? 0) === 0)
+    .sort((a, b) => Number(b.attempted) - Number(a.attempted));
+}
+
 export async function loadManuallyDisabledFeeds(db: D1Database): Promise<Set<string>> {
   try {
     const r = await db.prepare(

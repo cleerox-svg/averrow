@@ -87,12 +87,14 @@ export async function getApprovalState(db: D1Database, agentId: string): Promise
 }
 
 /**
- * `db` is the core DB (agent_outputs). With `env`, the approval row is read
- * from the routed telemetry store and the runs from the telemetry ∪ core
- * union (Track B1c); without it everything reads `db` (unit tests).
+ * `db` is the core DB. With `env`, the approval row is read from the routed
+ * telemetry store and the runs / outputs from the telemetry ∪ core union
+ * (Track B1c; agent_outputs since wave 2); without it everything reads `db`
+ * (unit tests).
  */
 export async function getReviewBundle(db: D1Database, agentId: string, env?: Env): Promise<AgentReviewBundle> {
   type RunRow = AgentReviewBundle["recent_runs"][number];
+  type OutputRow = AgentReviewBundle["recent_outputs"][number];
   const runParts = await historyParts(env, "agent_runs", { core: db });
   const [approval, runs, outputs] = await Promise.all([
     getApprovalState(env ? await telemetryStore(env) : db, agentId),
@@ -106,18 +108,21 @@ export async function getReviewBundle(db: D1Database, agentId: string, env?: Env
       LIMIT ?`,
       binds: [agentId, p.limit],
     }), { key: (r) => r.id, prefer: preferFinalizedRun, sort: byDesc<RunRow>("started_at"), limit: 10 }),
-    db.prepare(`
+    // agent_outputs is in the same family (Track B1 wave 2): same union.
+    historyParts(env, "agent_outputs", { core: db }).then((outParts) => unionRows<OutputRow>(outParts, (p) => ({
+      sql: `
       SELECT id, type, summary, severity, created_at
       FROM agent_outputs
       WHERE agent_id = ?
       ORDER BY created_at DESC
-      LIMIT 10
-    `).bind(agentId).all<AgentReviewBundle["recent_outputs"][number]>(),
+      LIMIT ?`,
+      binds: [agentId, p.limit],
+    }), { key: (r) => r.id, sort: byDesc<OutputRow>("created_at", "id"), limit: 10 })),
   ]);
   return {
     approval,
     recent_runs: runs,
-    recent_outputs: outputs.results,
+    recent_outputs: outputs,
   };
 }
 

@@ -5,6 +5,7 @@ import { json } from "../lib/cors";
 import { notRetiredClusterSql } from "../lib/cluster-status";
 import { cachedValue } from "../lib/cached-value";
 import type { Env } from "../types";
+import { byDesc, byId, historyParts, unionRows } from "../lib/telemetry-read";
 
 type WaitUntilCtx = Pick<ExecutionContext, "waitUntil">;
 
@@ -238,14 +239,7 @@ export async function handleTrendIntelligence(request: Request, env: Env, execCt
   try {
     const limit = clampInt(new URL(request.url).searchParams.get("limit"), 6, 1, 20);
 
-    const rows = await cachedTrend(env, execCtx, `intelligence:${limit}`, async () => (await env.DB.prepare(`
-      SELECT id, type, summary, severity, details,
-             related_brand_ids, related_campaign_id, related_provider_ids,
-             created_at
-      FROM agent_outputs
-      WHERE agent_id = 'observer' AND type = 'insight'
-      ORDER BY created_at DESC LIMIT ?
-    `).bind(limit).all<{
+    type IntelRow = {
       id: string;
       type: string;
       summary: string;
@@ -255,7 +249,20 @@ export async function handleTrendIntelligence(request: Request, env: Env, execCt
       related_campaign_id: string | null;
       related_provider_ids: string | null;
       created_at: string;
-    }>()).results);
+    };
+    // agent_outputs spans telemetry ∪ core (Track B1 wave 2): deduped by id.
+    const rows = await cachedTrend(env, execCtx, `intelligence:${limit}`, async () => unionRows<IntelRow>(
+      await historyParts(env, "agent_outputs"),
+      (p) => ({ sql: `
+      SELECT id, type, summary, severity, details,
+             related_brand_ids, related_campaign_id, related_provider_ids,
+             created_at
+      FROM agent_outputs
+      WHERE agent_id = 'observer' AND type = 'insight'
+      ORDER BY created_at DESC LIMIT ?
+    `, binds: [p.limit] }),
+      { key: byId, sort: byDesc<IntelRow>("created_at", "id"), limit },
+    ));
 
     return json({ success: true, data: rows }, 200, origin);
   } catch (err) {

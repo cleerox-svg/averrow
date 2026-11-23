@@ -58,6 +58,9 @@ const ROSTER_PAGE_RENDERERS: ReadonlyMap<string, (roster: RosterEntry[], domain:
 ]);
 
 // ─── Router setup ────────────────────────────────────────────────────
+/** A /api/v1/agents/outputs ticker row (agent_outputs, telemetry ∪ core). */
+type AgentOutputTickerRow = { id: string; agent_id: string; type: string; summary: string; severity: string; created_at: string };
+
 const router = Router();
 
 // CORS preflight
@@ -1155,13 +1158,16 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         const authResult = await reqAuth(request, env);
         if (!isAuth(authResult)) return authResult;
 
-        const snapshot = await env.DB.prepare(`
+        // agent_outputs spans telemetry ∪ core (Track B1 wave 2): the newest
+        // FC diagnostic may be on either DB.
+        const { historyParts, unionFirst, byDesc } = await import('./lib/telemetry-read');
+        const snapshot = await unionFirst<{ details: string; created_at: string }>(await historyParts(env, 'agent_outputs'), () => ({ sql: `
           SELECT details, created_at
           FROM agent_outputs
           WHERE agent_id = 'flight_control' AND type = 'diagnostic'
           ORDER BY created_at DESC
           LIMIT 1
-        `).first<{ details: string; created_at: string }>();
+        `, binds: [] }), { sort: byDesc<{ details: string; created_at: string }>('created_at') });
 
         if (!snapshot) {
           return Response.json({ status: 'no_data', message: 'Flight Control has not run yet' });
@@ -1191,8 +1197,10 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
           : ['critical', 'high'];
 
         const placeholders = severities.map(() => '?').join(',');
-        const rows = await env.DB.prepare(`
-          SELECT agent_id, type, summary, severity, created_at
+        const { historyParts, unionRows, byDesc } = await import('./lib/telemetry-read');
+        // telemetry ∪ core (Track B1 wave 2): deduped by id, re-sorted, re-limited.
+        const rows = await unionRows<AgentOutputTickerRow>(await historyParts(env, 'agent_outputs'), (p) => ({ sql: `
+          SELECT id, agent_id, type, summary, severity, created_at
           FROM agent_outputs
           WHERE severity IN (${placeholders})
             AND summary IS NOT NULL
@@ -1200,9 +1208,9 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
             AND created_at >= datetime('now', '-24 hours')
           ORDER BY created_at DESC
           LIMIT ?
-        `).bind(...severities, limit).all();
+        `, binds: [...severities, p.limit] }), { key: (r) => r.id, sort: byDesc<AgentOutputTickerRow>('created_at', 'id'), limit, drop: ['id'] });
 
-        return Response.json({ success: true, data: rows.results });
+        return Response.json({ success: true, data: rows });
       }
 
       // Agent activity log endpoint
@@ -1236,7 +1244,9 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
       const err = e instanceof Error ? e : new Error(String(e));
       // Log internally but never expose details to client
       try {
-        await env.DB.prepare(
+        // agent_outputs is in the agents telemetry family (Track B1 wave 2).
+        const { agentOutputsStore } = await import('./db/agent-outputs');
+        await (await agentOutputsStore(env)).prepare(
           "INSERT INTO agent_outputs (id, agent_id, type, summary, created_at) VALUES (?, 'sentinel', 'diagnostic', ?, datetime('now'))"
         ).bind(
           'err-' + Date.now(),

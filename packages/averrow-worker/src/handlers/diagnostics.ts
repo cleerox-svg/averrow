@@ -28,7 +28,7 @@ import { labelPerDatabase } from "../lib/db-registry";
 import { getDatabasesPayload, type DatabasesPayload } from "../lib/db-health";
 import { getWorkflowAgentStats } from "../lib/workflow-agent-stats";
 import { familyStore, telemetryStore } from "../lib/db-route";
-import { byDesc, byId, historyParts, unionAggregateFirst, unionGroupedResult, unionRowsResult } from "../lib/telemetry-read";
+import { byDesc, byId, historyParts, unionAggregateFirst, unionFirst, unionGroupedResult, unionRowsResult } from "../lib/telemetry-read";
 
 /**
  * Track B1d: on the feeds union path, the per-feed rollup's config columns
@@ -100,18 +100,21 @@ interface D1Metrics {
 // the diagnostic agent_outputs row FC writes at the end of each
 // tick. Returns null if not available (e.g. fresh deploy not yet
 // run).
-async function getFcTickTimings(db: D1Database): Promise<{
+async function getFcTickTimings(env: Env): Promise<{
   total_ms: number | null;
   generated_at: string | null;
   timings: Record<string, number> | null;
   ranked: Array<{ phase: string; ms: number; pct: number }>;
 } | null> {
   try {
-    const row = await db.prepare(
-      `SELECT details, created_at FROM agent_outputs
+    // Newest FC diagnostic on EITHER DB (agent_outputs spans telemetry ∪
+    // core, Track B1 wave 2).
+    const row = await unionFirst<{ details: string; created_at: string }>(await historyParts(env, "agent_outputs"), () => ({
+      sql: `SELECT details, created_at FROM agent_outputs
         WHERE agent_id = 'flight_control' AND type = 'diagnostic'
-        ORDER BY created_at DESC LIMIT 1`
-    ).first<{ details: string; created_at: string }>();
+        ORDER BY created_at DESC LIMIT 1`,
+      binds: [],
+    }), { sort: byDesc<{ details: string; created_at: string }>("created_at") });
     if (!row?.details) return null;
     const parsed = JSON.parse(row.details) as {
       timings?: Record<string, number>;
@@ -1543,7 +1546,6 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       },
     };
     const dnsQueueStabilityT = soft<DnsQueueStability>("dns_queue_stability", dnsQueueStabilityFallback, async () => {
-      const windowExpr = `datetime('now', '-${hoursBack} hours')`;
       const reaperKvP = (async () => {
         try {
           const [lastRun, lastDelta] = await Promise.all([
@@ -1555,8 +1557,14 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           return { lastRun: null, lastDelta: null };
         }
       })();
+      // agent_outputs spans telemetry ∪ core (Track B1 wave 2): each
+      // aggregate runs per part (the split keeps a backfilled row from
+      // counting twice) and is merged in code — AVGs weighted by their
+      // COUNT(col) companion, so NULLs are ignored exactly as SQL does.
+      const navParts = await historyParts(env, "agent_outputs");
+      const windowBind = `-${hoursBack} hours`;
       const [sourceRow, throughputRow, reconcilerRow, reaperRow, reaperKv] = await runSequential([
-        () => env.DB.prepare(`
+        () => unionAggregateFirst<{ queue_n: number; threats_n: number; total_n: number }>(navParts, () => ({ sql: `
           SELECT
             SUM(CASE WHEN summary LIKE '%source=queue%' THEN 1 ELSE 0 END) AS queue_n,
             SUM(CASE WHEN summary LIKE '%source=threats%' THEN 1 ELSE 0 END) AS threats_n,
@@ -1565,26 +1573,54 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           WHERE agent_id = 'navigator'
             AND type = 'diagnostic'
             AND summary LIKE 'dns-backfill:%'
-            AND created_at >= ${windowExpr}
-        `).first<{ queue_n: number; threats_n: number; total_n: number }>(),
-        () => env.DB.prepare(`
-          SELECT
-            AVG(CAST(json_extract(details, '$.processed')      AS REAL)) AS avg_processed,
-            AVG(CAST(json_extract(details, '$.resolved')       AS REAL)) AS avg_resolved,
-            AVG(CAST(json_extract(details, '$.graduated_dead') AS REAL)) AS avg_dead,
-            AVG(CAST(json_extract(details, '$.duration_ms')    AS REAL)) AS avg_duration_ms
-          FROM agent_outputs
-          WHERE agent_id = 'navigator'
-            AND type = 'diagnostic'
-            AND summary LIKE 'dns-backfill:%'
-            AND created_at >= ${windowExpr}
-        `).first<{
+            AND created_at >= datetime('now', ?)/*split*/
+        `, binds: [windowBind] }), { sum: ["queue_n", "threats_n", "total_n"] }),
+        () => unionAggregateFirst<{
           avg_processed: number | null;
           avg_resolved: number | null;
           avg_dead: number | null;
           avg_duration_ms: number | null;
-        }>(),
-        () => env.DB.prepare(`
+          n_processed: number;
+          n_resolved: number;
+          n_dead: number;
+          n_duration_ms: number;
+        }>(navParts, () => ({ sql: `
+          SELECT
+            AVG(CAST(json_extract(details, '$.processed')      AS REAL)) AS avg_processed,
+            AVG(CAST(json_extract(details, '$.resolved')       AS REAL)) AS avg_resolved,
+            AVG(CAST(json_extract(details, '$.graduated_dead') AS REAL)) AS avg_dead,
+            AVG(CAST(json_extract(details, '$.duration_ms')    AS REAL)) AS avg_duration_ms,
+            COUNT(CAST(json_extract(details, '$.processed')      AS REAL)) AS n_processed,
+            COUNT(CAST(json_extract(details, '$.resolved')       AS REAL)) AS n_resolved,
+            COUNT(CAST(json_extract(details, '$.graduated_dead') AS REAL)) AS n_dead,
+            COUNT(CAST(json_extract(details, '$.duration_ms')    AS REAL)) AS n_duration_ms
+          FROM agent_outputs
+          WHERE agent_id = 'navigator'
+            AND type = 'diagnostic'
+            AND summary LIKE 'dns-backfill:%'
+            AND created_at >= datetime('now', ?)/*split*/
+        `, binds: [windowBind] }), {
+          sum: ["n_processed", "n_resolved", "n_dead", "n_duration_ms"],
+          avg: [
+            { col: "avg_processed", weight: "n_processed" },
+            { col: "avg_resolved", weight: "n_resolved" },
+            { col: "avg_dead", weight: "n_dead" },
+            { col: "avg_duration_ms", weight: "n_duration_ms" },
+          ],
+          drop: ["n_processed", "n_resolved", "n_dead", "n_duration_ms"],
+        }),
+        () => unionAggregateFirst<{
+          runs: number;
+          runs_with_failures: number;
+          total_batch_failures: number;
+          avg_scanned: number | null;
+          avg_enqueued: number | null;
+          avg_cursor_lag_minutes: number | null;
+          max_cursor_lag_minutes: number | null;
+          n_scanned: number;
+          n_enqueued: number;
+          n_cursor_lag: number;
+        }>(navParts, () => ({ sql: `
           SELECT
             COUNT(*)                                                       AS runs,
             SUM(CASE WHEN CAST(json_extract(details, '$.batches_failed')
@@ -1593,22 +1629,26 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
             AVG(CAST(json_extract(details, '$.scanned')  AS REAL))         AS avg_scanned,
             AVG(CAST(json_extract(details, '$.enqueued') AS REAL))         AS avg_enqueued,
             AVG(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS avg_cursor_lag_minutes,
-            MAX(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS max_cursor_lag_minutes
+            MAX(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS max_cursor_lag_minutes,
+            COUNT(CAST(json_extract(details, '$.scanned')  AS REAL))       AS n_scanned,
+            COUNT(CAST(json_extract(details, '$.enqueued') AS REAL))       AS n_enqueued,
+            COUNT(CAST(json_extract(details, '$.cursor_lag_minutes') AS REAL)) AS n_cursor_lag
           FROM agent_outputs
           WHERE agent_id = 'navigator'
             AND type = 'diagnostic'
             AND summary LIKE 'dns-queue-reconcile%'
-            AND created_at >= ${windowExpr}
-        `).first<{
-          runs: number;
-          runs_with_failures: number;
-          total_batch_failures: number;
-          avg_scanned: number | null;
-          avg_enqueued: number | null;
-          avg_cursor_lag_minutes: number | null;
-          max_cursor_lag_minutes: number | null;
-        }>(),
-        () => env.DB.prepare(`
+            AND created_at >= datetime('now', ?)/*split*/
+        `, binds: [windowBind] }), {
+          sum: ["runs", "runs_with_failures", "total_batch_failures", "n_scanned", "n_enqueued", "n_cursor_lag"],
+          max: ["max_cursor_lag_minutes"],
+          avg: [
+            { col: "avg_scanned", weight: "n_scanned" },
+            { col: "avg_enqueued", weight: "n_enqueued" },
+            { col: "avg_cursor_lag_minutes", weight: "n_cursor_lag" },
+          ],
+          drop: ["n_scanned", "n_enqueued", "n_cursor_lag"],
+        }),
+        () => unionAggregateFirst<{ runs: number; total_stale_removed: number | null }>(navParts, () => ({ sql: `
           SELECT
             COUNT(*) AS runs,
             SUM(CAST(json_extract(details, '$.stale_removed') AS INT)) AS total_stale_removed
@@ -1616,8 +1656,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           WHERE agent_id = 'navigator'
             AND type = 'diagnostic'
             AND summary LIKE 'dns-queue-reap%'
-            AND created_at >= ${windowExpr}
-        `).first<{ runs: number; total_stale_removed: number | null }>(),
+            AND created_at >= datetime('now', ?)/*split*/
+        `, binds: [windowBind] }), { sum: ["runs", "total_stale_removed"] }),
         () => reaperKvP,
       ]);
       let reaperLastRunAgeHours: number | null = null;
@@ -2247,7 +2287,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       last_run_at: string | null;
       newest_failure: string | null;
     };
-    const aiCallHealthT = soft("ai_health", noRows<AiCallHealthRow>, async () => rows(await env.DB.prepare(`
+    // agent_outputs spans telemetry ∪ core (Track B1 wave 2): per-part
+    // SUMs / MAXes merged per agent (split excludes backfilled rows), then
+    // re-sorted — no HAVING, so nothing is filtered per DB.
+    const aiCallHealthT = soft("ai_health", noRows<AiCallHealthRow>, async () => rows(await unionGroupedResult<AiCallHealthRow>(await historyParts(env, "agent_outputs"), () => ({ sql: `
       SELECT agent_id,
              SUM(COALESCE(CAST(json_extract(details, '$.aiCallsAttempted') AS INTEGER), 0)) AS attempted,
              SUM(COALESCE(CAST(json_extract(details, '$.aiCallsSucceeded') AS INTEGER), 0)) AS succeeded,
@@ -2268,10 +2311,15 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
        WHERE created_at > datetime('now', '-' || ? || ' hours')
          AND (CASE WHEN json_valid(details)
                    THEN json_extract(details, '$.aiCallsAttempted')
-                   ELSE NULL END) IS NOT NULL
+                   ELSE NULL END) IS NOT NULL/*split*/
        GROUP BY +agent_id
        ORDER BY attempted DESC
-    `).bind(hoursBack).all<AiCallHealthRow>()));
+    `, binds: [hoursBack] }), {
+      groupBy: ["agent_id"],
+      sum: ["attempted", "succeeded", "skipped"],
+      max: ["last_run_at", "newest_failure"],
+      sort: (a, b) => b.attempted - a.attempted,
+    })));
 
     // ─── 7. Cron health (recent Navigator + orchestrator) ───────────
     // Navigator was renamed from 'fast_tick' — both IDs are queried so the
@@ -3128,7 +3176,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // flight_control diagnostic snapshot. Used to investigate
         // which step dominates the FC duration (currently ~4 min
         // post-#948; target <60s).
-        fc_tick_timings: await getFcTickTimings(env.DB),
+        fc_tick_timings: await getFcTickTimings(env),
 
         // KV-backed counter cache hit/miss ratio over the recent ring
         // window. Surfaces whether the Phase 1 cachedCount migration

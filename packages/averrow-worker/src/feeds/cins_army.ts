@@ -1,6 +1,7 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { threatId } from "./types";
 import { diagnosticFetch } from "../lib/feedDiagnostic";
+import { agentOutputsStore } from "../db/agent-outputs";
 
 const CINS_URL = "https://cinsscore.com/list/ci-badguys.txt";
 const SAMPLE_SIZE = 200;
@@ -19,12 +20,12 @@ export const cins_army: FeedModule = {
 
     // DB diagnostic: proves ingest() was called
     try {
-      await db.prepare(
+      await (await agentOutputsStore(ctx.env)).prepare(
         "INSERT INTO agent_outputs (id, agent_id, type, summary, created_at) VALUES (?, 'sentinel', 'diagnostic', ?, datetime('now'))"
       ).bind('diag_cins_called_' + Date.now(), `CINS Army ingest() called — url=${url}`).run();
     } catch { /* non-fatal */ }
 
-    const res = await diagnosticFetch(db, "cins_army", url, {
+    const res = await diagnosticFetch(ctx.env, "cins_army", url, {
       headers: { "User-Agent": "Averrow-ThreatIntel/1.0" },
     });
     if (!res.ok) throw new Error(`CINS Army HTTP ${res.status}`);
@@ -37,7 +38,7 @@ export const cins_army: FeedModule = {
 
     // DB diagnostic: parsed count
     try {
-      await db.prepare(
+      await (await agentOutputsStore(ctx.env)).prepare(
         "INSERT INTO agent_outputs (id, agent_id, type, summary, created_at) VALUES (?, 'sentinel', 'diagnostic', ?, datetime('now'))"
       ).bind('diag_cins_parsed_' + Date.now(), `CINS Army parsed ${allIps.length} IPs, sampled ${ips.length}, first=${ips[0] ?? 'NONE'}, batch inserting...`).run();
     } catch { /* non-fatal */ }
@@ -80,7 +81,7 @@ export const cins_army: FeedModule = {
     const summary = `CINS Army done: total_parsed=${allIps.length}, sampled=${ips.length}, inserted=${itemsNew}, ignored=${ips.length - itemsNew}` +
       (firstError ? `, first_error=${firstError.slice(0, 200)}` : '');
     try {
-      await db.prepare(
+      await (await agentOutputsStore(ctx.env)).prepare(
         "INSERT INTO agent_outputs (id, agent_id, type, summary, created_at) VALUES (?, 'sentinel', 'diagnostic', ?, datetime('now'))"
       ).bind('diag_cins_done_' + Date.now(), summary).run();
     } catch { /* non-fatal */ }

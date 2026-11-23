@@ -14,6 +14,7 @@ import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
 import { fuzzyMatchBrand } from "../../lib/brandDetect";
 import { cachedCount, THREATS_TOTAL_TTL_S } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
+import { historyParts, unionAggregateFirst } from "../../lib/telemetry-read";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import type { AuthContext } from "../../middleware/auth";
@@ -87,9 +88,11 @@ export async function handleAdminStats(request: Request, env: Env): Promise<Resp
     adminCachedCount('count.threats.analyst_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND severity IS NULL"),
     adminCachedCount('count.threats.cartographer_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND ip_address IS NOT NULL AND lat IS NULL"),
     adminCachedCount('count.threats.strategist_backlog', 900, "SELECT COUNT(*) AS n FROM threats WHERE status = 'active' AND campaign_id IS NULL AND threat_type IN ('phishing','typosquatting')"),
-    env.DB.prepare(
-      "SELECT MAX(created_at) AS last_run FROM agent_outputs WHERE agent_id = 'observer' AND type != 'diagnostic'",
-    ).first<{ last_run: string | null }>().catch(() => null),
+    // agent_outputs spans telemetry ∪ core (Track B1 wave 2); a MAX needs no split.
+    historyParts(env, "agent_outputs").then((parts) => unionAggregateFirst<{ last_run: string | null }>(parts, () => ({
+      sql: "SELECT MAX(created_at) AS last_run FROM agent_outputs WHERE agent_id = 'observer' AND type != 'diagnostic'",
+      binds: [],
+    }), { max: ["last_run"] })).catch(() => null),
     adminCachedCount('count.threats.ai_attr_pending', 900, "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND threat_type IN ('phishing','credential_harvesting','typosquatting','impersonation')").catch(() => null),
     adminCachedCount('count.brands.total', 3600, "SELECT COUNT(*) AS n FROM brands").catch(() => null),
   ]);

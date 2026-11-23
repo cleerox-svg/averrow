@@ -183,8 +183,24 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
     // metric — actual usable enrichments / theoretical max). Legacy rows
     // fall back to batch_enriched, which overstates yield because ip-api
     // returns status='success' with empty geo for ~93% of IPs.
-    const batchOutputsP = env.DB.prepare(`
-      SELECT created_at, summary,
+    // agent_outputs spans telemetry ∪ core (Track B1 wave 2): deduped by id.
+    type BatchOutputRow = {
+      id: string;
+      created_at: string;
+      summary: string;
+      batch_enriched: number | null;
+      batch_geo_located: number | null;
+      rdap_enriched: number | null;
+      batch_size: number | null;
+      max_batches: number | null;
+      batch_flush_successes: number | null;
+      batch_flush_failures: number | null;
+      batch_flush_failure_pct: number | null;
+      first_flush_error: string | null;
+      first_flush_error_chunk: number | null;
+    };
+    const batchOutputsP = historyParts(env, 'agent_outputs').then((parts) => unionRows<BatchOutputRow>(parts, (p) => ({ sql: `
+      SELECT id, created_at, summary,
              json_extract(details, '$.batch_enriched') AS batch_enriched,
              json_extract(details, '$.batch_geo_located') AS batch_geo_located,
              json_extract(details, '$.rdap_enriched') AS rdap_enriched,
@@ -198,21 +214,8 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
       FROM agent_outputs
       WHERE agent_id = 'cartographer' AND type = 'diagnostic'
       ORDER BY created_at DESC
-      LIMIT 10
-    `).all<{
-      created_at: string;
-      summary: string;
-      batch_enriched: number | null;
-      batch_geo_located: number | null;
-      rdap_enriched: number | null;
-      batch_size: number | null;
-      max_batches: number | null;
-      batch_flush_successes: number | null;
-      batch_flush_failures: number | null;
-      batch_flush_failure_pct: number | null;
-      first_flush_error: string | null;
-      first_flush_error_chunk: number | null;
-    }>();
+      LIMIT ?
+    `, binds: [p.limit] }), { key: (r) => r.id, sort: byDesc<BatchOutputRow>('created_at', 'id'), limit: 10, drop: ['id'] })).then((results) => ({ results }));
 
     const [
       column, mmdbColumn, indexRow, legacyHpIds, legacyHpSample, attemptsHist, queue, stuck, throughput, recentRuns, batchOutputs,

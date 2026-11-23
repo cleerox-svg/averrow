@@ -8,7 +8,7 @@ import { sanitizeIp } from "../lib/sanitizeIp";
 export const threatfox: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const feedUrl = ctx.feedUrl || "https://threatfox-api.abuse.ch/api/v1/";
-    const res = await diagnosticFetch(ctx.env.DB, "threatfox", feedUrl, {
+    const res = await diagnosticFetch(ctx.env, "threatfox", feedUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
