@@ -84,7 +84,7 @@ describe("runSequential", () => {
 // ── handler: concurrency, fail-soft, caching ────────────────────────
 
 const ENRICHMENT_SCAN = /COUNT\(\*\) AS total_threats/;
-const TOTALS_SCAN = /\(SELECT COUNT\(\*\) FROM brands\) AS brands/;
+const TOTALS_SCAN = /\(SELECT COUNT\(\*\) FROM hosting_providers\) AS providers/;
 const ALERTS_TIER_SCAN = /FROM alerts a\s+LEFT JOIN brands b/;
 
 /**

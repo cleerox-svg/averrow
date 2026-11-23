@@ -102,6 +102,11 @@ async function computeBrandMovers(
 ): Promise<{ success: true; data: { rising: BrandMoverRow[]; falling: BrandMoverRow[] } }> {
   const tally = newTally();
 
+  // `GROUP BY +target_brand_id` (unary plus, a value no-op): with a bare
+  // column the planner walks ALL of idx_cube_brand_id_hour (~123K rows,
+  // the whole brand cube) to avoid a GROUP BY sort, instead of seeking the
+  // window on idx_cube_brand_hour (prod 2026-11-23: 14d 124K -> 10K rows,
+  // 1d 123K -> ~1K). Pinned by test/brand-cube-window-plans.test.ts.
   const rows = await session.prepare(`
     WITH inflow AS (
       SELECT
@@ -113,7 +118,7 @@ async function computeBrandMovers(
                  THEN threat_count ELSE 0 END) AS last_week
       FROM threat_cube_brand
       WHERE hour_bucket >= datetime('now','-14 days')
-      GROUP BY target_brand_id
+      GROUP BY +target_brand_id
     )
     SELECT
       b.id, b.name, b.canonical_domain, b.logo_url, b.email_security_grade,
@@ -143,6 +148,12 @@ async function computeBrandMovers(
 
 // GET /api/brands/stats
 export const BRAND_STATS_TTL_S = 3600;
+/** handleListBrands' unscoped `under_attack` tab count (distinct brands with an active threat). */
+export const BRANDS_UNDER_ATTACK_COUNT_KEY = "count.brands.under_attack";
+export const BRANDS_UNDER_ATTACK_TTL_S = 3600;
+/** brand_stats' sector mix (a full `brands` scan) — own 6h cachedValue. */
+export const BRAND_SECTOR_MIX_TTL_S = 21_600;
+export const BRAND_SECTOR_MIX_CACHE_KEY = "brand_stats.sector_mix";
 
 export async function handleBrandStats(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
@@ -186,12 +197,18 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
     // brand (vs O(threat_count) per brand pre-migration). Pre-fix
     // this single query consumed ~793k rows/hour at 5 calls/hour
     // (diagnostics 2026-05-12 query #6).
+    // `GROUP BY +target_brand_id` (unary plus, a value no-op): with a bare
+    // column the planner walks ALL of idx_cube_brand_id_hour (~123K rows,
+    // the whole brand cube) to avoid a GROUP BY sort, instead of seeking the
+    // window on idx_cube_brand_hour (prod 2026-11-23: 14d 124K -> 10K rows,
+    // 1d 123K -> ~1K). Pinned by test/brand-cube-window-plans.test.ts.
+    // `, target_brand_id` makes a count tie deterministic.
     const topBrandRow = await session.prepare(`
       SELECT target_brand_id, SUM(threat_count) AS cnt
       FROM threat_cube_brand
       WHERE hour_bucket >= datetime('now', '-1 day')
-      GROUP BY target_brand_id
-      ORDER BY cnt DESC
+      GROUP BY +target_brand_id
+      ORDER BY cnt DESC, target_brand_id
       LIMIT 1
     `).first<{ target_brand_id: string; cnt: number }>();
 
@@ -240,14 +257,28 @@ export async function handleBrandStats(request: Request, env: Env): Promise<Resp
     // though ~6% of brands (4.7K of 78K) have a sector populated. Top
     // 8 buckets are enough for the donut + the "+N more" rollup the
     // chart already handles.
-    const sectorBreakdown = await session.prepare(`
-      SELECT sector, COUNT(*) AS count
-      FROM brands
-      WHERE sector IS NOT NULL AND sector != ''
-      GROUP BY sector
-      ORDER BY count DESC
-      LIMIT 8
-    `).all<{ sector: string; count: number }>();
+    //
+    // A full brands scan (~139K rows) on every brand_stats refill (every
+    // 30-min Phase D warm), for a mix that only moves when brand enrichment
+    // classifies sectors — so it has its own BRAND_SECTOR_MIX_TTL_S (6h)
+    // cachedValue; the sector donut can lag by up to 6h.
+    let sectorMeta: D1Result["meta"] | undefined;
+    const sectorResults = await cachedValue<Array<{ sector: string; count: number }>>(
+      env, BRAND_SECTOR_MIX_CACHE_KEY, BRAND_SECTOR_MIX_TTL_S,
+      async () => {
+        const r = await session.prepare(`
+          SELECT sector, COUNT(*) AS count
+          FROM brands
+          WHERE sector IS NOT NULL AND sector != ''
+          GROUP BY sector
+          ORDER BY count DESC
+          LIMIT 8
+        `).all<{ sector: string; count: number }>();
+        sectorMeta = r.meta;
+        return r.results ?? [];
+      },
+    );
+    const sectorBreakdown = { results: sectorResults, meta: sectorMeta };
 
     const data = {
       success: true,
@@ -418,9 +449,21 @@ export async function handleListBrands(request: Request, env: Env, scope?: OrgSc
       : { clause: "", params: [] as string[] };
 
     const [underAttackCount, watchlistCount, allCount] = await Promise.all([
-      session.prepare(
-        `SELECT COUNT(DISTINCT target_brand_id) AS n FROM threats WHERE status = 'active' AND target_brand_id IS NOT NULL ${scopeFilter.clause}`
-      ).bind(...scopeFilter.params).first<{ n: number }>(),
+      // Unscoped: a walk of every brand-linked threat on
+      // idx_threats_brand_status (~100K rows, the bulk of every brand_list
+      // miss — and Navigator's Phase C warm always misses the 300s list key)
+      // behind its own BRANDS_UNDER_ATTACK_TTL_S counter, so the tab count
+      // can lag by up to 1h. Scoped: bounded by the org's brand ids, raw.
+      scopeFilter.params.length === 0
+        ? cachedCount(env, BRANDS_UNDER_ATTACK_COUNT_KEY, BRANDS_UNDER_ATTACK_TTL_S, async () => {
+            const r = await session.prepare(
+              "SELECT COUNT(DISTINCT target_brand_id) AS n FROM threats WHERE status = 'active' AND target_brand_id IS NOT NULL",
+            ).first<{ n: number }>();
+            return r?.n ?? 0;
+          }).then((n) => ({ n }))
+        : session.prepare(
+            `SELECT COUNT(DISTINCT target_brand_id) AS n FROM threats WHERE status = 'active' AND target_brand_id IS NOT NULL ${scopeFilter.clause}`
+          ).bind(...scopeFilter.params).first<{ n: number }>(),
       session.prepare(
         `SELECT COUNT(*) AS n FROM monitored_brands ${mbScopeFilter.clause}`
       ).bind(...mbScopeFilter.params).first<{ n: number }>(),
@@ -489,7 +532,8 @@ export async function handleTopTargetedBrands(request: Request, env: Env): Promi
         SELECT target_brand_id, SUM(threat_count) AS cnt
         FROM threat_cube_brand
         WHERE hour_bucket >= ${since}
-        GROUP BY target_brand_id
+        -- +col: seek the window on idx_cube_brand_hour (see handleBrandMovers)
+        GROUP BY +target_brand_id
       )
       SELECT b.id, b.name, b.sector, b.canonical_domain,
              b.official_handles, b.email_security_grade,
@@ -898,7 +942,7 @@ export async function handleBrandFirmographics(request: Request, env: Env, brand
 // ── Catalog-level aggregates ────────────────────────────────
 // 4 read-only endpoints powering the Brands Intel page sections
 // (Defense / Pressure / Composition / Posture). All wrapped via
-// cachedValue (1h TTL, composition/posture 2h; refresh-ahead on Navigator sequential Phase D warms) inside lib/brand-aggregates.ts. Hot-path
+// cachedValue (pressure 3h, composition/posture 6h; refresh-ahead on Navigator sequential Phase D warms) inside lib/brand-aggregates.ts. Hot-path
 // safe at 100K+ catalog size.
 
 export async function handleBrandsAggregateEmailSecurity(request: Request, env: Env): Promise<Response> {

@@ -583,7 +583,7 @@ describe.skipIf(!hasSqlite())("filtered cube reads stay on the cube indexes", ()
       // the whole (country|brand, hour) index non-covering without stats.
       const distinctGeo = planned.find((x) => /COUNT\(DISTINCT country_code\) AS n FROM threat_cube_geo/.test(x.sql));
       expect(distinctGeo!.plan).toContain("SEARCH threat_cube_geo USING INDEX idx_cube_geo_hour (hour_bucket>?)");
-      const distinctBrand = planned.find((x) => /COUNT\(DISTINCT target_brand_id\) AS n FROM threat_cube_brand INDEXED BY/.test(x.sql));
+      const distinctBrand = planned.find((x) => /COUNT\(DISTINCT \+?target_brand_id\) AS n FROM threat_cube_brand INDEXED BY/.test(x.sql));
       expect(distinctBrand!.plan).toContain("SEARCH threat_cube_brand USING INDEX idx_cube_brand_hour (hour_bucket>?)");
       for (const p of planned.filter((x) => /target_brand_id = \?/.test(x.sql))) {
         expect(p.plan, p.sql).toMatch(/idx_cube_(arcs|brand)_(brand|id)_hour \(target_brand_id=\? AND hour_bucket>\?( AND hour_bucket<\?)?\)/);

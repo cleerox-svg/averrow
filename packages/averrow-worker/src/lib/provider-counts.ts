@@ -16,17 +16,15 @@
 //
 // The fix is the same WHERE-guard the threat cubes already use
 // (`... IS NOT excluded.x`): only rows whose count actually changed are
-// written. The correlated subqueries are evaluated twice (once to compute
-// the new value, once in the WHERE to compare), which adds read volume —
-// but reads sit at ~45% of budget with ample headroom, while writes are
-// the binding constraint. Trading cheap reads for eliminated writes is the
-// correct call here.
+// written. (The guard was first written as correlated subqueries evaluated
+// twice; since 2026-11-23 the counts come from one grouped pass — see
+// syncHostingProviderCounts.)
 //
 // Correctness note: a provider whose threats all flip inactive still
-// appears in the subqueries (active subquery → 0, total subquery → N), so
-// it is updated correctly. A provider whose threat rows are hard-deleted
-// (subqueries → 0) is also handled: the guard writes 0 only if the stored
-// value was non-zero. No row is silently left stale.
+// appears in the grouped pass (active → 0, total → N), so it is updated
+// correctly. A provider whose threat rows are all hard-deleted is absent
+// from the pass and zeroed by the NOT EXISTS sweep, which writes only when
+// a stored value is non-zero (or NULL). No row is silently left stale.
 
 import type { Env } from "../types";
 
@@ -38,28 +36,52 @@ import type { Env } from "../types";
  * Idempotent and safe to call from any dispatch path. Never throws on the
  * happy path; callers that need failure isolation should still wrap it.
  */
+/**
+ * The per-provider counts from ONE ordered pass over idx_threats_provider_created
+ * (hosting_provider_id leading, so the GROUP BY needs no sort). Exported for
+ * the parity test.
+ */
+export const PROVIDER_COUNTS_UPSERT_SQL = `
+    UPDATE hosting_providers SET
+      active_threat_count = c.active,
+      total_threat_count = c.total
+    FROM (
+      SELECT hosting_provider_id AS pid,
+             SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+             COUNT(*) AS total
+      FROM threats
+      WHERE hosting_provider_id IS NOT NULL
+      GROUP BY hosting_provider_id
+    ) AS c
+    WHERE c.pid = hosting_providers.id
+      AND (hosting_providers.active_threat_count IS NOT c.active
+        OR hosting_providers.total_threat_count IS NOT c.total)`;
+
+/** Providers with no threats at all: zero both counters (a guarded write). */
+export const PROVIDER_COUNTS_ZERO_SQL = `
+    UPDATE hosting_providers SET
+      active_threat_count = 0,
+      total_threat_count = 0
+    WHERE (active_threat_count IS NOT 0 OR total_threat_count IS NOT 0)
+      AND NOT EXISTS (
+        SELECT 1 FROM threats WHERE threats.hosting_provider_id = hosting_providers.id
+      )`;
+
 export async function syncHostingProviderCounts(env: Env): Promise<number> {
-  const res = await env.DB.prepare(
-    `UPDATE hosting_providers SET
-       active_threat_count = (
-         SELECT COUNT(*) FROM threats
-         WHERE threats.hosting_provider_id = hosting_providers.id
-           AND threats.status = 'active'
-       ),
-       total_threat_count = (
-         SELECT COUNT(*) FROM threats
-         WHERE threats.hosting_provider_id = hosting_providers.id
-       )
-     WHERE
-       active_threat_count IS NOT (
-         SELECT COUNT(*) FROM threats
-         WHERE threats.hosting_provider_id = hosting_providers.id
-           AND threats.status = 'active'
-       )
-       OR total_threat_count IS NOT (
-         SELECT COUNT(*) FROM threats
-         WHERE threats.hosting_provider_id = hosting_providers.id
-       )`,
-  ).run();
-  return res.meta.changes ?? 0;
+  // Read cost (2026-11-23): the previous form evaluated up to four correlated
+  // COUNT subqueries per provider — the active ones on
+  // idx_threats_provider_created with a row lookup each for `status`, then
+  // the WHERE guard's two, then SET's two on changed rows — so every run
+  // read the ~1.2M provider-linked threats 3-5 times (the bulk of the
+  // orchestrator's hour % 4 === 0 tick: 5-8M rows read). Now: one grouped
+  // pass computes both counts for every provider that has threats, and the
+  // NOT EXISTS sweep zeroes the rest (one covering seek per provider). Same
+  // values and the same change guard; both statements run in one batch
+  // (one transaction), so a reader never sees half the providers updated.
+  const db = env.DB;
+  const results = await db.batch([
+    db.prepare(PROVIDER_COUNTS_UPSERT_SQL),
+    db.prepare(PROVIDER_COUNTS_ZERO_SQL),
+  ]);
+  return results.reduce((n, r) => n + (r?.meta?.changes ?? 0), 0);
 }

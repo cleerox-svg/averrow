@@ -1,7 +1,7 @@
 // Catalog-level aggregate queries for the Brands Intel page.
 //
 // Per PR13: each aggregate is a single GROUP BY (or small JOIN) over
-// the catalog. Wrapped in cachedValue (1h / 2h TTL + Navigator refresh-ahead; reads run one at a time; email-security derives from
+// the catalog. Wrapped in cachedValue (3h / 6h TTL + Navigator refresh-ahead; reads run one at a time; email-security derives from
 // the shared 6h email-posture rollup in lib/email-posture-rollup.ts) so the Intel page
 // stays cheap even when the catalog grows to 100K+ brands. Per
 // CLAUDE.md: bare COUNT(*) FROM threats is a code-review red flag —
@@ -40,8 +40,16 @@ export interface AggregateOpts {
  * aggregate, four aggregates at once). 1h + refresh-ahead: Navigator's
  * sequential Phase D (every 30 min) recomputes it on every warm (threshold
  * 1740s), so data is ≤ ~30 min old and the key never lapses.
+ *
+ * 3h since 2026-11-23: the "cheap" social slice is a social_profiles ⋈
+ * brands GROUP BY that read ~163K rows per refill (sampled top queries,
+ * ~43/day). Every source it reads is written by a 6-hourly cron
+ * (social 15 *\/6, app_store 13 *\/6, dark_web 14 *\/6), so an hourly
+ * recompute mostly re-read unchanged rows. Threshold
+ * refreshAfterSeconds(10800) = 8940s → every 5th Phase D warm (~2.5h);
+ * the pressure cards can lag by up to ~3h.
  */
-export const BRAND_AGGREGATE_TTL_S = 3600;
+export const BRAND_AGGREGATE_TTL_S = 10_800;
 
 /**
  * TTL of composition (tier / source / Tranco / HQ mix of the catalog) and
@@ -50,8 +58,14 @@ export const BRAND_AGGREGATE_TTL_S = 3600;
  * 5340s, so the 30-min Phase D warm recomputes them every 3rd tick (~90
  * min) instead of every tick, and the key still never lapses (two spare
  * warms before expiry).
+ *
+ * 6h since 2026-11-23: each refill is four (composition) / four-plus
+ * (posture) full `brands` scans, ~139K rows each (~0.55M per refill, ~16
+ * refills/day each). Threshold refreshAfterSeconds(21600) = 19740s → every
+ * 11th Phase D warm (~5.5h); the catalog mix and the posture distribution
+ * can lag by up to ~6h (posture's source is written once a day).
  */
-export const BRAND_SLOW_AGGREGATE_TTL_S = 7200;
+export const BRAND_SLOW_AGGREGATE_TTL_S = 21_600;
 
 /**
  * TTL of the top-typosquatted-brands slice of the pressure aggregate (6h,
@@ -64,8 +78,8 @@ export const BRAND_SLOW_AGGREGATE_TTL_S = 7200;
  * lapses. Same SQL and semantics (all-time ACTIVE typosquats per brand,
  * which threat_cube_brand cannot reproduce: it is bucketed by creation hour
  * and only re-healed for the last 2-14 days, so threats that went inactive
- * later would still be counted); the ranking may lag ≤ 6h. The cheap
- * social / app / dark-web slices keep the 1h cycle.
+ * later would still be counted); the ranking may lag ≤ 6h. The social /
+ * app / dark-web slices follow BRAND_AGGREGATE_TTL_S (3h).
  */
 export const BRAND_TYPOSQUAT_PRESSURE_TTL_S = 21_600;
 
