@@ -23,11 +23,14 @@
 //     isolate read. Falling back to core after a cut-over would split writes
 //     across two DBs, so a KV blip keeps the known route instead.
 //   - a COLD isolate (no last value) on a read failure or an invalid value →
-//     the family's in-code default, FAMILY_COLD_DEFAULT_ROUTE. All three
-//     families were cut over in prod on 2026-11-23, so every default is
-//     'telemetry' (still core when TELEMETRY_DB is unbound). An explicit KV
-//     'core' always wins (the rollback path); an UNSET flag is still core, so
-//     an environment that was never cut over does not move by itself.
+//     the family's in-code default for this deploy environment,
+//     FAMILY_COLD_DEFAULT_ROUTE[deployEnvOf(env)]. All three families were
+//     cut over in PRODUCTION on 2026-11-23, so prod's defaults are
+//     'telemetry' (still core when TELEMETRY_DB is unbound); staging, dev and
+//     an unknown ENVIRONMENT keep core — staging binds TELEMETRY_DB but was
+//     never cut over, and must not move by itself on a KV blip or a typo. An
+//     explicit KV 'core' always wins (the rollback path); an UNSET flag is
+//     core everywhere. TelemetryRouteState.source says which case served.
 //   - callers must resolve a family ONCE per unit of work (run, feed pull, AI
 //     call) and carry it: a flip mid-unit must not send the finalize to a
 //     different DB than the INSERT.
@@ -42,7 +45,7 @@
 // test/db-access-ratchet.test.ts.
 
 import type { Env } from "../types";
-import { hasStore, storeBinding, StoreUnavailableError } from "./db-registry";
+import { deployEnvOf, hasStore, storeBinding, StoreUnavailableError, type DeployEnv } from "./db-registry";
 
 export type TelemetryRoute = "core" | "telemetry";
 
@@ -68,34 +71,55 @@ export const FAMILY_ROUTE_KV_KEYS: Record<TelemetryFamily, string> = {
   budget: "db_route:telemetry:budget",
 };
 
+/**
+ * Where a family's `requested` value came from:
+ *   - 'kv'           a valid flag read from KV (now, or within the 60 s cache)
+ *   - 'unset'        KV holds no flag
+ *   - 'cached'       KV failed / held an invalid value; the last known value is kept
+ *   - 'cold_default' KV failed / held an invalid value on a cold isolate; the
+ *                    environment's FAMILY_COLD_DEFAULT_ROUTE served
+ */
+export type TelemetryRouteSource = "kv" | "cached" | "cold_default" | "unset";
+
 export interface TelemetryRouteState {
   /** The database the family is served from right now. */
   route: TelemetryRoute;
   /**
    * The parsed KV flag; null when unset. When the flag is invalid or
-   * unreadable this is the last known value, else the family's cold default
-   * (FAMILY_COLD_DEFAULT_ROUTE).
+   * unreadable this is the last known value, else the environment's cold
+   * default (FAMILY_COLD_DEFAULT_ROUTE) — `source` tells them apart.
    */
   requested: TelemetryRoute | null;
   /** Whether TELEMETRY_DB is bound in this environment. */
   bound: boolean;
+  /** Where `requested` came from (see TelemetryRouteSource). */
+  source?: TelemetryRouteSource;
 }
 
 /**
- * What a cold isolate serves when it cannot learn a family's flag (KV read
- * failure, or an invalid value with no last known route). Flipped to
- * 'telemetry' after each family's prod cut-over (2026-11-23). Rolling a
- * family back to core for good means setting its flag to 'core' AND flipping
- * its entry here back to 'core' in the same change.
+ * What a cold isolate serves, per deploy environment, when it cannot learn a
+ * family's flag (KV read failure, or an invalid value with no last known
+ * route). Production's entries were flipped to 'telemetry' after each
+ * family's prod cut-over (2026-11-23); staging and dev were never cut over and
+ * stay 'core'. An unknown ENVIRONMENT also serves core (coldDefaultRoute).
+ * Rolling a family back to core for good in an environment means setting its
+ * flag to 'core' AND flipping its entry here back to 'core' in the same change.
  */
-export const FAMILY_COLD_DEFAULT_ROUTE: Record<TelemetryFamily, TelemetryRoute> = {
-  agents: "telemetry",
-  feeds: "telemetry",
-  budget: "telemetry",
+export const FAMILY_COLD_DEFAULT_ROUTE: Record<DeployEnv, Record<TelemetryFamily, TelemetryRoute>> = {
+  prod: { agents: "telemetry", feeds: "telemetry", budget: "telemetry" },
+  staging: { agents: "core", feeds: "core", budget: "core" },
+  dev: { agents: "core", feeds: "core", budget: "core" },
 };
+
+/** The cold-isolate default for this environment; core when ENVIRONMENT is unknown. */
+export function coldDefaultRoute(env: Pick<Env, "ENVIRONMENT">, family: TelemetryFamily): TelemetryRoute {
+  const deployEnv = deployEnvOf(env);
+  return deployEnv ? FAMILY_COLD_DEFAULT_ROUTE[deployEnv][family] : "core";
+}
 
 interface CachedFlag {
   requested: TelemetryRoute | null;
+  source: TelemetryRouteSource;
   expiresAt: number;
 }
 
@@ -187,38 +211,53 @@ export function parseTelemetryRoute(raw: unknown): TelemetryRoute | null {
   return v === "core" || v === "telemetry" ? v : null;
 }
 
-async function readRequested(env: Env, family: TelemetryFamily, nowMs: number): Promise<TelemetryRoute | null> {
+interface RequestedFlag {
+  requested: TelemetryRoute | null;
+  source: TelemetryRouteSource;
+}
+
+/**
+ * The value to keep when KV failed or held an invalid value: the last known
+ * one (an unset flag stays unset), else — cold isolate — this environment's
+ * cold default. A previous cold default stays labelled 'cold_default'.
+ */
+function fallbackFlag(env: Env, family: TelemetryFamily, prev: CachedFlag | null): RequestedFlag {
+  if (prev) return { requested: prev.requested, source: prev.source === "cold_default" ? "cold_default" : "cached" };
+  return { requested: coldDefaultRoute(env, family), source: "cold_default" };
+}
+
+async function readRequested(env: Env, family: TelemetryFamily, nowMs: number): Promise<RequestedFlag> {
   const c = caches[family];
-  if (c.flag && nowMs < c.flag.expiresAt) return c.flag.requested;
+  if (c.flag && nowMs < c.flag.expiresAt) return { requested: c.flag.requested, source: c.flag.source };
   // Deliberately no in-flight sharing across callers: a KV read owned by a
   // request that is cancelled before it settles would hang every later
   // caller in the isolate. At most one KV read per caller per cache miss.
+  let next: RequestedFlag;
   try {
     const raw = await env.CACHE.get(FAMILY_ROUTE_KV_KEYS[family]);
     const parsed = parseTelemetryRoute(raw);
     // A present-but-invalid value (typo) keeps the last known route rather
-    // than silently reverting to core — same rule as a read failure.
-    // A cold isolate has no last route and serves the family's cold default.
-    const requested = raw != null && parsed == null ? (c.flag?.requested ?? FAMILY_COLD_DEFAULT_ROUTE[family]) : parsed;
-    c.flag = { requested, expiresAt: nowMs + TELEMETRY_ROUTE_CACHE_MS };
-    return requested;
+    // than silently reverting to core — same rule as a read failure. A cold
+    // isolate has no last route and serves the environment's cold default.
+    if (raw != null && parsed == null) next = fallbackFlag(env, family, c.flag);
+    else next = { requested: parsed, source: parsed == null ? "unset" : "kv" };
   } catch {
     // Keep the last known route (stale) rather than silently flipping back
     // to core; retry KV on the next minute. A cold isolate (nothing cached)
-    // serves the family's cold default.
-    const requested = c.flag?.requested ?? FAMILY_COLD_DEFAULT_ROUTE[family];
-    c.flag = { requested, expiresAt: nowMs + TELEMETRY_ROUTE_CACHE_MS };
-    return requested;
+    // serves the environment's cold default.
+    next = fallbackFlag(env, family, c.flag);
   }
+  c.flag = { ...next, expiresAt: nowMs + TELEMETRY_ROUTE_CACHE_MS };
+  return next;
 }
 
 /** Which database serves a family, and why. Never throws. */
 export async function familyRouteState(env: Env, family: TelemetryFamily, nowMs: number = Date.now()): Promise<TelemetryRouteState> {
   const bound = hasStore(env, "telemetry");
-  const requested = await readRequested(env, family, nowMs);
+  const { requested, source } = await readRequested(env, family, nowMs);
   const route: TelemetryRoute = requested === "telemetry" && bound ? "telemetry" : "core";
   if (route === "telemetry") await markFamilyUsed(env, family, nowMs);
-  return { route, requested, bound };
+  return { route, requested, bound, source };
 }
 
 /** The agents family's route state (B1c API). */

@@ -88,16 +88,6 @@ import {
 const BACKLOG_TTL_LIVE_S = 3900;       // 65 min — survives to next hourly tick
 const BACKLOG_TTL_MONITORING_S = 14400; // 4h   — refresh every ~4th tick
 
-// Analyst scaling tiers on the total unlinked-active backlog (scaleAgents).
-// `backlog.total_unlinked.probe` is a BOUNDED probe capped at
-// UNLINKED_PROBE_CAP = HIGH + 1, so it answers every tier comparison
-// (`> 0`, `> MED`, `> HIGH`) exactly while reading at most CAP index
-// entries. The exact COUNT(*) read ~1.19M idx_threats_brand_status entries
-// per call (prod d1_top_queries_24h, 2026-11-08) to feed a gate that tops
-// out at 50K — a partial index can't help, a COUNT still reads every
-// matching entry. A value of CAP means "more than HIGH", not an exact count.
-export const UNLINKED_TIER_HIGH = 50_000;
-
 /**
  * Per-agent AI spend over the last 24h for the spend-burst alert body. Runs
  * per part of the budget_ledger union (telemetry ∪ core; the core part's
@@ -109,6 +99,16 @@ export const FC_SPEND_BURST_TOP_AGENT_SQL = `SELECT agent_id, SUM(cost_usd) AS c
               AND cost_usd > 0/*split*/
             GROUP BY agent_id
             ORDER BY cost DESC`;
+
+// Analyst scaling tiers on the total unlinked-active backlog (scaleAgents).
+// `backlog.total_unlinked.probe` is a BOUNDED probe capped at
+// UNLINKED_PROBE_CAP = HIGH + 1, so it answers every tier comparison
+// (`> 0`, `> MED`, `> HIGH`) exactly while reading at most CAP index
+// entries. The exact COUNT(*) read ~1.19M idx_threats_brand_status entries
+// per call (prod d1_top_queries_24h, 2026-11-08) to feed a gate that tops
+// out at 50K — a partial index can't help, a COUNT still reads every
+// matching entry. A value of CAP means "more than HIGH", not an exact count.
+export const UNLINKED_TIER_HIGH = 50_000;
 export const UNLINKED_TIER_MED = 10_000;
 export const UNLINKED_PROBE_CAP = UNLINKED_TIER_HIGH + 1;
 export const TOTAL_UNLINKED_PROBE_SQL = `
