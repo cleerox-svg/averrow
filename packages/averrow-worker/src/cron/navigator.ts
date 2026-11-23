@@ -995,9 +995,10 @@ async function runNavigatorImpl(
   //     accept 75s / 300s / 60s old entries and have the refill-lock holder
   //     refresh older ones in the background — the same compute rate the
   //     old short TTLs had, minus the cold first paint;
-  //   - D brand stats / movers / pressure / email-security rollup (3600s):
-  //     threshold 1740s, every D warm (age ≈1800s) recomputes (2/h per key);
-  //     composition / posture (7200s): threshold 5340s → every 3rd warm.
+  //   - D brand stats / movers / pressure (3600s): threshold 1740s, every D
+  //     warm (age ≈1800s) recomputes (2/h per key); composition / posture
+  //     (7200s): threshold 5340s → every 3rd warm; the email-security rollup
+  //     (21600s, 2026-11-23): threshold 19740s → every 11th warm (~5.5h).
   //     Navigator starts one target at a time and ends the phase on the first
   //     per-call timeout, so it never starts a scan beside another (an
   //     abandoned scan may finish on its own). The start target rotates

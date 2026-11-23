@@ -209,7 +209,8 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
     { name: "brand stats", phase: "D", ttl: BRAND_STATS_TTL_S, everyWarm: true },
     { name: "brand movers", phase: "D", ttl: BRAND_MOVERS_TTL_S, everyWarm: true },
     { name: "pressure aggregate", phase: "D", ttl: BRAND_AGGREGATE_TTL_S, everyWarm: true },
-    { name: "email-security aggregate (shared rollup)", phase: "D", ttl: EMAIL_POSTURE_ROLLUP_TTL_S, everyWarm: true },
+    // Weekly-moving data (6h TTL): refreshed every 11th Phase D warm (~5.5h).
+    { name: "email-security aggregate (shared rollup)", phase: "D", ttl: EMAIL_POSTURE_ROLLUP_TTL_S, everyWarm: false },
     // Daily-moving data: refreshed every 3rd Phase D warm (~90 min), never lapses.
     { name: "composition / posture aggregates", phase: "D", ttl: BRAND_SLOW_AGGREGATE_TTL_S, everyWarm: false },
   ];

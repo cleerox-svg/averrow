@@ -41,10 +41,13 @@ import {
   REGISTRAR_LANE_SQL,
   IP_REPUTATION_THREAT_TYPES,
   ASN_MAX_BRAND_FANOUT,
+  ASN_LANE_RANGE_SQL,
+  ASN_LANE_KEY_RANGES,
+  mergeAsnLaneRanges,
   runAsnLane,
   runSubnetLane,
 } from "../src/lib/nexus-threat-lanes";
-import { asnKey, asnKeySql } from "../src/lib/shared-infra-asns";
+import { asnKey, asnKeySql, SHARED_INFRA_ASNS } from "../src/lib/shared-infra-asns";
 import { stripIndexedBy } from "../src/lib/indexed-by-fallback";
 import { DEFAULT_HUB_FANOUT_THRESHOLD } from "../src/lib/cluster-components";
 
@@ -369,5 +372,73 @@ describe.skipIf(!hasSqlite())("0323 results are identical to the pre-0323 lanes"
     raw.prepare("UPDATE threats SET status = 'remediated' WHERE id IN ('w_0', 'w_1')").run();
     const rows = raw.prepare(ASN_LANE_SQL).all(ASN_MAX_BRAND_FANOUT) as Row[];
     expect(rows).toEqual([]); // 8 < the 10-threat floor
+  });
+});
+
+// ─── ASN lane key ranges (2026-11-23) ─────────────────────────────────
+// runAsnLane seeks the gaps BETWEEN the shared-infra ASNs instead of walking
+// the whole index and dropping them with NOT IN (~1.22M rows read per run in
+// prod). Pinned: the ranges skip exactly the shared keys, each range is a
+// covering range seek, and the merged ranged result equals the single
+// statement (incl. the top-N cut).
+describe.skipIf(!hasSqlite())("ASN lane key ranges", () => {
+  it("ranges are contiguous, exclusive at every shared-infra ASN and cover every other key", () => {
+    const shared = [...SHARED_INFRA_ASNS].sort();
+    expect(ASN_LANE_KEY_RANGES).toHaveLength(shared.length + 1);
+    expect(ASN_LANE_KEY_RANGES[0]![0]).toBe("");
+    expect(ASN_LANE_KEY_RANGES.at(-1)![1]).toBe("AT");
+    for (let i = 1; i < ASN_LANE_KEY_RANGES.length; i++) {
+      expect(ASN_LANE_KEY_RANGES[i]![0]).toBe(ASN_LANE_KEY_RANGES[i - 1]![1]);
+      expect(ASN_LANE_KEY_RANGES[i]![0]).toBe(shared[i - 1]);
+    }
+    const inRanges = (k: string) => ASN_LANE_KEY_RANGES.filter(([lo, hi]) => k > lo && k < hi).length;
+    for (const k of shared) expect(inRanges(k)).toBe(0);
+    for (const k of ["AS1", "AS13334", "AS133350", "AS4837", "AS64500", "AS999999", "AS0"]) {
+      if (!SHARED_INFRA_ASNS.has(k)) expect(inRanges(k), k).toBe(1);
+    }
+    // Every normalised key is AS<digits>, below the 'AT' sentinel.
+    expect(asnKey("4134 CHINANET")! < "AT").toBe(true);
+  });
+
+  for (const [label, prep] of VARIANTS) {
+    it(`each range is a covering range seek on idx_threats_asn_lane, group-ordered (${label})`, () => {
+      const db = openMigratedDb();
+      prep(db);
+      const n = (ASN_LANE_RANGE_SQL.match(/\?/g) ?? []).length;
+      expect(n).toBe(3);
+      const p = (db.prepare(`EXPLAIN QUERY PLAN ${ASN_LANE_RANGE_SQL}`).all("AS13335", "AS133618", ASN_MAX_BRAND_FANOUT) as Array<{ detail: string }>)
+        .map((r) => r.detail);
+      expect(p[0]).toBe("SEARCH threats USING COVERING INDEX idx_threats_asn_lane (<expr>>? AND <expr><?)");
+      expect(p.some((d) => /TEMP B-TREE FOR GROUP BY/.test(d))).toBe(false);
+    });
+  }
+
+  it("merged ranged groups == the single statement (edge fixture, and a top-100 cut over 130 groups)", async () => {
+    const db = openMigratedDb();
+    seedEdges(db);
+    // 130 qualifying groups with distinct sizes (no ties at the cut), keys
+    // spread across many ranges, plus shared-infra groups that must vanish.
+    insertThreats(db, Array.from({ length: 130 }, (_, g) => many(10 + g, (i) => ({
+      id: `top_${g}_${i}`, asn: `AS${70000 + g * 37}`, brand: `tb${i % 3}`,
+    }))).flat());
+    insertThreats(db, many(400, (i) => ({ id: `cfbig_${i}`, asn: "AS13335", brand: `cb${i % 3}` })));
+    const single = db.prepare(ASN_LANE_SQL).all(ASN_MAX_BRAND_FANOUT) as Row[];
+    expect(single).toHaveLength(100);
+    const parts = ASN_LANE_KEY_RANGES.map(([lo, hi]) =>
+      db.prepare(ASN_LANE_RANGE_SQL).all(lo, hi, ASN_MAX_BRAND_FANOUT) as Row[]);
+    const merged = mergeAsnLaneRanges(parts as unknown as Array<Array<{ asn: string; threat_type: string; threats: number }>>);
+    expect(canonicalGroups(merged as unknown as Row[])).toEqual(canonicalGroups(single));
+    expect(merged.map((r) => r.threats)).toEqual(single.map((r) => r.threats));
+    expect(merged.some((r) => r.asn === "AS13335")).toBe(false);
+    const viaLane = await runAsnLane(d1FromSqlite(db));
+    expect(viaLane.analyzed).toBe(100);
+    expect(viaLane.clusters.map((c) => `${c.asn}|${c.threatType}`).sort())
+      .toEqual(single.map((r) => `${r.asn}|${r.threat_type}`).sort());
+  });
+
+  it("merge breaks threat-count ties by asn, then threat_type", () => {
+    const r = (asn: string, threat_type: string, threats: number) => ({ asn, threat_type, threats });
+    expect(mergeAsnLaneRanges([[r("AS9", "phishing", 5)], [r("AS1", "phishing", 5), r("AS1", "malware", 5), r("AS2", "x", 9)]], 3))
+      .toEqual([r("AS2", "x", 9), r("AS1", "malware", 5), r("AS1", "phishing", 5)]);
   });
 });

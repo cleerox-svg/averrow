@@ -65,7 +65,8 @@
  *
  * The rule needs the score function, so it runs in JS: the SQL below finds
  * candidates (bounded to brands scanned in the last 23h — seeks
- * idx_brands_email_scan_due + idx_ess_brand_scanned; see the caller for the
+ * idx_brands_email_scan_due + idx_ess_brand_scanned, join order fixed by
+ * CROSS JOIN; see the caller for the
  * window/dedupe rationale) and findEmailGradeChanges filters them, reading
  * two rows per candidate (+1 when the previous scan was not checked). The
  * "current" scan is the one that set brands.email_security_scanned_at.
@@ -95,13 +96,23 @@ export interface EmailGradeChange {
   previous_grade: string;
 }
 
+/**
+ * Candidate pairs. `CROSS JOIN` is load-bearing: it fixes the join order to
+ * brands first, so the plan is a range seek on idx_brands_email_scan_due
+ * (brands scanned in the last 23h, ~760 in prod) and an
+ * idx_ess_brand_scanned seek per brand. With a plain JOIN the planner chose
+ * `SCAN ess` (every email_security_scans row, with a brands PK lookup each:
+ * ~613K rows read per hourly run, ~18M/day — prod EXPLAIN + sampled top
+ * queries, 2026-11-23). Same rows either way (an inner join); pinned by
+ * test/email-grade-change-plan.test.ts.
+ */
 export const EMAIL_GRADE_CHANGES_SQL = `
   SELECT b.id AS brand_id, b.name, b.email_security_grade AS current_grade,
          b.email_security_scanned_at AS current_scanned_at,
          ess.email_security_grade AS previous_grade, ess.id AS previous_scan_id,
          ess.scanned_at AS previous_scanned_at
   FROM brands b
-  JOIN email_security_scans ess ON ess.brand_id = b.id
+  CROSS JOIN email_security_scans ess ON ess.brand_id = b.id
   WHERE b.email_security_scanned_at >= datetime('now', '-23 hours')
     AND b.email_security_grade IS NOT NULL
     AND ess.email_security_grade IS NOT NULL

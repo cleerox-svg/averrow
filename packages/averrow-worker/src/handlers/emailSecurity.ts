@@ -342,8 +342,8 @@ export const EMAIL_SECURITY_STATS_KEY = 'email_security_stats';
  * At 1h roughly one warm in four pays the miss and every viewer between
  * them reads KV. cachedValue never refreshes on a hit, so the 15-min warm
  * does not shorten the TTL. A posture panel fed by a weekly rescan
- * tolerates the lag (worst case ~2h: this entry can be built from a
- * rollup that was itself up to 1h old).
+ * tolerates the lag (worst case ~7h: this entry can be built from a
+ * rollup that was itself up to 6h old — EMAIL_POSTURE_ROLLUP_TTL_S).
  */
 export const EMAIL_SECURITY_STATS_TTL_S = 3600;
 

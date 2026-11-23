@@ -2,7 +2,7 @@
 //
 // Per PR13: each aggregate is a single GROUP BY (or small JOIN) over
 // the catalog. Wrapped in cachedValue (1h / 2h TTL + Navigator refresh-ahead; reads run one at a time; email-security derives from
-// the shared 1h email-posture rollup in lib/email-posture-rollup.ts) so the Intel page
+// the shared 6h email-posture rollup in lib/email-posture-rollup.ts) so the Intel page
 // stays cheap even when the catalog grows to 100K+ brands. Per
 // CLAUDE.md: bare COUNT(*) FROM threats is a code-review red flag —
 // these aggregates use existing pre-computed columns where possible.
@@ -109,10 +109,10 @@ const BRAND_AGG_GRADE_RANK: Record<string, number> = {
 
 /**
  * Derived in memory from the shared email-posture rollup
- * (lib/email-posture-rollup.ts, one cached scan of `brands` per hour that
+ * (lib/email-posture-rollup.ts, one cached scan of `brands` per ~6h that
  * also feeds /api/email-security/stats and Observer). Previously three
  * scans of its own behind a 30-min cachedValue; no outer cache now — the
- * rollup is already cached (1h), so a second wrapper would only stack
+ * rollup is already cached (6h), so a second wrapper would only stack
  * staleness for the same single KV read.
  */
 export async function emailSecurityAggregate(env: Env, opts: AggregateOpts = {}): Promise<EmailSecurityAggregate> {

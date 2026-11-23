@@ -95,10 +95,13 @@ export function recordD1Reads(env: Env, endpoint: string, tally: D1Tally, stores
  *           the old single point, so `SUM(...) GROUP BY blob1` is unchanged)
  *   double4 overloads, double5 other D1 errors (0 on pre-v2 points)
  *   double6 record weight: 1 on the FIRST point of a record, 0 on the extra
- *           store points. A "request/run count" must be
- *           `SUM(_sample_interval * if(blob2 = '', 1, double6))` (pre-v2
- *           points have blob2 '' and no double6), never a bare point count —
- *           a run touching two stores writes two points.
+ *           store points. A "request/run count" is SUM(_sample_interval) on
+ *           blob2 '' points (always a record's only point; pre-v2 points have
+ *           blob2 '' and no double6) plus SUM(_sample_interval * double6) on
+ *           every other store, never a bare point count — a run touching two
+ *           stores writes two points. Group by blob2 and fold in code
+ *           (handlers/diagnostics.ts foldAeRecordCount): AE SQL answered 422
+ *           to the `if(blob2 = '', 1, double6)` form.
  *
  * With a store breakdown, one point is written per store with queries > 0,
  * plus a '-' point for any remainder of the total not covered by a store

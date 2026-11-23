@@ -18,6 +18,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { refreshAfterSeconds } from "../src/lib/cache-refresh";
 import {
   hasSqlite, openDerivedDb, openMigratedDb, d1FromSqlite, fakeKv,
   type SqliteDb, type StatementLogEntry,
@@ -168,12 +169,14 @@ describe.skipIf(!hasSqlite())("fix 2 — shared email-posture rollup", () => {
     expect(env.CACHE.store.has(`cv:${EMAIL_SECURITY_STATS_KEY}`)).toBe(true);
   });
 
-  it("cache contract: stats key unchanged, TTLs in the 30–60 min band", () => {
+  it("cache contract: stats key unchanged, stats TTL 30–60 min, rollup 6h", () => {
     expect(EMAIL_SECURITY_STATS_KEY).toBe("email_security_stats");
-    for (const ttl of [EMAIL_SECURITY_STATS_TTL_S, EMAIL_POSTURE_ROLLUP_TTL_S]) {
-      expect(ttl).toBeGreaterThanOrEqual(1800);
-      expect(ttl).toBeLessThanOrEqual(3600);
-    }
+    expect(EMAIL_SECURITY_STATS_TTL_S).toBeGreaterThanOrEqual(1800);
+    expect(EMAIL_SECURITY_STATS_TTL_S).toBeLessThanOrEqual(3600);
+    // 6h: the Phase D refresh warm recomputes the brands scan every ~5.5h,
+    // not on every 30-min warm (2026-11-23, ~19.5M reads/day at 1h).
+    expect(EMAIL_POSTURE_ROLLUP_TTL_S).toBe(21_600);
+    expect(Math.ceil(refreshAfterSeconds(EMAIL_POSTURE_ROLLUP_TTL_S) / 1800)).toBe(11);
     // Longer than Navigator's 15-min Phase B admin-dashboard warm, which
     // reaches this payload through handleAdminDashboard.
     expect(EMAIL_SECURITY_STATS_TTL_S).toBeGreaterThan(900);
