@@ -26,6 +26,9 @@ regexes = [
   # string the generic-api-key rule flags because the constant ends in _KEY
   # (lib/db-sizes.ts, reviewed 2026-11-22).
   '''CACHE_KEY = "infra\.db_sizes\.v[0-9]+"''',
+  # Same false positive for the velocity diagnostics KV key
+  # (lib/velocity-diag.ts, reviewed 2026-11-23).
+  '''CACHE_KEY = "diag\.weaponization\.distribution\.v[0-9]+"''',
 ]
 commits = [
   # imprsn8 default-admin hash (decommissioned in 2a021e28; credential dead).
