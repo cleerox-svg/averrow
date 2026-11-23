@@ -59,7 +59,7 @@ import {
   asnKeySql,
 } from "./shared-infra-asns";
 import { DEFAULT_HUB_FANOUT_THRESHOLD } from "./cluster-components";
-import { withIndexHintFallback } from "./indexed-by-fallback";
+import { isIndexHintError, stripIndexedBy, withIndexHintFallback } from "./indexed-by-fallback";
 import { buildDormancyPivotPayload } from "./cluster-infra-movement";
 import {
   slugifyKey,
@@ -899,12 +899,13 @@ export async function runRegistrarLane(db: D1Database): Promise<LaneResult> {
 // per call in prod). Keep the inner WHERE terms and ASN_NORM_SQL as they
 // are: the planner matches the index's partial WHERE and key expression
 // against them. If they drift (or the index is missing) the hint errors and
-// withIndexHintFallback re-runs the query unhinted — correct, just
+// readAsnLaneRows runs the single statement once unhinted — correct, just
 // expensive; test/nexus-lane-covering-indexes.test.ts fails first.
 // Since 2026-11-23 runAsnLane runs that walk as one range seek per gap
 // between the shared-infra ASNs (ASN_LANE_KEY_RANGES / ASN_LANE_RANGE_SQL),
 // so the excluded landlords' index entries are never read, and merges the
-// per-range top-N (mergeAsnLaneRanges).
+// per-range top-N (mergeAsnLaneRanges); on the first hint error it abandons
+// the ranges for that one unhinted statement (readAsnLaneRows).
 //
 // Skipped: shared-infra ASNs of either kind, IP-reputation types, NULL / ''
 // types (a '' type slugs to `_unknown`, which the retire pass supersedes as a
@@ -949,7 +950,7 @@ function asnLaneSql(ranged: boolean): string {
          AND asn_norm NOT IN (${SHARED_INFRA_ASNS_SQL_LIST})
        GROUP BY asn_norm, threat_type
       HAVING COUNT(*) >= 10 AND COUNT(DISTINCT target_brand_id) <= ?
-       ORDER BY threats DESC
+       ORDER BY threats DESC, asn_norm, threat_type
        LIMIT ${ASN_LANE_LIMIT}`;
 }
 
@@ -989,8 +990,10 @@ export const ASN_LANE_KEY_RANGES: ReadonlyArray<readonly [string, string]> = (()
 
 /**
  * Merge per-range ASN lane results into the single statement's top-N:
- * threats DESC; ties (which the single statement left in arbitrary order)
- * are broken by asn, then threat_type, so the cut is deterministic.
+ * threats DESC, ties broken by asn, then threat_type — the same order as the
+ * statement's own `ORDER BY threats DESC, asn_norm, threat_type`, so each
+ * range's LIMIT cut and the merged cut are deterministic and agree with the
+ * single statement (JS string order == SQLite BINARY order for these keys).
  */
 export function mergeAsnLaneRanges<T extends { asn: string; threat_type: string; threats: number }>(
   parts: T[][],
@@ -1031,6 +1034,32 @@ export interface AsnLaneResult extends LaneResult {
   clusters: AsnLaneCluster[];
 }
 
+/**
+ * The ASN lane's grouped rows. One seek per gap between shared-infra ASNs
+ * (ASN_LANE_KEY_RANGES), run one after another, merged to the single
+ * statement's top-N. If the INDEXED BY hint is unusable ("no such index" /
+ * "no query solution", e.g. the index is missing), the ranges are abandoned
+ * on the FIRST such error and the single unranged statement runs ONCE
+ * without the hint — the pre-range fallback cost (~one unhinted walk). An
+ * unhinted range can't seek the expression index, so retrying each of the
+ * 42 ranges unhinted would repeat that full walk 42 times. Partial range
+ * results are discarded. Any other error propagates.
+ */
+export async function readAsnLaneRows<T extends { asn: string; threat_type: string; threats: number }>(
+  db: D1Database,
+): Promise<T[]> {
+  const parts: T[][] = [];
+  for (const [lo, hi] of ASN_LANE_KEY_RANGES) {
+    try {
+      parts.push((await db.prepare(ASN_LANE_RANGE_SQL).bind(lo, hi, ASN_MAX_BRAND_FANOUT).all<T>()).results ?? []);
+    } catch (err) {
+      if (!isIndexHintError(err)) throw err;
+      return (await db.prepare(stripIndexedBy(ASN_LANE_SQL)).bind(ASN_MAX_BRAND_FANOUT).all<T>()).results ?? [];
+    }
+  }
+  return mergeAsnLaneRanges(parts);
+}
+
 /** `eventsDb`: where pivot_detected events are written (routed agent-runs store, Track B1c). */
 export async function runAsnLane(db: D1Database, eventsDb: D1Database = db): Promise<AsnLaneResult> {
   type AsnLaneRow = {
@@ -1048,14 +1077,7 @@ export async function runAsnLane(db: D1Database, eventsDb: D1Database = db): Pro
     last_7d: number;
     prev_7d: number;
   };
-  // One seek per gap between shared-infra ASNs (ASN_LANE_KEY_RANGES), run
-  // one after another, then merged to the single statement's top-N.
-  const parts: AsnLaneRow[][] = [];
-  for (const [lo, hi] of ASN_LANE_KEY_RANGES) {
-    parts.push((await withIndexHintFallback(ASN_LANE_RANGE_SQL, (sql) =>
-      db.prepare(sql).bind(lo, hi, ASN_MAX_BRAND_FANOUT).all<AsnLaneRow>())).results ?? []);
-  }
-  const rows = mergeAsnLaneRanges(parts);
+  const rows = await readAsnLaneRows<AsnLaneRow>(db);
   const out: AsnLaneResult = {
     clustersWritten: 0, analyzed: rows.length, writeErrors: 0,
     pivotsDetected: 0, accelerating: 0, clusters: [],

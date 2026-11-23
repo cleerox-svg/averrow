@@ -26,7 +26,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { hasSqlite, openMigratedDb, d1FromSqlite, type SqliteDb } from "./sqlite-d1-harness";
+import { hasSqlite, openMigratedDb, d1FromSqlite, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
 import { insertThreats, many, seedScenario } from "./nexus-fixtures";
 import {
   ASN_LANE_SQL,
@@ -43,7 +43,9 @@ import {
   ASN_MAX_BRAND_FANOUT,
   ASN_LANE_RANGE_SQL,
   ASN_LANE_KEY_RANGES,
+  ASN_LANE_LIMIT,
   mergeAsnLaneRanges,
+  readAsnLaneRows,
   runAsnLane,
   runSubnetLane,
 } from "../src/lib/nexus-threat-lanes";
@@ -434,6 +436,35 @@ describe.skipIf(!hasSqlite())("ASN lane key ranges", () => {
     expect(viaLane.analyzed).toBe(100);
     expect(viaLane.clusters.map((c) => `${c.asn}|${c.threatType}`).sort())
       .toEqual(single.map((r) => `${r.asn}|${r.threat_type}`).sort());
+  });
+
+  it("a hint error on range 1 abandons the ranges: ONE unhinted single-statement read, same output", async () => {
+    // ONE seeded database (first_seen is datetime('now', …)): ranged read
+    // with the index, then drop it and read again through the fallback.
+    const raw = openMigratedDb();
+    seedEdges(raw);
+    const expected = await readAsnLaneRows<{ asn: string; threat_type: string; threats: number }>(d1FromSqlite(raw));
+    expect(expected.length).toBeGreaterThan(3);
+    raw.exec("DROP INDEX idx_threats_asn_lane"); // "no such index" on the hint
+    const log: StatementLogEntry[] = [];
+    const got = await readAsnLaneRows<{ asn: string; threat_type: string; threats: number }>(d1FromSqlite(raw, { log }));
+    expect(log).toHaveLength(2);
+    expect(log[0]!.sql).toBe(ASN_LANE_RANGE_SQL);
+    expect(log[0]!.error).toMatch(/no such index/);
+    expect(log[1]!.sql).toBe(stripIndexedBy(ASN_LANE_SQL));
+    expect(log[1]!.error).toBeUndefined();
+    expect(canonicalGroups(got as unknown as Row[])).toEqual(canonicalGroups(expected as unknown as Row[]));
+    expect(got.map((r) => `${r.asn}|${r.threat_type}|${r.threats}`))
+      .toEqual(expected.map((r) => `${r.asn}|${r.threat_type}|${r.threats}`));
+  });
+
+  it("a non-hint error propagates (no fallback)", async () => {
+    const db = { prepare: () => ({ bind: () => ({ all: async () => { throw new Error("D1_ERROR: D1 DB is overloaded"); } }) }) } as unknown as D1Database;
+    await expect(readAsnLaneRows(db)).rejects.toThrow(/overloaded/);
+  });
+
+  it("each range's ORDER BY carries the merge tie-break (deterministic per-range LIMIT cut)", () => {
+    expect(ws(ASN_LANE_RANGE_SQL)).toContain(`ORDER BY threats DESC, asn_norm, threat_type LIMIT ${ASN_LANE_LIMIT}`);
   });
 
   it("merge breaks threat-count ties by asn, then threat_type", () => {
