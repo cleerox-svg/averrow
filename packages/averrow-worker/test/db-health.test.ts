@@ -204,6 +204,8 @@ describe("buildDatabasesBase — fail-soft", () => {
     expect(base.summary.total_bytes).toBe(4096 * 1010);
     expect(base.summary.overloads_24h).toBeNull();
     expect(base.summary.cycle_rows_read).toBeNull();
+    // The cycle window doesn't depend on the CF GraphQL call, so it is there without credentials.
+    expect(base.summary.cycle).toEqual({ start: "2026-11-18T00:00:00.000Z", end: expect.stringMatching(/^2026-12-17T23:59:59/), days_total: 30 });
     expect(base.proposed).toEqual([]); // telemetry + archive are live stores now
     const telemetry = base.databases.find((d) => d.store === "telemetry")!;
     expect(telemetry.label).toBe("TELEMETRY");

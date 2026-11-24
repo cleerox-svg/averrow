@@ -155,6 +155,7 @@ export const databasesFixture: DatabasesPayload = {
     largest_share_pct: 89,
     cycle_rows_read: 1_440_000_000,
     cycle_pct_of_plan: 5.76,
+    cycle: { start: '2026-11-18T00:00:00.000Z', end: '2026-12-17T23:59:59.999Z', days_total: 30 },
     overloads_24h: 37,
     // Server shape (lib/db-health.ts) — keep in sync so the UI can't drift.
     thresholds: { warn_size_fraction: 0.5, critical_size_fraction: 0.8, warn_days_to_cap: 180, overloaded_min: 5 },

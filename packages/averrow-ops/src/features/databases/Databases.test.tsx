@@ -13,7 +13,7 @@ import { api } from '@/lib/api';
 import { Databases } from './Databases';
 import { OperationsWorkspace } from '@/features/operations/OperationsWorkspace';
 import { auditDb, databasesFixture, emptyMeterFixture, noProposedFixture } from './fixtures';
-import { formatBytes, formatCount, formatTimeToFull, sourceNodes } from './format';
+import { cycleTrend, cycleTrendChip, cycleTrendLabel, cycleTrendTone, formatBytes, formatCount, formatTimeToFull, sourceNodes } from './format';
 import { projectionPoints } from './DatabaseDetail';
 
 const get = vi.mocked(api.get);
@@ -115,6 +115,29 @@ describe('Databases — table view', () => {
     expect(within(table).getByText(/averrow-telemetry/)).toBeInTheDocument();
   });
 
+  it('compares the last 24 h with the cycle average under each cycle total', async () => {
+    renderAt('/?view=table');
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText(/billing cycle \(since Nov 18\)/)).toBeInTheDocument();
+    const row = within(table).getByRole('row', { name: /trust-radar-v2 CORE/ });
+    // 14 complete hours (00–13) = 105.3 M → 181 M/day; earlier 4 days = 1.18 B → 294 M/day; 39% below.
+    const trend = within(row).getByText('▼ 39% · 24h 181 M');
+    expect(trend.closest('.dbp-trend')).toHaveAttribute('data-direction', 'down');
+    expect(trend.closest('.dbp-trend')).toHaveAttribute('data-tone', 'good'); // fewer reads
+    // Fewer writes is neutral, not green: it can mean a stalled writer.
+    const writeTrend = within(row).getAllByText(/^▼ \d+% · 24h /)[1];
+    expect(writeTrend.closest('.dbp-trend')).toHaveAttribute('data-tone', 'neutral');
+    expect(within(row).getByText(/Last 24 h: about 181 M rows read, 39% below this cycle's earlier daily average of 294 M/)).toBeInTheDocument();
+  });
+
+  it('shows no trend line when the payload has no cycle window', async () => {
+    get.mockResolvedValue({ success: true, data: { ...databasesFixture, summary: { ...databasesFixture.summary, cycle: undefined } } });
+    renderAt('/?view=table');
+    const table = await screen.findByRole('table');
+    expect(table.querySelector('.dbp-trend')).toBeNull();
+    expect(within(table).queryByText(/since/)).toBeNull();
+  });
+
   it('switches views with the Cards / Map / Table toggle', async () => {
     const user = userEvent.setup();
     renderAt('/');
@@ -203,6 +226,8 @@ describe('Databases — detail', () => {
     expect(screen.getByRole('img', { name: /grew from .* to 5\.42 GB.*reaches 10\.0 GB/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /19 overload rejections over the last 24 hours\. Peak 14/ })).toBeInTheDocument();
     expect(screen.getByText('threat_cube_brand')).toBeInTheDocument();
+    expect(screen.getByText('24h ≈ 181 M · earlier avg 294 M/day')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Last 24 h: about .* rows written, \d+% below/)).toBeInTheDocument();
     expect(screen.getByText('navigator')).toBeInTheDocument();
     expect(screen.getByText('Straight-line from the size history; dashed line is the projection to the limit.', { exact: false })).toBeInTheDocument();
   });
@@ -245,6 +270,53 @@ describe('format helpers', () => {
     expect(formatCount(null)).toBe('—');
     expect(formatCount(54_200_000)).toBe('54.2 M');
     expect(formatCount(950)).toBe('950');
+  });
+  // 2026-11-23T00:00Z is 5 days into a cycle that started 2026-11-18.
+  const cycleStart = '2026-11-18T00:00:00Z';
+  /** 24 hourly buckets 2026-11-22T00..23, `perHour` rows each; the newest is "in progress" at `now`. */
+  const day = (perHour: number) => Array.from({ length: 24 }, (_, i) => ({
+    hour: `2026-11-22T${String(i).padStart(2, '0')}:00:00Z`, rows_read: perHour, rows_written: perHour / 10,
+  }));
+  const now = '2026-11-22T23:30:00Z';
+  // Baseline: 4 days at 1,000/h = 96,000 → 24,000/day. Recent buckets are added on top.
+  const total = (perHour: number) => 96_000 + 24 * perHour;
+
+  it('compares the last day with the earlier part of the cycle', () => {
+    const up = cycleTrend(total(1_500), day(1_500), 'rows_read', cycleStart, now)!;
+    expect(up).toMatchObject({ dailyAvg: 24_000, last24h: 36_000, deltaPct: 50, direction: 'up' });
+    expect(cycleTrendChip(up)).toBe('▲ 50%');
+    expect(cycleTrendTone(up, 'rows_read')).toBe('warn'); // +50%: amber
+    expect(cycleTrendLabel(up, 'rows read')).toBe("Last 24 h: about 36.0 K rows read, 50% above this cycle's earlier daily average of 24.0 K");
+    const down = cycleTrend(total(500), day(500), 'rows_read', cycleStart, now)!;
+    expect([down.direction, cycleTrendChip(down), cycleTrendTone(down, 'rows_read')]).toEqual(['down', '▼ 50%', 'good']);
+    expect(cycleTrendTone(down, 'rows_written')).toBe('neutral');
+    const double = cycleTrend(total(2_000), day(2_000), 'rows_read', cycleStart, now)!;
+    expect([double.deltaPct, cycleTrendChip(double), cycleTrendTone(double, 'rows_written')]).toEqual([100, '▲ 100%', 'bad']);
+    const nearlyDouble = cycleTrend(total(1_990), day(1_990), 'rows_read', cycleStart, now)!;
+    expect(cycleTrendTone(nearlyDouble, 'rows_read')).toBe('warn');
+    const flat = cycleTrend(total(1_050), day(1_050), 'rows_read', cycleStart, now)!;
+    expect([flat.direction, cycleTrendChip(flat), cycleTrendTone(flat, 'rows_read')]).toEqual(['flat', '≈ avg', 'neutral']);
+    expect(cycleTrendLabel(flat, 'rows written')).toContain('about the same as');
+  });
+  it('does not let the recent day pull its own baseline toward it', () => {
+    // Day 2: one steady day at 1,000/h then a day at 1,220/h is +22%, not the +10% a whole-cycle average gives.
+    const h = day(1_220);
+    const t = cycleTrend(24_000 + 24 * 1_220, h, 'rows_read', '2026-11-21T00:00:00Z', now)!;
+    expect(t.deltaPct).toBe(22);
+  });
+  it('leaves out the hour still in progress and reads the requested field', () => {
+    const h = day(1_000);
+    h[23] = { ...h[23], rows_read: 900_000, rows_written: 100 }; // a spike in the unfinished hour
+    expect(cycleTrend(96_000 + 23_000 + 900_000, h, 'rows_read', cycleStart, now)!.direction).toBe('flat');
+    expect(cycleTrend(9_600 + 2_300 + 100, h, 'rows_written', cycleStart, now)!.dailyAvg).toBe(2_400);
+  });
+  it('gives no cycle trend without data, before a full baseline day, or for a quiet store', () => {
+    expect(cycleTrend(null, day(1_000), 'rows_read', cycleStart, now)).toBeNull();
+    expect(cycleTrend(120_000, [], 'rows_read', cycleStart, now)).toBeNull();
+    expect(cycleTrend(120_000, day(1_000), 'rows_read', undefined, now)).toBeNull();
+    expect(cycleTrend(30_000, day(1_000), 'rows_read', '2026-11-21T12:00:00Z', now)).toBeNull(); // 12 h baseline
+    expect(cycleTrend(4 * 240 + 24 * 10, day(10), 'rows_read', cycleStart, now)).toBeNull(); // 240/day
+    expect(cycleTrend(120_000, day(1_000), 'rows_read', cycleStart, '2026-11-22T08:00:00Z')).toBeNull(); // 8 complete hours
   });
   it('describes time to full', () => {
     expect(formatTimeToFull({ days_to_cap: null, growth_bytes_per_day: null })).toBe('Not enough history yet');

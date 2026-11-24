@@ -8,6 +8,7 @@ import type { DatabaseEntry, DatabasesSummary, DbWindow } from '@/hooks/useDatab
 import { StatusPill, windowParam } from './DatabaseCards';
 import {
   DASH, KIND_LABEL, OVERLOADS_SCOPE_DEFAULT, WINDOW_LABEL, formatBytes, formatCount, formatPct, formatTimeToFull, hourLabel,
+  cycleTrend, cycleTrendChip, cycleTrendLabel, cycleTrendTone,
   overCap, thresholdText, thresholds, usedPct,
 } from './format';
 
@@ -100,8 +101,10 @@ function OverloadsChart({ db }: { db: DatabaseEntry }) {
   );
 }
 
-export function DatabaseDetail({ db, window: win = '24h', summary }: { db: DatabaseEntry; window?: DbWindow; summary?: DatabasesSummary }) {
+export function DatabaseDetail({ db, window: win = '24h', summary, generatedAt }: { db: DatabaseEntry; window?: DbWindow; summary?: DatabasesSummary; generatedAt?: string }) {
   const th = thresholds(summary);
+  const readTrend = generatedAt ? cycleTrend(db.reads_cycle, db.hourly, 'rows_read', summary?.cycle?.start, generatedAt) : null;
+  const writeTrend = generatedAt ? cycleTrend(db.writes_cycle, db.hourly, 'rows_written', summary?.cycle?.start, generatedAt) : null;
   const over = overCap(db);
   const pct = usedPct(db.size_bytes, db.cap_bytes);
   const growth = db.growth_bytes_per_day;
@@ -140,8 +143,18 @@ export function DatabaseDetail({ db, window: win = '24h', summary }: { db: Datab
         <StatGrid cols={4}>
           <StatTile label="Size" value={formatBytes(db.size_bytes)} sub={pct == null ? 'Not measured yet' : `${formatPct(pct, 0)} of ${formatBytes(db.cap_bytes)} limit`} />
           <StatTile label="Time to full" value={over ? 'At cap' : db.days_to_cap != null && growth != null && growth > 0 ? formatTimeToFull(db).replace(' to full', '').replace(' months', ' mo').replace(' days', ' d').replace(' years', ' yr') : DASH} sub={over ? 'At or over the cap' : to80 != null ? `critical (${Math.round(th.critical * 100)}%) in ≈ ${to80} days` : formatTimeToFull(db)} />
-          <StatTile label="Reads · cycle" value={formatCount(db.reads_cycle)} sub={`24h ${formatCount(db.reads_24h)}`} />
-          <StatTile label="Writes · cycle" value={formatCount(db.writes_cycle)} sub={`24h ${formatCount(db.writes_24h)}`} />
+          <StatTile
+            label="Reads · cycle"
+            value={formatCount(db.reads_cycle)}
+            sub={readTrend ? `24h ≈ ${formatCount(readTrend.last24h)} · earlier avg ${formatCount(readTrend.dailyAvg)}/day` : `24h ${formatCount(db.reads_24h)}`}
+            delta={readTrend ? { value: cycleTrendChip(readTrend), tone: cycleTrendTone(readTrend, 'rows_read'), label: cycleTrendLabel(readTrend, 'rows read') } : undefined}
+          />
+          <StatTile
+            label="Writes · cycle"
+            value={formatCount(db.writes_cycle)}
+            sub={writeTrend ? `24h ≈ ${formatCount(writeTrend.last24h)} · earlier avg ${formatCount(writeTrend.dailyAvg)}/day` : `24h ${formatCount(db.writes_24h)}`}
+            delta={writeTrend ? { value: cycleTrendChip(writeTrend), tone: cycleTrendTone(writeTrend, 'rows_written'), label: cycleTrendLabel(writeTrend, 'rows written') } : undefined}
+          />
           <StatTile
             label="Overloads · 24h"
             value={db.overloads_24h == null ? DASH : String(db.overloads_24h)}

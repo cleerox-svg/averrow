@@ -132,3 +132,107 @@ export const edgeId = (e: Pick<DbEdge, 'kind' | 'source' | 'store'>) => `${e.kin
 export function findStore(dbs: DatabaseEntry[], store: string | null): DatabaseEntry | undefined {
   return store ? dbs.find((d) => d.store === store) : undefined;
 }
+
+// ─── Last 24 h vs the billing cycle's daily average ─────────────
+
+/** Within ±this % of the cycle average reads as "about average" (no colour). */
+export const CYCLE_TREND_FLAT_PCT = 10;
+/** Below this many rows a day a store is too quiet for a percentage to mean anything. */
+export const CYCLE_TREND_MIN_ROWS_PER_DAY = 1_000;
+/** Fewer complete hours than this in the recent window → no trend. */
+const MIN_RECENT_HOURS = 12;
+const HOUR_MS = 3_600_000;
+
+export interface CycleTrend {
+  /** The cycle's pace per day BEFORE the recent window (so the window doesn't pull its own baseline toward it). */
+  dailyAvg: number;
+  /** The recent window's pace per day (its complete hours, scaled to 24 h). */
+  last24h: number;
+  /** (last24h ÷ dailyAvg − 1) × 100, rounded. */
+  deltaPct: number;
+  direction: 'up' | 'down' | 'flat';
+}
+
+/**
+ * Compare the last day with the rest of the billing cycle, as per-day rates.
+ *
+ * The recent window is the complete hours of the store's `hourly` series (the
+ * newest bucket is the hour still in progress, so it is left out; the
+ * `reads_24h` figure is not used because its window starts mid-hour). The
+ * baseline is the cycle total minus everything from the recent window's first
+ * hour on, over the hours between the cycle start and that hour.
+ *
+ * Null when data is missing, the baseline is under a day, or the store is too
+ * quiet (< {@link CYCLE_TREND_MIN_ROWS_PER_DAY}/day). `now` should be the
+ * payload's `generated_at`.
+ */
+export function cycleTrend(
+  cycleTotal: number | null | undefined,
+  hourly: ReadonlyArray<{ hour: string; rows_read: number; rows_written: number }> | null | undefined,
+  field: 'rows_read' | 'rows_written',
+  cycleStart: string | null | undefined,
+  now: string | number | Date,
+): CycleTrend | null {
+  if (cycleTotal == null || !hourly || hourly.length === 0 || !cycleStart) return null;
+  const start = Date.parse(cycleStart);
+  const at = now instanceof Date ? now.getTime() : typeof now === 'number' ? now : Date.parse(now);
+  if (!Number.isFinite(start) || !Number.isFinite(at)) return null;
+
+  let recentSum = 0;
+  let recentHours = 0;
+  let firstRecent = Infinity;
+  let afterRecent = 0; // the in-progress hour: in the cycle total, in neither window
+  for (const h of hourly) {
+    const t = Date.parse(h.hour);
+    if (!Number.isFinite(t) || t < start) continue;
+    if (t + HOUR_MS <= at) {
+      recentSum += h[field];
+      recentHours++;
+      firstRecent = Math.min(firstRecent, t);
+    } else {
+      afterRecent += h[field];
+    }
+  }
+  if (recentHours < MIN_RECENT_HOURS) return null;
+
+  const baselineHours = (firstRecent - start) / HOUR_MS;
+  if (baselineHours < 24) return null;
+  const baselineTotal = cycleTotal - recentSum - afterRecent;
+  const dailyAvg = (baselineTotal / baselineHours) * 24;
+  if (!(dailyAvg >= CYCLE_TREND_MIN_ROWS_PER_DAY)) return null;
+
+  const last24h = (recentSum / recentHours) * 24;
+  const deltaPct = Math.round((last24h / dailyAvg - 1) * 100);
+  const direction = Math.abs(deltaPct) < CYCLE_TREND_FLAT_PCT ? 'flat' : deltaPct > 0 ? 'up' : 'down';
+  return { dailyAvg, last24h, deltaPct, direction };
+}
+
+/** Chip text: "▲ 18%", "▼ 9%" or "≈ avg". */
+export function cycleTrendChip(t: CycleTrend): string {
+  if (t.direction === 'flat') return '≈ avg';
+  return `${t.direction === 'up' ? '▲' : '▼'} ${Math.abs(t.deltaPct)}%`;
+}
+
+/** Full sentence for screen readers. `what` is "rows read" / "rows written". */
+export function cycleTrendLabel(t: CycleTrend, what: string): string {
+  const vs = t.direction === 'flat'
+    ? 'about the same as'
+    : `${Math.abs(t.deltaPct)}% ${t.direction === 'up' ? 'above' : 'below'}`;
+  return `Last 24 h: about ${formatCount(t.last24h)} ${what}, ${vs} this cycle's earlier daily average of ${formatCount(t.dailyAvg)}`;
+}
+
+/** At or above this % over the average (2× normal), an increase is red rather than amber. */
+export const CYCLE_TREND_HIGH_PCT = 100;
+
+export type CycleTrendTone = 'good' | 'warn' | 'bad' | 'neutral';
+
+/**
+ * Colour for a trend. More usage costs more: amber above the ±10% band, red
+ * at 2× the average or more. Fewer READS is good (green). Fewer WRITES is
+ * neutral, not good: a drop in writes can mean a stalled feed or agent.
+ */
+export function cycleTrendTone(t: CycleTrend, field: 'rows_read' | 'rows_written'): CycleTrendTone {
+  if (t.direction === 'up') return t.deltaPct >= CYCLE_TREND_HIGH_PCT ? 'bad' : 'warn';
+  if (t.direction === 'down') return field === 'rows_read' ? 'good' : 'neutral';
+  return 'neutral';
+}

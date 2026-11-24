@@ -85,6 +85,8 @@ export interface DatabasesSummary {
   largest_share_pct: number | null;
   cycle_rows_read: number | null;
   cycle_pct_of_plan: number | null;
+  /** Current Cloudflare billing cycle (18th → 17th, UTC). Absent on payloads cached before it was added. */
+  cycle?: { start: string; end: string; days_total: number };
   overloads_24h: number | null;
   /** Server thresholds (lib/db-health.ts). Defaults 0.5 / 0.8 when absent. */
   thresholds?: {
