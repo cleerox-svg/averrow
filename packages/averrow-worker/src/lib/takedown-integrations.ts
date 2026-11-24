@@ -46,6 +46,34 @@ export interface IntegrationHealth {
    * otherwise; `used` is null when the count could not be read.
    */
   monthly_quota?:      { used: number | null; cap: number };
+  /** Static channel configuration (secret NAMES, never values) + provider row. */
+  config:              IntegrationConfig;
+}
+
+/** The takedown_providers row behind an API integration (matched on abuse_api_type). */
+export interface IntegrationProviderConfig {
+  id:                  number;
+  provider_name:       string;
+  provider_type:       string | null;
+  abuse_email:         string | null;
+  abuse_url:           string | null;
+  abuse_api_url:       string | null;
+  abuse_api_type:      string;
+  auto_submit_enabled: boolean;
+}
+
+export interface IntegrationConfig {
+  /** Worker secret NAMES this channel reads — never their values. */
+  credential_secrets:   string[];
+  /** Optional non-secret vars this channel reads. */
+  optional_vars:        string[];
+  /** Whether a real send needs TAKEDOWN_SEND_MODE=live. */
+  requires_live_mode:   boolean;
+  send_mode:            "live" | "draft";
+  /** null for email channels, or when no provider row exists. */
+  provider:             IntegrationProviderConfig | null;
+  /** true only for API integrations that have a provider row. */
+  auto_submit_editable: boolean;
 }
 
 export interface IntegrationsReport {
@@ -59,17 +87,40 @@ interface IntegrationMeta {
   label:    string;
   channel:  "api" | "email";
   api_type: string | null; // matches takedown_providers.abuse_api_type for API kinds
+  /** Worker secret names the submitter reads (keep in sync with lib/takedown-submitters/*). */
+  secrets:  string[];
+  /** Optional non-secret vars the submitter reads. */
+  vars:     string[];
+  /** A real send needs TAKEDOWN_SEND_MODE=live. */
+  live:     boolean;
 }
 
 // Display registry. Order = display order. API integrations first.
 const REGISTRY: IntegrationMeta[] = [
-  { kind: "api_netbeacon",       label: "NetBeacon",              channel: "api",   api_type: "netbeacon" },
-  { kind: "api_godaddy",         label: "GoDaddy Abuse API",      channel: "api",   api_type: "godaddy" },
-  { kind: "api_web_risk",        label: "Google Web Risk",        channel: "api",   api_type: "web_risk" },
-  { kind: "email_send",          label: "Abuse email (live send)", channel: "email", api_type: null },
-  { kind: "email_draft",         label: "Abuse email (draft)",     channel: "email", api_type: null },
-  { kind: "followup_email_draft", label: "Follow-up email (draft)", channel: "email", api_type: null },
+  { kind: "api_netbeacon",        label: "NetBeacon",               channel: "api",   api_type: "netbeacon",
+    secrets: ["NETBEACON_API_KEY"], vars: ["NETBEACON_API_BASE"], live: true },
+  { kind: "api_godaddy",          label: "GoDaddy Abuse API",       channel: "api",   api_type: "godaddy",
+    secrets: ["GODADDY_API_KEY", "GODADDY_API_SECRET"], vars: ["GODADDY_API_BASE"], live: true },
+  { kind: "api_web_risk",         label: "Google Web Risk",         channel: "api",   api_type: "web_risk",
+    secrets: ["GOOGLE_SERVICE_ACCOUNT_JSON"], vars: ["WEB_RISK_MONTHLY_CAP"], live: true },
+  { kind: "email_send",           label: "Abuse email (live send)", channel: "email", api_type: null,
+    secrets: ["RESEND_API_KEY"], vars: [], live: true },
+  { kind: "email_draft",          label: "Abuse email (draft)",     channel: "email", api_type: null,
+    secrets: [], vars: [], live: false },
+  { kind: "followup_email_draft", label: "Follow-up email (draft)", channel: "email", api_type: null,
+    secrets: [], vars: [], live: false },
 ];
+
+/** API integration kind → takedown_providers.abuse_api_type. */
+export function apiTypeForIntegrationKind(kind: string): string | null {
+  const meta = REGISTRY.find((m) => m.kind === kind);
+  return meta && meta.channel === "api" ? meta.api_type : null;
+}
+
+/** Whether `kind` is a registered integration (API or email). */
+export function isKnownIntegrationKind(kind: string): boolean {
+  return REGISTRY.some((m) => m.kind === kind);
+}
 
 interface StatRow {
   kind:               string;
@@ -79,6 +130,17 @@ interface StatRow {
   rejected:           number;
   failed:             number;
   last_submission_at: string | null;
+}
+
+interface ProviderRow {
+  id:                  number;
+  provider_name:       string;
+  provider_type:       string | null;
+  abuse_email:         string | null;
+  abuse_url:           string | null;
+  abuse_api_url:       string | null;
+  abuse_api_type:      string;
+  auto_submit_enabled: number;
 }
 
 function isConfiguredFor(kind: string, env: Env): boolean {
@@ -144,14 +206,27 @@ export async function getTakedownIntegrations(
   }
 
   // 3. Provider config (auto-submit gate + name) for the API integrations.
+  //    Ordered by id; the lowest-id row per api type is the one reported.
   const provRes = await env.DB.prepare(
-    `SELECT provider_name, abuse_api_type, auto_submit_enabled
+    `SELECT id, provider_name, provider_type, abuse_email, abuse_url, abuse_api_url,
+            abuse_api_type, auto_submit_enabled
        FROM takedown_providers
-      WHERE abuse_api_type IN ('web_risk', 'netbeacon', 'godaddy')`,
-  ).all<{ provider_name: string; abuse_api_type: string; auto_submit_enabled: number }>();
-  const provByApiType = new Map<string, { provider_name: string; auto_submit_enabled: number }>();
+      WHERE abuse_api_type IN ('web_risk', 'netbeacon', 'godaddy')
+      ORDER BY id`,
+  ).all<ProviderRow>();
+  const provByApiType = new Map<string, IntegrationProviderConfig>();
   for (const r of provRes.results ?? []) {
-    provByApiType.set(r.abuse_api_type, { provider_name: r.provider_name, auto_submit_enabled: r.auto_submit_enabled });
+    if (provByApiType.has(r.abuse_api_type)) continue;
+    provByApiType.set(r.abuse_api_type, {
+      id:                  Number(r.id),
+      provider_name:       r.provider_name,
+      provider_type:       r.provider_type ?? null,
+      abuse_email:         r.abuse_email ?? null,
+      abuse_url:           r.abuse_url ?? null,
+      abuse_api_url:       r.abuse_api_url ?? null,
+      abuse_api_type:      r.abuse_api_type,
+      auto_submit_enabled: Number(r.auto_submit_enabled) === 1,
+    });
   }
 
   // 4. Web Risk's monthly free-allowance usage (one indexed range COUNT).
@@ -169,7 +244,7 @@ export async function getTakedownIntegrations(
     const failed    = s?.failed ?? 0;
     const decided   = submitted + rejected + failed;
     const prov      = meta.api_type ? provByApiType.get(meta.api_type) : undefined;
-    const autoEnabled = meta.channel === "api" ? (prov ? prov.auto_submit_enabled === 1 : false) : null;
+    const autoEnabled = meta.channel === "api" ? (prov ? prov.auto_submit_enabled : false) : null;
     const configured  = isConfiguredFor(meta.kind, env);
 
     return {
@@ -190,6 +265,14 @@ export async function getTakedownIntegrations(
       last_submission_at:  s?.last_submission_at ?? null,
       last_error:          lastErrByKind.get(meta.kind) ?? null,
       ...(meta.kind === "api_web_risk" ? { monthly_quota: { used: webRiskUsed, cap: webRiskMonthlyCap(env) } } : {}),
+      config: {
+        credential_secrets:   [...meta.secrets],
+        optional_vars:        [...meta.vars],
+        requires_live_mode:   meta.live,
+        send_mode:            sendLive ? "live" : "draft",
+        provider:             meta.channel === "api" ? (prov ? { ...prov } : null) : null,
+        auto_submit_editable: meta.channel === "api" && prov !== undefined,
+      },
     };
   });
 

@@ -7,7 +7,7 @@ import { computePriorityScore } from "../lib/scoring-utils";
 import {
   orgHandler, handler, checkOrgAccess,
   parsePagination, parseFilters, buildWhereClause,
-  parseBody, success, error, paginatedResponse, requireFields,
+  parseBody, success, error, paginatedResponse, requireFields, safeErrorMessage,
 } from "../lib/handler-utils";
 import { requireAuthorizationForModule, TakedownNotAuthorizedError, isUnderMonthlyTakedownCap } from "../lib/takedown-authorizations";
 import type { AuthorizationScope } from "../lib/takedown-authorizations";
@@ -523,6 +523,83 @@ export const handleAdminTakedownIntegrations = handler(async (request, env, ctx)
   const report = await getTakedownIntegrations(env, windowHours);
   return success(report, ctx.origin);
 });
+
+// ─── PATCH /api/admin/takedowns/integrations/:kind ───────────
+// Turns an API integration's operator auto-submit gate
+// (takedown_providers.auto_submit_enabled) on or off. Body:
+// `{ "auto_submit_enabled": boolean }` — nothing else. Route gate:
+// requireAdmin (admin + super_admin): enabling live auto-submission is
+// consequential, so analysts can view the integration but not change it.
+// Only the gate moves; real sends still need TAKEDOWN_SEND_MODE=live and the
+// channel's credential. One audit_log row per call. Returns the updated
+// integration item in the same shape as the GET.
+
+export async function handleAdminUpdateTakedownIntegration(
+  request: Request, env: Env, kind: string, ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  try {
+    const {
+      apiTypeForIntegrationKind, isKnownIntegrationKind, getTakedownIntegrations,
+    } = await import("../lib/takedown-integrations");
+
+    if (!isKnownIntegrationKind(kind)) return error("Unknown integration", 404, origin);
+    const apiType = apiTypeForIntegrationKind(kind);
+    if (!apiType) return error("Auto-submit is only configurable for API integrations", 400, origin);
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return error("Invalid JSON body", 400, origin);
+    }
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return error("Body must be a JSON object", 400, origin);
+    }
+    const fields = body as Record<string, unknown>;
+    const extra = Object.keys(fields).filter((k) => k !== "auto_submit_enabled");
+    if (extra.length > 0) return error(`Unknown field: ${extra[0]}`, 400, origin);
+    const next = fields["auto_submit_enabled"];
+    if (typeof next !== "boolean") return error("auto_submit_enabled must be a boolean", 400, origin);
+
+    const { store } = await import("../lib/db-registry");
+    const core = store(env, "core");
+
+    const prev = await core.prepare(
+      `SELECT auto_submit_enabled FROM takedown_providers
+        WHERE abuse_api_type = ? ORDER BY id LIMIT 1`,
+    ).bind(apiType).first<{ auto_submit_enabled: number | null }>();
+    if (!prev) return error("No provider row for this integration", 409, origin);
+
+    const upd = await core.prepare(
+      `UPDATE takedown_providers
+          SET auto_submit_enabled = ?, updated_at = datetime('now')
+        WHERE abuse_api_type = ?`,
+    ).bind(next ? 1 : 0, apiType).run();
+    if ((upd.meta?.changes ?? 0) === 0) return error("No provider row for this integration", 409, origin);
+
+    await audit(env, {
+      action: "takedown_integration_auto_submit",
+      userId: ctx.userId,
+      resourceType: "takedown_integration",
+      resourceId: kind,
+      details: {
+        kind,
+        abuse_api_type: apiType,
+        from: Number(prev.auto_submit_enabled) === 1,
+        to: next,
+      },
+      request,
+    });
+
+    const report = await getTakedownIntegrations(env);
+    const item = report.integrations.find((i) => i.kind === kind);
+    if (!item) return error("Unknown integration", 404, origin);
+    return success(item, origin);
+  } catch (err) {
+    return error(safeErrorMessage(err), 500, origin);
+  }
+}
 
 // ─── GET /api/admin/takedowns/metrics ────────────────────────
 // S2.1 — real takedown-effectiveness metrics (submission→resolution
