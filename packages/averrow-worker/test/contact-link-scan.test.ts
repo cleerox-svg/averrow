@@ -28,7 +28,10 @@ const DAYSIDE_MESSAGE = [
 
 interface Rows { threatDomains?: string[]; threatUrls?: string[]; lookalikes?: string[]; fail?: boolean }
 
-function makeEnv(rows: Rows = {}, gsbKey: string | undefined = "k"): Env {
+const SA_JSON = JSON.stringify({ client_email: "sa@example.iam.gserviceaccount.com", private_key: "k" });
+
+/** `webRisk` false = no Google service account (Web Risk not configured). */
+function makeEnv(rows: Rows = {}, webRisk = true): Env {
   const prepare = (sql: string) => ({
     bind: (...args: unknown[]) => ({
       all: async () => {
@@ -44,7 +47,7 @@ function makeEnv(rows: Rows = {}, gsbKey: string | undefined = "k"): Env {
       },
     }),
   });
-  return { DB: { prepare }, GOOGLE_SAFE_BROWSING_KEY: gsbKey } as unknown as Env;
+  return { DB: { prepare }, GOOGLE_SERVICE_ACCOUNT_JSON: webRisk ? SA_JSON : undefined } as unknown as Env;
 }
 
 beforeEach(() => {
@@ -114,13 +117,13 @@ describe("scanContactLinks", () => {
     expect(r.links[0]!.verdict).toBe("unchecked");
   });
 
-  it("leaves links unchecked when Safe Browsing is not configured", async () => {
-    const r = await scanContactLinks(makeEnv({}, ""), "https://ok-site.com/", null, NOW);
+  it("leaves links unchecked when Web Risk is not configured", async () => {
+    const r = await scanContactLinks(makeEnv({}, false), "https://ok-site.com/", null, NOW);
     expect(r.links[0]!.verdict).toBe("unchecked");
     expect(checkGoogleSafeBrowsing).not.toHaveBeenCalled();
   });
 
-  it("asks Safe Browsing without its cache", async () => {
+  it("asks Web Risk without its cache", async () => {
     await scanContactLinks(makeEnv(), "https://ok-site.com/", null, NOW);
     expect(checkGoogleSafeBrowsing.mock.calls[0]![2]).toEqual({ useCache: false });
   });
@@ -137,7 +140,7 @@ describe("scanContactLinks", () => {
     expect(r.links[0]!.reasons.join()).toContain("registered 5 days ago");
   });
 
-  it("flags Safe Browsing hits and fails closed when Safe Browsing does not answer", async () => {
+  it("flags Web Risk hits and fails closed when Web Risk does not answer (incl. at the monthly cap)", async () => {
     checkGoogleSafeBrowsing.mockResolvedValueOnce([{ flagged: true, threatType: "SOCIAL_ENGINEERING", checked: true }]);
     let r = await scanContactLinks(makeEnv(), "https://bad-site.com/", null, NOW);
     expect(r.links[0]!.verdict).toBe("flagged");

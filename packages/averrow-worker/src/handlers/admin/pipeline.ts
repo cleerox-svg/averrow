@@ -151,14 +151,17 @@ const PIPELINE_META: Record<string, PipelineMeta> = {
   },
   gsb: {
     label: 'Safe Browsing',
-    description: 'Google Safe Browsing lookups for malicious URLs.',
+    description: 'Google Web Risk Lookup API (uris.search) checks for malicious URLs.',
     agent: 'gsb',
     schedule: 'hourly',
     feed_name: 'google_safe_browsing',
     why_grows:
-      'Grows when the GSB API returns transient 5xxs or rate-limits. ' +
-      'Most threats clear in one tick; persistent backlog usually means ' +
-      'the API key has hit its daily quota.',
+      'Grows when Web Risk returns transient 5xxs or rate-limits, or once ' +
+      'the self-imposed monthly lookup cap (90,000 by default, ' +
+      'WEB_RISK_LOOKUP_MONTHLY_CAP — inside the 100,000 free tier) is ' +
+      'reached; capped rows wait for the next UTC month. Persistent ' +
+      'backlog early in a month usually means the service account is ' +
+      'missing or lacks Web Risk access.',
   },
   dbl: {
     label: 'Spamhaus DBL',

@@ -1293,7 +1293,8 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
       SECLOOKUP_API_KEY: !!env.SECLOOKUP_API_KEY,
       VIRUSTOTAL_API_KEY: !!env.VIRUSTOTAL_API_KEY,
       ABUSEIPDB_API_KEY: !!env.ABUSEIPDB_API_KEY,
-      GOOGLE_SAFE_BROWSING_KEY: !!env.GOOGLE_SAFE_BROWSING_KEY,
+      // Web Risk Lookup (google_safe_browsing feed) authenticates with the service account.
+      GOOGLE_SERVICE_ACCOUNT_JSON: !!env.GOOGLE_SERVICE_ACCOUNT_JSON,
     };
     const missing = Object.entries(keyStatus).filter(([, v]) => !v).map(([k]) => k);
     if (missing.length > 0) {
