@@ -126,10 +126,17 @@ export interface Env {
   REDDIT_CLIENT_SECRET?: string;
   GITHUB_FEED_TOKEN?: string;
   TELEGRAM_BOT_TOKEN?: string;
-  // Google Safe Browsing
+  // Google Safe Browsing v4 API key — UNUSED since 2026-11 (the v4 API is
+  // non-commercial only; URL lookups moved to the Web Risk Lookup API via
+  // GOOGLE_SERVICE_ACCOUNT_JSON, lib/web-risk-lookup.ts). Kept only so an
+  // existing secret binding doesn't fail type checks; nothing may read it.
   GOOGLE_SAFE_BROWSING_KEY?: string;
-  // Google service-account JSON (Web Risk Submission API + future GCP APIs)
+  // Google service-account JSON (Web Risk Submission + Lookup APIs, future GCP APIs)
   GOOGLE_SERVICE_ACCOUNT_JSON?: string;
+  /** Optional override of the Web Risk Lookup (uris.search) monthly call cap (default 90,000, clamped to ≤ 100,000; 0 = no lookups; lib/web-risk-lookup.ts). */
+  WEB_RISK_LOOKUP_MONTHLY_CAP?: string;
+  /** Optional override of the contact-form Web Risk lookup daily cap (default 200, clamped to ≤ 1,000; 0 = none; lib/web-risk-lookup.ts). */
+  WEB_RISK_LOOKUP_CONTACT_DAILY_CAP?: string;
   /** Optional override of the Web Risk monthly submission cap (default 100, lib/takedown-submitters/web-risk.ts). */
   WEB_RISK_MONTHLY_CAP?: string;
   // NetBeacon (DNS Abuse Institute) registrar-routed abuse reporting

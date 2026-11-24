@@ -2,6 +2,7 @@
 // Wave 2A: migrated read handlers to D1 Sessions API (read replicas)
 import { json } from "../lib/cors";
 import { withDnsblVerdicts } from "../lib/dnsbl-verdict";
+import { withGsbVerdict } from "../lib/web-risk-lookup";
 import { lookupInfobloxReference } from "../lib/infoblox-reference";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { enrichThreatsGeo } from "../lib/geoip";
@@ -118,7 +119,7 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
                 t.country_code, t.target_brand_id, t.hosting_provider_id, t.campaign_id,
                 t.cluster_id, t.registrar, t.registration_date,
                 t.vt_checked, t.vt_malicious, t.vt_reputation,
-                t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+                (t.gsb_checked = 1) AS gsb_checked, t.gsb_flagged, t.gsb_threat_type,
                 t.surbl_checked, t.surbl_listed,
                 t.greynoise_checked, t.greynoise_classification,
                 t.seclookup_checked, t.seclookup_risk_score,
@@ -150,7 +151,7 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
                 t.country_code, t.target_brand_id, t.hosting_provider_id, t.campaign_id,
                 t.cluster_id, t.registrar, t.registration_date,
                 t.vt_checked, t.vt_malicious, t.vt_reputation,
-                t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+                (t.gsb_checked = 1) AS gsb_checked, t.gsb_flagged, t.gsb_threat_type,
                 t.surbl_checked, t.surbl_listed,
                 t.greynoise_checked, t.greynoise_classification,
                 t.seclookup_checked, t.seclookup_risk_score,
@@ -251,7 +252,7 @@ export async function handleGetThreat(request: Request, env: Env, id: string): P
       url: str(threat.malicious_url),
       ip: str(threat.ip_address),
     });
-    return attachBookmark(json({ success: true, data: { ...withDnsblVerdicts(threat), infoblox_reference } }, 200, origin), session);
+    return attachBookmark(json({ success: true, data: { ...withGsbVerdict(withDnsblVerdicts(threat)), infoblox_reference } }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
   }

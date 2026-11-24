@@ -119,7 +119,8 @@ function DetailPanel({ row: r, colSpan, extra }: { row: ThreatRow; colSpan: numb
             <div>
               <div className="tt-sect-label">Reputation</div>
               {r.vt_checked != null && <KV k="VirusTotal" v={`${r.vt_malicious ?? 0} malicious · rep ${r.vt_reputation ?? 0}`} />}
-              {r.gsb_checked != null && <KV k="Safe Browsing" v={r.gsb_flagged ? (r.gsb_threat_type ?? 'flagged') : 'clean'} />}
+              {/* Only a row Google actually answered (gsb_checked = 1) has a verdict; 0 = not checked yet, never 'clean'. */}
+              {r.gsb_checked ? <KV k="Safe Browsing" v={r.gsb_flagged ? (r.gsb_threat_type ?? 'flagged') : 'clean'} /> : null}
               {/* Only a positive listing is a verdict; a non-listing is unknown, so KV renders nothing. */}
               <KV k="SURBL" v={r.surbl_listed ? 'listed' : null} />
               {r.greynoise_checked != null && <KV k="GreyNoise" v={r.greynoise_classification ?? 'seen'} />}

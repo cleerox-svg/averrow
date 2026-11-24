@@ -111,6 +111,21 @@ function cacheKey(clientEmail: string, scope: string): string {
 }
 
 /**
+ * Drop the cached access token for `scope` so the next getGoogleAccessToken
+ * mints a fresh one. Call it when Google answers 401/403 to a cached token
+ * (revoked key, rotated credential, changed IAM). Never throws.
+ */
+export async function invalidateGoogleAccessToken(env: Env, scope: string): Promise<void> {
+  const sa = parseServiceAccount(env);
+  if (!sa) return;
+  try {
+    await env.CACHE.delete(cacheKey(sa.client_email, scope));
+  } catch {
+    /* best-effort: the cached token expires on its own TTL */
+  }
+}
+
+/**
  * Get a cached-or-freshly-minted Google OAuth2 access token for `scope`.
  * Returns null when no service-account credential is configured or the token
  * exchange fails (caller degrades gracefully). Never throws.

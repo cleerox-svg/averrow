@@ -1,40 +1,54 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import type { Env } from "../types";
 import { logger } from "../lib/logger";
+import { store, type StoreDb } from "../lib/db-registry";
+import { hasServiceAccount } from "../lib/google-service-account";
+import {
+  webRiskLookup, webRiskLookupsRemaining, type LookupPurpose, type LookupRunStats,
+} from "../lib/web-risk-lookup";
 
 /**
- * Google Safe Browsing — URL safety checks via Lookup API v4.
+ * URL reputation via the Google Cloud Web Risk Lookup API (uris.search).
+ *
+ * The feed keeps its historical name, `google_safe_browsing`, and the
+ * threats columns it writes (gsb_checked / gsb_flagged / gsb_threat_type),
+ * so alert triage (lib/alert-triage.ts), Flight Control's backlog.gsb and the
+ * pipeline handlers keep working. It no longer calls the Safe Browsing v4 API
+ * (non-commercial terms): every lookup goes through lib/web-risk-lookup.ts,
+ * which holds the monthly free-tier cap, the volume estimate and the
+ * NEVER-call-computeDiff/hashes.search rule.
  *
  * Two modes:
- * A) Bulk enrichment (runs on cron via ingest()): queries recent threats for
- *    unchecked URLs/domains and validates them against Google's phishing and
- *    malware lists. Batch checks up to 100 URLs per run.
- * B) Inline enrichment (exported checkGoogleSafeBrowsing): other feeds call
- *    this for immediate URL validation.
+ * A) Bulk enrichment (runs on cron via ingest()): ≤ 100 recent unchecked
+ *    threats per run, de-duplicated by URL, checked one URL per call.
+ * B) Inline enrichment (exported checkGoogleSafeBrowsing): the contact-form
+ *    link scan calls this for immediate URL validation.
  *
- * API key: env.GOOGLE_SAFE_BROWSING_KEY (Worker secret).
- * Free for non-commercial use — will upgrade to Web Risk API later.
- * Results cached in KV with 24h TTL: gsb:{url_hash}
+ * Credential: GOOGLE_SERVICE_ACCOUNT_JSON (shared with the Web Risk takedown
+ * submitter). Results cached in KV with 24h TTL: gsb:<url>. A cache hit costs
+ * no Web Risk quota. A URL Google did not answer for (no credential, cap
+ * reached, counter unreadable, HTTP error, deadline) is checked=false: never
+ * cached, and the feed never marks its threat gsb_checked — a later run
+ * retries it. A URI Google rejects (HTTP 400/404) is stamped gsb_checked = 2
+ * ("attempted, unanswerable"): out of the work queue, never read as clean
+ * (readers test gsb_checked = 1). No token, a 401/403, or a run where every
+ * call was rejected makes ingest() throw, so the breaker and "Feed degraded"
+ * fire; a quota stop does not.
  */
 
 export interface GSBResult {
   flagged: boolean;
   threatType: string | null;
-  /** false when no answer came from Google (no key, API error). Results
-   *  cached before this field existed are real answers, so absent ≠ false. */
+  /** false when no answer came from Google (no credential, monthly cap,
+   *  API error). Results cached before this field existed are real answers,
+   *  so absent ≠ false. */
   checked?: boolean;
 }
 
-interface GSBMatch {
-  threat: { url: string };
-  threatType: string;
-  platformType: string;
-  cacheDuration: string;
-}
-
-interface GSBResponse {
-  matches?: GSBMatch[];
-}
+/** Wall-clock budget for one feed run's lookups — inside the feed's 150 s
+ *  per-pull timeout (FEED_RUN_TIMEOUT_OVERRIDES_MS), leaving room for the
+ *  threats UPDATEs. URLs not reached stay unchecked for the next run. */
+export const GSB_FEED_LOOKUP_BUDGET_MS = 100_000;
 
 const SEVERITY_RANK: Record<string, number> = {
   info: 0,
@@ -44,101 +58,80 @@ const SEVERITY_RANK: Record<string, number> = {
   critical: 4,
 };
 
+export interface CheckOptions {
+  /** false = neither read nor WRITE the gsb:<url> cache (contact path: a
+   *  visitor-supplied URL must not plant a verdict the feed would reuse). */
+  useCache?: boolean;
+  /** Epoch ms; no lookup is started after it. */
+  deadline?: number;
+  /** Which quota buckets to reserve from (lib/web-risk-lookup.ts). */
+  purpose?: LookupPurpose;
+}
+
 /**
- * Check URLs against Google Safe Browsing Lookup API v4.
- * Can batch up to 500 URLs per request; we cap at 100 per run.
- * Results are cached in KV with 24h TTL.
+ * Check URLs against Web Risk (uris.search). URLs are de-duplicated and
+ * cache hits answered from KV before any call is made. Returns one result
+ * per input URL, in order.
  */
 export async function checkGoogleSafeBrowsing(
   urls: string[],
   env: Env,
-  opts: { useCache?: boolean } = {},
+  opts: CheckOptions = {},
 ): Promise<GSBResult[]> {
+  return (await checkUrlsWithStats(urls, env, opts)).results;
+}
+
+async function checkUrlsWithStats(
+  urls: string[],
+  env: Env,
+  opts: CheckOptions,
+): Promise<{ results: GSBResult[]; stats: LookupRunStats | null; rejected: Set<string> }> {
   const useCache = opts.useCache ?? true;
-  const gsbKey = (env as unknown as Record<string, string | undefined>).GOOGLE_SAFE_BROWSING_KEY;
-  if (!gsbKey) {
-    return urls.map(() => ({ flagged: false, threatType: null, checked: false }));
-  }
+  const byUrl = new Map<string, GSBResult>();
+  const unique = [...new Set(urls)];
+  const toLookUp: string[] = [];
 
-  // Check KV cache for each URL; collect uncached ones
-  const results: GSBResult[] = new Array(urls.length);
-  const uncachedIndices: number[] = [];
-  const uncachedUrls: string[] = [];
-
-  for (let i = 0; i < urls.length; i++) {
-    const cacheKey = `gsb:${urls[i]}`;
-    const cached = useCache ? await env.CACHE.get(cacheKey) : null;
+  for (const url of unique) {
+    let cached: string | null = null;
+    if (useCache) {
+      try { cached = await env.CACHE.get(`gsb:${url}`); } catch { cached = null; }
+    }
     if (cached !== null) {
-      results[i] = JSON.parse(cached) as GSBResult;
-    } else {
-      uncachedIndices.push(i);
-      uncachedUrls.push(urls[i]!);
+      try { byUrl.set(url, JSON.parse(cached) as GSBResult); continue; } catch { /* re-check */ }
+    }
+    toLookUp.push(url);
+  }
+
+  let stats: LookupRunStats | null = null;
+  const rejected = new Set<string>();
+  if (toLookUp.length > 0) {
+    const run = await webRiskLookup(env, toLookUp, { deadline: opts.deadline, purpose: opts.purpose });
+    stats = run.stats;
+    for (let i = 0; i < toLookUp.length; i++) {
+      const url = toLookUp[i]!;
+      const v = run.verdicts[i]!;
+      const result: GSBResult = { flagged: v.flagged, threatType: v.threatType, checked: v.checked };
+      byUrl.set(url, result);
+      if (v.rejected) rejected.add(url);
+      if (v.checked && useCache) {
+        try {
+          await env.CACHE.put(`gsb:${url}`, JSON.stringify(result), { expirationTtl: 86400 });
+        } catch { /* cache is best-effort */ }
+      }
     }
   }
 
-  if (uncachedUrls.length === 0) return results;
-
-  // Call Google Safe Browsing API
-  const endpoint = `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${gsbKey}`;
-  const body = {
-    client: { clientId: "averrow", clientVersion: "1.0" },
-    threatInfo: {
-      threatTypes: [
-        "MALWARE",
-        "SOCIAL_ENGINEERING",
-        "UNWANTED_SOFTWARE",
-        "POTENTIALLY_HARMFUL_APPLICATION",
-      ],
-      platformTypes: ["ANY_PLATFORM"],
-      threatEntryTypes: ["URL"],
-      threatEntries: uncachedUrls.map((u) => ({ url: u })),
-    },
+  return {
+    results: urls.map((u) => byUrl.get(u) ?? { flagged: false, threatType: null, checked: false }),
+    stats,
+    rejected,
   };
-
-  const res = await fetch(endpoint, {
-    signal: AbortSignal.timeout(30_000), method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    logger.error("gsb_api_error", { status: res.status, statusText: res.statusText });
-    // Mark all uncached as clean (graceful degradation)
-    for (const idx of uncachedIndices) {
-      results[idx] = { flagged: false, threatType: null, checked: false };
-    }
-    return results;
-  }
-
-  const data = (await res.json()) as GSBResponse;
-  const matchMap = new Map<string, string>();
-  if (data.matches) {
-    for (const match of data.matches) {
-      matchMap.set(match.threat.url, match.threatType);
-    }
-  }
-
-  // Fill results and cache
-  for (let j = 0; j < uncachedIndices.length; j++) {
-    const url = uncachedUrls[j]!;
-    const idx = uncachedIndices[j]!;
-    const threatType = matchMap.get(url) ?? null;
-    const result: GSBResult = {
-      flagged: threatType !== null,
-      threatType,
-      checked: true,
-    };
-    results[idx] = result;
-    await env.CACHE.put(`gsb:${url}`, JSON.stringify(result), { expirationTtl: 86400 });
-  }
-
-  return results;
 }
 
 /**
  * Cross-feed escalation: when 3+ enrichment sources agree, auto-escalate to critical.
  */
-async function checkCrossFeedEscalation(db: D1Database, threatId: string): Promise<void> {
+async function checkCrossFeedEscalation(db: StoreDb, threatId: string): Promise<void> {
   const row = await db.prepare(`
     SELECT
       (CASE WHEN surbl_listed = 1 THEN 1 ELSE 0 END) +
@@ -164,23 +157,35 @@ async function checkCrossFeedEscalation(db: D1Database, threatId: string): Promi
 export const google_safe_browsing: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
     const { env } = ctx;
-    const gsbKey = (env as unknown as Record<string, string | undefined>).GOOGLE_SAFE_BROWSING_KEY;
+    const db = store(env, "core");
 
-    if (!gsbKey) {
+    if (!hasServiceAccount(env)) {
       logger.info("gsb_disabled", {
-        message: "Google Safe Browsing disabled — GOOGLE_SAFE_BROWSING_KEY not configured",
+        message: "Web Risk lookups disabled — GOOGLE_SERVICE_ACCOUNT_JSON not configured",
+      });
+      return { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
+    }
+
+    // Skip the D1 work-queue read when this month's Web Risk quota is spent
+    // (or the counter can't be read — fail closed). Rows stay gsb_checked = 0.
+    const remaining = await webRiskLookupsRemaining(env);
+    if (remaining === null || remaining === 0) {
+      logger.warn("gsb_quota_stop", {
+        reason: remaining === null ? "counter_unavailable" : "monthly_cap",
+        message: "Web Risk lookups skipped this run — threats left unchecked for a later run",
       });
       return { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
     }
 
     // Query threats with unchecked Google SB status (last 7 days, limit 100)
-    const unchecked = await env.DB.prepare(`
+    const unchecked = await db.prepare(`
       SELECT id, malicious_url, malicious_domain FROM threats
       WHERE gsb_checked = 0
         AND (malicious_url IS NOT NULL OR malicious_domain IS NOT NULL)
         AND first_seen >= datetime('now', '-7 days')
       ORDER BY
-        CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
+        CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+        first_seen DESC
       LIMIT 100
     `).all<{ id: string; malicious_url: string | null; malicious_domain: string | null }>();
 
@@ -199,18 +204,49 @@ export const google_safe_browsing: FeedModule = {
     }
 
     const urls = Array.from(urlMap.keys());
-    let itemsFetched = threats.length;
+    const itemsFetched = threats.length;
     let itemsNew = 0;
     let itemsDuplicate = 0;
     let itemsError = 0;
+    let outage: string | null = null;
 
     try {
-      const results = await checkGoogleSafeBrowsing(urls, env);
+      const { results, stats, rejected } = await checkUrlsWithStats(urls, env, {
+        deadline: Date.now() + GSB_FEED_LOOKUP_BUDGET_MS,
+        purpose: "feed",
+      });
+      if (stats) {
+        itemsError = stats.errors;
+        // Silent-outage guard: a credential / request failure must fail the
+        // pull (breaker + "Feed degraded"). A cap or an unreadable counter is
+        // a deliberate skip and does not.
+        if (stats.noToken) outage = "no Google access token (service-account token exchange failed)";
+        else if (stats.authFailed) outage = "Web Risk answered 401/403 — check the service account's Web Risk access";
+        else if (stats.systemicReject) outage = `Web Risk rejected every call (${stats.calls}) with 400/404 — request bug`;
+      }
 
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i]!;
         const result = results[i]!;
         const threatIds = urlMap.get(url) ?? [];
+
+        // Google rejects this URI (400/404) and always will: stamp
+        // gsb_checked = 2 (attempted, unanswerable) so it leaves the
+        // gsb_checked = 0 work queue. Every reader treats 2 as NOT clean.
+        if (rejected.has(url)) {
+          for (const tid of threatIds) {
+            await db.prepare(`
+              UPDATE threats SET gsb_checked = 2
+              WHERE id = ? AND gsb_checked = 0
+            `).bind(tid).run();
+          }
+          continue;
+        }
+
+        // Not answered by Google (cap, counter, credential, HTTP error,
+        // deadline): leave gsb_checked = 0 so a later run retries. Never
+        // record "clean" for a URL nobody checked.
+        if (result.checked === false) continue;
 
         if (result.flagged && result.threatType) {
           // Determine severity escalation
@@ -225,7 +261,7 @@ export const google_safe_browsing: FeedModule = {
           const targetRank = SEVERITY_RANK[targetSeverity] ?? 3;
 
           for (const tid of threatIds) {
-            await env.DB.prepare(`
+            await db.prepare(`
               UPDATE threats SET
                 gsb_checked = 1,
                 gsb_flagged = 1,
@@ -243,20 +279,20 @@ export const google_safe_browsing: FeedModule = {
               WHERE id = ?
             `).bind(result.threatType, targetRank, targetSeverity, tid).run();
 
-            await checkCrossFeedEscalation(env.DB, tid);
+            await checkCrossFeedEscalation(db, tid);
           }
 
           logger.info("gsb_threat_confirmed", {
             url,
             threatType: result.threatType,
             threat_ids: threatIds,
-            message: `Threat(s) confirmed as ${result.threatType} by Google Safe Browsing`,
+            message: `Threat(s) confirmed as ${result.threatType} by Google Web Risk`,
           });
           itemsNew++;
         } else {
           // Mark as checked but clean
           for (const tid of threatIds) {
-            await env.DB.prepare(`
+            await db.prepare(`
               UPDATE threats SET gsb_checked = 1
               WHERE id = ?
             `).bind(tid).run();
@@ -271,6 +307,7 @@ export const google_safe_browsing: FeedModule = {
       itemsError = threats.length;
     }
 
+    if (outage) throw new Error(`google_safe_browsing: ${outage}`);
     return { itemsFetched, itemsNew, itemsDuplicate, itemsError };
   },
 };

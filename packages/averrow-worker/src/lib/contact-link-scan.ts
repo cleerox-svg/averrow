@@ -12,16 +12,20 @@
 //   - internal intel: active `threats` row on the host, any parent domain up
 //     to the registrable domain, or the exact URL; a registered, non-benign
 //     `lookalike_domains` row
-//   - Google Safe Browsing, uncached (a URL can turn bad after a clean answer)
+//   - Google Web Risk Lookup API (uris.search), uncached (a URL can turn bad
+//     after a clean answer, and never written to the shared gsb: cache);
+//     counts against the contact-form daily Web Risk bucket AND the monthly
+//     cap (lib/web-risk-lookup.ts), and stops at the scan's time budget
 //   - domain age via RDAP: registered within NRD_MAX_AGE_DAYS → flagged
 //
-// Fails closed: a failed intel query, Safe Browsing not configured or not
-// answering, an unknown domain age (no RDAP for the TLD, or a hosting-platform
+// Fails closed: a failed intel query, Web Risk not configured (no Google
+// service account), at its monthly cap, or not answering, an unknown domain age (no RDAP for the TLD, or a hosting-platform
 // subdomain such as *.pages.dev), or the time budget running out leaves the
 // link "unchecked" (not clickable).
 
 import type { Env } from "../types";
 import { checkGoogleSafeBrowsing } from "../feeds/googleSafeBrowsing";
+import { hasServiceAccount } from "./google-service-account";
 import { NRD_MAX_AGE_DAYS } from "./domain-age";
 import { registrableDomain } from "./registrable-domain";
 import { rdapLookup } from "./whois";
@@ -236,6 +240,7 @@ async function runScan(
   links: FoundLink[],
   senderEmail: string | null,
   now: number,
+  deadline: number,
 ): Promise<LinkScanReport> {
   const scanned: ScannedLink[] = links.map((l) => ({ ...l, verdict: "clean", reasons: [], notes: [] }));
   const unchecked = (l: ScannedLink, why: string) => {
@@ -256,7 +261,7 @@ async function runScan(
   const hrefs = [...new Set(toCheck.map((l) => l.href!))];
   const urlKeys = [...new Set(toCheck.flatMap(urlVariants))];
   const regDomains = [...new Set(hosts.map(keyOf))];
-  const gsbConfigured = Boolean(env.GOOGLE_SAFE_BROWSING_KEY);
+  const gsbConfigured = hasServiceAccount(env);
   // Per link: its domain chain (≤ ~5) and ≤ 4 URL spellings, so 10 links
   // stay under D1's 100-bind limit.
 
@@ -266,14 +271,17 @@ async function runScan(
       return null;
     }),
     gsbConfigured
-      ? checkGoogleSafeBrowsing(hrefs, env, { useCache: false }).catch((err: unknown) => {
+      // Uncached both ways (no read, no write: a visitor URL must not plant a
+      // verdict the feed reuses); its own daily Web Risk bucket ('contact');
+      // no lookup starts once the scan's race has timed out.
+      ? checkGoogleSafeBrowsing(hrefs, env, { useCache: false, purpose: "contact", deadline }).catch((err: unknown) => {
           logger.warn("contact-link-scan-gsb-failed", { error: err instanceof Error ? err.message : String(err) });
           return null;
         })
       : Promise.resolve(null),
     Promise.all(regDomains.map((d) => domainAgeDays(env, d, now).catch(() => null))),
   ]);
-  checks.push("Averrow threat intel", gsbConfigured ? "Google Safe Browsing" : "Google Safe Browsing (not configured)", "domain age (RDAP)");
+  checks.push("Averrow threat intel", gsbConfigured ? "Google Web Risk" : "Google Web Risk (not configured)", "domain age (RDAP)");
   const ageByDomain = new Map(regDomains.map((d, i) => [d, ages[i] ?? null]));
   const senderKey = senderEmail?.includes("@") ? keyOf(senderEmail.split("@").pop()!.toLowerCase()) : null;
 
@@ -285,11 +293,11 @@ async function runScan(
       const hit = urlVariants(l).map((u) => intel.urls.get(u)).find(Boolean) ?? domainChain(host).map((d) => intel.domains.get(d)).find(Boolean);
       if (hit) { l.verdict = "flagged"; l.reasons.push(hit); }
     }
-    if (!gsbConfigured) unchecked(l, "Google Safe Browsing is not configured");
+    if (!gsbConfigured) unchecked(l, "Google Web Risk is not configured");
     else {
       const r = gsb?.[hrefs.indexOf(l.href!)];
-      if (!r || r.checked === false) unchecked(l, "Google Safe Browsing did not answer");
-      else if (r.flagged) { l.verdict = "flagged"; l.reasons.push(`Google Safe Browsing: ${r.threatType ?? "flagged"}`); }
+      if (!r || r.checked === false) unchecked(l, "Google Web Risk did not answer");
+      else if (r.flagged) { l.verdict = "flagged"; l.reasons.push(`Google Web Risk: ${r.threatType ?? "flagged"}`); }
     }
     const age = ageByDomain.get(reg) ?? null;
     if (age === null) unchecked(l, "domain age could not be confirmed");
@@ -321,7 +329,8 @@ export async function scanContactLinks(
     timer = setTimeout(() => resolve(allUnchecked("link check timed out")), LINK_SCAN_BUDGET_MS);
   });
   try {
-    return await Promise.race([runScan(env, links, senderEmail, now), timeout]);
+    const deadline = Date.now() + LINK_SCAN_BUDGET_MS;
+    return await Promise.race([runScan(env, links, senderEmail, now, deadline), timeout]);
   } catch (err) {
     logger.warn("contact-link-scan-failed", { error: err instanceof Error ? err.message : String(err) });
     return allUnchecked("link check failed");

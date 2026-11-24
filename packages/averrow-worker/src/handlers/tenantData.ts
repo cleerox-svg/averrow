@@ -11,6 +11,7 @@ import { verifyOrgAccess, canPerformHITL, isPlatformStaff, ORG_ROLE_HIERARCHY } 
 import type { AuthContext } from "../middleware/auth";
 import { refuseReadOnlyGlobalWrite } from "../lib/tenant-staff-guard";
 import { withDnsblVerdicts } from "../lib/dnsbl-verdict";
+import { withGsbVerdict } from "../lib/web-risk-lookup";
 
 // ─── Helpers ─────────────────────────────────────────────────
 // canPerformHITL + ORG_ROLE_HIERARCHY are the shared org-role gates from
@@ -625,7 +626,7 @@ export async function handleTenantOrgThreats(
                t.asn, t.registrar, t.registration_date,
                t.campaign_id, t.cluster_id, t.saas_technique_id,
                t.vt_checked, t.vt_malicious, t.vt_reputation,
-               t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+               (t.gsb_checked = 1) AS gsb_checked, t.gsb_flagged, t.gsb_threat_type,
                t.surbl_checked, t.surbl_listed,
                t.greynoise_checked, t.greynoise_classification,
                t.seclookup_checked, t.seclookup_risk_score,
@@ -721,7 +722,7 @@ export async function handleTenantThreatDetail(
              t.asn, t.registrar, t.registration_date,
              t.campaign_id, t.cluster_id, t.saas_technique_id,
              t.vt_checked, t.vt_malicious, t.vt_reputation,
-             t.gsb_checked, t.gsb_flagged, t.gsb_threat_type,
+             (t.gsb_checked = 1) AS gsb_checked, t.gsb_flagged, t.gsb_threat_type,
              t.surbl_checked, t.surbl_listed,
              t.greynoise_checked, t.greynoise_classification,
              t.seclookup_checked, t.seclookup_risk_score,
@@ -1137,7 +1138,7 @@ export async function handleTenantBrandThreats(
     return json({
       success: true,
       // SURBL / DBL "not listed" is not evidence (lib/dnsbl-verdict.ts).
-      data: (threats.results || []).map(withDnsblVerdicts),
+      data: (threats.results || []).map((r) => withGsbVerdict(withDnsblVerdicts(r))),
       total: countResult?.total ?? 0,
     }, 200, origin);
   } catch (err) {

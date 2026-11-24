@@ -616,7 +616,7 @@ async function readEnrichmentTotals(rc: ReadCtx): Promise<EnrichmentTotals> {
           `SELECT
             SUM(surbl_checked) as surbl_checked, SUM(surbl_listed) as surbl_hits,
             SUM(vt_checked) as vt_checked, SUM(CASE WHEN vt_malicious>0 THEN 1 ELSE 0 END) as vt_hits,
-            SUM(gsb_checked) as gsb_checked, SUM(gsb_flagged) as gsb_hits,
+            SUM(gsb_checked = 1) as gsb_checked, SUM(gsb_flagged) as gsb_hits,
             SUM(dbl_checked) as dbl_checked, SUM(dbl_listed) as dbl_hits,
             SUM(abuseipdb_checked) as abuse_checked, SUM(CASE WHEN abuseipdb_score>=50 THEN 1 ELSE 0 END) as abuse_hits,
             SUM(greynoise_checked) as gn_checked,
