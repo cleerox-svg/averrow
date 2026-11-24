@@ -8,7 +8,10 @@ vi.mock("../src/lib/google-service-account", () => ({
   getGoogleAccessToken: vi.fn(),
 }));
 
-import { webRiskSubmitter } from "../src/lib/takedown-submitters/web-risk";
+import {
+  webRiskSubmitter, webRiskMonthlyCap, utcMonthStart, WEB_RISK_MONTHLY_CAP_DEFAULT,
+} from "../src/lib/takedown-submitters/web-risk";
+import { dispatchSubmission } from "../src/lib/takedown-submitters";
 import { hasServiceAccount, getGoogleAccessToken } from "../src/lib/google-service-account";
 import type { ProviderRecord, TakedownRecord } from "../src/lib/takedown-submitters/types";
 import type { Env } from "../src/types";
@@ -126,5 +129,88 @@ describe("webRiskSubmitter.submit", () => {
     const res = await webRiskSubmitter.submit(env("live"), takedown(), provider());
     expect(res.outcome).toBe("failed");
     expect(res.error_message).toContain("project_id");
+  });
+});
+
+// ─── Monthly free-allowance cap ────────────────────────────────────
+
+/** Fake D1: COUNT reads return `count` (or throw), inserts are recorded. */
+function capDb(count: number | Error) {
+  const reads: Array<{ sql: string; binds: unknown[] }> = [];
+  const writes: unknown[][] = [];
+  const db = {
+    prepare(sql: string) {
+      return {
+        bind(...binds: unknown[]) {
+          return {
+            async first() {
+              reads.push({ sql, binds });
+              if (count instanceof Error) throw count;
+              return { n: count };
+            },
+            async run() { writes.push(binds); return { success: true }; },
+          };
+        },
+      };
+    },
+  };
+  return { db, reads, writes };
+}
+
+function capEnv(count: number | Error, extra: Record<string, unknown> = {}) {
+  const fake = capDb(count);
+  return { env: { TAKEDOWN_SEND_MODE: "live", DB: fake.db, ...extra } as unknown as Env, ...fake };
+}
+
+describe("Web Risk monthly cap", () => {
+  it("defaults to 100/month and accepts a non-negative integer override", () => {
+    expect(WEB_RISK_MONTHLY_CAP_DEFAULT).toBe(100);
+    expect(webRiskMonthlyCap({} as Env)).toBe(100);
+    expect(webRiskMonthlyCap({ WEB_RISK_MONTHLY_CAP: "40" } as unknown as Env)).toBe(40);
+    expect(webRiskMonthlyCap({ WEB_RISK_MONTHLY_CAP: "0" } as unknown as Env)).toBe(0);
+    expect(webRiskMonthlyCap({ WEB_RISK_MONTHLY_CAP: "-5" } as unknown as Env)).toBe(100);
+    expect(webRiskMonthlyCap({ WEB_RISK_MONTHLY_CAP: "lots" } as unknown as Env)).toBe(100);
+  });
+
+  it("counts every Web Risk call since the start of the UTC month", async () => {
+    expect(utcMonthStart(new Date("2026-11-24T06:00:00Z"))).toBe("2026-11-01 00:00:00");
+    const { env, reads } = capEnv(3);
+    expect(await webRiskSubmitter.hasCapacity!(env)).toBe(true);
+    expect(reads[0]!.sql).toMatch(/FROM takedown_submissions/);
+    expect(reads[0]!.sql).not.toMatch(/outcome/); // every call counts, accepted or not
+    expect(reads[0]!.binds[1]).toBe("api_web_risk");
+    expect(String(reads[0]!.binds[0])).toMatch(/^\d{4}-\d{2}-01 00:00:00$/);
+  });
+
+  it("has no capacity at the cap, or when the count can't be read (fail closed)", async () => {
+    expect(await webRiskSubmitter.hasCapacity!(capEnv(99).env)).toBe(true);
+    expect(await webRiskSubmitter.hasCapacity!(capEnv(100).env)).toBe(false);
+    expect(await webRiskSubmitter.hasCapacity!(capEnv(0, { WEB_RISK_MONTHLY_CAP: "0" }).env)).toBe(false);
+    expect(await webRiskSubmitter.hasCapacity!(capEnv(new Error("D1 overloaded")).env)).toBe(false);
+  });
+
+  it("dispatch uses Web Risk under the cap", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ name: "projects/proj-123/operations/op-1" }), { status: 200 }),
+    );
+    const { env, writes } = capEnv(10);
+    const { result } = await dispatchSubmission(env, takedown(), provider({ abuse_email: "abuse@google.com" }));
+    expect(result.submitter_kind).toBe("api_web_risk");
+    expect(writes).toHaveLength(1);
+  });
+
+  it("dispatch at the cap falls through to abuse email and never calls Google", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const { env } = capEnv(100);
+    const { result } = await dispatchSubmission(env, takedown(), provider({ abuse_email: "abuse@google.com" }));
+    expect(result.submitter_kind).toBe("email"); // emailSendSubmitter.kind
+    expect(fetchSpy.mock.calls.some(([u]) => String(u).includes("webrisk.googleapis.com"))).toBe(false);
+  });
+
+  it("dispatch at the cap with no other channel fails and says why", async () => {
+    const { env } = capEnv(100);
+    const { result } = await dispatchSubmission(env, takedown(), provider());
+    expect(result.submitter_kind).toBe("none");
+    expect(result.error_message).toMatch(/at monthly cap: api_web_risk/);
   });
 });

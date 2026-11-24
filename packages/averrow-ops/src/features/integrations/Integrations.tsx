@@ -92,6 +92,8 @@ function IntegrationCard({ it }: { it: IntegrationHealth }) {
           )}
         </div>
 
+        {it.monthly_quota && <MonthlyQuotaLine quota={it.monthly_quota} />}
+
         {/* Metrics */}
         <div style={{ display: 'flex', gap: 20, alignItems: 'baseline' }}>
           <div>
@@ -202,6 +204,23 @@ export function Integrations() {
           {integrations.map((it) => <IntegrationCard key={it.kind} it={it} />)}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * "This month: 12 / 100 free submissions". Amber from 80% of the cap; at the
+ * cap the dispatcher skips this channel and the next one (abuse email) is used.
+ */
+export function MonthlyQuotaLine({ quota }: { quota: { used: number | null; cap: number } }) {
+  const { used, cap } = quota;
+  const atCap = used != null && used >= cap;
+  const near = used != null && !atCap && used >= cap * 0.8;
+  const color = atCap ? 'var(--sev-critical-text)' : near ? 'var(--sev-medium-text)' : 'var(--text-secondary)';
+  return (
+    <div style={{ fontSize: 12, color }}>
+      This month: <strong>{used ?? '—'} / {cap}</strong> free submissions
+      {atCap && ' · cap reached, using abuse email until the 1st'}
     </div>
   );
 }

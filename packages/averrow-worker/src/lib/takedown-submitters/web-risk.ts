@@ -26,6 +26,7 @@
 
 import type { Env } from "../../types";
 import { logger } from "../logger";
+import { store } from "../db-registry";
 import { getGoogleAccessToken, hasServiceAccount } from "../google-service-account";
 import { isLiveSendMode } from "./email-send";
 import { postJson, outcomeForStatus, truncate } from "./http";
@@ -37,6 +38,37 @@ import type {
 } from "./types";
 
 const KIND = "api_web_risk";
+
+/**
+ * Monthly cap on Web Risk Submission API calls, to stay inside Google's free
+ * allowance. Google's quota page allows 1,000 SubmitUri calls/day and 100/min
+ * per project, but the pricing page lists the Submission API as "Contact
+ * sales" (older pricing gave 100 free submissions/month), so 100/month is the
+ * conservative free ceiling. Every call this UTC month counts, whatever its
+ * outcome (Google is billed per call, not per acceptance). Override with the
+ * WEB_RISK_MONTHLY_CAP var (non-negative integer; 0 = no Web Risk submissions).
+ */
+export const WEB_RISK_MONTHLY_CAP_DEFAULT = 100;
+
+export function webRiskMonthlyCap(env: Env): number {
+  const raw = env.WEB_RISK_MONTHLY_CAP?.trim();
+  if (raw && /^\d+$/.test(raw)) return Number(raw);
+  return WEB_RISK_MONTHLY_CAP_DEFAULT;
+}
+
+/** 'YYYY-MM-01 00:00:00' (UTC) — the takedown_submissions.attempted_at format. */
+export function utcMonthStart(now: Date = new Date()): string {
+  return `${now.toISOString().slice(0, 7)}-01 00:00:00`;
+}
+
+/** Web Risk calls recorded this UTC month (idx_takedown_submissions_attempted range). */
+export async function webRiskSubmissionsThisMonth(env: Env, now: Date = new Date()): Promise<number> {
+  const row = await store(env, "core").prepare(
+    `SELECT COUNT(*) AS n FROM takedown_submissions
+      WHERE attempted_at >= ? AND submitter_kind = ?`,
+  ).bind(utcMonthStart(now), KIND).first<{ n: number }>();
+  return row?.n ?? 0;
+}
 const SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 // Threat types we assert when submitting. Web Risk accepts these enums.
 const THREAT_TYPES = ["SOCIAL_ENGINEERING", "MALWARE", "UNWANTED_SOFTWARE"];
@@ -61,6 +93,18 @@ export const webRiskSubmitter: Submitter = {
 
   isConfigured(env: Env): boolean {
     return hasServiceAccount(env);
+  },
+
+  async hasCapacity(env: Env): Promise<boolean> {
+    try {
+      return (await webRiskSubmissionsThisMonth(env)) < webRiskMonthlyCap(env);
+    } catch (err) {
+      // Can't count → don't risk a billable call.
+      logger.warn("web risk cap check failed; skipping web risk", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
   },
 
   canHandle(env: Env, takedown: TakedownRecord, provider: ProviderRecord): boolean {

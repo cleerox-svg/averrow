@@ -71,6 +71,28 @@ export function pickSubmitter(
   return null;
 }
 
+/**
+ * pickSubmitter plus each match's optional quota gate: a submitter whose
+ * hasCapacity() says no is skipped and the next match in priority order is
+ * tried. `skipped` names the kinds passed over for quota.
+ */
+export async function pickSubmitterWithCapacity(
+  env: Env,
+  takedown: TakedownRecord,
+  provider: ProviderRecord,
+): Promise<{ submitter: Submitter | null; skipped: string[] }> {
+  const skipped: string[] = [];
+  for (const s of SUBMITTERS) {
+    if (!s.canHandle(env, takedown, provider)) continue;
+    if (s.hasCapacity && !(await s.hasCapacity(env))) {
+      skipped.push(s.kind);
+      continue;
+    }
+    return { submitter: s, skipped };
+  }
+  return { submitter: null, skipped };
+}
+
 export interface DispatchResult {
   result:        SubmissionResult;
   submission_id: string;
@@ -81,16 +103,17 @@ export async function dispatchSubmission(
   takedown: TakedownRecord,
   provider: ProviderRecord,
 ): Promise<DispatchResult> {
-  const submitter = pickSubmitter(env, takedown, provider);
+  const { submitter, skipped } = await pickSubmitterWithCapacity(env, takedown, provider);
 
   let result: SubmissionResult;
   if (!submitter) {
+    const quota = skipped.length > 0 ? `; at monthly cap: ${skipped.join(", ")}` : "";
     result = {
       outcome:          "failed",
       submitter_kind:   "none",
       submitter_target: null,
       request_summary:  null,
-      error_message:    `No submitter matched provider ${provider.provider_name} (api_type=${provider.abuse_api_type ?? "?"})`,
+      error_message:    `No submitter matched provider ${provider.provider_name} (api_type=${provider.abuse_api_type ?? "?"})${quota}`,
     };
   } else {
     try {
