@@ -125,7 +125,9 @@ describe("scanContactLinks", () => {
 
   it("asks Web Risk without its cache", async () => {
     await scanContactLinks(makeEnv(), "https://ok-site.com/", null, NOW);
-    expect(checkGoogleSafeBrowsing.mock.calls[0]![2]).toEqual({ useCache: false });
+    const opts = checkGoogleSafeBrowsing.mock.calls[0]![2] as { useCache: boolean; purpose: string; deadline: number };
+    expect(opts).toMatchObject({ useCache: false, purpose: "contact" });
+    expect(typeof opts.deadline).toBe("number");
   });
 
   it("flags a registered look-alike", async () => {

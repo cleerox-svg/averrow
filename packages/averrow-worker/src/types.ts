@@ -133,8 +133,10 @@ export interface Env {
   GOOGLE_SAFE_BROWSING_KEY?: string;
   // Google service-account JSON (Web Risk Submission + Lookup APIs, future GCP APIs)
   GOOGLE_SERVICE_ACCOUNT_JSON?: string;
-  /** Optional override of the Web Risk Lookup (uris.search) monthly call cap (default 90,000; 0 = no lookups; lib/web-risk-lookup.ts). */
+  /** Optional override of the Web Risk Lookup (uris.search) monthly call cap (default 90,000, clamped to ≤ 100,000; 0 = no lookups; lib/web-risk-lookup.ts). */
   WEB_RISK_LOOKUP_MONTHLY_CAP?: string;
+  /** Optional override of the contact-form Web Risk lookup daily cap (default 200, clamped to ≤ 1,000; 0 = none; lib/web-risk-lookup.ts). */
+  WEB_RISK_LOOKUP_CONTACT_DAILY_CAP?: string;
   /** Optional override of the Web Risk monthly submission cap (default 100, lib/takedown-submitters/web-risk.ts). */
   WEB_RISK_MONTHLY_CAP?: string;
   // NetBeacon (DNS Abuse Institute) registrar-routed abuse reporting

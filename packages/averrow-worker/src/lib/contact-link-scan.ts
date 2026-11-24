@@ -13,8 +13,9 @@
 //     to the registrable domain, or the exact URL; a registered, non-benign
 //     `lookalike_domains` row
 //   - Google Web Risk Lookup API (uris.search), uncached (a URL can turn bad
-//     after a clean answer); counts against the monthly Web Risk lookup cap
-//     (lib/web-risk-lookup.ts)
+//     after a clean answer, and never written to the shared gsb: cache);
+//     counts against the contact-form daily Web Risk bucket AND the monthly
+//     cap (lib/web-risk-lookup.ts), and stops at the scan's time budget
 //   - domain age via RDAP: registered within NRD_MAX_AGE_DAYS → flagged
 //
 // Fails closed: a failed intel query, Web Risk not configured (no Google
@@ -239,6 +240,7 @@ async function runScan(
   links: FoundLink[],
   senderEmail: string | null,
   now: number,
+  deadline: number,
 ): Promise<LinkScanReport> {
   const scanned: ScannedLink[] = links.map((l) => ({ ...l, verdict: "clean", reasons: [], notes: [] }));
   const unchecked = (l: ScannedLink, why: string) => {
@@ -269,7 +271,10 @@ async function runScan(
       return null;
     }),
     gsbConfigured
-      ? checkGoogleSafeBrowsing(hrefs, env, { useCache: false }).catch((err: unknown) => {
+      // Uncached both ways (no read, no write: a visitor URL must not plant a
+      // verdict the feed reuses); its own daily Web Risk bucket ('contact');
+      // no lookup starts once the scan's race has timed out.
+      ? checkGoogleSafeBrowsing(hrefs, env, { useCache: false, purpose: "contact", deadline }).catch((err: unknown) => {
           logger.warn("contact-link-scan-gsb-failed", { error: err instanceof Error ? err.message : String(err) });
           return null;
         })
@@ -324,7 +329,8 @@ export async function scanContactLinks(
     timer = setTimeout(() => resolve(allUnchecked("link check timed out")), LINK_SCAN_BUDGET_MS);
   });
   try {
-    return await Promise.race([runScan(env, links, senderEmail, now), timeout]);
+    const deadline = Date.now() + LINK_SCAN_BUDGET_MS;
+    return await Promise.race([runScan(env, links, senderEmail, now, deadline), timeout]);
   } catch (err) {
     logger.warn("contact-link-scan-failed", { error: err instanceof Error ? err.message : String(err) });
     return allUnchecked("link check failed");
