@@ -134,9 +134,11 @@ export interface DatabasesPayload {
     /**
      * The current Cloudflare billing cycle (00:00 UTC on the 18th to the end
      * of the 17th). Lets the UI turn `reads_cycle` / `writes_cycle` into a
-     * per-day average and compare the last 24h against it.
+     * per-day average and compare the last 24h against it. Optional: a base
+     * payload cached (10 min, `databases.base.v2`) before this field shipped
+     * lacks it.
      */
-    cycle: { start: string; end: string; days_total: number };
+    cycle?: { start: string; end: string; days_total: number };
     overloads_24h: number | null;
     /**
      * What overload counts cover: only statements issued through the D1
@@ -590,6 +592,7 @@ export async function buildDatabasesBase(env: Env, now: Date = new Date()): Prom
   const totalBytes = measured.length > 0 ? measured.reduce((s, b) => s + b, 0) : null;
   const largest = measured.length > 0 ? Math.max(...measured) : null;
   const cycleRead: number | null = cycleRowsRead;
+  const { start: cycleStart, end: cycleEnd, days_total: cycleDays } = computeBillingCycle(now);
   return {
     generated_at: now.toISOString(),
     summary: {
@@ -599,7 +602,7 @@ export async function buildDatabasesBase(env: Env, now: Date = new Date()): Prom
       largest_share_pct: totalBytes && largest != null ? Math.round((largest / totalBytes) * 1000) / 10 : null,
       cycle_rows_read: cycleRead,
       cycle_pct_of_plan: cycleRead != null ? Math.round((cycleRead / BILLING_CYCLE_PLAN_CEILING) * 1000) / 10 : null,
-      cycle: (({ start, end, days_total }) => ({ start, end, days_total }))(computeBillingCycle(now)),
+      cycle: { start: cycleStart, end: cycleEnd, days_total: cycleDays },
       overloads_24h: overloadsKnown ? databases.reduce((s, d) => s + (d.overloads_24h ?? 0), 0) : null,
       overloads_scope: "metered_jobs",
       thresholds: {

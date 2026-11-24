@@ -103,8 +103,8 @@ function OverloadsChart({ db }: { db: DatabaseEntry }) {
 
 export function DatabaseDetail({ db, window: win = '24h', summary, generatedAt }: { db: DatabaseEntry; window?: DbWindow; summary?: DatabasesSummary; generatedAt?: string }) {
   const th = thresholds(summary);
-  const readTrend = generatedAt ? cycleTrend(db.reads_cycle, db.reads_24h, summary?.cycle?.start, generatedAt) : null;
-  const writeTrend = generatedAt ? cycleTrend(db.writes_cycle, db.writes_24h, summary?.cycle?.start, generatedAt) : null;
+  const readTrend = generatedAt ? cycleTrend(db.reads_cycle, db.hourly, 'rows_read', summary?.cycle?.start, generatedAt) : null;
+  const writeTrend = generatedAt ? cycleTrend(db.writes_cycle, db.hourly, 'rows_written', summary?.cycle?.start, generatedAt) : null;
   const over = overCap(db);
   const pct = usedPct(db.size_bytes, db.cap_bytes);
   const growth = db.growth_bytes_per_day;
@@ -146,13 +146,13 @@ export function DatabaseDetail({ db, window: win = '24h', summary, generatedAt }
           <StatTile
             label="Reads · cycle"
             value={formatCount(db.reads_cycle)}
-            sub={readTrend ? `24h ${formatCount(db.reads_24h)} · avg ${formatCount(readTrend.dailyAvg)}/day` : `24h ${formatCount(db.reads_24h)}`}
+            sub={readTrend ? `24h ≈ ${formatCount(readTrend.last24h)} · earlier avg ${formatCount(readTrend.dailyAvg)}/day` : `24h ${formatCount(db.reads_24h)}`}
             delta={readTrend ? { value: cycleTrendChip(readTrend), tone: cycleTrendTone(readTrend), label: cycleTrendLabel(readTrend, 'rows read') } : undefined}
           />
           <StatTile
             label="Writes · cycle"
             value={formatCount(db.writes_cycle)}
-            sub={writeTrend ? `24h ${formatCount(db.writes_24h)} · avg ${formatCount(writeTrend.dailyAvg)}/day` : `24h ${formatCount(db.writes_24h)}`}
+            sub={writeTrend ? `24h ≈ ${formatCount(writeTrend.last24h)} · earlier avg ${formatCount(writeTrend.dailyAvg)}/day` : `24h ${formatCount(db.writes_24h)}`}
             delta={writeTrend ? { value: cycleTrendChip(writeTrend), tone: cycleTrendTone(writeTrend), label: cycleTrendLabel(writeTrend, 'rows written') } : undefined}
           />
           <StatTile

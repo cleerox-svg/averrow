@@ -2,22 +2,22 @@
 
 import { Link } from 'react-router-dom';
 import { tabUrl } from '@/lib/workspaceRoutes';
-import type { DatabasesPayload, DbWindow } from '@/hooks/useDatabases';
+import type { DatabaseEntry, DatabasesPayload, DbWindow } from '@/hooks/useDatabases';
 import { StatusPill, windowParam } from './DatabaseCards';
 import {
   DASH, cycleTrend, cycleTrendChip, cycleTrendLabel, formatBytes, formatCount, formatPct, formatTimeToFull, usedPct,
 } from './format';
 
 /** Cycle total, with the last 24 h compared against the cycle's average day underneath. */
-function CycleCell({ total, last24h, what, cycleStart, now }: {
-  total: number | null; last24h: number | null; what: string; cycleStart?: string; now: string;
+function CycleCell({ total, hourly, field, what, cycleStart, now }: {
+  total: number | null; hourly: DatabaseEntry['hourly']; field: 'rows_read' | 'rows_written'; what: string; cycleStart?: string; now: string;
 }) {
-  const t = cycleTrend(total, last24h, cycleStart, now);
+  const t = cycleTrend(total, hourly, field, cycleStart, now);
   return (
     <td className="num">
       {formatCount(total)}
       {t && (
-        <span className="dbp-trend" data-direction={t.direction} title={cycleTrendLabel(t, what)}>
+        <span className="dbp-trend" data-direction={t.direction}>
           <span aria-hidden="true">{cycleTrendChip(t)} · 24h {formatCount(t.last24h)}</span>
           <span className="sr-only">{cycleTrendLabel(t, what)}</span>
         </span>
@@ -32,7 +32,7 @@ export function DatabaseTable({ data, window: win = '24h' }: { data: DatabasesPa
       <table className="dbp-table">
         <caption>
           All databases. Rows read and written are totals for the billing cycle{cycleSince(data.summary.cycle?.start)}; the line under each
-          compares the last 24 h with the cycle&apos;s average day (red above, green below). Dashes mean not measured yet.
+          compares the last 24 h with the cycle&apos;s earlier average day (red above, green below). Dashes mean not measured yet.
         </caption>
         <thead>
           <tr>
@@ -57,8 +57,8 @@ export function DatabaseTable({ data, window: win = '24h' }: { data: DatabasesPa
               <td className="num">{formatBytes(db.size_bytes)}</td>
               <td className="num">{formatPct(usedPct(db.size_bytes, db.cap_bytes), 0)}</td>
               <td>{db.size_bytes == null ? DASH : formatTimeToFull(db)}</td>
-              <CycleCell total={db.reads_cycle} last24h={db.reads_24h} what="rows read" cycleStart={data.summary.cycle?.start} now={data.generated_at} />
-              <CycleCell total={db.writes_cycle} last24h={db.writes_24h} what="rows written" cycleStart={data.summary.cycle?.start} now={data.generated_at} />
+              <CycleCell total={db.reads_cycle} hourly={db.hourly} field="rows_read" what="rows read" cycleStart={data.summary.cycle?.start} now={data.generated_at} />
+              <CycleCell total={db.writes_cycle} hourly={db.hourly} field="rows_written" what="rows written" cycleStart={data.summary.cycle?.start} now={data.generated_at} />
               <td className="num">{db.overloads_24h == null ? DASH : db.overloads_24h}</td>
               <td><Link to={tabUrl('databases', { db: db.store, window: windowParam(win) })} aria-label={`Open details for ${db.name}`}>Details →</Link></td>
             </tr>
@@ -75,7 +75,11 @@ export function DatabaseTable({ data, window: win = '24h' }: { data: DatabasesPa
   );
 }
 
-/** " (since Nov 18)", or "" when the payload has no cycle window. */
+/**
+ * " (since Nov 18)", or "" when the payload has no cycle window. Formatted in
+ * UTC on purpose: the cycle starts at 00:00 UTC, so a local-time formatter
+ * (e.g. `formatDate` in `@/lib/time`) would say "Nov 17" in the Americas.
+ */
 function cycleSince(start: string | undefined): string {
   if (!start) return '';
   const d = new Date(start);

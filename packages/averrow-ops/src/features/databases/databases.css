@@ -94,9 +94,9 @@
 .dbp-table .num { text-align: right; font-family: var(--font-mono); white-space: nowrap; }
 .dbp-table th.num { text-align: right; }
 /* Last 24 h vs the cycle's average day, under a cycle total. More use = more spend, so up is red. */
-.dbp-trend { display: block; margin-top: 2px; font-size: 12px; color: var(--text-tertiary); }
+.dbp-trend { display: block; margin-top: 2px; font-size: 12px; color: var(--text-tertiary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .dbp-trend[data-direction="up"] { color: var(--sev-critical-text); }
-.dbp-trend[data-direction="down"] { color: var(--healthy); }
+.dbp-trend[data-direction="down"] { color: var(--sev-info-text); } /* same green as the StatTile "good" chip */
 .dbp-table tr[data-selected="true"] td { background: var(--primary-tint); }
 
 /* map */
