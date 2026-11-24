@@ -10,7 +10,7 @@
 
 import { Link } from 'react-router-dom';
 import { useCallback, useMemo, useState } from 'react';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import {
   useDarkWebOrgMentions,
   useDarkWebModuleSummary,
@@ -103,9 +103,7 @@ export function DarkWeb() {
 
   return (
     <div className="max-w-7xl space-y-6">
-      <BackLink fallback="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        <ArrowLeft size={12} /> BACK TO OVERVIEW
-      </BackLink>
+      <BackLink fallback="/">BACK</BackLink>
 
       <header>
         <div className="flex items-center gap-3 mb-1">

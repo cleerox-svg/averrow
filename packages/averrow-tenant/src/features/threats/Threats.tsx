@@ -38,9 +38,7 @@ export function Threats() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <BackLink fallback="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        ← BACK TO OVERVIEW
-      </BackLink>
+      <BackLink fallback="/">BACK</BackLink>
 
       <header>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Threats</h1>

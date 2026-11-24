@@ -72,7 +72,7 @@ beforeEach(() => {
 describe('TakedownDetail Back', () => {
   it('deep link: Back goes to the /takedowns fallback', () => {
     mount('/takedowns/td1');
-    fireEvent.click(screen.getByText(/BACK TO TAKEDOWNS/));
+    fireEvent.click(screen.getByRole('link', { name: 'BACK' }));
     expect(screen.getByTestId('where').textContent).toBe('/takedowns');
   });
 
@@ -80,7 +80,7 @@ describe('TakedownDetail Back', () => {
     mount('/takedowns');
     fireEvent.click(screen.getByText('open td1'));
     expect(screen.getByTestId('where').textContent).toBe('/takedowns/td1');
-    fireEvent.click(screen.getByText(/BACK TO TAKEDOWNS/));
+    fireEvent.click(screen.getByRole('link', { name: 'BACK' }));
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/takedowns'));
     expect(screen.getByText('open td1')).toBeTruthy();
   });

@@ -7,7 +7,7 @@
 // Phase B sprint 3.
 
 import { useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { Badge, PageState, pageStateKind } from '@averrow/shared/ui';
 import {
   useBrandSocialFindings,
@@ -28,9 +28,7 @@ export function BrandSocialFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <BackLink fallback="/modules/social" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        <ArrowLeft size={12} /> BACK TO SOCIAL MEDIA
-      </BackLink>
+      <BackLink fallback="/modules/social">BACK</BackLink>
 
       <header>
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Social Media Impersonation · Brand</div>

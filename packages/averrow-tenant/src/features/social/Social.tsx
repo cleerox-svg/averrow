@@ -7,7 +7,7 @@
 // Phase B sprint 3.
 
 import { Link } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, ShieldCheck, Users, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, ShieldCheck, Users, type LucideIcon } from 'lucide-react';
 import { useSocialModuleSummary, type SocialBrandSummary, type SocialModuleTotals } from '@/lib/socialModule';
 import { BackLink } from '@averrow/shared/nav';
 
@@ -16,9 +16,7 @@ export function Social() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <BackLink fallback="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        <ArrowLeft size={12} /> BACK TO OVERVIEW
-      </BackLink>
+      <BackLink fallback="/">BACK</BackLink>
 
       <header>
         <div className="flex items-center gap-3 mb-1">

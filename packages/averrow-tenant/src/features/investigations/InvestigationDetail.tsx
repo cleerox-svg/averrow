@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
-  ArrowLeft, Radar, ShieldAlert, Send, X, Loader2, MessageSquare,
+  Radar, ShieldAlert, Send, X, Loader2, MessageSquare,
   UserPlus, UserCheck, Trash2, type LucideIcon,
 } from 'lucide-react';
 import {
@@ -279,9 +279,7 @@ function Notes({ investigationId, notes, canEdit }: {
 
 function Back() {
   return (
-    <BackLink fallback="/investigations" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/55 hover:text-white/85 transition-colors">
-      <ArrowLeft size={14} /> Investigations
-    </BackLink>
+    <BackLink fallback="/investigations">BACK</BackLink>
   );
 }
 

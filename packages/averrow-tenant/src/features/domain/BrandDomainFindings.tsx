@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink, X } from 'lucide-react';
+import { ExternalLink, X } from 'lucide-react';
 import {
   useBrandDomainFindings,
   useDomainModuleSummary,
@@ -41,9 +41,7 @@ export function BrandDomainFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <BackLink fallback="/modules/domain" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        <ArrowLeft size={12} /> BACK TO DOMAIN MONITORING
-      </BackLink>
+      <BackLink fallback="/modules/domain">BACK</BackLink>
 
       <header>
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Domain Monitoring · Brand</div>

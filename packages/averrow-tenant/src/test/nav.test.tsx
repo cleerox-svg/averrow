@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { BrowserRouter, MemoryRouter, Navigate, Route, Routes, Link, useLocation } from 'react-router-dom';
-import { appHistoryIndex, BackLink, useBack } from '@averrow/shared/nav';
+import { appHistoryIndex, BackLink, useBack, replaceUrlKeepingState } from '@averrow/shared/nav';
 
 function Where() {
   return <div data-testid="where">{useLocation().pathname}</div>;
@@ -75,6 +75,28 @@ describe('shared nav (BrowserRouter)', () => {
     fireEvent.click(a, { metaKey: true });
     document.removeEventListener('click', swallow);
     expect(screen.getByTestId('where').textContent).toBe('/detail');
+  });
+});
+
+describe('history idx hygiene', () => {
+  beforeEach(() => window.history.replaceState(null, '', '/'));
+
+  it('idx survives the AuthProvider-style URL strip, and later pushes stay numeric', () => {
+    start('/list');
+    replaceUrlKeepingState('/list');
+    expect(appHistoryIndex()).toBe(0);
+    fireEvent.click(screen.getByText('open'));
+    expect(appHistoryIndex()).toBe(1);
+    expect(screen.getByTestId('can').textContent).toBe('true');
+  });
+
+  it('NaN / garbage idx is unknown, not "can go back"', () => {
+    for (const bad of [Number.NaN, -1, 1.5, '3', null]) {
+      window.history.replaceState({ idx: bad }, '', '/detail');
+      render(<MemoryRouter initialEntries={['/detail']}><App /></MemoryRouter>);
+      expect(appHistoryIndex()).toBe(0);
+      expect(screen.getAllByTestId('can').pop()?.textContent).toBe('false');
+    }
   });
 });
 

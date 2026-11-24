@@ -4,7 +4,7 @@
 // Phase C sprint 4.
 
 import { useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink, Mail, FileText } from 'lucide-react';
+import { ExternalLink, Mail, FileText } from 'lucide-react';
 import {
   useTenantTakedownDetail,
   takedownActionsFor,
@@ -27,9 +27,7 @@ export function TakedownDetail() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <BackLink fallback="/takedowns" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        <ArrowLeft size={12} /> BACK TO TAKEDOWNS
-      </BackLink>
+      <BackLink fallback="/takedowns">BACK</BackLink>
 
       {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading takedown…</div>}
       {error && (

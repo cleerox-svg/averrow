@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { canManageCrossover } from '@/lib/staffCrossover';
 import { useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink, Image as ImageIcon, Upload, Trash2 } from 'lucide-react';
+import { ExternalLink, Image as ImageIcon, Upload, Trash2 } from 'lucide-react';
 import {
   useBrandTrademarkFindings,
   useTrademarkModuleSummary,
@@ -34,9 +34,7 @@ export function BrandTrademarkFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <BackLink fallback="/modules/trademark" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        <ArrowLeft size={12} /> BACK TO TRADEMARK
-      </BackLink>
+      <BackLink fallback="/modules/trademark">BACK</BackLink>
 
       <header>
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Trademark Infringement · Brand</div>

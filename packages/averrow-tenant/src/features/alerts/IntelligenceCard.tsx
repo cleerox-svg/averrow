@@ -8,7 +8,7 @@
 import { useState, type ReactNode } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
-  ArrowLeft, ShieldAlert, Network, GitBranch, Clock, FileSearch, Sparkles,
+  ShieldAlert, Network, GitBranch, Clock, FileSearch, Sparkles,
   ExternalLink, type LucideIcon,
 } from 'lucide-react';
 import { useAlert, useCanTriage, useIsStaff, extractConfidence, alertAssigneeLabel, type Alert, type AlertSeverity } from '@/lib/alerts';
@@ -321,9 +321,7 @@ function ReputationGrid({ threat: t }: { threat: ThreatRow }) {
 
 function BackToAlerts() {
   return (
-    <BackLink fallback="/alerts" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/55 hover:text-white/85 transition-colors">
-      <ArrowLeft size={14} /> Alerts
-    </BackLink>
+    <BackLink fallback="/alerts">BACK</BackLink>
   );
 }
 

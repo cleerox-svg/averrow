@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, ShieldOff, FileSignature, AlertTriangle, Users } from 'lucide-react';
+import { CheckCircle2, ShieldOff, FileSignature, AlertTriangle, Users } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import {
   useTakedownAuthorization,
@@ -139,12 +139,7 @@ export function TakedownAuthorizationPage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <BackLink
-        fallback="/settings"
-        className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70"
-      >
-        <ArrowLeft size={12} /> BACK TO SETTINGS
-      </BackLink>
+      <BackLink fallback="/settings">BACK</BackLink>
 
       <header>
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Settings</div>

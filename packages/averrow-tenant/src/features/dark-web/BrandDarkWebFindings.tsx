@@ -6,7 +6,7 @@
 // Phase B sprint 5.
 
 import { useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import {
   useBrandDarkWebFindings,
   useDarkWebModuleSummary,
@@ -25,9 +25,7 @@ export function BrandDarkWebFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <BackLink fallback="/modules/dark-web" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        <ArrowLeft size={12} /> BACK TO DARK WEB
-      </BackLink>
+      <BackLink fallback="/modules/dark-web">BACK</BackLink>
 
       <header>
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Dark Web Monitoring · Brand</div>
