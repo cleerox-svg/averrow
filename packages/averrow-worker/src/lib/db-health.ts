@@ -131,6 +131,12 @@ export interface DatabasesPayload {
     largest_share_pct: number | null;
     cycle_rows_read: number | null;
     cycle_pct_of_plan: number | null;
+    /**
+     * The current Cloudflare billing cycle (00:00 UTC on the 18th to the end
+     * of the 17th). Lets the UI turn `reads_cycle` / `writes_cycle` into a
+     * per-day average and compare the last 24h against it.
+     */
+    cycle: { start: string; end: string; days_total: number };
     overloads_24h: number | null;
     /**
      * What overload counts cover: only statements issued through the D1
@@ -593,6 +599,7 @@ export async function buildDatabasesBase(env: Env, now: Date = new Date()): Prom
       largest_share_pct: totalBytes && largest != null ? Math.round((largest / totalBytes) * 1000) / 10 : null,
       cycle_rows_read: cycleRead,
       cycle_pct_of_plan: cycleRead != null ? Math.round((cycleRead / BILLING_CYCLE_PLAN_CEILING) * 1000) / 10 : null,
+      cycle: (({ start, end, days_total }) => ({ start, end, days_total }))(computeBillingCycle(now)),
       overloads_24h: overloadsKnown ? databases.reduce((s, d) => s + (d.overloads_24h ?? 0), 0) : null,
       overloads_scope: "metered_jobs",
       thresholds: {

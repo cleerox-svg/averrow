@@ -59,7 +59,7 @@ export function Databases() {
       <div className="dbp">
         {isError && <PageState kind="error" layout="inline" title="Couldn't refresh databases" description="Showing the last loaded data." onRetry={() => { void refetch(); }} />}
         {detail
-          ? <DatabaseDetail db={detail} window={win} summary={data.summary} />
+          ? <DatabaseDetail db={detail} window={win} summary={data.summary} generatedAt={data.generated_at} />
           : <PageState kind="empty" title="Database not found" description={`There is no database "${dbParam}".`} action={{ label: 'All databases', onClick: () => patch({ db: null }) }} />}
       </div>
     );

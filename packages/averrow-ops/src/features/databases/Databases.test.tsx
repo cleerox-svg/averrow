@@ -13,7 +13,7 @@ import { api } from '@/lib/api';
 import { Databases } from './Databases';
 import { OperationsWorkspace } from '@/features/operations/OperationsWorkspace';
 import { auditDb, databasesFixture, emptyMeterFixture, noProposedFixture } from './fixtures';
-import { formatBytes, formatCount, formatTimeToFull, sourceNodes } from './format';
+import { cycleTrend, cycleTrendChip, cycleTrendLabel, cycleTrendTone, formatBytes, formatCount, formatTimeToFull, sourceNodes } from './format';
 import { projectionPoints } from './DatabaseDetail';
 
 const get = vi.mocked(api.get);
@@ -115,6 +115,25 @@ describe('Databases — table view', () => {
     expect(within(table).getByText(/averrow-telemetry/)).toBeInTheDocument();
   });
 
+  it('compares the last 24 h with the cycle average under each cycle total', async () => {
+    renderAt('/?view=table');
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText(/billing cycle \(since Nov 18\)/)).toBeInTheDocument();
+    const row = within(table).getByRole('row', { name: /trust-radar-v2 CORE/ });
+    // 1.36 B over 4.59 days ≈ 296 M/day; 160 M in the last 24 h is 46% below.
+    expect(within(row).getByText('▼ 46% · 24h 160 M')).toBeInTheDocument();
+    expect(within(row).getByText(/Last 24 h: 160 M rows read, 46% below this cycle's daily average of 296 M/)).toBeInTheDocument();
+    expect(within(row).getByText('▼ 46% · 24h 160 M').closest('.dbp-trend')).toHaveAttribute('data-direction', 'down');
+  });
+
+  it('shows no trend line when the payload has no cycle window', async () => {
+    get.mockResolvedValue({ success: true, data: { ...databasesFixture, summary: { ...databasesFixture.summary, cycle: undefined } } });
+    renderAt('/?view=table');
+    const table = await screen.findByRole('table');
+    expect(table.querySelector('.dbp-trend')).toBeNull();
+    expect(within(table).queryByText(/since/)).toBeNull();
+  });
+
   it('switches views with the Cards / Map / Table toggle', async () => {
     const user = userEvent.setup();
     renderAt('/');
@@ -203,6 +222,8 @@ describe('Databases — detail', () => {
     expect(screen.getByRole('img', { name: /grew from .* to 5\.42 GB.*reaches 10\.0 GB/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /19 overload rejections over the last 24 hours\. Peak 14/ })).toBeInTheDocument();
     expect(screen.getByText('threat_cube_brand')).toBeInTheDocument();
+    expect(screen.getByText('24h 160 M · avg 296 M/day')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Last 24 h: 240 K rows written, 62% below/)).toBeInTheDocument();
     expect(screen.getByText('navigator')).toBeInTheDocument();
     expect(screen.getByText('Straight-line from the size history; dashed line is the projection to the limit.', { exact: false })).toBeInTheDocument();
   });
@@ -245,6 +266,28 @@ describe('format helpers', () => {
     expect(formatCount(null)).toBe('—');
     expect(formatCount(54_200_000)).toBe('54.2 M');
     expect(formatCount(950)).toBe('950');
+  });
+  it('compares the last 24 h with the cycle average', () => {
+    const start = '2026-11-18T00:00:00Z';
+    const now = '2026-11-23T00:00:00Z'; // 5 days in
+    const up = cycleTrend(1_000, 300, start, now)!;
+    expect(up).toMatchObject({ dailyAvg: 200, deltaPct: 50, direction: 'up' });
+    expect(cycleTrendChip(up)).toBe('▲ 50%');
+    expect(cycleTrendTone(up)).toBe('bad');
+    expect(cycleTrendLabel(up, 'rows read')).toBe("Last 24 h: 300 rows read, 50% above this cycle's daily average of 200");
+    const down = cycleTrend(1_000, 100, start, now)!;
+    expect([down.direction, cycleTrendChip(down), cycleTrendTone(down)]).toEqual(['down', '▼ 50%', 'good']);
+    const flat = cycleTrend(1_000, 215, start, now)!;
+    expect([flat.direction, cycleTrendChip(flat), cycleTrendTone(flat)]).toEqual(['flat', '≈ avg', 'neutral']);
+    expect(cycleTrendLabel(flat, 'rows written')).toContain('about the same as');
+  });
+  it('gives no cycle trend without data or before a full day of the cycle', () => {
+    const start = '2026-11-18T00:00:00Z';
+    expect(cycleTrend(null, 5, start, '2026-11-23T00:00:00Z')).toBeNull();
+    expect(cycleTrend(5, null, start, '2026-11-23T00:00:00Z')).toBeNull();
+    expect(cycleTrend(5, 5, undefined, '2026-11-23T00:00:00Z')).toBeNull();
+    expect(cycleTrend(5, 5, start, '2026-11-18T20:00:00Z')).toBeNull();
+    expect(cycleTrend(0, 5, start, '2026-11-23T00:00:00Z')).toBeNull();
   });
   it('describes time to full', () => {
     expect(formatTimeToFull({ days_to_cap: null, growth_bytes_per_day: null })).toBe('Not enough history yet');

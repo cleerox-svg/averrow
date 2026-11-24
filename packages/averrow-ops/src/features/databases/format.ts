@@ -132,3 +132,61 @@ export const edgeId = (e: Pick<DbEdge, 'kind' | 'source' | 'store'>) => `${e.kin
 export function findStore(dbs: DatabaseEntry[], store: string | null): DatabaseEntry | undefined {
   return store ? dbs.find((d) => d.store === store) : undefined;
 }
+
+// ─── Last 24 h vs the billing cycle's daily average ─────────────
+
+/** Within ±this % of the cycle average reads as "about average" (no colour). */
+export const CYCLE_TREND_FLAT_PCT = 10;
+
+export interface CycleTrend {
+  /** Cycle total ÷ days elapsed in the cycle. */
+  dailyAvg: number;
+  last24h: number;
+  /** (last 24 h ÷ daily average − 1) × 100, rounded. */
+  deltaPct: number;
+  direction: 'up' | 'down' | 'flat';
+}
+
+/**
+ * Compare the last 24 h against the cycle's average day. Null when any input
+ * is missing or the cycle is less than a day old (its "average" would be the
+ * same 24 h). `now` should be the payload's `generated_at`, so a cached
+ * payload is measured against the moment its numbers were taken.
+ */
+export function cycleTrend(
+  cycleTotal: number | null | undefined,
+  last24h: number | null | undefined,
+  cycleStart: string | null | undefined,
+  now: string | number | Date,
+): CycleTrend | null {
+  if (cycleTotal == null || last24h == null || !cycleStart) return null;
+  const start = Date.parse(cycleStart);
+  const at = now instanceof Date ? now.getTime() : typeof now === 'number' ? now : Date.parse(now);
+  if (!Number.isFinite(start) || !Number.isFinite(at)) return null;
+  const days = (at - start) / 86_400_000;
+  if (days < 1) return null;
+  const dailyAvg = cycleTotal / days;
+  if (!(dailyAvg > 0)) return null;
+  const deltaPct = Math.round((last24h / dailyAvg - 1) * 100);
+  const direction = Math.abs(deltaPct) < CYCLE_TREND_FLAT_PCT ? 'flat' : deltaPct > 0 ? 'up' : 'down';
+  return { dailyAvg, last24h, deltaPct, direction };
+}
+
+/** Chip text: "▲ 18%", "▼ 9%" or "≈ avg". */
+export function cycleTrendChip(t: CycleTrend): string {
+  if (t.direction === 'flat') return '≈ avg';
+  return `${t.direction === 'up' ? '▲' : '▼'} ${Math.abs(t.deltaPct)}%`;
+}
+
+/** Full sentence for screen readers and hover. `what` is "rows read" / "rows written". */
+export function cycleTrendLabel(t: CycleTrend, what: string): string {
+  const vs = t.direction === 'flat'
+    ? 'about the same as'
+    : `${Math.abs(t.deltaPct)}% ${t.direction === 'up' ? 'above' : 'below'}`;
+  return `Last 24 h: ${formatCount(t.last24h)} ${what}, ${vs} this cycle's daily average of ${formatCount(t.dailyAvg)}`;
+}
+
+/** More reads or writes than usual costs more, so up is "bad" (red) and down is "good" (green). */
+export function cycleTrendTone(t: CycleTrend): 'good' | 'bad' | 'neutral' {
+  return t.direction === 'up' ? 'bad' : t.direction === 'down' ? 'good' : 'neutral';
+}
