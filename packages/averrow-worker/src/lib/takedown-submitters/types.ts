@@ -77,4 +77,11 @@ export interface Submitter {
    * configured.
    */
   isConfigured?(env: Env): boolean;
+  /**
+   * Optional quota gate, checked after canHandle() at dispatch. False → this
+   * submitter is skipped for this takedown and the next one in priority
+   * order is tried (e.g. Web Risk at its monthly free cap falls through to
+   * abuse email). Must not throw; on doubt return false (fail closed).
+   */
+  hasCapacity?(env: Env): Promise<boolean>;
 }

@@ -35,10 +35,15 @@ const submitFollowup = vi.fn(async () => ({
   request_summary: "followup",
 }));
 const recordSubmissionAttempt = vi.fn(async () => "sub-f");
+// Monthly-cap gates (Web Risk free allowance): off by default; the cap tests flip them.
+const isQuotaBlocked = vi.fn(async () => false);
+const quotaBlockedProviderNames = vi.fn(async () => [] as string[]);
 vi.mock("../src/lib/takedown-submitters", () => ({
   dispatchSubmission,
   followupDraftSubmitter: { submitFollowup },
   recordSubmissionAttempt,
+  isQuotaBlocked,
+  quotaBlockedProviderNames,
 }));
 vi.mock("../src/lib/provider-resolver", () => ({
   resolveProvider: vi.fn(async () => ({
@@ -321,6 +326,48 @@ describe.skipIf(!hasSqlite())("G21 consent integrity — real schema", () => {
       }) as unknown as Awaited<ReturnType<typeof dispatchSubmission>>);
       const res = await runPhaseGAutoSubmit(env);
       expect(res.submitted).toBe(0);
+      expect(get("td1")).toMatchObject({ status: "draft", submitted_at: null });
+    });
+  });
+
+  describe("Web Risk monthly cap — capped takedowns wait, unclaimed", () => {
+    it("Phase G leaves a cap-blocked provider's takedowns out of the batch", async () => {
+      setup("auto");
+      insertTakedown("td1", { status: "draft", severity: "LOW" });
+      quotaBlockedProviderNames.mockResolvedValueOnce(["GoDaddy"]);
+      const res = await runPhaseGAutoSubmit(env);
+      expect(res).toMatchObject({ submitted: 0, skipped: 0 });
+      expect(dispatchSubmission).not.toHaveBeenCalled();
+      expect(get("td1")).toMatchObject({ status: "draft", submitted_at: null });
+    });
+
+    it("Phase G still files other providers' takedowns while one is capped", async () => {
+      setup("auto");
+      insertTakedown("td1", { status: "draft", severity: "LOW" });
+      quotaBlockedProviderNames.mockResolvedValueOnce(["Google Safe Browsing"]);
+      const res = await runPhaseGAutoSubmit(env);
+      expect(res.submitted).toBe(1);
+      expect(dispatchSubmission).toHaveBeenCalledTimes(1);
+    });
+
+    it("Phase G backstop: a row whose only channel is capped is skipped, not claimed", async () => {
+      setup("auto");
+      insertTakedown("td1", { status: "draft", severity: "LOW" });
+      isQuotaBlocked.mockResolvedValueOnce(true);
+      const res = await runPhaseGAutoSubmit(env);
+      expect(res).toMatchObject({ submitted: 0, skipped: 1 });
+      expect(dispatchSubmission).not.toHaveBeenCalled();
+      expect(get("td1")).toMatchObject({ status: "draft", submitted_at: null });
+    });
+
+    it("hand-submit at the cap answers 409 and leaves the takedown unchanged", async () => {
+      setup("auto");
+      insertTakedown("td1", { status: "draft", severity: "LOW" });
+      isQuotaBlocked.mockResolvedValueOnce(true);
+      const res = await staffSubmit("td1");
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { error: string }).error).toMatch(/monthly submission cap/);
+      expect(dispatchSubmission).not.toHaveBeenCalled();
       expect(get("td1")).toMatchObject({ status: "draft", submitted_at: null });
     });
   });

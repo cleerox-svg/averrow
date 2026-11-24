@@ -8,6 +8,8 @@ function makeEnv(opts: {
   errors?: Array<Record<string, unknown>>;
   providers?: Array<Record<string, unknown>>;
   vars?: Record<string, string>;
+  /** Web Risk calls this month; undefined → the COUNT read throws. */
+  webRiskMonth?: number;
 }): Env {
   const stats = opts.stats ?? [];
   const errors = opts.errors ?? [];
@@ -17,6 +19,10 @@ function makeEnv(opts: {
     DB: {
       prepare: (sql: string) => ({
         bind: (..._b: unknown[]) => ({
+          first: async () => {
+            if (opts.webRiskMonth === undefined) throw new Error("no count");
+            return { n: opts.webRiskMonth };
+          },
           all: async () => {
             if (sql.includes("GROUP BY submitter_kind")) return { results: stats };
             if (sql.includes("error_message IS NOT NULL")) return { results: errors };
@@ -30,6 +36,18 @@ function makeEnv(opts: {
 }
 
 describe("getTakedownIntegrations", () => {
+  it("reports Web Risk's monthly usage against its cap, and only for Web Risk", async () => {
+    const report = await getTakedownIntegrations(makeEnv({ webRiskMonth: 42 }), 168);
+    const wr = report.integrations.find((i) => i.kind === "api_web_risk")!;
+    expect(wr.monthly_quota).toEqual({ used: 42, cap: 100 });
+    expect(report.integrations.filter((i) => i.monthly_quota)).toHaveLength(1);
+    const capped = await getTakedownIntegrations(makeEnv({ webRiskMonth: 5, vars: { WEB_RISK_MONTHLY_CAP: "20" } }), 168);
+    expect(capped.integrations.find((i) => i.kind === "api_web_risk")!.monthly_quota).toEqual({ used: 5, cap: 20 });
+    const unreadable = await getTakedownIntegrations(makeEnv({}), 168);
+    expect(unreadable.integrations.find((i) => i.kind === "api_web_risk")!.monthly_quota).toEqual({ used: null, cap: 100 });
+  });
+
+
   it("lists all registered integrations even with zero submissions", async () => {
     const report = await getTakedownIntegrations(makeEnv({}), 168);
     const kinds = report.integrations.map((i) => i.kind);

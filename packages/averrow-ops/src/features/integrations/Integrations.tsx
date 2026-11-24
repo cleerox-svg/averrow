@@ -92,6 +92,8 @@ function IntegrationCard({ it }: { it: IntegrationHealth }) {
           )}
         </div>
 
+        {it.monthly_quota && <MonthlyQuotaLine quota={it.monthly_quota} />}
+
         {/* Metrics */}
         <div style={{ display: 'flex', gap: 20, alignItems: 'baseline' }}>
           <div>
@@ -202,6 +204,42 @@ export function Integrations() {
           {integrations.map((it) => <IntegrationCard key={it.kind} it={it} />)}
         </div>
       )}
+    </div>
+  );
+}
+
+/** "1 Dec": the next UTC month start, when a monthly cap resets. */
+function nextResetLabel(now: Date = new Date()): string {
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return next.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
+
+/**
+ * "This month: 12 / 100 free submissions". Only the count is coloured (like
+ * the Credential / Auto-submit values above): amber from 80% with "N left",
+ * red at the cap. At the cap Web Risk takedowns WAIT (unclaimed) until the
+ * cap resets at the next UTC month start; they are not failed or re-routed.
+ */
+export function MonthlyQuotaLine({ quota, now }: { quota: { used: number | null; cap: number }; now?: Date }) {
+  const { used, cap } = quota;
+  const reset = nextResetLabel(now);
+  if (cap <= 0) {
+    return (
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+        This month: <strong style={{ color: 'var(--text-tertiary)' }}>paused</strong> (monthly cap set to 0)
+      </div>
+    );
+  }
+  const atCap = used != null && used >= cap;
+  const near = used != null && !atCap && used >= cap * 0.8;
+  const color = atCap ? 'var(--sev-critical-text)' : near ? 'var(--sev-medium-text)' : 'var(--text-primary)';
+  const noun = cap <= 100 ? 'free submissions' : 'submissions';
+  return (
+    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+      This month: <strong style={{ color, whiteSpace: 'nowrap' }}>{used ?? '—'} / {cap}</strong> {noun}
+      {used == null && ' (count unavailable)'}
+      {near && ` · ${cap - used!} left`}
+      {atCap && <span style={{ color }}> · cap reached, takedowns wait until {reset} (UTC)</span>}
     </div>
   );
 }

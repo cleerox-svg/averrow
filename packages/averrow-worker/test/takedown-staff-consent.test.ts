@@ -26,7 +26,12 @@ const dispatchSubmission = vi.fn(async () => ({
   },
   submission_id: "sub-1",
 }));
-vi.mock("../src/lib/takedown-submitters", () => ({ dispatchSubmission }));
+vi.mock("../src/lib/takedown-submitters", () => ({
+  dispatchSubmission,
+  // Monthly-cap gates (Web Risk free allowance): never blocking here.
+  isQuotaBlocked: vi.fn(async () => false),
+  quotaBlockedProviderNames: vi.fn(async () => [] as string[]),
+}));
 
 const resolveProvider = vi.fn(async () => ({
   hosting_provider: null, hosting_ip: null, hosting_country: null,

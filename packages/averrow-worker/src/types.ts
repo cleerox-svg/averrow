@@ -130,6 +130,8 @@ export interface Env {
   GOOGLE_SAFE_BROWSING_KEY?: string;
   // Google service-account JSON (Web Risk Submission API + future GCP APIs)
   GOOGLE_SERVICE_ACCOUNT_JSON?: string;
+  /** Optional override of the Web Risk monthly submission cap (default 100, lib/takedown-submitters/web-risk.ts). */
+  WEB_RISK_MONTHLY_CAP?: string;
   // NetBeacon (DNS Abuse Institute) registrar-routed abuse reporting
   NETBEACON_API_KEY?: string;
   NETBEACON_API_BASE?: string;

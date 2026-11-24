@@ -14,6 +14,7 @@
 import type { Env } from "../types";
 import { SUBMITTERS } from "./takedown-submitters";
 import { isLiveSendMode } from "./takedown-submitters/email-send";
+import { webRiskMonthlyCap, webRiskSubmissionsThisMonth } from "./takedown-submitters/web-risk";
 
 export type IntegrationStatus =
   | "live"          // configured + enabled + live send mode
@@ -39,6 +40,12 @@ export interface IntegrationHealth {
   success_rate:        number | null;  // 0-100, over submitted+rejected+failed; null if none
   last_submission_at:  string | null;
   last_error:          string | null;
+  /**
+   * Calendar-month (UTC) usage against a self-imposed cap, for integrations
+   * that have one (Web Risk: stays in Google's free allowance). Absent
+   * otherwise; `used` is null when the count could not be read.
+   */
+  monthly_quota?:      { used: number | null; cap: number };
 }
 
 export interface IntegrationsReport {
@@ -147,6 +154,14 @@ export async function getTakedownIntegrations(
     provByApiType.set(r.abuse_api_type, { provider_name: r.provider_name, auto_submit_enabled: r.auto_submit_enabled });
   }
 
+  // 4. Web Risk's monthly free-allowance usage (one indexed range COUNT).
+  let webRiskUsed: number | null = null;
+  try {
+    webRiskUsed = await webRiskSubmissionsThisMonth(env);
+  } catch {
+    webRiskUsed = null;
+  }
+
   const integrations: IntegrationHealth[] = REGISTRY.map((meta) => {
     const s = statsByKind.get(meta.kind);
     const submitted = s?.submitted ?? 0;
@@ -174,6 +189,7 @@ export async function getTakedownIntegrations(
       success_rate:        decided > 0 ? Math.round((submitted / decided) * 100) : null,
       last_submission_at:  s?.last_submission_at ?? null,
       last_error:          lastErrByKind.get(meta.kind) ?? null,
+      ...(meta.kind === "api_web_risk" ? { monthly_quota: { used: webRiskUsed, cap: webRiskMonthlyCap(env) } } : {}),
     };
   });
 

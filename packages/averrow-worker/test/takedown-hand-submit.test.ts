@@ -21,7 +21,8 @@ const dispatchSubmission = vi.fn(async () => ({
   },
   submission_id: "sub-1",
 }));
-vi.mock("../src/lib/takedown-submitters", () => ({ dispatchSubmission }));
+const isQuotaBlocked = vi.fn(async () => false);
+vi.mock("../src/lib/takedown-submitters", () => ({ dispatchSubmission, isQuotaBlocked }));
 
 // resolveProvider is only reached when provider_name is unset / unmatched;
 // mock it so no DNS/network happens even on that fallback path.

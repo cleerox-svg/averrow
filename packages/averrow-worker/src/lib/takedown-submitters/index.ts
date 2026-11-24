@@ -19,6 +19,8 @@
 // Phase C sprint 1.
 
 import type { Env } from "../../types";
+import { store } from "../db-registry";
+import { isLiveSendMode } from "./email-send";
 import { emailDraftSubmitter } from "./email-draft";
 import { emailSendSubmitter } from "./email-send";
 import { followupDraftSubmitter } from "./followup-draft";
@@ -71,6 +73,60 @@ export function pickSubmitter(
   return null;
 }
 
+/**
+ * pickSubmitter plus each match's optional quota gate: a submitter whose
+ * hasCapacity() says no is skipped and the next match in priority order is
+ * tried. `skipped` names the kinds passed over for quota.
+ */
+export async function pickSubmitterWithCapacity(
+  env: Env,
+  takedown: TakedownRecord,
+  provider: ProviderRecord,
+): Promise<{ submitter: Submitter | null; skipped: string[] }> {
+  const skipped: string[] = [];
+  for (const s of SUBMITTERS) {
+    if (!s.canHandle(env, takedown, provider)) continue;
+    if (s.hasCapacity && !(await s.hasCapacity(env))) {
+      skipped.push(s.kind);
+      continue;
+    }
+    return { submitter: s, skipped };
+  }
+  return { submitter: null, skipped };
+}
+
+/**
+ * True when a takedown has a matching channel but every match is at its
+ * monthly cap — i.e. it should WAIT for the cap to reset, not fail. Callers
+ * check this before claiming a row (Sparrow skips it; hand-submit answers 409).
+ */
+export async function isQuotaBlocked(
+  env: Env,
+  takedown: TakedownRecord,
+  provider: ProviderRecord,
+): Promise<boolean> {
+  const { submitter, skipped } = await pickSubmitterWithCapacity(env, takedown, provider);
+  return submitter === null && skipped.length > 0;
+}
+
+/**
+ * Provider names whose takedowns can only go through Web Risk (no abuse
+ * email to fall back to) while Web Risk is at its monthly cap. Sparrow leaves
+ * these out of a run's candidate batch so capped takedowns wait unclaimed and
+ * can't starve other providers' slots. [] when Web Risk has capacity or the
+ * send mode is draft (Web Risk is never picked then).
+ */
+export async function quotaBlockedProviderNames(env: Env): Promise<string[]> {
+  if (!isLiveSendMode(env) || !webRiskSubmitter.hasCapacity) return [];
+  if (await webRiskSubmitter.hasCapacity(env)) return [];
+  const rows = await store(env, "core").prepare(
+    `SELECT provider_name FROM takedown_providers
+      WHERE abuse_api_type = 'web_risk'
+        AND (abuse_email IS NULL OR trim(abuse_email) = '')`,
+  ).all<{ provider_name: string }>();
+  return (rows.results ?? []).map((r) => r.provider_name);
+}
+
 export interface DispatchResult {
   result:        SubmissionResult;
   submission_id: string;
@@ -81,16 +137,17 @@ export async function dispatchSubmission(
   takedown: TakedownRecord,
   provider: ProviderRecord,
 ): Promise<DispatchResult> {
-  const submitter = pickSubmitter(env, takedown, provider);
+  const { submitter, skipped } = await pickSubmitterWithCapacity(env, takedown, provider);
 
   let result: SubmissionResult;
   if (!submitter) {
+    const quota = skipped.length > 0 ? `; at monthly cap: ${skipped.join(", ")}` : "";
     result = {
       outcome:          "failed",
       submitter_kind:   "none",
       submitter_target: null,
       request_summary:  null,
-      error_message:    `No submitter matched provider ${provider.provider_name} (api_type=${provider.abuse_api_type ?? "?"})`,
+      error_message:    `No submitter matched provider ${provider.provider_name} (api_type=${provider.abuse_api_type ?? "?"})${quota}`,
     };
   } else {
     try {

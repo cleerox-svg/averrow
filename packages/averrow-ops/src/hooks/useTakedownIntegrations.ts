@@ -21,6 +21,8 @@ export interface IntegrationHealth {
   success_rate: number | null;
   last_submission_at: string | null;
   last_error: string | null;
+  /** UTC calendar-month usage against a self-imposed cap (Web Risk: Google's free allowance). */
+  monthly_quota?: { used: number | null; cap: number };
 }
 
 export interface IntegrationsReport {
