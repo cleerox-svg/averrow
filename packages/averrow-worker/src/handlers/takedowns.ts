@@ -7,7 +7,7 @@ import { computePriorityScore } from "../lib/scoring-utils";
 import {
   orgHandler, handler, checkOrgAccess,
   parsePagination, parseFilters, buildWhereClause,
-  parseBody, success, error, paginatedResponse, requireFields,
+  parseBody, success, error, paginatedResponse, requireFields, safeErrorMessage,
 } from "../lib/handler-utils";
 import { requireAuthorizationForModule, TakedownNotAuthorizedError, isUnderMonthlyTakedownCap } from "../lib/takedown-authorizations";
 import type { AuthorizationScope } from "../lib/takedown-authorizations";
@@ -523,6 +523,94 @@ export const handleAdminTakedownIntegrations = handler(async (request, env, ctx)
   const report = await getTakedownIntegrations(env, windowHours);
   return success(report, ctx.origin);
 });
+
+// ─── PATCH /api/admin/takedowns/integrations/:kind ───────────
+// Turns an API integration's operator auto-submit gate
+// (takedown_providers.auto_submit_enabled) on or off. Body:
+// `{ "auto_submit_enabled": boolean }` — nothing else. The flag is
+// provider-scoped: Sparrow Phase G skips EVERY automated submission to the
+// provider row while it is 0 (API and its abuse-email fallback alike).
+//
+// Role split (AppSec M1): the route gate is requireAdmin, so admin and
+// super_admin can turn it OFF (kill switch); turning it ON is super_admin
+// only. Only the gate moves; real sends still need TAKEDOWN_SEND_MODE=live
+// and the channel's credential.
+//
+// The UPDATE is pinned to the value read (`IS ?`, so a NULL read still
+// matches), so the audited from/to is exact: 0 rows changed after a
+// differing read → 409. A same-value request is a no-op (no write, no audit).
+// Returns `{ kind, auto_submit_enabled, changed }`; the client refetches the
+// GET for the full item, so nothing after the write can turn a saved change
+// into a 500.
+
+export async function handleAdminUpdateTakedownIntegration(
+  request: Request, env: Env, kind: string, ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  try {
+    const { apiTypeForIntegrationKind, isKnownIntegrationKind } = await import("../lib/takedown-integrations");
+
+    if (!isKnownIntegrationKind(kind)) return error("Unknown integration", 404, origin);
+    const apiType = apiTypeForIntegrationKind(kind);
+    if (!apiType) return error("Auto-submit is only configurable for API integrations", 400, origin);
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return error("Invalid JSON body", 400, origin);
+    }
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return error("Body must be a JSON object", 400, origin);
+    }
+    const fields = body as Record<string, unknown>;
+    const extra = Object.keys(fields).filter((k) => k !== "auto_submit_enabled");
+    if (extra.length > 0) return error(`Unknown field: ${extra[0]}`, 400, origin);
+    const next = fields["auto_submit_enabled"];
+    if (typeof next !== "boolean") return error("auto_submit_enabled must be a boolean", 400, origin);
+
+    if (next && ctx.role !== "super_admin") {
+      return error("Only a super admin can turn on auto-submit", 403, origin);
+    }
+
+    const { store } = await import("../lib/db-registry");
+    const core = store(env, "core");
+
+    const prevRow = await core.prepare(
+      `SELECT auto_submit_enabled FROM takedown_providers
+        WHERE abuse_api_type = ? ORDER BY id LIMIT 1`,
+    ).bind(apiType).first<{ auto_submit_enabled: number | null }>();
+    if (!prevRow) return error("No provider row for this integration", 409, origin);
+
+    const prevRaw = prevRow.auto_submit_enabled ?? null;
+    const prev = Number(prevRaw) === 1;
+    if (prev === next) {
+      return success({ kind, auto_submit_enabled: next, changed: false }, origin);
+    }
+
+    const upd = await core.prepare(
+      `UPDATE takedown_providers
+          SET auto_submit_enabled = ?, updated_at = datetime('now')
+        WHERE abuse_api_type = ? AND auto_submit_enabled IS ?`,
+    ).bind(next ? 1 : 0, apiType, prevRaw).run();
+    if ((upd.meta?.changes ?? 0) === 0) {
+      return error("Auto-submit changed concurrently — reload and try again", 409, origin);
+    }
+
+    await audit(env, {
+      action: "takedown_integration_auto_submit",
+      userId: ctx.userId,
+      resourceType: "takedown_integration",
+      resourceId: kind,
+      details: { kind, abuse_api_type: apiType, from: prev, to: next },
+      request,
+    });
+
+    return success({ kind, auto_submit_enabled: next, changed: true }, origin);
+  } catch (err) {
+    return error(safeErrorMessage(err), 500, origin);
+  }
+}
 
 // ─── GET /api/admin/takedowns/metrics ────────────────────────
 // S2.1 — real takedown-effectiveness metrics (submission→resolution

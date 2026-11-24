@@ -31,7 +31,7 @@ import {
 } from "../handlers/organizations";
 import {
   handleAdminListTakedowns, handleAdminUpdateTakedown, handleAdminTakedownIntegrations,
-  handleAdminTakedownMetrics, handleAdminSubmitTakedown,
+  handleAdminTakedownMetrics, handleAdminSubmitTakedown, handleAdminUpdateTakedownIntegration,
 } from "../handlers/takedowns";
 import {
   handleGenerateVapidKeys, handleGetPushConfig, handleUpdatePushConfig, handlePushTest,
@@ -634,6 +634,18 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const ctx = await requirePermission("manage_takedowns")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAdminTakedownIntegrations(request, env);
+  });
+  // Toggle an API integration's operator auto-submit gate
+  // (takedown_providers.auto_submit_enabled). requireAdmin here (admin +
+  // super_admin may turn it OFF — kill switch); the handler additionally
+  // requires super_admin to turn it ON. Analysts view only.
+  // Two path segments after /takedowns/, so it cannot be matched by (or
+  // match) the single-segment PATCH /api/admin/takedowns/:id below;
+  // registered ahead of it regardless.
+  router.patch("/api/admin/takedowns/integrations/:kind", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleAdminUpdateTakedownIntegration(request, env, request.params["kind"] ?? "", ctx);
   });
   // S2.1 — takedown-effectiveness metrics (resolution time / monthly
   // volume / success rate). OPS-ONLY; distinct GET path, no collision
