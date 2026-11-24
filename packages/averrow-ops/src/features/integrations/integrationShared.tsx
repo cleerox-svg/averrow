@@ -23,9 +23,9 @@ export function timeAgo(iso: string | null): string {
 
 export function successColor(rate: number | null): string {
   if (rate === null) return 'var(--text-tertiary)';
-  if (rate >= 80) return 'var(--green)';
-  if (rate >= 50) return 'var(--amber)';
-  return 'var(--red)';
+  if (rate >= 80) return 'var(--sev-info-text)';
+  if (rate >= 50) return 'var(--sev-medium-text)';
+  return 'var(--sev-critical-text)';
 }
 
 /** "1 Dec": the next UTC month start, when a monthly cap resets. */
@@ -45,7 +45,7 @@ export function MonthlyQuotaLine({ quota, now }: { quota: { used: number | null;
   const reset = nextResetLabel(now);
   if (cap <= 0) {
     return (
-      <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+      <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
         This month: <strong style={{ color: 'var(--text-tertiary)' }}>paused</strong> (monthly cap set to 0)
       </div>
     );
@@ -55,7 +55,7 @@ export function MonthlyQuotaLine({ quota, now }: { quota: { used: number | null;
   const color = atCap ? 'var(--sev-critical-text)' : near ? 'var(--sev-medium-text)' : 'var(--text-primary)';
   const noun = cap <= 100 ? 'free submissions' : 'submissions';
   return (
-    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
       This month: <strong style={{ color, whiteSpace: 'nowrap' }}>{used ?? '—'} / {cap}</strong> {noun}
       {used == null && ' (count unavailable)'}
       {near && ` · ${cap - used!} left`}

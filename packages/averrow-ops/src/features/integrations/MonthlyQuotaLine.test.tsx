@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MonthlyQuotaLine } from './Integrations';
+import { MonthlyQuotaLine } from './integrationShared';
 
 const now = new Date('2026-11-24T06:00:00Z');
 

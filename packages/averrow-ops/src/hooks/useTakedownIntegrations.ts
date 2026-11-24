@@ -25,6 +25,10 @@ export interface IntegrationConfig {
   send_mode: 'live' | 'draft';
   provider: IntegrationProvider | null;
   auto_submit_editable: boolean;
+  /** Per-secret set/missing (names only). Absent on older APIs. */
+  credential_status?: Array<{ name: string; set: boolean }>;
+  /** What the auto-submit flag covers. Absent on older APIs. */
+  auto_submit_scope?: 'provider';
 }
 
 export interface IntegrationHealth {
@@ -83,6 +87,6 @@ export function useSetIntegrationAutoSubmit() {
       if (!res.success) throw new Error(res.error || 'Could not update auto-submit');
       return res.data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['takedown-integrations'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['takedown-integrations'] }),
   });
 }

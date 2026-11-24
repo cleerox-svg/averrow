@@ -8,15 +8,13 @@ import {
   Badge,
   PageHeader,
 } from '@/design-system/components';
-import { Zap, Send, AlertTriangle } from 'lucide-react';
+import { Zap, Send, AlertTriangle, ChevronRight } from 'lucide-react';
 import {
   useTakedownIntegrations,
   type IntegrationHealth,
 } from '@/hooks/useTakedownIntegrations';
 import { STATUS_BADGE, timeAgo, successColor, MonthlyQuotaLine } from './integrationShared';
 import { IntegrationConfigPanel } from './IntegrationConfigPanel';
-
-export { MonthlyQuotaLine };
 
 const WINDOWS: Array<{ label: string; hours: number }> = [
   { label: '24h', hours: 24 },
@@ -34,9 +32,10 @@ function IntegrationCard({ it, onSelect }: { it: IntegrationHealth; onSelect: (k
       type="button"
       onClick={() => onSelect(it.kind)}
       aria-haspopup="dialog"
-      aria-label={`${it.label}: open configuration`}
-      className="block w-full cursor-pointer rounded-[var(--radius-card,16px)] border-0 bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)]"
+      style={{ borderRadius: 'var(--card-radius)' }}
+      className="block w-full cursor-pointer border-0 bg-transparent p-0 text-left outline-none transition-[transform,filter] duration-150 hover:brightness-110 active:scale-[0.99] motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)]"
     >
+      <span className="sr-only">Open configuration for </span>
     <Card variant={it.status === 'live' ? 'active' : undefined}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 4 }}>
         {/* Header */}
@@ -56,17 +55,17 @@ function IntegrationCard({ it, onSelect }: { it: IntegrationHealth; onSelect: (k
         </div>
 
         {/* Config line */}
-        <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-secondary)' }}>
+        <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--text-secondary)' }}>
           <span>
             Credential:{' '}
-            <strong style={{ color: it.configured ? 'var(--green)' : 'var(--red)' }}>
+            <strong style={{ color: it.configured ? 'var(--sev-info-text)' : 'var(--sev-critical-text)' }}>
               {it.configured ? 'set' : 'missing'}
             </strong>
           </span>
           {it.channel === 'api' && (
             <span>
               Auto-submit:{' '}
-              <strong style={{ color: it.auto_submit_enabled ? 'var(--green)' : 'var(--text-tertiary)' }}>
+              <strong style={{ color: it.auto_submit_enabled ? 'var(--sev-info-text)' : 'var(--text-tertiary)' }}>
                 {it.auto_submit_enabled ? 'on' : 'off'}
               </strong>
             </span>
@@ -85,7 +84,7 @@ function IntegrationCard({ it, onSelect }: { it: IntegrationHealth; onSelect: (k
               success
             </div>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
             <div>{it.submitted} submitted · {it.failed} failed · {it.rejected} rejected{it.queued ? ` · ${it.queued} queued` : ''}</div>
             <div style={{ color: 'var(--text-tertiary)' }}>
               {it.total} total · last {timeAgo(it.last_submission_at)}
@@ -96,14 +95,22 @@ function IntegrationCard({ it, onSelect }: { it: IntegrationHealth; onSelect: (k
         {/* Last error */}
         {it.last_error && (
           <div style={{
-            display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12,
+            display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 13, minWidth: 0,
             color: 'var(--sev-high-text)', background: 'var(--sev-high-bg)',
             padding: '6px 8px', borderRadius: 6,
           }}>
             <AlertTriangle size={12} style={{ marginTop: 1, flexShrink: 0 }} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.last_error}</span>
+            <span style={{
+              minWidth: 0, overflowWrap: 'anywhere', overflow: 'hidden',
+              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+            }}>{it.last_error}</span>
           </div>
         )}
+
+        {/* Affordance */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 2, fontSize: 13, color: 'var(--primary-text)' }}>
+          Details <ChevronRight size={14} aria-hidden />
+        </div>
       </div>
     </Card>
     </button>
@@ -178,13 +185,13 @@ export function Integrations() {
       {failed ? (
         <PageState kind="error" layout="card" title="Couldn't load integrations" onRetry={() => { void refetch(); }} />
       ) : isLoading && !data ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(340px, 100%), 1fr))', gap: 16 }}>
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-40" />)}
         </div>
       ) : integrations.length === 0 ? (
         <PageState kind="empty" layout="card" title="No integrations" description="No takedown submitters are registered." />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(340px, 100%), 1fr))', gap: 16 }}>
           {integrations.map((it) => <IntegrationCard key={it.kind} it={it} onSelect={setSelectedKind} />)}
         </div>
       )}
