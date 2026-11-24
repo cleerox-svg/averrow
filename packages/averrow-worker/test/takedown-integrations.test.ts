@@ -215,6 +215,41 @@ describe("getTakedownIntegrations", () => {
       }
     });
 
+    it("credential_status reports per-secret presence only — never a value", async () => {
+      const report = await getTakedownIntegrations(makeEnv({
+        vars: {
+          GODADDY_API_KEY: "gd-key-VALUE-123", GODADDY_API_SECRET: "",
+          RESEND_API_KEY: "re_live_VALUE_456", GOOGLE_SERVICE_ACCOUNT_JSON: "{\"private_key\":\"PK-VALUE-789\"}",
+        },
+      }), 168);
+      const byKind = Object.fromEntries(report.integrations.map((i) => [i.kind, i.config]));
+      expect(byKind.api_godaddy!.credential_status).toEqual([
+        { name: "GODADDY_API_KEY", set: true },
+        { name: "GODADDY_API_SECRET", set: false }, // empty string = not set
+      ]);
+      expect(byKind.api_netbeacon!.credential_status).toEqual([{ name: "NETBEACON_API_KEY", set: false }]);
+      expect(byKind.api_web_risk!.credential_status).toEqual([{ name: "GOOGLE_SERVICE_ACCOUNT_JSON", set: true }]);
+      expect(byKind.email_send!.credential_status).toEqual([{ name: "RESEND_API_KEY", set: true }]);
+      expect(byKind.email_draft!.credential_status).toEqual([]);
+      expect(byKind.followup_email_draft!.credential_status).toEqual([]);
+      // credential_secrets is unchanged and aligned 1:1 with credential_status.
+      for (const c of Object.values(byKind)) {
+        expect(c.credential_status.map((x) => x.name)).toEqual(c.credential_secrets);
+        for (const entry of c.credential_status) expect(Object.keys(entry).sort()).toEqual(["name", "set"]);
+      }
+      const raw = JSON.stringify(report);
+      for (const leaked of ["gd-key-VALUE-123", "re_live_VALUE_456", "PK-VALUE-789", "private_key"]) {
+        expect(raw).not.toContain(leaked);
+      }
+    });
+
+    it("auto_submit_scope is 'provider' for API kinds and null for email kinds", async () => {
+      const report = await getTakedownIntegrations(makeEnv({ providers: PROVIDERS }), 168);
+      for (const i of report.integrations) {
+        expect(i.config.auto_submit_scope).toBe(i.channel === "api" ? "provider" : null);
+      }
+    });
+
     it("reports the lowest-id row when several share an abuse_api_type", async () => {
       const report = await getTakedownIntegrations(makeEnv({ providers: [
         { ...PROVIDERS[0], id: 3, provider_name: "NetBeacon (first)" },

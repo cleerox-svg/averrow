@@ -2,11 +2,12 @@
 // gate (takedown_providers.auto_submit_enabled) for the API integrations.
 //
 // Handler-level: validation (unknown kind 404, email kind 400, body 400),
-// missing provider row 409, the UPDATE + audit row, and the response shape
-// (the same IntegrationHealth item the GET returns).
-// Router-level: requireAdmin — admin / super_admin reach the handler,
-// analyst (who can VIEW the integrations) and other staff get 403. The
-// guard runs for real against a signed JWT.
+// the role split (ON = super_admin only, OFF = admin or super_admin), missing
+// provider row 409, the value-pinned UPDATE (concurrent change 409), the
+// same-value no-op, the audit row and the minimal response
+// `{ kind, auto_submit_enabled, changed }`.
+// Router-level: requireAdmin — analyst (who can VIEW the integrations) and
+// other staff get 403. The guard runs for real against a signed JWT.
 
 import { describe, it, expect } from "vitest";
 import { Router } from "itty-router";
@@ -23,16 +24,22 @@ const ADMIN: AuthContext = {
   userId: "u-admin", email: "admin@averrow.local", role: "admin",
   orgId: null, orgRole: null, embeddedScope: undefined,
 };
+const SUPER: AuthContext = { ...ADMIN, userId: "u-super", email: "super@averrow.local", role: "super_admin" };
 
 interface ProviderRow {
   id: number; provider_name: string; provider_type: string | null;
   abuse_email: string | null; abuse_url: string | null; abuse_api_url: string | null;
-  abuse_api_type: string; auto_submit_enabled: number;
+  abuse_api_type: string; auto_submit_enabled: number | null;
 }
 
 interface Captured { sql: string; binds: unknown[] }
 
-function makeEnv(providers: ProviderRow[], vars: Record<string, string> = {}) {
+function makeEnv(
+  providers: ProviderRow[],
+  vars: Record<string, string> = {},
+  /** Runs between the handler's read and its UPDATE (simulates a racing writer). */
+  beforeUpdate?: (rows: ProviderRow[]) => void,
+) {
   const runs: Captured[] = [];
   const audits: Captured[] = [];
   const rows = providers.map((p) => ({ ...p }));
@@ -57,9 +64,14 @@ function makeEnv(providers: ProviderRow[], vars: Record<string, string> = {}) {
       async run() {
         runs.push({ sql, binds });
         if (sql.includes("UPDATE takedown_providers")) {
+          beforeUpdate?.(rows);
+          // SET auto_submit_enabled = ?1 WHERE abuse_api_type = ?2 AND auto_submit_enabled IS ?3
           let changes = 0;
           for (const r of rows) {
-            if (r.abuse_api_type === binds[1]) { r.auto_submit_enabled = binds[0] as number; changes++; }
+            if (r.abuse_api_type === binds[1] && (r.auto_submit_enabled ?? null) === (binds[2] ?? null)) {
+              r.auto_submit_enabled = binds[0] as number;
+              changes++;
+            }
           }
           return { success: true, meta: { changes } };
         }
@@ -104,53 +116,102 @@ function patchReq(kind: string, body: unknown, token?: string): Request {
   });
 }
 
-async function call(env: Env, kind: string, body: unknown) {
-  const res = await handleAdminUpdateTakedownIntegration(patchReq(kind, body), env, kind, ADMIN);
+async function call(env: Env, kind: string, body: unknown, ctx: AuthContext = SUPER) {
+  const res = await handleAdminUpdateTakedownIntegration(patchReq(kind, body), env, kind, ctx);
   const json = await res.json() as { success: boolean; data?: Record<string, unknown>; error?: string };
   return { status: res.status, json };
 }
 
-describe("handleAdminUpdateTakedownIntegration", () => {
-  it("turns auto-submit on, writes one audit row, and returns the updated integration item", async () => {
-    const { env, runs, audits, rows } = makeEnv([NETBEACON], { NETBEACON_API_KEY: "k", TAKEDOWN_SEND_MODE: "live" });
-    const { status, json } = await call(env, "api_netbeacon", { auto_submit_enabled: true });
-    expect(status).toBe(200);
-    expect(json.success).toBe(true);
+const updates = (runs: Captured[]) => runs.filter((r) => r.sql.includes("UPDATE takedown_providers"));
 
-    const upd = runs.filter((r) => r.sql.includes("UPDATE takedown_providers"));
+describe("handleAdminUpdateTakedownIntegration", () => {
+  it("super_admin turns auto-submit ON: pinned UPDATE, one audit row, minimal response", async () => {
+    const { env, runs, audits, rows } = makeEnv([NETBEACON], { NETBEACON_API_KEY: "k", TAKEDOWN_SEND_MODE: "live" });
+    const { status, json } = await call(env, "api_netbeacon", { auto_submit_enabled: true }, SUPER);
+    expect(status).toBe(200);
+    expect(json).toEqual({ success: true, data: { kind: "api_netbeacon", auto_submit_enabled: true, changed: true } });
+
+    const upd = updates(runs);
     expect(upd).toHaveLength(1);
-    expect(upd[0]!.binds).toEqual([1, "netbeacon"]);
+    expect(upd[0]!.sql).toMatch(/WHERE abuse_api_type = \? AND auto_submit_enabled IS \?/);
+    expect(upd[0]!.binds).toEqual([1, "netbeacon", 0]); // pinned to the value read
     expect(rows[0]!.auto_submit_enabled).toBe(1);
 
     expect(audits).toHaveLength(1);
     const b = audits[0]!.binds;
     // (id, user_id, action, resource_type, resource_id, details, ip, ua, outcome)
-    expect(b[1]).toBe("u-admin");
+    expect(b[1]).toBe("u-super");
     expect(b[2]).toBe("takedown_integration_auto_submit");
     expect(b[3]).toBe("takedown_integration");
     expect(b[4]).toBe("api_netbeacon");
     expect(JSON.parse(b[5] as string)).toEqual({
       kind: "api_netbeacon", abuse_api_type: "netbeacon", from: false, to: true,
     });
-
-    const item = json.data!;
-    expect(item.kind).toBe("api_netbeacon");
-    expect(item.auto_submit_enabled).toBe(true);
-    expect(item.status).toBe("live");
-    const config = item.config as Record<string, unknown>;
-    expect(config.auto_submit_editable).toBe(true);
-    expect(config.credential_secrets).toEqual(["NETBEACON_API_KEY"]);
-    expect((config.provider as Record<string, unknown>).auto_submit_enabled).toBe(true);
-    expect((config.provider as Record<string, unknown>).id).toBe(7);
   });
 
-  it("turns auto-submit off and records from/to", async () => {
-    const { env, audits } = makeEnv([{ ...NETBEACON, auto_submit_enabled: 1 }], { NETBEACON_API_KEY: "k" });
-    const { status, json } = await call(env, "api_netbeacon", { auto_submit_enabled: false });
+  it("admin (not super_admin) turning it ON → 403, nothing written or audited", async () => {
+    const { env, runs, audits, rows } = makeEnv([NETBEACON]);
+    const { status, json } = await call(env, "api_netbeacon", { auto_submit_enabled: true }, ADMIN);
+    expect(status).toBe(403);
+    expect(json).toEqual({ success: false, error: "Only a super admin can turn on auto-submit" });
+    expect(updates(runs)).toHaveLength(0);
+    expect(audits).toHaveLength(0);
+    expect(rows[0]!.auto_submit_enabled).toBe(0);
+  });
+
+  it("admin CAN turn it OFF (kill switch) and the audit records from/to", async () => {
+    const { env, audits, rows } = makeEnv([{ ...NETBEACON, auto_submit_enabled: 1 }], { NETBEACON_API_KEY: "k" });
+    const { status, json } = await call(env, "api_netbeacon", { auto_submit_enabled: false }, ADMIN);
     expect(status).toBe(200);
-    expect(json.data!.auto_submit_enabled).toBe(false);
-    expect(json.data!.status).toBe("disabled");
+    expect(json.data).toEqual({ kind: "api_netbeacon", auto_submit_enabled: false, changed: true });
+    expect(rows[0]!.auto_submit_enabled).toBe(0);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.binds[1]).toBe("u-admin");
     expect(JSON.parse(audits[0]!.binds[5] as string)).toMatchObject({ from: true, to: false });
+  });
+
+  it("super_admin can turn it OFF too", async () => {
+    const { env, rows } = makeEnv([{ ...NETBEACON, auto_submit_enabled: 1 }]);
+    const { status, json } = await call(env, "api_netbeacon", { auto_submit_enabled: false }, SUPER);
+    expect(status).toBe(200);
+    expect(json.data!.changed).toBe(true);
+    expect(rows[0]!.auto_submit_enabled).toBe(0);
+  });
+
+  for (const [label, current, next, ctx] of [
+    ["OFF → OFF by admin", 0, false, ADMIN],
+    ["ON → ON by super_admin", 1, true, SUPER],
+  ] as Array<[string, number, boolean, AuthContext]>) {
+    it(`same-value request (${label}) is a no-op: 200 changed:false, no UPDATE, no audit`, async () => {
+      const { env, runs, audits } = makeEnv([{ ...NETBEACON, auto_submit_enabled: current }]);
+      const { status, json } = await call(env, "api_netbeacon", { auto_submit_enabled: next }, ctx);
+      expect(status).toBe(200);
+      expect(json.data).toEqual({ kind: "api_netbeacon", auto_submit_enabled: next, changed: false });
+      expect(updates(runs)).toHaveLength(0);
+      expect(audits).toHaveLength(0);
+    });
+  }
+
+  it("concurrent change between read and UPDATE → 409, no audit", async () => {
+    // Read sees 1 (on); a racing writer flips it to 0 before our pinned UPDATE.
+    const { env, audits, rows } = makeEnv(
+      [{ ...NETBEACON, auto_submit_enabled: 1 }], {},
+      (r) => { r[0]!.auto_submit_enabled = 0; },
+    );
+    const { status, json } = await call(env, "api_netbeacon", { auto_submit_enabled: false }, ADMIN);
+    expect(status).toBe(409);
+    expect(json.error).toBe("Auto-submit changed concurrently — reload and try again");
+    expect(audits).toHaveLength(0);
+    expect(rows[0]!.auto_submit_enabled).toBe(0);
+  });
+
+  it("a NULL stored flag reads as off and the pinned UPDATE still matches it (IS NULL)", async () => {
+    const { env, runs, rows } = makeEnv([{ ...NETBEACON, auto_submit_enabled: null }]);
+    const { status, json } = await call(env, "api_netbeacon", { auto_submit_enabled: true }, SUPER);
+    expect(status).toBe(200);
+    expect(json.data!.changed).toBe(true);
+    expect(updates(runs)[0]!.binds).toEqual([1, "netbeacon", null]);
+    expect(rows[0]!.auto_submit_enabled).toBe(1);
   });
 
   it("unknown kind → 404, nothing written", async () => {
@@ -230,22 +291,40 @@ describe("PATCH /api/admin/takedowns/integrations/:kind — requireAdmin route g
     });
   }
 
+  it("super_admin turns it ON through the router", async () => {
+    const { env, rows } = makeEnv([NETBEACON]);
+    const res = (await buildRouter().fetch(
+      patchReq("api_netbeacon", { auto_submit_enabled: true }, await tokenFor("super_admin")), env)) as Response;
+    expect(res.status).toBe(200);
+    const json = await res.json() as { data: { kind: string; changed: boolean } };
+    expect(json.data).toEqual({ kind: "api_netbeacon", auto_submit_enabled: true, changed: true });
+    expect(rows[0]!.auto_submit_enabled).toBe(1);
+  });
+
+  it("admin passes the route gate but turning it ON → 403 from the handler", async () => {
+    const { env, rows } = makeEnv([NETBEACON]);
+    const res = (await buildRouter().fetch(
+      patchReq("api_netbeacon", { auto_submit_enabled: true }, await tokenFor("admin")), env)) as Response;
+    expect(res.status).toBe(403);
+    const json = await res.json() as { error: string };
+    expect(json.error).toBe("Only a super admin can turn on auto-submit");
+    expect(rows[0]!.auto_submit_enabled).toBe(0);
+  });
+
   for (const role of ["admin", "super_admin"] as UserRole[]) {
-    it(`${role} reaches the handler and the gate flips`, async () => {
-      const { env, rows } = makeEnv([NETBEACON]);
+    it(`${role} turns it OFF through the router (kill switch)`, async () => {
+      const { env, rows } = makeEnv([{ ...NETBEACON, auto_submit_enabled: 1 }]);
       const res = (await buildRouter().fetch(
-        patchReq("api_netbeacon", { auto_submit_enabled: true }, await tokenFor(role)), env)) as Response;
+        patchReq("api_netbeacon", { auto_submit_enabled: false }, await tokenFor(role)), env)) as Response;
       expect(res.status).toBe(200);
-      const json = await res.json() as { data: { kind: string } };
-      expect(json.data.kind).toBe("api_netbeacon");
-      expect(rows[0]!.auto_submit_enabled).toBe(1);
+      expect(rows[0]!.auto_submit_enabled).toBe(0);
     });
   }
 
   it("is not shadowed by PATCH /api/admin/takedowns/:id (that route never sees the integrations path)", async () => {
-    const { env, runs } = makeEnv([NETBEACON]);
+    const { env, runs } = makeEnv([{ ...NETBEACON, auto_submit_enabled: 1 }]);
     const res = (await buildRouter().fetch(
-      patchReq("api_netbeacon", { auto_submit_enabled: true }, await tokenFor("admin")), env)) as Response;
+      patchReq("api_netbeacon", { auto_submit_enabled: false }, await tokenFor("admin")), env)) as Response;
     expect(res.status).toBe(200);
     expect(runs.some((r) => r.sql.includes("takedown_requests"))).toBe(false);
   });

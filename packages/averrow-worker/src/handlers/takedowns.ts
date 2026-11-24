@@ -527,21 +527,28 @@ export const handleAdminTakedownIntegrations = handler(async (request, env, ctx)
 // ─── PATCH /api/admin/takedowns/integrations/:kind ───────────
 // Turns an API integration's operator auto-submit gate
 // (takedown_providers.auto_submit_enabled) on or off. Body:
-// `{ "auto_submit_enabled": boolean }` — nothing else. Route gate:
-// requireAdmin (admin + super_admin): enabling live auto-submission is
-// consequential, so analysts can view the integration but not change it.
-// Only the gate moves; real sends still need TAKEDOWN_SEND_MODE=live and the
-// channel's credential. One audit_log row per call. Returns the updated
-// integration item in the same shape as the GET.
+// `{ "auto_submit_enabled": boolean }` — nothing else. The flag is
+// provider-scoped: Sparrow Phase G skips EVERY automated submission to the
+// provider row while it is 0 (API and its abuse-email fallback alike).
+//
+// Role split (AppSec M1): the route gate is requireAdmin, so admin and
+// super_admin can turn it OFF (kill switch); turning it ON is super_admin
+// only. Only the gate moves; real sends still need TAKEDOWN_SEND_MODE=live
+// and the channel's credential.
+//
+// The UPDATE is pinned to the value read (`IS ?`, so a NULL read still
+// matches), so the audited from/to is exact: 0 rows changed after a
+// differing read → 409. A same-value request is a no-op (no write, no audit).
+// Returns `{ kind, auto_submit_enabled, changed }`; the client refetches the
+// GET for the full item, so nothing after the write can turn a saved change
+// into a 500.
 
 export async function handleAdminUpdateTakedownIntegration(
   request: Request, env: Env, kind: string, ctx: AuthContext,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const {
-      apiTypeForIntegrationKind, isKnownIntegrationKind, getTakedownIntegrations,
-    } = await import("../lib/takedown-integrations");
+    const { apiTypeForIntegrationKind, isKnownIntegrationKind } = await import("../lib/takedown-integrations");
 
     if (!isKnownIntegrationKind(kind)) return error("Unknown integration", 404, origin);
     const apiType = apiTypeForIntegrationKind(kind);
@@ -562,40 +569,44 @@ export async function handleAdminUpdateTakedownIntegration(
     const next = fields["auto_submit_enabled"];
     if (typeof next !== "boolean") return error("auto_submit_enabled must be a boolean", 400, origin);
 
+    if (next && ctx.role !== "super_admin") {
+      return error("Only a super admin can turn on auto-submit", 403, origin);
+    }
+
     const { store } = await import("../lib/db-registry");
     const core = store(env, "core");
 
-    const prev = await core.prepare(
+    const prevRow = await core.prepare(
       `SELECT auto_submit_enabled FROM takedown_providers
         WHERE abuse_api_type = ? ORDER BY id LIMIT 1`,
     ).bind(apiType).first<{ auto_submit_enabled: number | null }>();
-    if (!prev) return error("No provider row for this integration", 409, origin);
+    if (!prevRow) return error("No provider row for this integration", 409, origin);
+
+    const prevRaw = prevRow.auto_submit_enabled ?? null;
+    const prev = Number(prevRaw) === 1;
+    if (prev === next) {
+      return success({ kind, auto_submit_enabled: next, changed: false }, origin);
+    }
 
     const upd = await core.prepare(
       `UPDATE takedown_providers
           SET auto_submit_enabled = ?, updated_at = datetime('now')
-        WHERE abuse_api_type = ?`,
-    ).bind(next ? 1 : 0, apiType).run();
-    if ((upd.meta?.changes ?? 0) === 0) return error("No provider row for this integration", 409, origin);
+        WHERE abuse_api_type = ? AND auto_submit_enabled IS ?`,
+    ).bind(next ? 1 : 0, apiType, prevRaw).run();
+    if ((upd.meta?.changes ?? 0) === 0) {
+      return error("Auto-submit changed concurrently — reload and try again", 409, origin);
+    }
 
     await audit(env, {
       action: "takedown_integration_auto_submit",
       userId: ctx.userId,
       resourceType: "takedown_integration",
       resourceId: kind,
-      details: {
-        kind,
-        abuse_api_type: apiType,
-        from: Number(prev.auto_submit_enabled) === 1,
-        to: next,
-      },
+      details: { kind, abuse_api_type: apiType, from: prev, to: next },
       request,
     });
 
-    const report = await getTakedownIntegrations(env);
-    const item = report.integrations.find((i) => i.kind === kind);
-    if (!item) return error("Unknown integration", 404, origin);
-    return success(item, origin);
+    return success({ kind, auto_submit_enabled: next, changed: true }, origin);
   } catch (err) {
     return error(safeErrorMessage(err), 500, origin);
   }

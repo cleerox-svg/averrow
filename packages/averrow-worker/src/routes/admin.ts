@@ -636,8 +636,9 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     return handleAdminTakedownIntegrations(request, env);
   });
   // Toggle an API integration's operator auto-submit gate
-  // (takedown_providers.auto_submit_enabled). requireAdmin — turning live
-  // auto-submission on is consequential; analysts view, admins change.
+  // (takedown_providers.auto_submit_enabled). requireAdmin here (admin +
+  // super_admin may turn it OFF — kill switch); the handler additionally
+  // requires super_admin to turn it ON. Analysts view only.
   // Two path segments after /takedowns/, so it cannot be matched by (or
   // match) the single-segment PATCH /api/admin/takedowns/:id below;
   // registered ahead of it regardless.

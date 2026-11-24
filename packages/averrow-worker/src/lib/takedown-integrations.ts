@@ -65,6 +65,8 @@ export interface IntegrationProviderConfig {
 export interface IntegrationConfig {
   /** Worker secret NAMES this channel reads — never their values. */
   credential_secrets:   string[];
+  /** Per-secret presence (non-empty string in env) — never the value. */
+  credential_status:    Array<{ name: string; set: boolean }>;
   /** Optional non-secret vars this channel reads. */
   optional_vars:        string[];
   /** Whether a real send needs TAKEDOWN_SEND_MODE=live. */
@@ -74,6 +76,18 @@ export interface IntegrationConfig {
   provider:             IntegrationProviderConfig | null;
   /** true only for API integrations that have a provider row. */
   auto_submit_editable: boolean;
+  /**
+   * What the auto-submit switch governs. "provider" = the whole
+   * takedown_providers row: Sparrow skips EVERY automated submission to it
+   * while off (the API and its abuse-email fallback alike). null for email
+   * channels, which have no switch.
+   */
+  auto_submit_scope:    "provider" | null;
+}
+
+function secretIsSet(env: Env, name: string): boolean {
+  const v = (env as unknown as Record<string, unknown>)[name];
+  return typeof v === "string" && v.length > 0;
 }
 
 export interface IntegrationsReport {
@@ -267,11 +281,13 @@ export async function getTakedownIntegrations(
       ...(meta.kind === "api_web_risk" ? { monthly_quota: { used: webRiskUsed, cap: webRiskMonthlyCap(env) } } : {}),
       config: {
         credential_secrets:   [...meta.secrets],
+        credential_status:    meta.secrets.map((name) => ({ name, set: secretIsSet(env, name) })),
         optional_vars:        [...meta.vars],
         requires_live_mode:   meta.live,
         send_mode:            sendLive ? "live" : "draft",
         provider:             meta.channel === "api" ? (prov ? { ...prov } : null) : null,
         auto_submit_editable: meta.channel === "api" && prov !== undefined,
+        auto_submit_scope:    meta.channel === "api" ? "provider" : null,
       },
     };
   });
