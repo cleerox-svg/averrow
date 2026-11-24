@@ -66,7 +66,8 @@ export function Console() {
 
   function selectTab(next: ConsoleTab) {
     // Only `tab` carries over; other params belong to the pane being left.
-    setParams(next === 'alerts' ? {} : { tab: next }, { replace: true });
+    // PUSH: a tab switch is a place the user went, so Back returns to the previous tab.
+    setParams(next === 'alerts' ? {} : { tab: next });
   }
 
   const active = TABS.find(t => t.id === tab);

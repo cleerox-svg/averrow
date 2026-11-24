@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import {
   StatTile,
@@ -831,7 +831,10 @@ export function Alerts() {
     () => ({ limit: 200, status: statusParam, severity: severityParam, alert_type: typeParam }),
     [statusParam, severityParam, typeParam],
   );
-  const writeParams = (patch: Record<string, string | undefined>) => {
+  const navigate = useNavigate();
+  // Opening an alert PUSHES (Back closes it); filter edits keep REPLACE so they
+  // never fill the history. `replace` defaults to true; pass false to push.
+  const writeParams = (patch: Record<string, string | undefined>, opts: { replace?: boolean } = {}) => {
     setParams(prev => {
       const next = new URLSearchParams(prev);
       for (const [k, v] of Object.entries(patch)) {
@@ -839,8 +842,11 @@ export function Alerts() {
         else next.set(k, v);
       }
       return next;
-    }, { replace: true });
+    }, { replace: opts.replace ?? true });
   };
+  // True when the open alert sits on its own pushed history entry, so closing it
+  // can pop that entry instead of stacking a duplicate list entry.
+  const alertPushed = useRef(false);
   // Local optimistic overlay for assign (the list refetch then supersedes it).
   const [assignOverlay, setAssignOverlay] = useState<Pick<Alert, 'id' | 'staff_assigned_to' | 'staff_assigned_to_name' | 'staff_assigned_to_email'> | null>(null);
   const [search, setSearch] = useState('');
@@ -953,7 +959,19 @@ export function Alerts() {
   const [announcement, setAnnouncement] = useState('');
   const selectAlert = (a: Alert | null) => {
     selfSelected.current = a?.id ?? null;
-    writeParams({ alert: a?.id });
+    if (a && !alertParam) {
+      // list -> detail: a new place, so push.
+      alertPushed.current = true;
+      writeParams({ alert: a.id }, { replace: false });
+    } else if (a) {
+      // switching between alerts replaces, so one Back closes the detail.
+      writeParams({ alert: a.id });
+    } else if (alertPushed.current) {
+      alertPushed.current = false;
+      navigate(-1);
+    } else {
+      writeParams({ alert: undefined });
+    }
   };
   // Closing returns focus to the row control that opened it, or the list
   // heading when that row isn't on screen (fetched-by-id / filtered out).
@@ -1085,6 +1103,7 @@ export function Alerts() {
 
   const setFilter = (key: 'status' | 'severity' | 'alert_type', value: string) => {
     selfSelected.current = null;
+    alertPushed.current = false;
     writeParams({ [key]: value === 'all' ? undefined : value, alert: undefined });
   };
 
@@ -1100,6 +1119,7 @@ export function Alerts() {
   };
   const applyView = (fv: AlertViewState) => {
     selfSelected.current = null;
+    alertPushed.current = false;
     writeParams({ severity: fv.severity, status: fv.status, alert_type: fv.alert_type, alert: undefined });
     setSearch(fv.search ?? '');
     setAiVerdictFilter(fv.ai ?? 'all');

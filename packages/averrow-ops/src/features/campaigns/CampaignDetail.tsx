@@ -15,7 +15,8 @@
 // The route is what every campaign notification deep-links into
 // (Strategist creates notifications with `link: /campaigns/:id`).
 // This page is the drill-down those clicks land on.
-import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
+import { useBack } from '@averrow/shared/nav';
 import { accentText } from '@/lib/accent-text';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 import {
@@ -124,7 +125,6 @@ function CampaignUnavailable({ isError, onRetry, onBack }: { isError: boolean; o
 
 export function CampaignDetail() {
   const { campaignId } = useParams<{ campaignId: string }>();
-  const navigate = useNavigate();
 
   const id = campaignId ?? '';
   const { data: campaign, isLoading: campaignLoading, isError: campaignError, isPlaceholderData: campaignStale, refetch: refetchCampaign } = useCampaignDetail(id);
@@ -133,7 +133,8 @@ export function CampaignDetail() {
   const { data: infrastructure, isLoading: infraLoading } = useCampaignInfrastructure(id);
   const { data: brandImpact, isLoading: brandsLoading } = useCampaignBrands(id);
 
-  const backToList = () => navigate('/explore?tab=campaigns');
+  // Previous in-app screen (Search, a brand, a threat...) or the campaigns list when there is none.
+  const { go: backToList } = useBack('/explore?tab=campaigns');
 
   if (campaignLoading) {
     return (
@@ -173,7 +174,7 @@ export function CampaignDetail() {
         className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--primary-text)]"
         style={{ color: 'var(--text-tertiary)' }}
       >
-        <ArrowLeft size={12} /> Back to Operations
+        <ArrowLeft size={12} /> Back
       </button>
 
       {/* ─── Header card (severity-accented EntityCard) ───── */}

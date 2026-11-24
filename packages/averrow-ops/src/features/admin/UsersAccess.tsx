@@ -117,7 +117,9 @@ function UsersAccessInner() {
   const setActiveTab = (id: string) => {
     const next = new URLSearchParams(searchParams);
     next.set('tab', id);
-    setSearchParams(next, { replace: true });
+    // PUSH: a tab switch is a place the user went (no canonicalisation here,
+    // an unknown ?tab= just resolves to the first visible tab).
+    setSearchParams(next);
   };
 
   const tabs: Tab[] = visible.map((id) => ({ id, label: id === 'staff' ? 'Staff' : 'Invites' }));

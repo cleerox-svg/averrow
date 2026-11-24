@@ -1,5 +1,6 @@
-import { useState, useMemo, useEffect } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useState, useMemo } from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { useBack } from '@averrow/shared/nav';
 import { useLeads, useLead, useLeadStats, useEnrichLead, useUpdateLead, useRefreshLeadFirmographics } from '@/hooks/useLeads';
 import type { SalesLead, LeadStats } from '@/hooks/useLeads';
 import { ScanLeadsView } from '@/features/scan-leads/ScanLeads';
@@ -847,10 +848,11 @@ export function Leads() {
   // `?view=scan` opens the Scan Leads tab directly — used by the
   // sales notification email and the legacy /admin/scan-leads
   // redirect so deep links land in the right place.
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialView = isLeadsView(searchParams.get('view')) ? (searchParams.get('view') as LeadsView) : 'kanban';
-  const [activeView, setActiveView] = useState<LeadsView>(initialView);
-  const [selectedLead, setSelectedLead] = useState<SalesLead | null>(null);
+  // View and open lead both live in the URL (`?view=`, `?lead=`) so system Back
+  // walks what the user did: close the lead, then return to the previous view.
+  const activeView: LeadsView = isLeadsView(searchParams.get('view')) ? (searchParams.get('view') as LeadsView) : 'kanban';
   const { data: leadsRes, isLoading, isError: leadsError, refetch: refetchLeads } = useLeads();
   // A failed fetch is an error, never "No leads yet"; stale rows stay with an inline error.
   const leadsFailed = leadsError && !leadsRes;
@@ -859,31 +861,35 @@ export function Leads() {
   const leads = useMemo(() => leadsRes?.data || [], [leadsRes]);
 
   // Deep link: `?lead=<id>` (e.g. the cross-pipeline link from a scan lead)
-  // auto-opens that sales lead's detail once the list has loaded.
+  // opens that sales lead's detail once the list has loaded.
   const leadParam = searchParams.get('lead');
-  useEffect(() => {
-    if (!leadParam || selectedLead) return;
-    const match = leads.find((l) => String(l.id) === leadParam);
-    if (match) setSelectedLead(match);
-  }, [leadParam, leads, selectedLead]);
+  const selectedLead = useMemo(
+    // In the scan view `?lead=` belongs to the scan-lead drill-down.
+    () => (leadParam && activeView !== 'scan' ? leads.find((l) => String(l.id) === leadParam) ?? null : null),
+    [leadParam, leads, activeView],
+  );
 
-  function closeDetail() {
-    setSelectedLead(null);
-    if (searchParams.has('lead')) {
-      const next = new URLSearchParams(searchParams);
-      next.delete('lead');
-      setSearchParams(next, { replace: true });
-    }
+  // Fallback when the detail was the first entry (cold deep link): the list.
+  const listParams = new URLSearchParams(searchParams);
+  listParams.delete('lead');
+  const listSearch = listParams.toString();
+  const { go: closeDetail } = useBack(`${location.pathname}${listSearch ? `?${listSearch}` : ''}`);
+
+  // PUSH: opening a lead is a place the user went; Back closes it.
+  function openLead(lead: SalesLead) {
+    const next = new URLSearchParams(searchParams);
+    next.set('lead', String(lead.id));
+    setSearchParams(next);
   }
 
+  // PUSH: the view switch is a tab. Selecting one drops any open lead.
   function selectView(view: LeadsView) {
-    setActiveView(view);
-    // Keep the URL in sync so reload + share-link both work.
     // `kanban` is the default — strip the param to keep URLs clean.
     const next = new URLSearchParams(searchParams);
+    next.delete('lead');
     if (view === 'kanban') next.delete('view');
     else next.set('view', view);
-    setSearchParams(next, { replace: true });
+    setSearchParams(next);
   }
 
   // Sales-leads loader covers kanban/pipeline/enrich. The Scan
@@ -948,10 +954,10 @@ export function Leads() {
         <PageState kind="error" layout="inline" title="Couldn't refresh leads" description="Showing the last loaded list." onRetry={() => { void refetchLeads(); }} />
       )}
       {activeView === 'kanban' && !leadsFailed && (
-        <KanbanView leads={leads} onSelect={setSelectedLead} />
+        <KanbanView leads={leads} onSelect={openLead} />
       )}
       {activeView === 'pipeline' && !leadsFailed && (
-        <PipelineView leads={leads} stats={stats ?? null} statsFailed={statsError && !stats} onSelect={setSelectedLead} />
+        <PipelineView leads={leads} stats={stats ?? null} statsFailed={statsError && !stats} onSelect={openLead} />
       )}
       {activeView === 'enrich' && !leadsFailed && (
         <EnrichView leads={leads} />

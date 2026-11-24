@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
+import { useBack } from '@averrow/shared/nav';
 import { Card, FilterBar, Badge, Tabs, PageState, Table, Th, Td } from '@/design-system/components';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Button } from '@/components/ui/Button';
@@ -56,7 +57,12 @@ const statusBadgeVariant = (status: string): 'success' | 'critical' | 'default' 
 
 export function SuperAdminOrgs() {
   const { isSuperAdmin } = useAuth();
-  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
+  // The open org lives in the URL (`?org=`), pushed on select, so system Back
+  // closes the org instead of leaving the page.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedOrgId = searchParams.get('org');
+  const setSelectedOrgId = (orgId: string) => setSearchParams({ org: orgId });
+  const { go: closeOrg } = useBack('/admin/customers');
   const [showCreate, setShowCreate] = useState(false);
 
   if (!isSuperAdmin) {
@@ -64,7 +70,7 @@ export function SuperAdminOrgs() {
   }
 
   if (selectedOrgId) {
-    return <OrgDetailView orgId={selectedOrgId} onBack={() => setSelectedOrgId(null)} />;
+    return <OrgDetailView orgId={selectedOrgId} onBack={closeOrg} />;
   }
 
   return (

@@ -41,7 +41,8 @@ export function TabbedWorkspace({
   function selectTab(next: string) {
     // Only `tab` carries over — q/focus/brand_id etc. belong to the pane
     // being left and must not filter the next one.
-    setParams(next === fallbackId ? {} : { tab: next }, { replace: true });
+    // PUSH: a tab switch is a place the user went, so Back returns to the previous tab.
+    setParams(next === fallbackId ? {} : { tab: next });
   }
 
   const active = tabs.find(t => t.id === tab) ?? tabs[0];

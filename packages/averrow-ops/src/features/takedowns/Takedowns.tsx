@@ -737,7 +737,7 @@ export function Takedowns() {
       const params = new URLSearchParams(prev);
       params.set('scope', nextScope);
       return params;
-    }, { replace: true });
+    });  // PUSH: scope switches between whole datasets (SOC queue vs prospects), like a tab
   }, [setSearchParams]);
 
   const clearBrandFilter = useCallback(() => {
@@ -745,7 +745,7 @@ export function Takedowns() {
       const params = new URLSearchParams(prev);
       params.delete('brand');
       return params;
-    }, { replace: true });
+    }, { replace: true });  // filter removal: REPLACE
   }, [setSearchParams]);
 
   // Authorized mode keeps the full filter/sort/search workflow, paginated

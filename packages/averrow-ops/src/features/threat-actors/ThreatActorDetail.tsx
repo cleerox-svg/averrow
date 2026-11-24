@@ -1,4 +1,5 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useBack } from '@averrow/shared/nav';
 import { ArrowLeft, Search } from 'lucide-react';
 import { BreakdownCard, PageState, Table, Th, Td } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -39,6 +40,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
   const params = useParams<{ actorId: string }>();
   const actorId = actorIdProp ?? params.actorId;
   const navigate = useNavigate();
+  const { go: goBack } = useBack('/explore?tab=actors');
   const { data: actor, isLoading, isError, refetch } = useThreatActorDetail(actorId ?? '');
 
   if (isLoading) {
@@ -60,11 +62,11 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
       <div className="p-6 space-y-4">
         {!inline && (
           <button
-            onClick={() => navigate('/explore?tab=actors')}
+            onClick={goBack}
             className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--primary-text)]"
             style={{ color: 'var(--text-tertiary)' }}
           >
-            <ArrowLeft size={12} /> Back to Threat Actors
+            <ArrowLeft size={12} /> Back
           </button>
         )}
         {/* A failed fetch is an error with a retry; only a successful response
@@ -120,10 +122,10 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
       {/* Back nav — hidden in inline mode (parent list is already visible) */}
       {!inline && (
         <button
-          onClick={() => navigate('/explore?tab=actors')}
+          onClick={goBack}
           className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors"
         >
-          &larr; Back to Threat Actors
+          &larr; Back
         </button>
       )}
 

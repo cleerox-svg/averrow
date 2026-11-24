@@ -111,3 +111,20 @@ describe('TabbedWorkspace', () => {
     expect(css).toMatch(/\.console-head \+ \.console-tabbar \{ margin-top: 12px; \}/);
   });
 });
+
+describe('TabbedWorkspace history', () => {
+  it('a tab switch pushes, so Back returns to the previous tab', async () => {
+    const { createMemoryRouter, RouterProvider } = await import('react-router-dom');
+    const router = createMemoryRouter(
+      [{ path: '/w', element: <><TabbedWorkspace crumb="X" title="W" tabs={TABS} /><Loc /></> }],
+      { initialEntries: ['/w'] },
+    );
+    render(<RouterProvider router={router} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'B' }));
+    expect(screen.getByTestId('loc').textContent).toBe('/w?tab=b');
+    expect(router.state.historyAction).toBe('PUSH');
+    act(() => { void router.navigate(-1); });
+    expect(await screen.findByText('pane-a')).toBeInTheDocument();
+    expect(screen.getByTestId('loc').textContent).toBe('/w');
+  });
+});

@@ -19,7 +19,7 @@
  * Params that aren't ours are left untouched.
  */
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   LAYER_IDS, LENS_IDS, lensPreset, isLensId, noLayers, sameLayers,
@@ -381,15 +381,31 @@ export function mergeObservatoryState(prev: ObservatoryUrlState, rawPatch: Obser
   return next;
 }
 
+/** True when the patch explicitly selects a node / arc / sel different from the current one. */
+export function isSelectionPick(prev: ObservatoryUrlState, patch: ObservatoryPatch): boolean {
+  return (
+    (!!patch.node && patch.node !== prev.node) ||
+    (!!patch.arc && patch.arc !== prev.arc) ||
+    (!!patch.sel && patch.sel !== prev.sel)
+  );
+}
+
 export function useObservatoryUrlState() {
   const [sp, setSp] = useSearchParams();
   const state = useMemo(() => parseObservatoryParams(sp), [sp]);
+  // Latest params for `update`, which must stay referentially stable.
+  const spRef = useRef(sp);
+  spRef.current = sp;
 
   const update = useCallback(
     (patch: ObservatoryPatch) => {
+      // PUSH when the user picks a different node / arc / selection, so Back
+      // un-picks it. Layer, lens, period, filter toggles and every clear
+      // (including the automatic stale-selection drops) REPLACE.
+      const picks = isSelectionPick(parseObservatoryParams(spRef.current), patch);
       setSp(
         prev => applyObservatoryState(prev, mergeObservatoryState(parseObservatoryParams(prev), patch)),
-        { replace: true },
+        { replace: !picks },
       );
     },
     [setSp],

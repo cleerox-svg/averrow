@@ -14,7 +14,8 @@
 // view in as a tab without the duplicate header.
 
 import { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useBack } from "@averrow/shared/nav";
 import {
   useScanLeads,
   useScanLead,
@@ -49,6 +50,7 @@ const STATUS_BADGE: Record<ScanLead["status"], "info" | "high" | "medium" | "low
 
 export function ScanLeadsView() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   // `?lead=<id>` opens the drill-down — the "New lead" notification
   // deep-links straight here.
@@ -62,17 +64,18 @@ export function ScanLeadsView() {
   const stats = data?.stats;
   const leads = data?.leads ?? [];
 
+  // Back pops the pushed `?lead=` entry; a cold deep link falls back to the list.
+  const listParams = new URLSearchParams(searchParams);
+  listParams.delete("lead");
+  const listSearch = listParams.toString();
+  const { go: closeLead } = useBack(`${location.pathname}${listSearch ? `?${listSearch}` : ""}`);
+
   function openLead(id: string) {
     const next = new URLSearchParams(searchParams);
     next.set("lead", id);
     setSearchParams(next, { replace: false });
   }
 
-  function closeLead() {
-    const next = new URLSearchParams(searchParams);
-    next.delete("lead");
-    setSearchParams(next, { replace: false });
-  }
 
   if (selectedLeadId) {
     return <ScanLeadDetail leadId={selectedLeadId} onBack={closeLead} />;

@@ -2,6 +2,7 @@
 // tables and the jobs using this database in the selected window.
 
 import { Link } from 'react-router-dom';
+import { BackLink } from '@averrow/shared/nav';
 import { StatTile, StatGrid } from '@/design-system/components';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import type { DatabaseEntry, DatabasesSummary, DbWindow } from '@/hooks/useDatabases';
@@ -116,7 +117,7 @@ export function DatabaseDetail({ db, window: win = '24h', summary, generatedAt }
 
   return (
     <div className="dbp">
-      <Link className="dbp-back" to={tabUrl('databases', { window: windowParam(win) })}>← All databases</Link>
+      <BackLink className="dbp-back" fallback={tabUrl('databases', { window: windowParam(win) })}>← All databases</BackLink>
 
       <section className="dbp-detail-head" aria-label="Database summary">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

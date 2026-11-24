@@ -11,8 +11,8 @@
  */
 
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ShieldCheck, ShieldAlert, MessageSquare } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { ShieldCheck, ShieldAlert, MessageSquare } from 'lucide-react';
 
 import { PageHeader, Card, Button, Badge, PageState } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -108,16 +108,8 @@ export function AgentReview() {
       <PageHeader
         title={meta?.displayName ?? agentId}
         subtitle={meta?.subtitle ?? `Agent deployment review for ${agentId}.`}
-        back={{ label: 'Approval queue', to: '/agents/approvals' }}
+        back={{ label: 'Back', fallback: '/agents/approvals' }}
       />
-
-      <Link
-        to="/agents/approvals"
-        className="inline-flex items-center gap-2 font-mono text-[11px]"
-        style={{ color: 'var(--text-secondary)' }}
-      >
-        <ArrowLeft size={14} /> Back to approval queue
-      </Link>
 
       {isLoading && (
         <div className="space-y-3">

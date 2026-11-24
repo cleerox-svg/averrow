@@ -128,7 +128,9 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     // page that never redirects (`?home=1`), so a session that is gone (or a
     // transient /me failure that left no user) can never loop home <-> app.
     clearAppHint();
-    window.location.href = HOME_NO_REDIRECT_URL;
+    // replace(): the guarded app URL must not stay in history, or Back from the
+    // marketing page would bounce straight into the app again.
+    window.location.replace(HOME_NO_REDIRECT_URL);
     return null;
   }
   return <>{children}</>;
