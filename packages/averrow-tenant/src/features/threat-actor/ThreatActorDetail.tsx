@@ -6,8 +6,8 @@
 //
 // Phase B sprint 8.
 
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink, Globe2, Server } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { ExternalLink, Globe2, Server } from 'lucide-react';
 import {
   useThreatActorDetail,
   CAPABILITY_LABELS,
@@ -19,6 +19,7 @@ import {
   type OrgThreatRow,
   type ThreatActorProfile,
 } from '@/lib/threatActorModule';
+import { BackLink } from '@averrow/shared/nav';
 
 export function ThreatActorDetail() {
   const { actorId } = useParams<{ actorId: string }>();
@@ -26,9 +27,7 @@ export function ThreatActorDetail() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/modules/threat-actor" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        <ArrowLeft size={12} /> BACK TO THREAT ACTORS
-      </Link>
+      <BackLink fallback="/modules/threat-actor">BACK</BackLink>
 
       {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading actor profile…</div>}
       {error && (

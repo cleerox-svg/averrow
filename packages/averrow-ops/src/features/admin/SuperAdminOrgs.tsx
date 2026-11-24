@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
+import { useBack, BackLink } from '@averrow/shared/nav';
 import { Card, FilterBar, Badge, Tabs, PageState, Table, Th, Td } from '@/design-system/components';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Button } from '@/components/ui/Button';
@@ -56,7 +57,12 @@ const statusBadgeVariant = (status: string): 'success' | 'critical' | 'default' 
 
 export function SuperAdminOrgs() {
   const { isSuperAdmin } = useAuth();
-  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
+  // The open org lives in the URL (`?org=`), pushed on select, so system Back
+  // closes the org instead of leaving the page.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedOrgId = searchParams.get('org');
+  const setSelectedOrgId = (orgId: string) => setSearchParams({ org: orgId });
+  const { go: closeOrg } = useBack('/admin/customers');
   const [showCreate, setShowCreate] = useState(false);
 
   if (!isSuperAdmin) {
@@ -64,7 +70,7 @@ export function SuperAdminOrgs() {
   }
 
   if (selectedOrgId) {
-    return <OrgDetailView orgId={selectedOrgId} onBack={() => setSelectedOrgId(null)} />;
+    return <OrgDetailView orgId={selectedOrgId} onBack={closeOrg} />;
   }
 
   return (
@@ -241,7 +247,7 @@ function OrgDetailView({ orgId, onBack }: { orgId: string; onBack: () => void })
   // A failed fetch is an error with a retry; only a successful response with
   // no org is "not found".
   if (isError && !org) {
-    return <PageState kind="error" title="Couldn't load this organization" onRetry={() => { void refetch(); }} secondaryAction={{ label: 'Back to organizations', onClick: onBack }} />;
+    return <PageState kind="error" title="Couldn't load this organization" onRetry={() => { void refetch(); }} secondaryAction={{ label: 'Back', onClick: onBack }} />;
   }
 
   if (!org) {
@@ -250,7 +256,7 @@ function OrgDetailView({ orgId, onBack }: { orgId: string; onBack: () => void })
         kind="empty"
         title="Organization not found"
         description="It may have been removed, or the link is stale."
-        action={{ label: 'Back to organizations', onClick: onBack }}
+        action={{ label: 'Back', onClick: onBack }}
       />
     );
   }
@@ -259,12 +265,12 @@ function OrgDetailView({ orgId, onBack }: { orgId: string; onBack: () => void })
     <div className="space-y-6">
       {/* Back button + Header */}
       <div>
-        <button
-          onClick={onBack}
+        <BackLink
+          fallback="/admin/customers"
           className="text-[11px] text-[color:var(--text-tertiary)] font-mono hover:text-[color:var(--text-primary)] transition-colors mb-3 flex items-center gap-1"
         >
-          &larr; Back to Organizations
-        </button>
+          Back
+        </BackLink>
         <div className="flex items-start gap-4">
           <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-lg font-bold text-[color:var(--text-primary)] shrink-0">
             {org.name.slice(0, 2).toUpperCase()}

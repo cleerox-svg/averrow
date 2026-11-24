@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import {
   StatTile,
@@ -831,7 +831,11 @@ export function Alerts() {
     () => ({ limit: 200, status: statusParam, severity: severityParam, alert_type: typeParam }),
     [statusParam, severityParam, typeParam],
   );
-  const writeParams = (patch: Record<string, string | undefined>) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Opening an alert PUSHES (Back closes it); filter edits keep REPLACE so they
+  // never fill the history. `replace` defaults to true; pass false to push.
+  const writeParams = (patch: Record<string, string | undefined>, opts: { replace?: boolean; state?: unknown } = {}) => {
     setParams(prev => {
       const next = new URLSearchParams(prev);
       for (const [k, v] of Object.entries(patch)) {
@@ -839,8 +843,14 @@ export function Alerts() {
         else next.set(k, v);
       }
       return next;
-    }, { replace: true });
+    }, { replace: opts.replace ?? true, state: opts.state });
   };
+  // The pushed entry is marked in history state (`alertPushed`), so closing can pop
+  // it instead of stacking a duplicate list entry, and the mark survives a reload
+  // and remounts. `popping` stops a double click from popping twice.
+  const alertPushed = (location.state as { alertPushed?: boolean } | null)?.alertPushed === true;
+  const popping = useRef(false);
+  useEffect(() => { popping.current = false; }, [location.key]);
   // Local optimistic overlay for assign (the list refetch then supersedes it).
   const [assignOverlay, setAssignOverlay] = useState<Pick<Alert, 'id' | 'staff_assigned_to' | 'staff_assigned_to_name' | 'staff_assigned_to_email'> | null>(null);
   const [search, setSearch] = useState('');
@@ -953,7 +963,20 @@ export function Alerts() {
   const [announcement, setAnnouncement] = useState('');
   const selectAlert = (a: Alert | null) => {
     selfSelected.current = a?.id ?? null;
-    writeParams({ alert: a?.id });
+    if (a && !alertParam) {
+      // list -> detail: a new place, so push.
+      writeParams({ alert: a.id }, { replace: false, state: { alertPushed: true } });
+    } else if (a) {
+      // switching between alerts replaces, so one Back closes the detail.
+      writeParams({ alert: a.id }, { state: location.state });
+    } else if (alertPushed) {
+      if (!popping.current) {
+        popping.current = true;
+        navigate(-1);
+      }
+    } else {
+      writeParams({ alert: undefined });
+    }
   };
   // Closing returns focus to the row control that opened it, or the list
   // heading when that row isn't on screen (fetched-by-id / filtered out).

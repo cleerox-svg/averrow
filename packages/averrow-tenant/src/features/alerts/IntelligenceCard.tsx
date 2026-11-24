@@ -8,7 +8,7 @@
 import { useState, type ReactNode } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
-  ArrowLeft, ShieldAlert, Network, GitBranch, Clock, FileSearch, Sparkles,
+  ShieldAlert, Network, GitBranch, Clock, FileSearch, Sparkles,
   ExternalLink, type LucideIcon,
 } from 'lucide-react';
 import { useAlert, useCanTriage, useIsStaff, extractConfidence, alertAssigneeLabel, type Alert, type AlertSeverity } from '@/lib/alerts';
@@ -18,6 +18,7 @@ import { AiAssessmentPanel } from './AiAssessment';
 import { AlertActions, AssigneeControl, StaffTriageNote } from './AlertActions';
 import { AddToInvestigation } from '@/features/investigations/AddToInvestigation';
 import { AgePill } from '@/components/AgePill';
+import { BackLink } from '@averrow/shared/nav';
 
 type TabKey = 'overview' | 'evidence' | 'infrastructure' | 'related' | 'activity';
 
@@ -39,7 +40,7 @@ export function IntelligenceCard() {
   if (error || !alert) {
     return (
       <div className="max-w-2xl">
-        <BackLink />
+        <BackToAlerts />
         <section className="mt-4 rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
           <p className="text-sm text-white/70">
             {error instanceof Error ? error.message : 'Signal not found.'}
@@ -61,7 +62,7 @@ export function IntelligenceCard() {
 
   return (
     <div className="max-w-5xl space-y-5">
-      <BackLink />
+      <BackToAlerts />
 
       {/* Header */}
       <header>
@@ -318,11 +319,9 @@ function ReputationGrid({ threat: t }: { threat: ThreatRow }) {
 
 // ─── Small parts ─────────────────────────────────────────────
 
-function BackLink() {
+function BackToAlerts() {
   return (
-    <Link to="/alerts" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/55 hover:text-white/85 transition-colors">
-      <ArrowLeft size={14} /> Alerts
-    </Link>
+    <BackLink fallback="/alerts">BACK</BackLink>
   );
 }
 

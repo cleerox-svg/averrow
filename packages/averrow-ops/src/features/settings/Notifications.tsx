@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useBack } from '@averrow/shared/nav';
 import { Bell, ChevronDown, ChevronRight, Settings, SlidersHorizontal } from 'lucide-react';
 import { NOTIFICATION_EVENTS, type NotificationEventKey, type NotificationSeverity } from '@averrow/shared';
 import {
@@ -72,6 +73,7 @@ export function Notifications() {
 function NotificationsInbox() {
   const toast = useToast();
   const navigate = useNavigate();
+  const { go: goBack } = useBack('/');
   const isMobile = useIsMobile();
   const [stateFilter, setStateFilter] = useState<NotificationStateFilter>('inbox');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -196,7 +198,8 @@ function NotificationsInbox() {
     <div className="page-enter mx-auto max-w-3xl pb-8">
       <PageHeader
         title="Notifications"
-        back={{ label: 'Back', onClick: () => navigate(-1) }}
+        // Inbox is top-level (opened from the bell / push); with no previous in-app screen, Back lands on the Overview.
+        back={{ label: 'Back', onClick: goBack }}
         backFont="sans"
         actions={
           <>

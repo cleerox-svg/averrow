@@ -41,7 +41,12 @@ export function TabbedWorkspace({
   function selectTab(next: string) {
     // Only `tab` carries over — q/focus/brand_id etc. belong to the pane
     // being left and must not filter the next one.
-    setParams(next === fallbackId ? {} : { tab: next }, { replace: true });
+    // PUSH: a tab switch is a place the user went, so Back returns to the previous tab.
+    // Re-selecting the current tab never pushes (a duplicate entry makes Back look dead):
+    // it is a no-op when the URL is already canonical, else a REPLACE that strips the pane's params.
+    const nextParams: Record<string, string> = next === fallbackId ? {} : { tab: next };
+    if (new URLSearchParams(nextParams).toString() === params.toString()) return;
+    setParams(nextParams, { replace: next === tab });
   }
 
   const active = tabs.find(t => t.id === tab) ?? tabs[0];

@@ -1,66 +1,46 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { WorkspaceEmbedProvider } from '@averrow/shared/ui';
+import { describe, it, expect } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { RouterProvider, createMemoryRouter, useLocation } from 'react-router-dom';
 import { PageHeader } from './PageHeader';
 
-function Where() {
-  const loc = useLocation();
-  return <div data-testid="where">{loc.pathname}</div>;
-}
-
-function renderAt(ui: React.ReactNode) {
-  return render(
-    <MemoryRouter initialEntries={['/agents/run-1']}>
-      <Routes>
-        <Route path="*" element={<>{ui}<Where /></>} />
-      </Routes>
-    </MemoryRouter>,
+function Loc() { const l = useLocation(); return <div data-testid="loc">{l.pathname}</div>; }
+function setup(entries: string[], index: number, back: Parameters<typeof PageHeader>[0]['back']) {
+  const router = createMemoryRouter(
+    [
+      { path: '/prev', element: <Loc /> },
+      { path: '/page', element: <><Loc /><PageHeader title="T" back={back} /></> },
+      { path: '/parent', element: <Loc /> },
+    ],
+    { initialEntries: entries, initialIndex: index },
   );
+  render(<RouterProvider router={router} />);
+  return router;
 }
 
-describe('ops PageHeader adapter', () => {
-  it('renders the shared header (one h1, subtitle, actions)', () => {
-    renderAt(<PageHeader title="Agents" subtitle="Fleet health" actions={<button type="button">Refresh</button>} />);
-    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
-    expect(screen.getByText('Fleet health')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+describe('ops PageHeader back', () => {
+  it('fallback: returns to the previous in-app screen when there is one', async () => {
+    const router = setup(['/prev'], 0, { label: 'Back', fallback: '/parent' });
+    await router.navigate('/page');
+    fireEvent.click(await screen.findByRole('link', { name: /Back/ }));
+    await waitFor(() => expect(screen.getByTestId('loc').textContent).toBe('/prev'));
   });
 
-  it('maps back.to to a router navigation', async () => {
-    renderAt(<PageHeader title="Run" back={{ label: 'Agents', to: '/agents' }} />);
-    await userEvent.click(screen.getByRole('button', { name: /Agents/ }));
-    expect(screen.getByTestId('where')).toHaveTextContent('/agents');
+  it('fallback renders a real link to the parent', async () => {
+    setup(['/page'], 0, { label: 'Back', fallback: '/parent' });
+    expect(await screen.findByRole('link', { name: /Back/ })).toHaveAttribute('href', '/parent');
   });
 
-  it('back.onClick wins over back.to and does not navigate', async () => {
-    const onClick = vi.fn();
-    renderAt(<PageHeader title="Run" back={{ label: 'Back', to: '/agents', onClick }} />);
-    await userEvent.click(screen.getByRole('button', { name: /Back/ }));
-    expect(onClick).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId('where')).toHaveTextContent('/agents/run-1');
+  it('fallback: goes to the parent (replace) on a cold start', async () => {
+    const router = setup(['/page'], 0, { label: 'Back', fallback: '/parent' });
+    fireEvent.click(await screen.findByRole('link', { name: /Back/ }));
+    await waitFor(() => expect(screen.getByTestId('loc').textContent).toBe('/parent'));
+    expect(router.state.historyAction).toBe('REPLACE');
   });
 
-  it('renders no back control when `back` is omitted', () => {
-    renderAt(<PageHeader title="Agents" />);
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
-  });
-
-  it('drops the h1 and subtitle inside a workspace but keeps actions and the back control', () => {
-    renderAt(
-      <WorkspaceEmbedProvider>
-        <PageHeader
-          title="Agents"
-          subtitle="Fleet health"
-          back={{ label: 'Up', to: '/' }}
-          actions={<button type="button">Refresh</button>}
-        />
-      </WorkspaceEmbedProvider>,
-    );
-    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
-    expect(screen.queryByText('Fleet health')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Up/ })).toBeInTheDocument();
+  it('legacy `to` still navigates to the fixed target', async () => {
+    const router = setup(['/prev'], 0, { label: 'Back', to: '/parent' });
+    await router.navigate('/page');
+    fireEvent.click(await screen.findByRole('button', { name: /Back/ }));
+    await waitFor(() => expect(screen.getByTestId('loc').textContent).toBe('/parent'));
   });
 });

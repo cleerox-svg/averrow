@@ -888,6 +888,12 @@ unchanged):
 
 ---
 
+## Back controls
+
+Use the shared `BackLink` / `useBack` / `useCloseParam` from `@averrow/shared/nav`: Back returns to the previous in-app screen and uses the `fallback` parent only on a cold start (deep link, reload, push open). Label it "Back" unless the page has a single fixed parent (then "Back to X"); never hard-code a destination for a history Back. The arrow is `aria-hidden` (BackLink does this) and the control has a visible `focus-visible` ring (BackLink default).
+
+---
+
 ## SIDEBAR STANDARD
 
 Shipped in Phase 6 screen 1 (#1909, 2026-11-08). The shell is

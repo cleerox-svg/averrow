@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ArrowLeft, UserPlus, Mail, Trash2, AlertTriangle, Copy, Check, Send, Crown, ArrowRightLeft } from 'lucide-react';
+import { UserPlus, Mail, Trash2, AlertTriangle, Copy, Check, Send, Crown, ArrowRightLeft } from 'lucide-react';
 import { parseInitials, colorForUserId } from '@averrow/shared/avatar';
 import { useAuth } from '@/lib/auth';
 import {
@@ -19,6 +18,7 @@ import {
   type OrgInvite,
   type OrgRole,
 } from '@/lib/members';
+import { BackLink } from '@averrow/shared/nav';
 
 export function Members() {
   const { user } = useAuth();
@@ -29,12 +29,7 @@ export function Members() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <Link
-        to="/settings"
-        className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70"
-      >
-        <ArrowLeft size={12} /> BACK TO SETTINGS
-      </Link>
+      <BackLink fallback="/settings">BACK</BackLink>
 
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>

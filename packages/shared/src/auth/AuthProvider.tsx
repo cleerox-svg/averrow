@@ -38,6 +38,7 @@
 // (refresh in another tab, manual logout in another tab) doesn't
 // race the auth lifecycle.
 
+import { replaceUrlKeepingState } from '../nav/historyState';
 import {
   createContext, useCallback, useContext, useEffect, useState,
   type ReactNode,
@@ -236,11 +237,11 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     if (fromUrl && typeof window !== 'undefined') {
       httpClient.setTokens(fromUrl.accessToken, '');
       if (fromUrl.source === 'hash' && fromUrl.returnTo && returnToPrefix && isSafeReturnTo(fromUrl.returnTo, returnToPrefix)) {
-        window.history.replaceState({}, '', fromUrl.returnTo);
+        replaceUrlKeepingState(fromUrl.returnTo);
       } else {
         // Strip the token noise from the URL bar even when returnTo
         // is unsafe — never echo attacker-controlled values back.
-        window.history.replaceState({}, '', window.location.pathname);
+        replaceUrlKeepingState(window.location.pathname);
       }
     }
 

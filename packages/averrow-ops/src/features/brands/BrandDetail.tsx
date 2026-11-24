@@ -15,6 +15,7 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { BackLink } from '@averrow/shared/nav';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { ScanSearch, ShieldCheck } from 'lucide-react';
@@ -166,9 +167,9 @@ export function BrandDetailV3() {
   if (!brand) {
     return (
       <div className="animate-fade-in">
-        <button onClick={() => navigate('/explore?tab=brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors mb-4">
-          &larr; Back to Brands
-        </button>
+        <BackLink fallback="/explore?tab=brands" className="inline-block font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors mb-4">
+          Back
+        </BackLink>
         {/* A failed fetch is an error with a retry; only a successful response
             with no brand is "not found". */}
         {isError ? (
@@ -183,9 +184,9 @@ export function BrandDetailV3() {
   return (
     <div className="animate-fade-in space-y-6">
       <div>
-        <button onClick={() => navigate('/explore?tab=brands')} className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
-          &larr; Back to Brands
-        </button>
+        <BackLink fallback="/explore?tab=brands" className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
+          Back
+        </BackLink>
       </div>
 
       <Card variant="base" style={{ padding: '20px 24px', position: 'relative', overflow: 'hidden' }}>

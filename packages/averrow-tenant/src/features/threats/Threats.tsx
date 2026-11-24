@@ -5,11 +5,12 @@
 // curated columns). Server-side filter/sort/search/pagination. Rows expand
 // to an evidence/TTP detail drawer. Reads ?brand= for deep-links.
 
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { ShieldAlert, AlertTriangle, Globe } from 'lucide-react';
 import { ThreatsTable, useThreatsTable, type ThreatsTableState } from '@averrow/shared/threats-table';
 import { useTenantThreats, type ThreatsResponse } from '@/lib/threats';
 import { useTenantDashboard } from '@/lib/dashboard';
+import { BackLink } from '@averrow/shared/nav';
 
 const SORT_KEYS = {
   brand: 'brand', type: 'type', target: 'target', severity: 'severity',
@@ -37,9 +38,7 @@ export function Threats() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
-        ← BACK TO OVERVIEW
-      </Link>
+      <BackLink fallback="/">BACK</BackLink>
 
       <header>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Threats</h1>

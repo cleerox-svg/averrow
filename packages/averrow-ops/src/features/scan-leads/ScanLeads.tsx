@@ -15,6 +15,7 @@
 
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { useCloseParam } from "@averrow/shared/nav";
 import {
   useScanLeads,
   useScanLead,
@@ -62,17 +63,15 @@ export function ScanLeadsView() {
   const stats = data?.stats;
   const leads = data?.leads ?? [];
 
+  // Back pops the pushed `?lead=` entry; a cold deep link replaces it away instead.
+  const closeLead = useCloseParam("lead");
+
   function openLead(id: string) {
     const next = new URLSearchParams(searchParams);
     next.set("lead", id);
     setSearchParams(next, { replace: false });
   }
 
-  function closeLead() {
-    const next = new URLSearchParams(searchParams);
-    next.delete("lead");
-    setSearchParams(next, { replace: false });
-  }
 
   if (selectedLeadId) {
     return <ScanLeadDetail leadId={selectedLeadId} onBack={closeLead} />;
@@ -456,7 +455,7 @@ export function ScanLeadDetail({ leadId, onBack }: { leadId: string; onBack: () 
 
   const backBtn = (
     <Button size="sm" variant="ghost" onClick={onBack}>
-      <ArrowLeft className="w-4 h-4 mr-1" /> Back to leads
+      <ArrowLeft className="w-4 h-4 mr-1" /> Back
     </Button>
   );
 

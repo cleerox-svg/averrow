@@ -115,9 +115,12 @@ function UsersAccessInner() {
   const activeTab: TabId = requested && visible.includes(requested) ? requested : visible[0]!;
 
   const setActiveTab = (id: string) => {
+    if (id === activeTab) return; // re-selecting the current tab must not push a duplicate entry
     const next = new URLSearchParams(searchParams);
     next.set('tab', id);
-    setSearchParams(next, { replace: true });
+    // PUSH: a tab switch is a place the user went (no canonicalisation here,
+    // an unknown ?tab= just resolves to the first visible tab).
+    setSearchParams(next);
   };
 
   const tabs: Tab[] = visible.map((id) => ({ id, label: id === 'staff' ? 'Staff' : 'Invites' }));

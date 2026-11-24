@@ -6,7 +6,8 @@
 // stands out. This is the "Option C" view from the planning thread.
 
 import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
+import { BackLink } from '@averrow/shared/nav';
 import { Card, PageHeader, Badge, Button, StateMachineButtons } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
@@ -112,12 +113,12 @@ export function AdminIncidentDetail() {
 
   return (
     <div className="p-6 space-y-4 max-w-3xl">
-      <Link to="/console?tab=incidents" style={{
+      <BackLink fallback="/console?tab=incidents" style={{
         fontFamily: 'var(--font-mono)', fontSize: 11,
         color: 'var(--text-tertiary)', textDecoration: 'none',
       }}>
-        ← All incidents
-      </Link>
+        Back
+      </BackLink>
 
       <PageHeader
         title={incident.title}

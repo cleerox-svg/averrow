@@ -733,19 +733,20 @@ export function Takedowns() {
 
   const handleScopeChange = useCallback((next: string) => {
     const nextScope = resolveScope(next);
+    if (nextScope === scope) return; // re-selecting the current scope must not push a duplicate entry
     setSearchParams((prev) => {
       const params = new URLSearchParams(prev);
       params.set('scope', nextScope);
       return params;
-    }, { replace: true });
-  }, [setSearchParams]);
+    });  // PUSH: scope switches between whole datasets (SOC queue vs prospects), like a tab
+  }, [setSearchParams, scope]);
 
   const clearBrandFilter = useCallback(() => {
     setSearchParams((prev) => {
       const params = new URLSearchParams(prev);
       params.delete('brand');
       return params;
-    }, { replace: true });
+    }, { replace: true });  // filter removal: REPLACE
   }, [setSearchParams]);
 
   // Authorized mode keeps the full filter/sort/search workflow, paginated
