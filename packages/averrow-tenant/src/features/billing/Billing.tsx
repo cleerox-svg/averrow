@@ -10,7 +10,7 @@
 //
 // v3 Phase D Stripe sprint 5.
 
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, CheckCircle2, CreditCard, Clock, ExternalLink } from 'lucide-react';
 import {
   useBillingSummary,
@@ -25,6 +25,7 @@ import { useAuth } from '@/lib/auth';
 import { useIsStaff } from '@/lib/alerts';
 import { StaffTriageNote } from '@/features/alerts/AlertActions';
 import { canManageCrossover } from '@/lib/staffCrossover';
+import { BackLink } from '@averrow/shared/nav';
 
 export function Billing() {
   const { data, isLoading, error } = useBillingSummary();
@@ -43,9 +44,9 @@ export function Billing() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <Link to="/settings" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
+      <BackLink fallback="/settings" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO SETTINGS
-      </Link>
+      </BackLink>
 
       <header>
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Settings</div>

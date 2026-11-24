@@ -13,15 +13,16 @@ import {
   type AppStoreBrandSummary,
   type AppStoreModuleTotals,
 } from '@/lib/appStoreModule';
+import { BackLink } from '@averrow/shared/nav';
 
 export function AppStore() {
   const { data, isLoading, error } = useAppStoreModuleSummary();
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
+      <BackLink fallback="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO OVERVIEW
-      </Link>
+      </BackLink>
 
       <header>
         <div className="flex items-center gap-3 mb-1">

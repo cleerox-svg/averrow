@@ -29,6 +29,7 @@ import {
 } from '@/lib/takedown-msa';
 import { useOrgMembers, useOrgInvites, canManageMembers } from '@/lib/members';
 import { MODULE_LABELS, type ModuleKey } from '@/lib/modules';
+import { BackLink } from '@averrow/shared/nav';
 
 const ALL_MODULE_KEYS = Object.keys(MODULE_LABELS) as ModuleKey[];
 
@@ -138,12 +139,12 @@ export function TakedownAuthorizationPage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <Link
-        to="/settings"
+      <BackLink
+        fallback="/settings"
         className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70"
       >
         <ArrowLeft size={12} /> BACK TO SETTINGS
-      </Link>
+      </BackLink>
 
       <header>
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Settings</div>

@@ -22,6 +22,7 @@ import { useCanTriage, useIsStaff } from '@/lib/alerts';
 import { StaffTriageNote } from '@/features/alerts/AlertActions';
 import { TakedownActions } from './TakedownActions';
 import { AgePill } from '@/components/AgePill';
+import { BackLink } from '@averrow/shared/nav';
 
 export function Takedowns() {
   const [filters, setFilters] = useState<TakedownsFilters>({});
@@ -34,9 +35,9 @@ export function Takedowns() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
+      <BackLink fallback="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO OVERVIEW
-      </Link>
+      </BackLink>
 
       <header>
         <div className="flex items-center gap-3 mb-1">

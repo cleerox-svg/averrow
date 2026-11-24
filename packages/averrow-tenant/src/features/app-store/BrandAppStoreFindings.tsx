@@ -5,7 +5,7 @@
 //
 // Phase B sprint 4.
 
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Star } from 'lucide-react';
 import {
   useBrandAppStoreFindings,
@@ -13,6 +13,7 @@ import {
   STORE_LABELS,
   type AppStoreListingRow,
 } from '@/lib/appStoreModule';
+import { BackLink } from '@averrow/shared/nav';
 
 export function BrandAppStoreFindings() {
   const { brandId } = useParams<{ brandId: string }>();
@@ -23,9 +24,9 @@ export function BrandAppStoreFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/modules/app-store" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
+      <BackLink fallback="/modules/app-store" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO APP STORE
-      </Link>
+      </BackLink>
 
       <header>
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">App Store Impersonation · Brand</div>

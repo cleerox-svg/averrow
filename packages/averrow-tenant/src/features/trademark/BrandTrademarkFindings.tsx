@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { canManageCrossover } from '@/lib/staffCrossover';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Image as ImageIcon, Upload, Trash2 } from 'lucide-react';
 import {
   useBrandTrademarkFindings,
@@ -23,6 +23,7 @@ import {
 } from '@/lib/trademarkModule';
 import { getToken } from '@/lib/api';
 import { useTheme } from '@/lib/useTheme';
+import { BackLink } from '@averrow/shared/nav';
 
 export function BrandTrademarkFindings() {
   const { brandId } = useParams<{ brandId: string }>();
@@ -33,9 +34,9 @@ export function BrandTrademarkFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/modules/trademark" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
+      <BackLink fallback="/modules/trademark" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO TRADEMARK
-      </Link>
+      </BackLink>
 
       <header>
         <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Trademark Infringement · Brand</div>

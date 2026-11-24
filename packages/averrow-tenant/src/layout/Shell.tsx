@@ -69,7 +69,7 @@ export function Shell() {
   useEffect(() => {
     if (!loading && !user) {
       clearAppHint();
-      window.location.href = HOME_NO_REDIRECT_URL;
+      window.location.replace(HOME_NO_REDIRECT_URL);
     }
   }, [loading, user]);
 
