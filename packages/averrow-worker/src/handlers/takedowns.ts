@@ -1149,7 +1149,7 @@ export async function handleAdminSubmitTakedown(
     // gate on auto_submit_enabled — that is the automation gate the human
     // replaces. Prefer the takedown's resolved provider_name; fall back to
     // resolveProvider() when it's unset or not in the directory. ──
-    const { dispatchSubmission } = await import("../lib/takedown-submitters");
+    const { dispatchSubmission, isQuotaBlocked } = await import("../lib/takedown-submitters");
     const resolvedProvider = await resolveSubmitProvider(env, td.provider_name, td.target_value);
     if (!resolvedProvider) {
       return error(
@@ -1166,6 +1166,32 @@ export async function handleAdminSubmitTakedown(
       env, request, ctx, sendRow, authScope, provider.provider_type, "hand_submit", origin,
     );
     if (consentErr) return consentErr;
+
+    const takedownRecord = {
+      id:                     td.id,
+      org_id:                 orgId,
+      brand_id:               td.brand_id,
+      module_key:             moduleKey,
+      target_type:            td.target_type,
+      target_value:           td.target_value,
+      target_url:             td.target_url,
+      evidence_summary:       td.evidence_summary,
+      evidence_detail:        td.evidence_detail,
+      provider_name:          providerName,
+      provider_abuse_contact: td.provider_abuse_contact,
+      provider_method:        td.provider_method,
+      severity:               td.severity,
+    };
+
+    // ── Monthly provider cap (Web Risk free allowance). Checked BEFORE the
+    // claim: a capped channel with nowhere to fall back to means "wait until
+    // the 1st", not a terminal failure of this takedown. ──
+    if (await isQuotaBlocked(env, takedownRecord, provider)) {
+      return error(
+        "This provider's monthly submission cap is reached (Google Web Risk free allowance). It resumes on the 1st (UTC); the takedown is unchanged.",
+        409, origin,
+      );
+    }
 
     // ── ATOMIC SINGLE-DISPATCH CLAIM (F1) ──────────────────────────────
     // Claim the row BEFORE dispatching. D1 serializes writes, so this
@@ -1202,25 +1228,7 @@ export async function handleAdminSubmitTakedown(
 
     // ── Dispatch — inherits TAKEDOWN_SEND_MODE (PROD = live → real send).
     // Records the takedown_submissions audit row internally. ──
-    const { result, submission_id } = await dispatchSubmission(
-      env,
-      {
-        id:                     td.id,
-        org_id:                 orgId,
-        brand_id:               td.brand_id,
-        module_key:             moduleKey,
-        target_type:            td.target_type,
-        target_value:           td.target_value,
-        target_url:             td.target_url,
-        evidence_summary:       td.evidence_summary,
-        evidence_detail:        td.evidence_detail,
-        provider_name:          providerName,
-        provider_abuse_contact: td.provider_abuse_contact,
-        provider_method:        td.provider_method,
-        severity:               td.severity,
-      },
-      provider,
-    );
+    const { result, submission_id } = await dispatchSubmission(env, takedownRecord, provider);
 
     if (result.outcome === "failed" || result.outcome === "rejected") {
       // We already claimed the row to 'submitted'; the send did not land, so

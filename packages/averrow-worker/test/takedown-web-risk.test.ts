@@ -11,7 +11,7 @@ vi.mock("../src/lib/google-service-account", () => ({
 import {
   webRiskSubmitter, webRiskMonthlyCap, utcMonthStart, WEB_RISK_MONTHLY_CAP_DEFAULT,
 } from "../src/lib/takedown-submitters/web-risk";
-import { dispatchSubmission } from "../src/lib/takedown-submitters";
+import { dispatchSubmission, isQuotaBlocked, quotaBlockedProviderNames } from "../src/lib/takedown-submitters";
 import { hasServiceAccount, getGoogleAccessToken } from "../src/lib/google-service-account";
 import type { ProviderRecord, TakedownRecord } from "../src/lib/takedown-submitters/types";
 import type { Env } from "../src/types";
@@ -151,6 +151,10 @@ function capDb(count: number | Error) {
             async run() { writes.push(binds); return { success: true }; },
           };
         },
+        async all() {
+          reads.push({ sql, binds: [] });
+          return { results: [{ provider_name: "Google Safe Browsing" }] };
+        },
       };
     },
   };
@@ -212,5 +216,22 @@ describe("Web Risk monthly cap", () => {
     const { result } = await dispatchSubmission(env, takedown(), provider());
     expect(result.submitter_kind).toBe("none");
     expect(result.error_message).toMatch(/at monthly cap: api_web_risk/);
+  });
+});
+
+describe("quota-blocked takedowns wait instead of failing", () => {
+  it("isQuotaBlocked: true at the cap when Web Risk is the only channel (prod: no abuse email)", async () => {
+    expect(await isQuotaBlocked(capEnv(100).env, takedown(), provider())).toBe(true);
+    expect(await isQuotaBlocked(capEnv(99).env, takedown(), provider())).toBe(false);
+    // With an abuse email the takedown can still go out by email → not blocked.
+    expect(await isQuotaBlocked(capEnv(100).env, takedown(), provider({ abuse_email: "abuse@x.example" }))).toBe(false);
+  });
+
+  it("quotaBlockedProviderNames: the web_risk providers with no abuse email, only at the cap and in live mode", async () => {
+    const at = capEnv(100);
+    expect(await quotaBlockedProviderNames(at.env)).toEqual(["Google Safe Browsing"]);
+    expect(at.reads.some((r) => /abuse_api_type = 'web_risk'/.test(r.sql) && /abuse_email IS NULL/.test(r.sql))).toBe(true);
+    expect(await quotaBlockedProviderNames(capEnv(3).env)).toEqual([]);
+    expect(await quotaBlockedProviderNames(capEnv(100, { TAKEDOWN_SEND_MODE: "draft" }).env)).toEqual([]);
   });
 });

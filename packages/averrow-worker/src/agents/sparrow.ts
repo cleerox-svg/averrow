@@ -1344,6 +1344,12 @@ export async function runPhaseGAutoSubmit(
   // status='requested' → auto-submits in any non-off posture ONLY when the
   //                      CUSTOMER approved it (isCustomerApproved — G21); a
   //                      staff-set 'requested' is judged like a draft
+  // Providers that can only be reached through a channel at its monthly cap
+  // (Web Risk at its free-allowance cap, no abuse email): their takedowns
+  // wait unclaimed until the cap resets and don't take batch slots.
+  const { dispatchSubmission, isQuotaBlocked, quotaBlockedProviderNames } = await import("../lib/takedown-submitters");
+  const quotaBlocked = await quotaBlockedProviderNames(env).catch(() => [] as string[]);
+
   const candidates = await env.DB.prepare(
     `SELECT tr.id, tr.org_id, tr.brand_id, tr.module_key,
             tr.target_type, tr.target_value, tr.target_url,
@@ -1358,9 +1364,10 @@ export async function runPhaseGAutoSubmit(
        AND tr.org_id IS NOT NULL
        AND tr.module_key IS NOT NULL
        AND tr.provider_name IS NOT NULL
+       AND tr.provider_name NOT IN (SELECT value FROM json_each(?))
      ORDER BY tr.priority_score DESC, tr.created_at ASC
      LIMIT ?`,
-  ).bind(PHASE_G_BATCH).all<PhaseGRow>();
+  ).bind(JSON.stringify(quotaBlocked), PHASE_G_BATCH).all<PhaseGRow>();
 
   let submitted = 0;
   let skipped   = 0;
@@ -1368,7 +1375,6 @@ export async function runPhaseGAutoSubmit(
   let skippedBrandNotOwned = 0;
 
   const { isModuleAuthorized, isUnderMonthlyTakedownCap, getActiveAuthorization } = await import("../lib/takedown-authorizations");
-  const { dispatchSubmission } = await import("../lib/takedown-submitters");
   const { isModuleEnabled }    = await import("../lib/entitlements");
   const { evaluateTakedownPolicy } = await import("../lib/takedown-policy");
   const { isCustomerApproved }     = await import("../lib/takedown-customer-approval");
@@ -1516,6 +1522,25 @@ export async function runPhaseGAutoSubmit(
       // status change) between the read and now means changes=0 → no send.
       // Also pinned to the org still holding the brand (the brand re-check
       // above, repeated so a claim removal in between can't slip through).
+      const takedownRecord = {
+        id:                     row.id,
+        org_id:                 orgId,
+        brand_id:               row.brand_id,
+        module_key:             modKey,
+        target_type:            row.target_type,
+        target_value:           row.target_value,
+        target_url:             row.target_url,
+        evidence_summary:       row.evidence_summary,
+        evidence_detail:        row.evidence_detail,
+        provider_name:          row.provider_name,
+        provider_abuse_contact: row.provider_abuse_contact,
+        provider_method:        row.provider_method,
+        severity:               row.severity,
+      };
+      // Backstop to the candidate filter: a takedown whose only channel is at
+      // its monthly cap waits (not claimed, no submission row) until the 1st.
+      if (await isQuotaBlocked(env, takedownRecord, providerRow)) { skipped++; continue; }
+
       const claim = await env.DB.prepare(
         `UPDATE takedown_requests
          SET status = 'submitted',
@@ -1529,25 +1554,7 @@ export async function runPhaseGAutoSubmit(
       if (!claim.meta || claim.meta.changes !== 1) { skipped++; continue; }
       claimedId = row.id;
 
-      const { result } = await dispatchSubmission(
-        env,
-        {
-          id:                     row.id,
-          org_id:                 orgId,
-          brand_id:               row.brand_id,
-          module_key:             modKey,
-          target_type:            row.target_type,
-          target_value:           row.target_value,
-          target_url:             row.target_url,
-          evidence_summary:       row.evidence_summary,
-          evidence_detail:        row.evidence_detail,
-          provider_name:          row.provider_name,
-          provider_abuse_contact: row.provider_abuse_contact,
-          provider_method:        row.provider_method,
-          severity:               row.severity,
-        },
-        providerRow,
-      );
+      const { result } = await dispatchSubmission(env, takedownRecord, providerRow);
 
       if (result.outcome === "failed" || result.outcome === "rejected") {
         // The provider did not accept the report: release the claim back to
