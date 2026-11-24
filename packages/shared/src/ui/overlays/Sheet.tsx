@@ -4,6 +4,7 @@ import { cn } from '../cn';
 import { Card } from '../Card';
 import { OverlayStyles } from './overlay-styles';
 import { OverlayHeader, type OverlayHeaderProps } from './parts';
+import { HistoryDismiss } from '../../nav/historyDismiss';
 
 // Mobile bottom sheet (ACCOUNT_DESIGN_SPEC §4.13). Radix Dialog supplies the
 // focus trap, Esc / scrim dismissal, scroll lock and aria wiring; we add the
@@ -27,9 +28,11 @@ export interface SheetProps {
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   children?: React.ReactNode;
+  /** System / browser Back closes the sheet (see `useHistoryDismiss`). Opt-in; needs a Router. Default false. */
+  dismissOnBack?: boolean;
 }
 
-export function Sheet({ open, defaultOpen = false, onOpenChange, children }: SheetProps): React.ReactElement {
+export function Sheet({ open, defaultOpen = false, onOpenChange, children, dismissOnBack = false }: SheetProps): React.ReactElement {
   const [inner, setInner] = React.useState(defaultOpen);
   const controlled = open !== undefined;
   const isOpen = controlled ? open : inner;
@@ -45,6 +48,7 @@ export function Sheet({ open, defaultOpen = false, onOpenChange, children }: She
     <SheetContext.Provider value={ctx}>
       <DialogPrimitive.Root open={isOpen} onOpenChange={set}>
         <OverlayStyles />
+        {dismissOnBack ? <HistoryDismiss open={isOpen} onClose={() => set(false)} /> : null}
         {children}
       </DialogPrimitive.Root>
     </SheetContext.Provider>

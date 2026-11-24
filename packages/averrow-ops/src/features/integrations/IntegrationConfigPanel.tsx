@@ -133,6 +133,7 @@ function AutoSubmitControl({ it }: { it: IntegrationHealth }) {
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
+        dismissOnBack
         tone="primary"
         title={`Turn on auto-submit for ${it.label}?`}
         description={
@@ -172,6 +173,7 @@ function PanelBody({ it, open, windowHours, onClose }: { it: IntegrationHealth; 
       open={open}
       onOpenChange={(open) => { if (!open) onClose(); }}
       width={560}
+      dismissOnBack
       title={it.label}
       description={<span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{it.kind}</span>}
       footer={<Button type="button" variant="secondary" className="min-h-[44px]" onClick={onClose}>Close</Button>}

@@ -892,6 +892,11 @@ unchanged):
 
 Use the shared `BackLink` / `useBack` / `useCloseParam` from `@averrow/shared/nav`: Back returns to the previous in-app screen and uses the `fallback` parent only on a cold start (deep link, reload, push open). Label it "Back" unless the page has a single fixed parent (then "Back to X"); never hard-code a destination for a history Back. The arrow is `aria-hidden` (BackLink does this) and the control has a visible `focus-visible` ring (BackLink default).
 
+**System Back closes overlays.** On the installed PWA Back is the Android gesture, so anything that opens on top of a page must close on it instead of leaving the page:
+- Sheets, dialogs and confirms: pass `dismissOnBack` to `Dialog` / `ConfirmDialog` / `Sheet` (`@averrow/shared/ui`), or call `useHistoryDismiss(open, onClose)` (`@averrow/shared/nav`). It pushes one same-URL entry through the router while open, pops it on a UI close, and calls `onClose` when Back removes it. Opt-in (it needs a Router and must not wrap menus whose items navigate); enabled on the Integrations config panel, the Notifications filter sheet, and both mobile nav drawers. A link inside such an overlay should `replace` if it must leave no trace of the overlay entry.
+- Detail drawers: put the selection in the URL (`?thing=<id>`) with `usePushedParam(param, marker)`: open pushes (marked in history state), switching replaces, a user close pops the marked entry, an effect-driven drop replaces and never pops. Ops Alerts (own marker) and Takedowns use this pattern. Never keep an open drawer in `useState` only.
+- Observatory: a selection pick pushes an entry marked `obsPushed`; `clearSelection()` pops it when the view is otherwise unchanged, else replaces.
+
 ---
 
 ## SIDEBAR STANDARD

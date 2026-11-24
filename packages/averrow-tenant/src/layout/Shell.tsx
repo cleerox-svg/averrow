@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { useHistoryDismiss } from '@averrow/shared/nav';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { AppUpdateNotice } from '@averrow/shared/ui';
@@ -14,6 +15,8 @@ export function Shell() {
   const { user, loading } = useAuth();
   const [navOpen, setNavOpen] = useState(false);
   const { pathname } = useLocation();
+  // System Back closes the open drawer (one same-URL entry while it is open).
+  useHistoryDismiss(navOpen, () => setNavOpen(false));
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);

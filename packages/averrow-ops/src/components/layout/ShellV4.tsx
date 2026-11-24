@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { useHistoryDismiss } from '@averrow/shared/nav';
 import {
   LayoutDashboard, SquareTerminal, Mail, Inbox,
   Globe, Users, Cpu, Rss, ClipboardList, Bell, Target,
@@ -277,6 +278,8 @@ export function ShellV4() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const closeDrawer = () => setDrawerOpen(false);
+  // System Back closes the open drawer (one same-URL entry while it is open).
+  useHistoryDismiss(drawerOpen, closeDrawer);
   const nav = buildV4Nav({
     isSuperAdmin,
     role: user?.role,
@@ -418,7 +421,7 @@ export function ShellV4() {
               {group.items.map(item => {
                 const Icon = item.icon;
                 return (
-                  <NavLink key={item.to + item.label} to={item.to} end={item.end} className={navClass} onClick={closeDrawer}>
+                  <NavLink key={item.to + item.label} to={item.to} end={item.end} className={navClass} onClick={closeDrawer} replace={drawerOpen || undefined}>
                     <Icon strokeWidth={2} /> {item.label}
                     {item.count != null && item.count > 0 && (
                       <>

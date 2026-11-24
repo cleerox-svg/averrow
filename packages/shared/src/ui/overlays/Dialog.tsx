@@ -10,6 +10,7 @@ import { WarnIcon, InfoIcon } from '../settings/icons';
 import { Spinner } from '../Spinner';
 import { Sheet, SheetContent } from './Sheet';
 import { useIsCompact } from './useMediaQuery';
+import { HistoryDismiss } from '../../nav/historyDismiss';
 
 export type OverlayPresentation = 'auto' | 'dialog' | 'sheet';
 
@@ -26,6 +27,12 @@ export interface DialogProps extends OverlayHeaderProps {
   className?: string;
   onOpenAutoFocus?: (event: Event) => void;
   onCloseAutoFocus?: (event: Event) => void;
+  /**
+   * Make the system Back gesture / browser Back close this overlay instead of
+   * leaving the page (see `useHistoryDismiss`). Opt-in: needs a Router above it,
+   * and pushes one same-URL history entry while open. Default false.
+   */
+  dismissOnBack?: boolean;
 }
 
 /**
@@ -34,70 +41,78 @@ export interface DialogProps extends OverlayHeaderProps {
  */
 export function Dialog({
   open, onOpenChange, title, description, icon, hideTitle, children, footer,
-  width = 440, presentation = 'auto', className, onOpenAutoFocus, onCloseAutoFocus,
+  width = 440, presentation = 'auto', className, onOpenAutoFocus, onCloseAutoFocus, dismissOnBack = false,
 }: DialogProps): React.ReactElement {
   const compact = useIsCompact();
   const asSheet = presentation === 'sheet' || (presentation === 'auto' && compact);
 
+  const dismiss = dismissOnBack ? <HistoryDismiss open={open} onClose={() => onOpenChange(false)} /> : null;
+
   if (asSheet) {
     return (
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent
-          title={title}
-          description={description}
-          icon={icon}
-          hideTitle={hideTitle}
-          footer={footer}
-          className={className}
-          onOpenAutoFocus={onOpenAutoFocus}
-          onCloseAutoFocus={onCloseAutoFocus}
-        >
-          {children}
-        </SheetContent>
-      </Sheet>
+      <>
+        {dismiss}
+        <Sheet open={open} onOpenChange={onOpenChange}>
+          <SheetContent
+            title={title}
+            description={description}
+            icon={icon}
+            hideTitle={hideTitle}
+            footer={footer}
+            className={className}
+            onOpenAutoFocus={onOpenAutoFocus}
+            onCloseAutoFocus={onCloseAutoFocus}
+          >
+            {children}
+          </SheetContent>
+        </Sheet>
+      </>
     );
   }
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
-      <OverlayStyles />
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="av-ov-scrim" />
-        <DialogPrimitive.Content
-          asChild
-          aria-modal="true"
-          {...(description ? {} : { 'aria-describedby': undefined })}
-          onOpenAutoFocus={onOpenAutoFocus}
-          onCloseAutoFocus={onCloseAutoFocus}
-        >
-          <Card
-            variant="elevated"
-            padding="lg"
-            className={cn('av-ov-dialog', className)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              margin: 'auto',
-              height: 'fit-content',
-              maxHeight: 'calc(100dvh - 32px)',
-              width: typeof width === 'number' ? `min(${width}px, calc(100vw - 32px))` : width,
-              overflowY: 'auto',
-              zIndex: 'var(--z-modal, 400)' as unknown as number,
-            }}
+    <>
+      {dismiss}
+      <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+        <OverlayStyles />
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="av-ov-scrim" />
+          <DialogPrimitive.Content
+            asChild
+            aria-modal="true"
+            {...(description ? {} : { 'aria-describedby': undefined })}
+            onOpenAutoFocus={onOpenAutoFocus}
+            onCloseAutoFocus={onCloseAutoFocus}
           >
-            <div className={hideTitle ? undefined : 'mb-4'}>
-              <OverlayHeader title={title} description={description} icon={icon} hideTitle={hideTitle} />
-            </div>
-            {children}
-            {footer ? (
-              <div className="av-ov-footer mt-5" data-presentation="dialog">
-                {footer}
+            <Card
+              variant="elevated"
+              padding="lg"
+              className={cn('av-ov-dialog', className)}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                margin: 'auto',
+                height: 'fit-content',
+                maxHeight: 'calc(100dvh - 32px)',
+                width: typeof width === 'number' ? `min(${width}px, calc(100vw - 32px))` : width,
+                overflowY: 'auto',
+                zIndex: 'var(--z-modal, 400)' as unknown as number,
+              }}
+            >
+              <div className={hideTitle ? undefined : 'mb-4'}>
+                <OverlayHeader title={title} description={description} icon={icon} hideTitle={hideTitle} />
               </div>
-            ) : null}
-          </Card>
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+              {children}
+              {footer ? (
+                <div className="av-ov-footer mt-5" data-presentation="dialog">
+                  {footer}
+                </div>
+              ) : null}
+            </Card>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
+    </>
   );
 }
 
@@ -120,13 +135,15 @@ export interface ConfirmDialogProps {
   errorMessage?: string;
   icon?: React.ReactNode;
   presentation?: OverlayPresentation;
+  /** See {@link DialogProps.dismissOnBack}. */
+  dismissOnBack?: boolean;
 }
 
 const DEFAULT_ERROR = "Couldn't complete that. Check your connection and try again.";
 
 export function ConfirmDialog({
   open, onOpenChange, title, description, consequence, confirmLabel, cancelLabel = 'Cancel',
-  tone = 'danger', onConfirm, errorMessage, icon, presentation,
+  tone = 'danger', onConfirm, errorMessage, icon, presentation, dismissOnBack,
 }: ConfirmDialogProps): React.ReactElement {
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -180,6 +197,7 @@ export function ConfirmDialog({
       }
       icon={<IconTile size={40} tone={tone === 'danger' ? 'red' : 'amber'}>{icon ?? defaultIcon}</IconTile>}
       presentation={presentation}
+      dismissOnBack={dismissOnBack}
       // Destructive: land on Cancel so Enter can never confirm by accident.
       onOpenAutoFocus={tone === 'danger' ? (e) => { e.preventDefault(); cancelRef.current?.focus(); } : undefined}
       footer={

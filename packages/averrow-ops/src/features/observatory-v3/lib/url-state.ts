@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   LAYER_IDS, LENS_IDS, lensPreset, isLensId, noLayers, sameLayers,
   type LayerToggles, type LensId,
@@ -391,32 +391,93 @@ export function isSelectionPick(prev: ObservatoryUrlState, patch: ObservatoryPat
   return !hadSelection && !!(patch.node || patch.arc || patch.sel);
 }
 
+/** History-state mark on the entry a selection pick pushed (see `useObservatoryUrlState`). */
+export const OBS_PUSHED = 'obsPushed';
+const OBS_BASE = 'obsBase';
+
+/** The URL minus the selection keys: what the view looks like regardless of what is selected. */
+function viewKey(sp: URLSearchParams): string {
+  const out = new URLSearchParams(sp);
+  for (const k of ['node', 'arc', 'sel']) out.delete(k);
+  out.sort();
+  return out.toString();
+}
+function stateRecord(state: unknown): Record<string, unknown> {
+  return state && typeof state === 'object' ? (state as Record<string, unknown>) : {};
+}
+function withoutMarks(state: unknown): unknown {
+  const { [OBS_PUSHED]: _a, [OBS_BASE]: _b, ...rest } = stateRecord(state);
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
+const hasSelection = (s: Pick<ObservatoryUrlState, 'node' | 'arc' | 'sel'>) => !!(s.node || s.arc || s.sel);
+
 export function useObservatoryUrlState() {
   const [sp, setSp] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   const state = useMemo(() => parseObservatoryParams(sp), [sp]);
-  // Latest params for `update`, which must stay referentially stable.
+  // Latest params / entry state for the callbacks, which must stay referentially stable.
   const spRef = useRef(sp);
   spRef.current = sp;
+  const locStateRef = useRef<unknown>(location.state);
+  locStateRef.current = location.state;
+  const popping = useRef(false);
+  useEffect(() => { popping.current = false; }, [location.key]);
 
   const update = useCallback(
     (patch: ObservatoryPatch, opts?: { replace?: boolean }) => {
       // PUSH only on none -> selection, so Back un-picks it. Selection -> another
       // selection, layer / lens / period / filter toggles and every clear REPLACE.
       // `opts.replace` forces a replace (effect-driven updates, e.g. the country fallback).
-      const picks = !opts?.replace && isSelectionPick(parseObservatoryParams(spRef.current), patch);
+      const cur = parseObservatoryParams(spRef.current);
+      const picks = !opts?.replace && isSelectionPick(cur, patch);
+      const nextState = mergeObservatoryState(cur, patch);
+      if (picks) {
+        // Mark the entry (and what the view looked like before) so a user close can pop it.
+        const base = viewKey(spRef.current);
+        setSp(prev => applyObservatoryState(prev, mergeObservatoryState(parseObservatoryParams(prev), patch)), {
+          replace: false,
+          state: { ...stateRecord(locStateRef.current), [OBS_PUSHED]: true, [OBS_BASE]: base },
+        });
+        return;
+      }
+      // A replace keeps the mark only while a selection stays open; a clear (or a
+      // pick that is not a push) leaves an unmarked entry.
+      const keep = hasSelection(cur) && hasSelection(nextState);
       setSp(
         prev => applyObservatoryState(prev, mergeObservatoryState(parseObservatoryParams(prev), patch)),
-        { replace: !picks },
+        { replace: true, state: keep ? locStateRef.current : withoutMarks(locStateRef.current) },
       );
     },
     [setSp],
   );
 
+  /**
+   * A USER closing the selection (X, map background, sheet dismiss). When the open
+   * selection was pushed by a pick and the view is otherwise unchanged since, this
+   * POPS that entry (once), so the next Back leaves the map instead of landing on a
+   * duplicate "nothing selected" entry. Otherwise it replaces. Effect-driven drops
+   * (stale selections) use `update(…, { replace: true })`, which never pops.
+   */
+  const clearSelection = useCallback(() => {
+    const st = stateRecord(locStateRef.current);
+    const cur = spRef.current;
+    const pushed = st[OBS_PUSHED] === true && hasSelection(parseObservatoryParams(cur))
+      && st[OBS_BASE] === viewKey(cur);
+    if (pushed) {
+      if (popping.current) return;
+      popping.current = true;
+      navigate(-1);
+      return;
+    }
+    update({ node: null, arc: null, sel: null });
+  }, [navigate, update]);
+
   // Canonicalise hand-edited / stale URLs once they land.
   useEffect(() => {
     const canonical = applyObservatoryState(sp, state);
-    if (canonical.toString() !== sp.toString()) setSp(canonical, { replace: true });
+    if (canonical.toString() !== sp.toString()) setSp(canonical, { replace: true, state: locStateRef.current });
   }, [sp, state, setSp]);
 
-  return { state, update };
+  return { state, update, clearSelection };
 }

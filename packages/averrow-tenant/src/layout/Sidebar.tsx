@@ -112,31 +112,31 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
         onClick={(e) => { if ((e.target as Element).closest('a')) onClose?.(); }}
       >
         <Section label="Workspace">
-          <NavLink to="/console" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/console" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <LayoutDashboard size={16} />
             <span>Console</span>
           </NavLink>
-          <NavLink to="/" end className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/" end className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Globe size={16} />
             <span>Overview</span>
           </NavLink>
-          <NavLink to="/threats" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/threats" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <ShieldAlert size={16} />
             <span>Threats</span>
           </NavLink>
-          <NavLink to="/alerts" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/alerts" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <AlertTriangle size={16} />
             <span>Alerts</span>
           </NavLink>
-          <NavLink to="/notifications" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/notifications" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Bell size={16} />
             <span>Notifications</span>
           </NavLink>
-          <NavLink to="/takedowns" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/takedowns" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Send size={16} />
             <span>Takedowns</span>
           </NavLink>
-          <NavLink to="/investigations" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/investigations" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <FolderSearch size={16} />
             <span>Investigations</span>
           </NavLink>
@@ -160,7 +160,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
               );
             }
             return (
-              <NavLink
+              <NavLink replace={open || undefined}
                 key={m.module_key}
                 to={MODULE_PATHS[m.module_key]}
                 className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}
@@ -180,7 +180,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
             {locked.map((m) => {
               const Icon = MODULE_ICONS[m.module_key];
               return (
-                <NavLink
+                <NavLink replace={open || undefined}
                   key={m.module_key}
                   to={MODULE_PATHS[m.module_key]}
                   className={cn(NAV_BASE, 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]')}
@@ -195,25 +195,25 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
         )}
 
         <Section label="Account">
-          <NavLink to="/automation-policy" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/automation-policy" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <SlidersHorizontal size={16} />
             <span>Automation Policy</span>
           </NavLink>
-          <NavLink to="/settings/monitoring" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/settings/monitoring" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <ListFilter size={16} />
             <span>Monitoring Rules</span>
           </NavLink>
-          <NavLink to="/settings/executives" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/settings/executives" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <UserCog size={16} />
             <span>Executives</span>
           </NavLink>
           {canViewAudit && (
-            <NavLink to="/audit-log" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+            <NavLink replace={open || undefined} to="/audit-log" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
               <ScrollText size={16} />
               <span>Audit Log</span>
             </NavLink>
           )}
-          <NavLink to="/settings" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <NavLink replace={open || undefined} to="/settings" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Settings size={16} />
             <span>Settings</span>
           </NavLink>

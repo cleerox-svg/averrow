@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { usePushedParam } from '@averrow/shared/nav';
 import { useAdminTakedowns, useAdminTakedownsAll, useUpdateTakedown } from '@/hooks/useTakedowns';
 import type { Takedown, TakedownScope } from '@/hooks/useTakedowns';
 import { useToast } from '@/components/ui/Toast';
@@ -709,7 +710,17 @@ export function Takedowns() {
   const [sortBy, setSortBy] = useState('priority');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [selectedTakedown, setSelectedTakedown] = useState<Takedown | null>(null);
+  // The open takedown lives in the URL (`?takedown=<id>`), so the system Back
+  // gesture closes the drawer. Opening from the list pushes (marked in history
+  // state), switching takedowns replaces, a close pops the entry this page
+  // pushed and otherwise replaces the param away; a cold deep link opens it.
+  const location = useLocation();
+  const takedownParam = usePushedParam('takedown', 'takedownPushed');
+  const openId = takedownParam.value;
+  // Local snapshot of the open row: it carries the optimistic status / note
+  // patches below (the list refetch doesn't replace it). A deep link adopts the
+  // listed row once the list loads.
+  const [snapshot, setSnapshot] = useState<Takedown | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   // True while the open panel holds an unsaved internal-notes draft.
   const staffNotesDirtyRef = useRef(false);
@@ -719,8 +730,13 @@ export function Takedowns() {
   const selectTakedown = useCallback((next: Takedown | null) => {
     if (staffNotesDirtyRef.current && !window.confirm(DISCARD_STAFF_NOTES_PROMPT)) return;
     staffNotesDirtyRef.current = false;
-    setSelectedTakedown(next);
-  }, []);
+    if (next) {
+      setSnapshot(next);
+      takedownParam.open(next.id);
+    } else {
+      takedownParam.close();
+    }
+  }, [takedownParam]);
   const closePanel = useCallback(() => selectTakedown(null), [selectTakedown]);
 
   // Debounce search
@@ -746,8 +762,8 @@ export function Takedowns() {
       const params = new URLSearchParams(prev);
       params.delete('brand');
       return params;
-    }, { replace: true });  // filter removal: REPLACE
-  }, [setSearchParams]);
+    }, { replace: true, state: location.state });  // filter removal: REPLACE (keeps an open drawer's history mark)
+  }, [setSearchParams, location.state]);
 
   // Authorized mode keeps the full filter/sort/search workflow, paginated
   // server-side at 100/page — the existing SOC queue behavior, unchanged.
@@ -794,6 +810,26 @@ export function Takedowns() {
   const statValue = (n: number): number | null =>
     hasData ? n : (isLoading || isError ? null : 0);
   const takedowns = isProspect ? (prospectQuery.data?.takedowns ?? []) : (authorizedQuery.data?.takedowns ?? []);
+
+  const listed = openId ? takedowns.find((t) => t.id === openId) ?? null : null;
+  const selectedTakedown: Takedown | null = openId
+    ? (snapshot && snapshot.id === openId ? snapshot : listed)
+    : null;
+  useEffect(() => {
+    if (openId && listed && snapshot?.id !== openId) setSnapshot(listed);
+  }, [openId, listed, snapshot?.id]);
+  // An id the loaded list does not hold (stale link, other scope, beyond the
+  // page) is dropped with a REPLACE, never a pop: nothing was opened by the user.
+  const listSettled = hasData && !isLoading && !isPlaceholder;
+  const dropOpenId = takedownParam.drop;
+  useEffect(() => {
+    if (openId && !selectedTakedown && listSettled) dropOpenId();
+  }, [openId, selectedTakedown, listSettled, dropOpenId]);
+  // A Back / deep-link close discards the panel's notes draft with it.
+  useEffect(() => { if (!openId) staffNotesDirtyRef.current = false; }, [openId]);
+  // Mutation callbacks outlive the render that created them: close via the latest.
+  const closeOpenRef = useRef(takedownParam.close);
+  closeOpenRef.current = takedownParam.close;
   const statusCounts = isProspect ? (prospectQuery.data?.statusCounts ?? []) : (authorizedQuery.data?.statusCounts ?? []);
   // Safety-cap indicator (F1) — only meaningful in Prospect mode, where the
   // fetch drains pages until either exhausted or this cap trips.
@@ -864,16 +900,16 @@ export function Takedowns() {
         if (updates.status) {
           const status = updates.status;
           if (staffNotesDirtyRef.current) {
-            setSelectedTakedown((prev) => (prev && prev.id === id ? { ...prev, status } : prev));
+            setSnapshot((prev) => (prev && prev.id === id ? { ...prev, status } : prev));
           } else {
-            setSelectedTakedown(null);
+            closeOpenRef.current();
           }
         }
         // Keep the open panel's snapshot in step with the saved staff note
         // (the list refetch doesn't replace selectedTakedown).
         else if (updates.staff_notes !== undefined) {
           const saved = updates.staff_notes;
-          setSelectedTakedown((prev) => (prev && prev.id === id ? { ...prev, staff_notes: saved } : prev));
+          setSnapshot((prev) => (prev && prev.id === id ? { ...prev, staff_notes: saved } : prev));
         }
       },
       // The server's refusal reason (e.g. "Waiting for the customer's approval

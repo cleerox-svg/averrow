@@ -54,3 +54,86 @@ describe('useObservatoryUrlState history', () => {
     expect(router.state.historyAction).toBe('REPLACE');
   });
 });
+
+describe('closing a selection does not leave a dead Back press', () => {
+  function mount(entries: string[] = ['/start', '/']) {
+    const router = createMemoryRouter(
+      [{ path: '/', element: <Probe /> }, { path: '/start', element: <div /> }],
+      { initialEntries: entries, initialIndex: entries.length - 1 },
+    );
+    render(<RouterProvider router={router} />);
+    return router;
+  }
+  const back = (r: ReturnType<typeof createMemoryRouter>) => act(() => { void r.navigate(-1); });
+
+  it('the pick pushes a marked entry; a user close POPS it, so the next Back leaves the map', () => {
+    const router = mount();
+    act(() => api!.update({ node: '10.5,20.5' }));
+    expect(router.state.historyAction).toBe('PUSH');
+    expect(router.state.location.state).toMatchObject({ obsPushed: true });
+    act(() => api!.clearSelection());
+    expect(router.state.historyAction).toBe('POP');
+    expect(router.state.location.search).toBe('');
+    expect(router.state.location.pathname).toBe('/');
+    back(router);
+    expect(router.state.location.pathname).toBe('/start'); // not a duplicate "nothing selected" entry
+  });
+
+  it('the mark survives selection -> selection replaces, and still closes with one pop', () => {
+    const router = mount();
+    act(() => api!.update({ node: '10.5,20.5' }));
+    act(() => api!.update({ node: '11.5,21.5' }));
+    act(() => api!.update({ sel: 'country:NL' }));
+    expect(router.state.historyAction).toBe('REPLACE');
+    expect(router.state.location.state).toMatchObject({ obsPushed: true });
+    act(() => api!.clearSelection());
+    back(router);
+    expect(router.state.location.pathname).toBe('/start');
+  });
+
+  it('closing twice quickly pops once', () => {
+    const router = mount();
+    act(() => api!.update({ node: '10.5,20.5' }));
+    act(() => { api!.clearSelection(); api!.clearSelection(); });
+    expect(router.state.location.pathname).toBe('/');
+  });
+
+  it('an unmarked (deep-linked) selection closes with a replace', () => {
+    const router = mount(['/start', '/?node=10.50%2C20.50']);
+    expect(api!.state.node).toBe('10.50,20.50');
+    act(() => api!.clearSelection());
+    expect(router.state.historyAction).toBe('REPLACE');
+    expect(router.state.location.search).toBe('');
+    back(router);
+    expect(router.state.location.pathname).toBe('/start');
+  });
+
+  it('an effect-driven clear ({ replace: true }) replaces and never pops, even on a marked entry', () => {
+    const router = mount();
+    act(() => api!.update({ node: '10.5,20.5' }));
+    act(() => api!.update({ node: null, arc: null, sel: null }, { replace: true }));
+    expect(router.state.historyAction).toBe('REPLACE');
+    expect(router.state.location.pathname).toBe('/');
+    expect(router.state.location.search).toBe('');
+    expect(router.state.location.state ?? {}).not.toHaveProperty('obsPushed');
+  });
+
+  it('a view change made while selected (colorBy) means the close replaces: the change is kept', () => {
+    const router = mount();
+    act(() => api!.update({ node: '10.5,20.5' }));
+    act(() => api!.update({ colorBy: 'type' }));
+    expect(router.state.location.state).toMatchObject({ obsPushed: true });
+    act(() => api!.clearSelection());
+    expect(router.state.historyAction).toBe('REPLACE');
+    expect(router.state.location.search).toContain('colorBy=type');
+  });
+
+  it('a period change clears the selection with a replace and drops the mark', () => {
+    const router = mount();
+    act(() => api!.update({ node: '10.5,20.5' }));
+    act(() => api!.update({ period: '30d' }));
+    expect(router.state.historyAction).toBe('REPLACE');
+    expect(router.state.location.search).not.toContain('node=');
+    expect(router.state.location.state ?? {}).not.toHaveProperty('obsPushed');
+  });
+});
