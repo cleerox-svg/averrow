@@ -117,7 +117,7 @@ export function DatabaseDetail({ db, window: win = '24h', summary, generatedAt }
 
   return (
     <div className="dbp">
-      <BackLink className="dbp-back" fallback={tabUrl('databases', { window: windowParam(win) })}>← All databases</BackLink>
+      <BackLink className="dbp-back" fallback={tabUrl('databases', { window: windowParam(win) })}>Back</BackLink>
 
       <section className="dbp-detail-head" aria-label="Database summary">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

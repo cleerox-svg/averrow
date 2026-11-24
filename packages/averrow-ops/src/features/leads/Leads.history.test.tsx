@@ -75,4 +75,15 @@ describe('Leads history', () => {
     await waitFor(() => expect(here()).toBe('/leads'));
     expect(router.state.historyAction).toBe('REPLACE');
   });
+
+  it('re-selecting the current view adds no history entry', async () => {
+    const router = setup(['/leads']);
+    const key = router.state.location.key;
+    fireEvent.click(screen.getByRole('button', { name: 'Kanban' }));
+    expect(router.state.location.key).toBe(key);
+    fireEvent.click(screen.getByRole('button', { name: 'Sales Pipeline' }));
+    const keyP = router.state.location.key;
+    fireEvent.click(screen.getByRole('button', { name: 'Sales Pipeline' }));
+    expect(router.state.location.key).toBe(keyP);
+  });
 });

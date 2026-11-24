@@ -16,7 +16,7 @@
 // (Strategist creates notifications with `link: /campaigns/:id`).
 // This page is the drill-down those clicks land on.
 import { useParams, Link } from 'react-router-dom';
-import { useBack } from '@averrow/shared/nav';
+import { BackLink } from '@averrow/shared/nav';
 import { accentText } from '@/lib/accent-text';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 import {
@@ -105,10 +105,10 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle?: string }) 
 
 // A failed request is an error with retry, never "not found" (a 500 must not
 // tell the operator the campaign was merged or dissolved).
-function CampaignUnavailable({ isError, onRetry, onBack }: { isError: boolean; onRetry: () => void; onBack: () => void }) {
+function CampaignUnavailable({ isError, onRetry }: { isError: boolean; onRetry: () => void }) {
   return (
     <div className="animate-fade-in space-y-4">
-      <PageHeader title="Campaign" back={{ label: 'Back to Operations', onClick: onBack }} className="mb-0" />
+      <PageHeader title="Campaign" back={{ label: 'Back', fallback: '/explore?tab=campaigns' }} className="mb-0" />
       {isError ? (
         <PageState kind="error" layout="card" title="Couldn't load this campaign" onRetry={onRetry} />
       ) : (
@@ -133,9 +133,6 @@ export function CampaignDetail() {
   const { data: infrastructure, isLoading: infraLoading } = useCampaignInfrastructure(id);
   const { data: brandImpact, isLoading: brandsLoading } = useCampaignBrands(id);
 
-  // Previous in-app screen (Search, a brand, a threat...) or the campaigns list when there is none.
-  const { go: backToList } = useBack('/explore?tab=campaigns');
-
   if (campaignLoading) {
     return (
       <div className="animate-fade-in space-y-5">
@@ -150,7 +147,6 @@ export function CampaignDetail() {
       <CampaignUnavailable
         isError={campaignError}
         onRetry={() => { void refetchCampaign(); }}
-        onBack={backToList}
       />
     );
   }
@@ -169,13 +165,14 @@ export function CampaignDetail() {
   return (
     <div className="animate-fade-in space-y-5 pb-12">
       {/* ─── Back link ─────────────────────────────────────── */}
-      <button
-        onClick={backToList}
+      <BackLink
+        fallback="/explore?tab=campaigns"
+        arrow={false}
         className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--primary-text)]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         <ArrowLeft size={12} /> Back
-      </button>
+      </BackLink>
 
       {/* ─── Header card (severity-accented EntityCard) ───── */}
       <EntityCard accent={accent} padding="18px 22px">

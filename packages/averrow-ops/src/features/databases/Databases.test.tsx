@@ -222,7 +222,7 @@ describe('Databases — detail', () => {
     renderAt('/admin/operations?tab=databases&db=core');
     expect(await screen.findByRole('heading', { name: 'trust-radar-v2' })).toBeInTheDocument();
     expect(screen.getByText('Overloaded')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '← All databases' })).toHaveAttribute('href', '/admin/operations?tab=databases');
+    expect(screen.getByRole('link', { name: 'Back' })).toHaveAttribute('href', '/admin/operations?tab=databases');
     expect(screen.getByRole('img', { name: /grew from .* to 5\.42 GB.*reaches 10\.0 GB/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /19 overload rejections over the last 24 hours\. Peak 14/ })).toBeInTheDocument();
     expect(screen.getByText('threat_cube_brand')).toBeInTheDocument();
@@ -367,7 +367,7 @@ describe('review fixes', () => {
   it('labels detail top jobs with the window and keeps it on the back link', async () => {
     renderAt('/?db=core&window=1h');
     expect(await screen.findByRole('heading', { name: /Top jobs · last hour/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '← All databases' })).toHaveAttribute('href', '/admin/operations?tab=databases&window=1h');
+    expect(screen.getByRole('link', { name: 'Back' })).toHaveAttribute('href', '/admin/operations?tab=databases&window=1h');
   });
 
   it('shows no projection and "At or over the cap" when size >= cap', async () => {

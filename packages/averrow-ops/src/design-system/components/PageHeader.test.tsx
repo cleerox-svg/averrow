@@ -21,13 +21,18 @@ describe('ops PageHeader back', () => {
   it('fallback: returns to the previous in-app screen when there is one', async () => {
     const router = setup(['/prev'], 0, { label: 'Back', fallback: '/parent' });
     await router.navigate('/page');
-    fireEvent.click(await screen.findByRole('button', { name: /Back/ }));
+    fireEvent.click(await screen.findByRole('link', { name: /Back/ }));
     await waitFor(() => expect(screen.getByTestId('loc').textContent).toBe('/prev'));
+  });
+
+  it('fallback renders a real link to the parent', async () => {
+    setup(['/page'], 0, { label: 'Back', fallback: '/parent' });
+    expect(await screen.findByRole('link', { name: /Back/ })).toHaveAttribute('href', '/parent');
   });
 
   it('fallback: goes to the parent (replace) on a cold start', async () => {
     const router = setup(['/page'], 0, { label: 'Back', fallback: '/parent' });
-    fireEvent.click(await screen.findByRole('button', { name: /Back/ }));
+    fireEvent.click(await screen.findByRole('link', { name: /Back/ }));
     await waitFor(() => expect(screen.getByTestId('loc').textContent).toBe('/parent'));
     expect(router.state.historyAction).toBe('REPLACE');
   });

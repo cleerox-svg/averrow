@@ -215,3 +215,52 @@ describe('history flow B: Explore tabs then a brand detail', () => {
     expect(router.state.historyAction).toBe('REPLACE');
   });
 });
+
+describe('re-selecting the current tab', () => {
+  it('Console: clicking the active tab or its KPI tile adds no history entry', async () => {
+    const router = createMemoryRouter(
+      [{ path: '/', element: <Shell>prev</Shell> }, { path: '/console', element: <Shell><Console /></Shell> }],
+      { initialEntries: ['/', '/console'], initialIndex: 1 },
+    );
+    mount(router);
+    await screen.findByRole('tab', { name: /Alerts/ });
+    const key = router.state.location.key;
+    fireEvent.click(screen.getByRole('tab', { name: /Alerts/ }));
+    expect(router.state.location.key).toBe(key);
+    fireEvent.click(screen.getByRole('tab', { name: /Threats/ }));
+    const keyT = router.state.location.key;
+    fireEvent.click(screen.getByRole('tab', { name: /Threats/ }));
+    expect(router.state.location.key).toBe(keyT);
+    systemBack(router);
+    await waitFor(() => expect(here()).toBe('/console'));
+  });
+});
+
+describe('alert close survives a remount (history state, not a ref)', () => {
+  it('an entry carrying alertPushed state closes with one pop even in a fresh mount', async () => {
+    const router = createMemoryRouter(
+      [{ path: '/', element: <Shell><Console /></Shell> }],
+      { initialEntries: ['/', { pathname: '/', search: '?alert=alr_7', state: { alertPushed: true } }], initialIndex: 1 },
+    );
+    mount(router);
+    await screen.findByTestId('alert-detail');
+    const close = screen.getByRole('button', { name: 'Close alert detail' });
+    fireEvent.click(close);
+    fireEvent.click(close); // double click must not pop twice
+    await waitFor(() => expect(screen.queryByTestId('alert-detail')).not.toBeInTheDocument());
+    expect(router.state.historyAction).toBe('POP');
+    expect(router.state.location.search).toBe('');
+  });
+
+  it('a deep-linked alert (no pushed mark) closes with a replace instead of leaving the app', async () => {
+    const router = createMemoryRouter(
+      [{ path: '/', element: <Shell><Console /></Shell> }],
+      { initialEntries: ['/?alert=alr_7'] },
+    );
+    mount(router);
+    await screen.findByTestId('alert-detail');
+    fireEvent.click(screen.getByRole('button', { name: 'Close alert detail' }));
+    await waitFor(() => expect(screen.queryByTestId('alert-detail')).not.toBeInTheDocument());
+    expect(router.state.historyAction).toBe('REPLACE');
+  });
+});

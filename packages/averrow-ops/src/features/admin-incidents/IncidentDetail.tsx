@@ -117,7 +117,7 @@ export function AdminIncidentDetail() {
         fontFamily: 'var(--font-mono)', fontSize: 11,
         color: 'var(--text-tertiary)', textDecoration: 'none',
       }}>
-        ← Back
+        Back
       </BackLink>
 
       <PageHeader

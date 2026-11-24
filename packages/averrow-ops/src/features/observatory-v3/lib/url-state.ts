@@ -381,13 +381,14 @@ export function mergeObservatoryState(prev: ObservatoryUrlState, rawPatch: Obser
   return next;
 }
 
-/** True when the patch explicitly selects a node / arc / sel different from the current one. */
+/**
+ * True when the patch opens a selection from none (node / arc / sel set while
+ * nothing is selected). Only that transition pushes, so Back un-picks; moving
+ * from one selection to another replaces, so browsing many nodes needs one Back.
+ */
 export function isSelectionPick(prev: ObservatoryUrlState, patch: ObservatoryPatch): boolean {
-  return (
-    (!!patch.node && patch.node !== prev.node) ||
-    (!!patch.arc && patch.arc !== prev.arc) ||
-    (!!patch.sel && patch.sel !== prev.sel)
-  );
+  const hadSelection = !!(prev.node || prev.arc || prev.sel);
+  return !hadSelection && !!(patch.node || patch.arc || patch.sel);
 }
 
 export function useObservatoryUrlState() {
@@ -398,11 +399,11 @@ export function useObservatoryUrlState() {
   spRef.current = sp;
 
   const update = useCallback(
-    (patch: ObservatoryPatch) => {
-      // PUSH when the user picks a different node / arc / selection, so Back
-      // un-picks it. Layer, lens, period, filter toggles and every clear
-      // (including the automatic stale-selection drops) REPLACE.
-      const picks = isSelectionPick(parseObservatoryParams(spRef.current), patch);
+    (patch: ObservatoryPatch, opts?: { replace?: boolean }) => {
+      // PUSH only on none -> selection, so Back un-picks it. Selection -> another
+      // selection, layer / lens / period / filter toggles and every clear REPLACE.
+      // `opts.replace` forces a replace (effect-driven updates, e.g. the country fallback).
+      const picks = !opts?.replace && isSelectionPick(parseObservatoryParams(spRef.current), patch);
       setSp(
         prev => applyObservatoryState(prev, mergeObservatoryState(parseObservatoryParams(prev), patch)),
         { replace: !picks },

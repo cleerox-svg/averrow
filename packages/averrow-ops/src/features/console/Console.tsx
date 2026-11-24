@@ -67,7 +67,11 @@ export function Console() {
   function selectTab(next: ConsoleTab) {
     // Only `tab` carries over; other params belong to the pane being left.
     // PUSH: a tab switch is a place the user went, so Back returns to the previous tab.
-    setParams(next === 'alerts' ? {} : { tab: next });
+    // Re-selecting the current tab never pushes: no-op when the URL is already canonical,
+    // else a REPLACE that strips the pane's params.
+    const nextParams: Record<string, string> = next === 'alerts' ? {} : { tab: next };
+    if (new URLSearchParams(nextParams).toString() === params.toString()) return;
+    setParams(nextParams, { replace: next === tab });
   }
 
   const active = TABS.find(t => t.id === tab);

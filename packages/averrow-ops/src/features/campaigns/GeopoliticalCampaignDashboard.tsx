@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useBack } from '@averrow/shared/nav';
+import { BackLink } from '@averrow/shared/nav';
 import { BreakdownCard, PageHeader, PageState, Table, Th, Td } from '@/design-system/components';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { severityColor, severityOpacity, threatTypeColor } from '@/lib/severityColor';
@@ -423,7 +423,6 @@ function EscalationRules({ rules }: { rules: Record<string, string> }) {
 
 export function GeopoliticalCampaignDashboard() {
   const { slug } = useParams<{ slug: string }>();
-  const { go: goBack } = useBack('/explore?tab=campaigns');
 
   const { data: campaign, isLoading: campaignLoading, isError: campaignError, isPlaceholderData: campaignStale, refetch: refetchCampaign } = useGeopoliticalCampaign(slug ?? '');
   const { data: stats } = useGeoCampaignStats(slug ?? '');
@@ -470,7 +469,7 @@ export function GeopoliticalCampaignDashboard() {
       <div className="animate-fade-in p-6 space-y-4">
         <PageHeader
           title="Geopolitical campaign"
-          back={{ label: 'Back', onClick: goBack }}
+          back={{ label: 'Back', fallback: '/explore?tab=campaigns' }}
           className="mb-0"
         />
         {campaignError ? (
@@ -495,12 +494,12 @@ export function GeopoliticalCampaignDashboard() {
   return (
     <div className="animate-fade-in p-6 space-y-6">
       {/* Back nav */}
-      <button
-        onClick={goBack}
+      <BackLink
+        fallback="/explore?tab=campaigns"
         className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] font-mono transition-colors"
       >
-        &larr; Back
-      </button>
+        Back
+      </BackLink>
 
       {/* Campaign Header */}
       <div className="rounded-xl border border-signal-red/30 bg-signal-red/5 p-5">

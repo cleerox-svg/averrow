@@ -168,7 +168,7 @@ export function BrandDetailV3() {
     return (
       <div className="animate-fade-in">
         <BackLink fallback="/explore?tab=brands" className="inline-block font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors mb-4">
-          &larr; Back
+          Back
         </BackLink>
         {/* A failed fetch is an error with a retry; only a successful response
             with no brand is "not found". */}
@@ -185,7 +185,7 @@ export function BrandDetailV3() {
     <div className="animate-fade-in space-y-6">
       <div>
         <BackLink fallback="/explore?tab=brands" className="font-mono text-xs text-[var(--text-muted)] hover:text-accent transition-colors">
-          &larr; Back
+          Back
         </BackLink>
       </div>
 

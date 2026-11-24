@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { useBack } from '@averrow/shared/nav';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useCloseParam } from '@averrow/shared/nav';
 import { useLeads, useLead, useLeadStats, useEnrichLead, useUpdateLead, useRefreshLeadFirmographics } from '@/hooks/useLeads';
 import type { SalesLead, LeadStats } from '@/hooks/useLeads';
 import { ScanLeadsView } from '@/features/scan-leads/ScanLeads';
@@ -848,7 +848,6 @@ export function Leads() {
   // `?view=scan` opens the Scan Leads tab directly — used by the
   // sales notification email and the legacy /admin/scan-leads
   // redirect so deep links land in the right place.
-  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   // View and open lead both live in the URL (`?view=`, `?lead=`) so system Back
   // walks what the user did: close the lead, then return to the previous view.
@@ -869,11 +868,8 @@ export function Leads() {
     [leadParam, leads, activeView],
   );
 
-  // Fallback when the detail was the first entry (cold deep link): the list.
-  const listParams = new URLSearchParams(searchParams);
-  listParams.delete('lead');
-  const listSearch = listParams.toString();
-  const { go: closeDetail } = useBack(`${location.pathname}${listSearch ? `?${listSearch}` : ''}`);
+  // Pops the pushed `?lead=` entry; a cold deep link replaces it away instead.
+  const closeDetail = useCloseParam('lead');
 
   // PUSH: opening a lead is a place the user went; Back closes it.
   function openLead(lead: SalesLead) {
@@ -882,14 +878,17 @@ export function Leads() {
     setSearchParams(next);
   }
 
-  // PUSH: the view switch is a tab. Selecting one drops any open lead.
+  // PUSH: the view switch is a tab. Re-selecting the current view is a no-op, and
+  // switching while a lead is open REPLACES (the lead entry is swapped for the new
+  // view) so Back from the new view never reopens that lead.
   function selectView(view: LeadsView) {
+    if (view === activeView && !searchParams.has('lead')) return;
     // `kanban` is the default — strip the param to keep URLs clean.
     const next = new URLSearchParams(searchParams);
     next.delete('lead');
     if (view === 'kanban') next.delete('view');
     else next.set('view', view);
-    setSearchParams(next);
+    setSearchParams(next, { replace: view === activeView || searchParams.has('lead') });
   }
 
   // Sales-leads loader covers kanban/pipeline/enrich. The Scan
