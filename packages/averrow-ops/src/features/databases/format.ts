@@ -221,7 +221,18 @@ export function cycleTrendLabel(t: CycleTrend, what: string): string {
   return `Last 24 h: about ${formatCount(t.last24h)} ${what}, ${vs} this cycle's earlier daily average of ${formatCount(t.dailyAvg)}`;
 }
 
-/** More reads or writes than usual costs more, so up is "bad" (red) and down is "good" (green). */
-export function cycleTrendTone(t: CycleTrend): 'good' | 'bad' | 'neutral' {
-  return t.direction === 'up' ? 'bad' : t.direction === 'down' ? 'good' : 'neutral';
+/** At or above this % over the average (2× normal), an increase is red rather than amber. */
+export const CYCLE_TREND_HIGH_PCT = 100;
+
+export type CycleTrendTone = 'good' | 'warn' | 'bad' | 'neutral';
+
+/**
+ * Colour for a trend. More usage costs more: amber above the ±10% band, red
+ * at 2× the average or more. Fewer READS is good (green). Fewer WRITES is
+ * neutral, not good: a drop in writes can mean a stalled feed or agent.
+ */
+export function cycleTrendTone(t: CycleTrend, field: 'rows_read' | 'rows_written'): CycleTrendTone {
+  if (t.direction === 'up') return t.deltaPct >= CYCLE_TREND_HIGH_PCT ? 'bad' : 'warn';
+  if (t.direction === 'down') return field === 'rows_read' ? 'good' : 'neutral';
+  return 'neutral';
 }

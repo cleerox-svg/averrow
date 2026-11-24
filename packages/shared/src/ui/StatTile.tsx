@@ -74,7 +74,8 @@ export interface StatTileProps
 
 export interface StatDelta {
   value: string;
-  tone?: 'good' | 'bad' | 'neutral';
+  /** `warn` = amber, for a change worth a look that isn't bad yet. */
+  tone?: 'good' | 'warn' | 'bad' | 'neutral';
   /** e.g. "412 more than yesterday" (aria-label). */
   label?: string;
 }

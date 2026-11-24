@@ -5,7 +5,7 @@ import { tabUrl } from '@/lib/workspaceRoutes';
 import type { DatabaseEntry, DatabasesPayload, DbWindow } from '@/hooks/useDatabases';
 import { StatusPill, windowParam } from './DatabaseCards';
 import {
-  DASH, cycleTrend, cycleTrendChip, cycleTrendLabel, formatBytes, formatCount, formatPct, formatTimeToFull, usedPct,
+  DASH, cycleTrend, cycleTrendChip, cycleTrendLabel, cycleTrendTone, formatBytes, formatCount, formatPct, formatTimeToFull, usedPct,
 } from './format';
 
 /** Cycle total, with the last 24 h compared against the cycle's average day underneath. */
@@ -17,7 +17,7 @@ function CycleCell({ total, hourly, field, what, cycleStart, now }: {
     <td className="num">
       {formatCount(total)}
       {t && (
-        <span className="dbp-trend" data-direction={t.direction}>
+        <span className="dbp-trend" data-direction={t.direction} data-tone={cycleTrendTone(t, field)}>
           <span aria-hidden="true">{cycleTrendChip(t)} · 24h {formatCount(t.last24h)}</span>
           <span className="sr-only">{cycleTrendLabel(t, what)}</span>
         </span>
@@ -32,7 +32,7 @@ export function DatabaseTable({ data, window: win = '24h' }: { data: DatabasesPa
       <table className="dbp-table">
         <caption>
           All databases. Rows read and written are totals for the billing cycle{cycleSince(data.summary.cycle?.start)}; the line under each
-          compares the last 24 h with the cycle&apos;s earlier average day (red above, green below). Dashes mean not measured yet.
+          compares the last 24 h with the cycle&apos;s earlier average day: amber above, red at double or more, green for fewer reads. Dashes mean not measured yet.
         </caption>
         <thead>
           <tr>

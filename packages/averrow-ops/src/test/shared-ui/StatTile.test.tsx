@@ -169,6 +169,11 @@ describe('shared StatTile', () => {
     expect(chip).not.toHaveClass('ds-stat-delta--inline');
   });
 
+  it('renders a warn (amber) delta tone', () => {
+    render(<StatTile label="Reads" value="1.8 B" delta={{ value: '▲ 40%', tone: 'warn', label: '40% above average' }} />);
+    expect(screen.getByLabelText('40% above average')).toHaveAttribute('data-tone', 'warn');
+  });
+
   it('delta falls back to its value as the name and defaults to neutral', () => {
     render(<StatTile label="Queue" value={9} delta={{ value: '0' }} />);
     expect(screen.getByLabelText('0')).toHaveAttribute('data-tone', 'neutral');

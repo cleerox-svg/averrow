@@ -147,13 +147,13 @@ export function DatabaseDetail({ db, window: win = '24h', summary, generatedAt }
             label="Reads · cycle"
             value={formatCount(db.reads_cycle)}
             sub={readTrend ? `24h ≈ ${formatCount(readTrend.last24h)} · earlier avg ${formatCount(readTrend.dailyAvg)}/day` : `24h ${formatCount(db.reads_24h)}`}
-            delta={readTrend ? { value: cycleTrendChip(readTrend), tone: cycleTrendTone(readTrend), label: cycleTrendLabel(readTrend, 'rows read') } : undefined}
+            delta={readTrend ? { value: cycleTrendChip(readTrend), tone: cycleTrendTone(readTrend, 'rows_read'), label: cycleTrendLabel(readTrend, 'rows read') } : undefined}
           />
           <StatTile
             label="Writes · cycle"
             value={formatCount(db.writes_cycle)}
             sub={writeTrend ? `24h ≈ ${formatCount(writeTrend.last24h)} · earlier avg ${formatCount(writeTrend.dailyAvg)}/day` : `24h ${formatCount(db.writes_24h)}`}
-            delta={writeTrend ? { value: cycleTrendChip(writeTrend), tone: cycleTrendTone(writeTrend), label: cycleTrendLabel(writeTrend, 'rows written') } : undefined}
+            delta={writeTrend ? { value: cycleTrendChip(writeTrend), tone: cycleTrendTone(writeTrend, 'rows_written'), label: cycleTrendLabel(writeTrend, 'rows written') } : undefined}
           />
           <StatTile
             label="Overloads · 24h"

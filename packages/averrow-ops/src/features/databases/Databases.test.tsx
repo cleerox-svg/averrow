@@ -123,6 +123,10 @@ describe('Databases — table view', () => {
     // 14 complete hours (00–13) = 105.3 M → 181 M/day; earlier 4 days = 1.18 B → 294 M/day; 39% below.
     const trend = within(row).getByText('▼ 39% · 24h 181 M');
     expect(trend.closest('.dbp-trend')).toHaveAttribute('data-direction', 'down');
+    expect(trend.closest('.dbp-trend')).toHaveAttribute('data-tone', 'good'); // fewer reads
+    // Fewer writes is neutral, not green: it can mean a stalled writer.
+    const writeTrend = within(row).getAllByText(/^▼ \d+% · 24h /)[1];
+    expect(writeTrend.closest('.dbp-trend')).toHaveAttribute('data-tone', 'neutral');
     expect(within(row).getByText(/Last 24 h: about 181 M rows read, 39% below this cycle's earlier daily average of 294 M/)).toBeInTheDocument();
   });
 
@@ -281,12 +285,17 @@ describe('format helpers', () => {
     const up = cycleTrend(total(1_500), day(1_500), 'rows_read', cycleStart, now)!;
     expect(up).toMatchObject({ dailyAvg: 24_000, last24h: 36_000, deltaPct: 50, direction: 'up' });
     expect(cycleTrendChip(up)).toBe('▲ 50%');
-    expect(cycleTrendTone(up)).toBe('bad');
+    expect(cycleTrendTone(up, 'rows_read')).toBe('warn'); // +50%: amber
     expect(cycleTrendLabel(up, 'rows read')).toBe("Last 24 h: about 36.0 K rows read, 50% above this cycle's earlier daily average of 24.0 K");
     const down = cycleTrend(total(500), day(500), 'rows_read', cycleStart, now)!;
-    expect([down.direction, cycleTrendChip(down), cycleTrendTone(down)]).toEqual(['down', '▼ 50%', 'good']);
+    expect([down.direction, cycleTrendChip(down), cycleTrendTone(down, 'rows_read')]).toEqual(['down', '▼ 50%', 'good']);
+    expect(cycleTrendTone(down, 'rows_written')).toBe('neutral');
+    const double = cycleTrend(total(2_000), day(2_000), 'rows_read', cycleStart, now)!;
+    expect([double.deltaPct, cycleTrendChip(double), cycleTrendTone(double, 'rows_written')]).toEqual([100, '▲ 100%', 'bad']);
+    const nearlyDouble = cycleTrend(total(1_990), day(1_990), 'rows_read', cycleStart, now)!;
+    expect(cycleTrendTone(nearlyDouble, 'rows_read')).toBe('warn');
     const flat = cycleTrend(total(1_050), day(1_050), 'rows_read', cycleStart, now)!;
-    expect([flat.direction, cycleTrendChip(flat), cycleTrendTone(flat)]).toEqual(['flat', '≈ avg', 'neutral']);
+    expect([flat.direction, cycleTrendChip(flat), cycleTrendTone(flat, 'rows_read')]).toEqual(['flat', '≈ avg', 'neutral']);
     expect(cycleTrendLabel(flat, 'rows written')).toContain('about the same as');
   });
   it('does not let the recent day pull its own baseline toward it', () => {
