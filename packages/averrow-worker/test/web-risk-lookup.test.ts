@@ -18,8 +18,7 @@ import {
   webRiskLookupMonthlyCap, webRiskLookupContactDailyCap,
   WEB_RISK_LOOKUP_MONTHLY_CAP_DEFAULT, WEB_RISK_LOOKUP_CONTACT_DAILY_CAP_DEFAULT,
   MONTH_BUCKET, CONTACT_DAY_BUCKET, monthPeriod, dayPeriod,
-  mapSearchResponse, reserveLookups, webRiskLookup, webRiskLookupsRemaining,
-} from "../src/lib/web-risk-lookup";
+  mapSearchResponse, reserveLookups, webRiskLookup, webRiskLookupsRemaining, withGsbVerdict } from "../src/lib/web-risk-lookup";
 import { checkGoogleSafeBrowsing, google_safe_browsing } from "../src/feeds/googleSafeBrowsing";
 import { notifyContactSubmission, contactNotifyKey } from "../src/lib/contact-notify";
 import { hasServiceAccount, getGoogleAccessToken, invalidateGoogleAccessToken } from "../src/lib/google-service-account";
@@ -247,7 +246,7 @@ describe.skipIf(!hasSqlite())("checkGoogleSafeBrowsing via Web Risk", () => {
     expect(mockInvalidate).toHaveBeenCalledWith(expect.anything(), "https://www.googleapis.com/auth/cloud-platform");
   });
 
-  it("marks a 400/404 URI rejected, unless every call of a large run was rejected", async () => {
+  it("marks a 400 URI rejected, unless every call of a large run was rejected", async () => {
     fetchMock.mockImplementation(async (u) => (String(u).includes("weird") ? new Response("bad", { status: 400 }) : notListed()));
     const one = await webRiskLookup(env().env, ["https://weird.example/", "https://ok.example/"]);
     expect(one.verdicts[0]).toMatchObject({ checked: false, rejected: true });
@@ -257,6 +256,21 @@ describe.skipIf(!hasSqlite())("checkGoogleSafeBrowsing via Web Risk", () => {
     const all = await webRiskLookup(env().env, Array.from({ length: 6 }, (_, i) => `https://w${i}.example/`));
     expect(all.stats.systemicReject).toBe(true);
     expect(all.verdicts.some((v) => v.rejected)).toBe(false);
+  });
+
+  it("a 404 is a wrong endpoint / project, not a per-URI answer: stops the run, stamps nothing", async () => {
+    fetchMock.mockResolvedValue(new Response("not found", { status: 404 }));
+    const r = await webRiskLookup(env().env, ["https://a.example/", "https://b.example/"]);
+    expect(r.stats.authFailed).toBe(true);
+    expect(r.verdicts.some((v) => v.rejected)).toBe(false);
+  });
+
+  it("withGsbVerdict: API rows show gsb_checked as 1 only when Google answered", () => {
+    expect(withGsbVerdict({ id: "t", gsb_checked: 1 })).toEqual({ id: "t", gsb_checked: 1 });
+    expect(withGsbVerdict({ id: "t", gsb_checked: 2 })).toEqual({ id: "t", gsb_checked: 0 }); // rejected ≠ clean
+    expect(withGsbVerdict({ id: "t", gsb_checked: 0 })).toEqual({ id: "t", gsb_checked: 0 });
+    expect(withGsbVerdict({ id: "t" })).toEqual({ id: "t" }); // no key → untouched
+    expect(withGsbVerdict(null)).toBeNull();
   });
 
   it("de-duplicates URLs and reserves only what it calls", async () => {

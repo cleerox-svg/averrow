@@ -11,6 +11,7 @@ import { verifyOrgAccess, canPerformHITL, isPlatformStaff, ORG_ROLE_HIERARCHY } 
 import type { AuthContext } from "../middleware/auth";
 import { refuseReadOnlyGlobalWrite } from "../lib/tenant-staff-guard";
 import { withDnsblVerdicts } from "../lib/dnsbl-verdict";
+import { withGsbVerdict } from "../lib/web-risk-lookup";
 
 // ─── Helpers ─────────────────────────────────────────────────
 // canPerformHITL + ORG_ROLE_HIERARCHY are the shared org-role gates from
@@ -1137,7 +1138,7 @@ export async function handleTenantBrandThreats(
     return json({
       success: true,
       // SURBL / DBL "not listed" is not evidence (lib/dnsbl-verdict.ts).
-      data: (threats.results || []).map(withDnsblVerdicts),
+      data: (threats.results || []).map((r) => withGsbVerdict(withDnsblVerdicts(r))),
       total: countResult?.total ?? 0,
     }, 200, origin);
   } catch (err) {

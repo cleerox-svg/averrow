@@ -2,6 +2,7 @@
 // Wave 2A: migrated read handlers to D1 Sessions API (read replicas)
 import { json } from "../lib/cors";
 import { withDnsblVerdicts } from "../lib/dnsbl-verdict";
+import { withGsbVerdict } from "../lib/web-risk-lookup";
 import { lookupInfobloxReference } from "../lib/infoblox-reference";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { enrichThreatsGeo } from "../lib/geoip";
@@ -251,7 +252,7 @@ export async function handleGetThreat(request: Request, env: Env, id: string): P
       url: str(threat.malicious_url),
       ip: str(threat.ip_address),
     });
-    return attachBookmark(json({ success: true, data: { ...withDnsblVerdicts(threat), infoblox_reference } }, 200, origin), session);
+    return attachBookmark(json({ success: true, data: { ...withGsbVerdict(withDnsblVerdicts(threat)), infoblox_reference } }, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
   }

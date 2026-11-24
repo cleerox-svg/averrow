@@ -75,7 +75,7 @@ export const WEB_RISK_LOOKUP_CONTACT_DAILY_CAP_MAX = 1_000;
 export const LOOKUP_CONCURRENCY = 4;
 /** Per-request timeout. */
 export const LOOKUP_CALL_TIMEOUT_MS = 10_000;
-/** A run whose every call (≥ this many) was a 400/404 is a request bug, not
+/** A run whose every call (≥ this many) was a 400 is a request bug, not
  *  bad URLs: nothing is stamped terminal. */
 export const SYSTEMIC_REJECT_MIN_CALLS = 5;
 
@@ -108,7 +108,7 @@ export interface LookupVerdict {
   flagged: boolean;
   threatType: string | null;
   checked: boolean;
-  /** Google answered 400/404 for this URI: it will never be answerable. */
+  /** Google answered 400 for this URI: it will never be answerable. */
   rejected?: boolean;
 }
 
@@ -123,11 +123,11 @@ export interface LookupRunStats {
   noToken: boolean;
   /** Google answered 401/403: credential problem, run stopped. */
   authFailed: boolean;
-  /** Every call (≥ SYSTEMIC_REJECT_MIN_CALLS) was a 400/404. */
+  /** Every call (≥ SYSTEMIC_REJECT_MIN_CALLS) was a 400. */
   systemicReject: boolean;
   /** Calls that failed (any non-2xx, network, bad body). */
   errors: number;
-  /** URIs answered 400/404 (terminal; see LookupVerdict.rejected). */
+  /** URIs answered 400 (terminal; see LookupVerdict.rejected). */
   rejected: number;
   /** Reserved URIs not attempted because the deadline passed. */
   deadlineSkipped: number;
@@ -319,12 +319,13 @@ export async function webRiskLookup(
         });
         if (!res.ok) {
           stats.errors++;
-          if (res.status === 400 || res.status === 404) {
-            // Per-URI rejection (INVALID_ARGUMENT etc.): retrying won't help.
+          if (res.status === 400) {
+            // Per-URI rejection (INVALID_ARGUMENT): retrying won't help.
             stats.rejected++;
             verdicts[idx] = { ...UNCHECKED, rejected: true };
-          } else if (res.status === 401 || res.status === 403) {
-            // Credential problem: every further call would fail the same way.
+          } else if (res.status === 401 || res.status === 403 || res.status === 404) {
+            // Credential problem, or (404) a wrong endpoint / project: not
+            // about this URI, and every further call would fail the same way.
             stats.authFailed = true;
             stop = true;
           } else if (res.status === 429) {
@@ -360,4 +361,17 @@ export async function webRiskLookup(
 
   if (stats.capped) logStop("cap");
   return { verdicts, stats };
+}
+
+/**
+ * API rows: `gsb_checked` as 1 only when Google actually answered (1), else 0.
+ * The column also holds 2 (Google rejected the URI: unanswerable, NOT clean),
+ * which a client treating any non-zero value as "checked" would misread.
+ * Use on every response that returns a raw `threats` row (SELECT *).
+ */
+export function withGsbVerdict<T>(row: T): T {
+  if (row === null || typeof row !== "object" || !("gsb_checked" in (row as object))) return row;
+  const out = { ...(row as Record<string, unknown>) };
+  out.gsb_checked = out.gsb_checked === 1 ? 1 : 0;
+  return out as T;
 }
