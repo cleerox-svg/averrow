@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { usePushedParam, useSetSearchParamsKeepState } from '@averrow/shared/nav';
 import { useAdminTakedowns, useAdminTakedownsAll, useUpdateTakedown } from '@/hooks/useTakedowns';
 import type { Takedown, TakedownScope } from '@/hooks/useTakedowns';
 import { useToast } from '@/components/ui/Toast';
@@ -562,6 +563,28 @@ const TAKEDOWN_INTERNAL_NOTES_LABEL = 'Internal notes — not visible to custome
 const TAKEDOWN_CUSTOMER_NOTE_LABEL = "Customer's note";
 const DISCARD_STAFF_NOTES_PROMPT = 'Discard unsaved internal notes?';
 
+// The internal-notes draft is autosaved per takedown (session only), so a system
+// Back, a reload or a crash never silently loses it. Cleared on save / discard.
+const notesDraftKey = (id: string) => `takedown-notes-draft:${id}`;
+function readNotesDraft(id: string): string | null {
+  try { return window.sessionStorage.getItem(notesDraftKey(id)); } catch { return null; }
+}
+function writeNotesDraft(id: string, value: string): void {
+  try { window.sessionStorage.setItem(notesDraftKey(id), value); } catch { /* storage unavailable */ }
+}
+function clearNotesDraft(id: string): void {
+  try { window.sessionStorage.removeItem(notesDraftKey(id)); } catch { /* storage unavailable */ }
+}
+// Ids whose draft the user explicitly discarded (accepted the confirm). The
+// closing TakedownNotes' unmount flush must not write that draft back; the flag
+// is consumed by that flush, or reset when a fresh TakedownNotes mounts.
+const discardedNotesDrafts = new Set<string>();
+function discardNotesDraft(id: string): void {
+  discardedNotesDrafts.add(id);
+  clearNotesDraft(id);
+}
+const NOTES_DRAFT_DEBOUNCE_MS = 300;
+
 function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
   takedown: Takedown;
   onSave: (id: string, staffNotes: string | null) => void;
@@ -571,7 +594,11 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const saved = takedown.staff_notes ?? '';
-  const [draft, setDraft] = useState(saved);
+  const [draft, setDraft] = useState(() => readNotesDraft(takedown.id) ?? saved);
+  const [restored, setRestored] = useState(() => {
+    const d = readNotesDraft(takedown.id);
+    return d !== null && d.trim() !== saved.trim();
+  });
   const fieldId = `takedown-staff-notes-${takedown.id}`;
   // Whitespace-only edits are not a change; a whitespace-only save clears.
   const dirty = draft.trim() !== saved.trim();
@@ -579,8 +606,35 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
+  // Autosave while dirty (debounced); flush on unmount so a Back right after typing keeps it.
+  const latest = useRef({ draft, dirty });
+  latest.current = { draft, dirty };
+  const skipFlush = useRef(false);
+  useEffect(() => {
+    if (!dirty) { clearNotesDraft(takedown.id); return; }
+    const t = setTimeout(() => { if (!skipFlush.current) writeNotesDraft(takedown.id, draft); }, NOTES_DRAFT_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [draft, dirty, takedown.id]);
+  useEffect(() => {
+    // A fresh instance starts clean: an earlier discard flag no longer applies.
+    discardedNotesDrafts.delete(takedown.id);
+    return () => {
+      const discarded = discardedNotesDrafts.delete(takedown.id);
+      if (!discarded && latest.current.dirty && !skipFlush.current) writeNotesDraft(takedown.id, latest.current.draft);
+    };
+  }, [takedown.id]);
+
+  const handleDiscardRestored = () => {
+    setDraft(saved);
+    setRestored(false);
+    clearNotesDraft(takedown.id);
+  };
+
   const handleSave = () => {
     const trimmed = draft.trim();
+    skipFlush.current = true;
+    clearNotesDraft(takedown.id);
+    setRestored(false);
     setDraft(trimmed);
     onSave(takedown.id, trimmed ? trimmed : null);
   };
@@ -617,13 +671,30 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
         <textarea
           id={fieldId}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => { skipFlush.current = false; setDraft(e.target.value); }}
           placeholder="Add internal notes..."
           rows={3}
           maxLength={4000}
           className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[color-mix(in_srgb,var(--primary)_25%,transparent)] resize-none font-mono"
           style={{ color: 'var(--text-primary)' }}
         />
+        {restored && dirty && (
+          <div
+            className="flex items-center gap-2 font-mono text-[11px]"
+            style={{ marginTop: 6, color: 'var(--text-secondary)' }}
+          >
+            <span>Restored unsaved draft</span>
+            <span aria-hidden="true">·</span>
+            <button
+              type="button"
+              onClick={handleDiscardRestored}
+              className="cursor-pointer border-0 bg-transparent p-0 underline"
+              style={{ color: 'var(--primary-text)' }}
+            >
+              Discard
+            </button>
+          </div>
+        )}
         {dirty && (
           <div style={{ marginTop: 6 }}>
             <Button
@@ -692,7 +763,7 @@ function TakedownActions({ takedown, onUpdate, isUpdating }: {
 // ─── Main page ─────────────────────────────────────────────────
 
 export function Takedowns() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSetSearchParamsKeepState();
 
   // Scope + brand deep-link params read live off the URL (single source of
   // truth — no mirrored local state to drift out of sync). `scope` defaults
@@ -709,18 +780,39 @@ export function Takedowns() {
   const [sortBy, setSortBy] = useState('priority');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [selectedTakedown, setSelectedTakedown] = useState<Takedown | null>(null);
+  // The open takedown lives in the URL (`?takedown=<id>`), so the system Back
+  // gesture closes the drawer. Opening from the list pushes (marked in history
+  // state), switching takedowns replaces, a close pops the entry this page
+  // pushed and otherwise replaces the param away; a cold deep link opens it.
+  const takedownParam = usePushedParam('takedown', 'takedownPushed');
+  const openId = takedownParam.value;
+  const openIdRef = useRef(openId);
+  openIdRef.current = openId;
+  // Local snapshot of the open row: it carries the optimistic status / note
+  // patches below (the list refetch doesn't replace it). A deep link adopts the
+  // listed row once the list loads.
+  const [snapshot, setSnapshot] = useState<Takedown | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  // Where focus lands when the drawer closes and the row that opened it is gone.
+  const listHeadingRef = useRef<HTMLDivElement | null>(null);
   // True while the open panel holds an unsaved internal-notes draft.
   const staffNotesDirtyRef = useRef(false);
   const handleStaffNotesDirty = useCallback((dirty: boolean) => { staffNotesDirtyRef.current = dirty; }, []);
   /** Switch/close the detail panel unless that would discard an unsaved
    *  staff-notes draft the user chooses to keep. */
   const selectTakedown = useCallback((next: Takedown | null) => {
-    if (staffNotesDirtyRef.current && !window.confirm(DISCARD_STAFF_NOTES_PROMPT)) return;
+    if (staffNotesDirtyRef.current) {
+      if (!window.confirm(DISCARD_STAFF_NOTES_PROMPT)) return;
+      if (openIdRef.current) discardNotesDraft(openIdRef.current); // an explicit discard: the unmount flush must not write it back
+    }
     staffNotesDirtyRef.current = false;
-    setSelectedTakedown(next);
-  }, []);
+    if (next) {
+      setSnapshot(next);
+      takedownParam.open(next.id);
+    } else {
+      takedownParam.close();
+    }
+  }, [takedownParam]);
   const closePanel = useCallback(() => selectTakedown(null), [selectTakedown]);
 
   // Debounce search
@@ -746,7 +838,7 @@ export function Takedowns() {
       const params = new URLSearchParams(prev);
       params.delete('brand');
       return params;
-    }, { replace: true });  // filter removal: REPLACE
+    }, { replace: true });  // filter removal: REPLACE (keeps an open drawer's history mark)
   }, [setSearchParams]);
 
   // Authorized mode keeps the full filter/sort/search workflow, paginated
@@ -794,6 +886,27 @@ export function Takedowns() {
   const statValue = (n: number): number | null =>
     hasData ? n : (isLoading || isError ? null : 0);
   const takedowns = isProspect ? (prospectQuery.data?.takedowns ?? []) : (authorizedQuery.data?.takedowns ?? []);
+
+  const listed = openId ? takedowns.find((t) => t.id === openId) ?? null : null;
+  const selectedTakedown: Takedown | null = openId
+    ? (snapshot && snapshot.id === openId ? snapshot : listed)
+    : null;
+  useEffect(() => {
+    if (openId && listed && snapshot?.id !== openId) setSnapshot(listed);
+  }, [openId, listed, snapshot?.id]);
+  // An id the loaded list does not hold (stale link, other scope, beyond the
+  // page) is dropped with a REPLACE, never a pop: nothing was opened by the user.
+  const listSettled = hasData && !isLoading && !isPlaceholder;
+  const dropOpenId = takedownParam.drop;
+  useEffect(() => {
+    if (openId && !selectedTakedown && listSettled) dropOpenId();
+  }, [openId, selectedTakedown, listSettled, dropOpenId]);
+  // A Back / deep-link close discards the panel's notes draft with it.
+  // The notes draft itself is autosaved (TakedownNotes), so Back loses nothing.
+  useEffect(() => { if (!openId) { staffNotesDirtyRef.current = false; setSnapshot(null); } }, [openId]);
+  // Mutation callbacks outlive the render that created them: close via the latest.
+  const closeOpenRef = useRef(takedownParam.close);
+  closeOpenRef.current = takedownParam.close;
   const statusCounts = isProspect ? (prospectQuery.data?.statusCounts ?? []) : (authorizedQuery.data?.statusCounts ?? []);
   // Safety-cap indicator (F1) — only meaningful in Prospect mode, where the
   // fetch drains pages until either exhausted or this cap trips.
@@ -864,16 +977,16 @@ export function Takedowns() {
         if (updates.status) {
           const status = updates.status;
           if (staffNotesDirtyRef.current) {
-            setSelectedTakedown((prev) => (prev && prev.id === id ? { ...prev, status } : prev));
+            setSnapshot((prev) => (prev && prev.id === id ? { ...prev, status } : prev));
           } else {
-            setSelectedTakedown(null);
+            if (openIdRef.current === id) closeOpenRef.current();
           }
         }
         // Keep the open panel's snapshot in step with the saved staff note
         // (the list refetch doesn't replace selectedTakedown).
         else if (updates.staff_notes !== undefined) {
           const saved = updates.staff_notes;
-          setSelectedTakedown((prev) => (prev && prev.id === id ? { ...prev, staff_notes: saved } : prev));
+          setSnapshot((prev) => (prev && prev.id === id ? { ...prev, staff_notes: saved } : prev));
         }
       },
       // The server's refusal reason (e.g. "Waiting for the customer's approval
@@ -890,13 +1003,15 @@ export function Takedowns() {
   return (
     <div className="animate-fade-in space-y-6">
       {/* Page header */}
-      <PageHeader
-        title="Takedowns"
-        subtitle={isProspect
-          ? `${stats.total} orgless drafts across ${prospectStats.brands} brands`
-          : `${stats.total} total requests`}
-        meta={<span className="font-mono text-[10px] text-white/55 uppercase tracking-wider">Sparrow Queue</span>}
-      />
+      <div ref={listHeadingRef} tabIndex={-1} className="outline-none">
+        <PageHeader
+          title="Takedowns"
+          subtitle={isProspect
+            ? `${stats.total} orgless drafts across ${prospectStats.brands} brands`
+            : `${stats.total} total requests`}
+          meta={<span className="font-mono text-[10px] text-white/55 uppercase tracking-wider">Sparrow Queue</span>}
+        />
+      </div>
 
       {/* ─── SCOPE TOGGLE ────────────────────────────── */}
       <Tabs
@@ -1091,6 +1206,7 @@ export function Takedowns() {
       {/* ─── DETAIL PANEL ─────────────────────────────── */}
       <ReportPanel
         isOpen={!!selectedTakedown}
+        returnFocusFallback={() => listHeadingRef.current}
         onClose={closePanel}
         title={selectedTakedown?.target_value ?? 'Takedown Request'}
         subtitle={

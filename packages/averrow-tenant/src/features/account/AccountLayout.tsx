@@ -69,6 +69,10 @@ export function AccountLayout() {
   // ── unsaved-changes guard ──
   const dirtyRef = useRef(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  // "Discard changes" runs the held navigation while its confirm owns a history
+  // entry (dismissOnBack), so that navigation replaces the entry instead of stacking.
+  const confirming = useRef(false);
+  const goTo = useCallback((href: string) => navigate(href, { replace: confirming.current || undefined }), [navigate]);
   const reportDirty = useCallback<ReportDirty>((dirty) => { dirtyRef.current = dirty; }, []);
   const runGuarded = useCallback<RunGuarded>((go) => {
     if (dirtyRef.current) setPendingAction(() => go);
@@ -96,7 +100,7 @@ export function AccountLayout() {
       onClick={(e) => {
         if (dirtyRef.current && isPlainLeftClick(e) && !e.defaultPrevented) {
           e.preventDefault();
-          setPendingAction(() => () => navigate(p.href));
+          setPendingAction(() => () => goTo(p.href));
           return;
         }
         p.onClick?.(e);
@@ -104,7 +108,7 @@ export function AccountLayout() {
     >
       {p.children}
     </Link>
-  ), [navigate]);
+  ), [goTo]);
 
   const passkeys = user?.passkey_count;
   const sections = useMemo(() => getAccountSections({
@@ -154,7 +158,7 @@ export function AccountLayout() {
               </Button>
             )}
             renderLink={renderLink}
-            onNavigate={(href) => navigate(href)}
+            onNavigate={goTo}
           >
             <Outlet />
           </SettingsShell>
@@ -167,11 +171,13 @@ export function AccountLayout() {
           description="You have unsaved changes on this page."
           consequence="If you leave now, your edits won't be saved."
           confirmLabel="Discard changes"
+          dismissOnBack
           onConfirm={() => {
             const go = pendingAction;
             dirtyRef.current = false;
             setPendingAction(null);
-            go?.();
+            confirming.current = true;
+            try { go?.(); } finally { confirming.current = false; }
           }}
         />
       </SettingsDirtyContext.Provider>

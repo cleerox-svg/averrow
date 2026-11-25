@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
+import { MemoryRouter, RouterProvider, createMemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import { stubMatchMedia } from '@/test/shared-ui/helpers';
 
 const fetchMock = vi.fn();
@@ -1020,6 +1020,72 @@ describe('ObservatoryV3 footer label follows the stats query only', () => {
     expect(footer().textContent).toContain('777');
     expect(footer().getAttribute('aria-busy')).toBe('false');
     await act(async () => { release(); await gate; });
+  });
+});
+
+describe('ObservatoryV3 selection and the system Back gesture', () => {
+  function mountWithHistory(path: string) {
+    const router = createMemoryRouter(
+      [{ path: '/observatory', element: <ObservatoryV3 /> }, { path: '/prev', element: <div>PREV</div> }],
+      { initialEntries: ['/prev', path], initialIndex: 1 },
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>);
+    return router;
+  }
+  const back = (r: ReturnType<typeof createMemoryRouter>) => act(() => { void r.navigate(-1); });
+
+  it('open a node, close the drawer, then Back leaves the map (no dead press)', async () => {
+    route({ '/api/observatory/nodes': [node], '/api/observatory/stats': { ...okStats, threats_mapped: 3, threats_total: 3 } });
+    const router = mountWithHistory('/observatory');
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].threats).toHaveLength(1));
+    await userEvent.click(screen.getByRole('button', { name: 'pick-origin' }));
+    await screen.findByRole('dialog', { name: /Threat origin details/ });
+    expect(router.state.location.search).toContain('node=');
+    expect(router.state.historyAction).toBe('PUSH');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close details' }));
+    await waitFor(() => expect(router.state.location.search).not.toContain('node='));
+    expect(router.state.historyAction).toBe('POP');
+
+    back(router);
+    await screen.findByText('PREV');
+  });
+
+  it('system Back closes an open node drawer and stays on the map', async () => {
+    route({ '/api/observatory/nodes': [node], '/api/observatory/stats': { ...okStats, threats_mapped: 3, threats_total: 3 } });
+    const router = mountWithHistory('/observatory');
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].threats).toHaveLength(1));
+    await userEvent.click(screen.getByRole('button', { name: 'pick-origin' }));
+    await screen.findByRole('dialog', { name: /Threat origin details/ });
+    back(router);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Threat origin details/ })).toBeNull());
+    expect(router.state.location.pathname).toBe('/observatory');
+  });
+
+  it('announces "Selection cleared" when Back removes the selection', async () => {
+    route({ '/api/observatory/nodes': [node], '/api/observatory/stats': { ...okStats, threats_mapped: 3, threats_total: 3 } });
+    const router = mountWithHistory('/observatory');
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].threats).toHaveLength(1));
+    await userEvent.click(screen.getByRole('button', { name: 'pick-origin' }));
+    await screen.findByRole('dialog', { name: /Threat origin details/ });
+    back(router);
+    expect(await screen.findByText('Selection cleared')).toBeInTheDocument();
+    expect(screen.getByText('Selection cleared').closest('[aria-live="polite"]')).not.toBeNull();
+    // Focus is not left on <body>: the drawer hands it back (to the panel toggle, the opener's fallback).
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body));
+  });
+
+  it('a stale selection dropped by the page replaces and never pops', async () => {
+    route({ '/api/observatory/nodes': [node], '/api/observatory/stats': { ...okStats, threats_mapped: 3, threats_total: 3 } });
+    // A node key the loaded data does not hold: the dead-key effect drops it.
+    const router = mountWithHistory('/observatory?node=55.00%2C66.00');
+    await waitFor(() => expect(router.state.location.search).not.toContain('node='));
+    expect(router.state.historyAction).toBe('REPLACE');
+    expect(router.state.location.pathname).toBe('/observatory');
+    // Nothing was popped: the entry behind us is still /prev, one Back away.
+    back(router);
+    await screen.findByText('PREV');
   });
 });
 

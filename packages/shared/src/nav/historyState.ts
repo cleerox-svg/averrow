@@ -18,3 +18,15 @@ export function readHistoryIdx(): number | null {
     return null;
   }
 }
+
+/** `history.state.usr` as a record (empty when absent or not an object). */
+export function stateRecord(state: unknown): Record<string, unknown> {
+  return state && typeof state === 'object' ? (state as Record<string, unknown>) : {};
+}
+
+/** The state without `keys`, or undefined when nothing else is left. */
+export function withoutKeys(state: unknown, keys: readonly string[]): unknown {
+  const rest = { ...stateRecord(state) };
+  for (const k of keys) delete rest[k];
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}

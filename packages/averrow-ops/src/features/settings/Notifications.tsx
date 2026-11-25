@@ -278,7 +278,7 @@ function NotificationsInbox() {
         />
       )}
 
-      <Sheet open={isMobile && filtersOpen} onOpenChange={setFiltersOpen}>
+      <Sheet open={isMobile && filtersOpen} onOpenChange={setFiltersOpen} dismissOnBack>
         <SheetContent
           title="Filters"
           footer={

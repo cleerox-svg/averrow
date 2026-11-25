@@ -153,7 +153,7 @@ export function ObservatoryV3() {
   const canSeeTakedowns = useCanSeeTakedowns();
   // Bumps on every data-theme / data-accent / data-base change on <html>.
   const appearanceVersion = useAppearanceVersion();
-  const { state, update } = useObservatoryUrlState();
+  const { state, update, clearSelection } = useObservatoryUrlState();
   const { period, colorBy, layers, lens, view, wall } = state;
   // `measure=takedowns` needs manage_takedowns (the server refuses it to every other role): a viewer without it
   // sees the lens's default measure whatever the URL says, and no takedown request is ever made.
@@ -456,15 +456,17 @@ export function ObservatoryV3() {
     setShowMobilePanel(false);
   }, [update, layers, focusPoints, focusModels]);
 
-  const closeDrill = useCallback(() => { evFallback.current = null; update(drillToPatch(null)); }, [update]);
+  // A user close: pops the entry the pick pushed (one Back leaves the map), else replaces.
+  const closeDrill = useCallback(() => { evFallback.current = null; clearSelection(); }, [clearSelection]);
 
   // A click on the map selects without moving the camera.
   const handleMapSelect = useCallback((s: MapSelection | null) => {
     if (wall) return; // picking on a wall screen selects nothing (no drill, no URL write)
     openerKind.current = null;
     evFallback.current = null;
-    update(drillToPatch(s ? (s.kind === 'node' ? { kind: 'node', node: s.node } : { kind: 'arc', arc: s.arc }) : null));
-  }, [update, wall]);
+    if (!s) { clearSelection(); return; }
+    update(drillToPatch(s.kind === 'node' ? { kind: 'node', node: s.node } : { kind: 'arc', arc: s.arc }));
+  }, [update, clearSelection, wall]);
   const handleLensPick = useCallback((pick: LensPick) => {
     if (wall) return;
     openerKind.current = null;
@@ -656,6 +658,12 @@ export function ObservatoryV3() {
     }
   }, [liveQ.data, needs.live]);
   useEffect(() => () => { if (announceTimer.current) clearTimeout(announceTimer.current); }, []);
+  // A selection removed by Back, a close or a drop is announced (focus is restored by the drawer on unmount).
+  const hadDrill = useRef(false);
+  useEffect(() => {
+    if (hadDrill.current && !drill) setAnnouncement('Selection cleared');
+    hadDrill.current = !!drill;
+  }, [drill]);
 
   // ─── Intel feed: what a click on an event does ──
   // Fly to its place, apply its target (lens + `sel`, which opens the drill drawer or sheet), and — from the rail — ping the
@@ -694,8 +702,8 @@ export function ObservatoryV3() {
     setPanelTab('events');
     setPanelPref(true);
     setShowMobilePanel(true);
-    if (drill) update(drillToPatch(null));
-  }, [drill, update]);
+    if (drill) clearSelection();
+  }, [drill, clearSelection]);
 
   // ─── Lens props for the map ──
   const lensMapProps = useMemo<LensMapProps>(() => ({
@@ -791,10 +799,10 @@ export function ObservatoryV3() {
   const drillTrend = useDrillTrend(drill, { period, source, filters, enabled: !!drill });
 
   const onPickActor = useCallback((id: string | null) => {
-    if (!id) { update(drillToPatch(null)); return; }
+    if (!id) { clearSelection(); return; }
     actorFocused.current = null;
     update(selPatch('actor', id));
-  }, [update]);
+  }, [update, clearSelection]);
 
   // ─── Layout geometry ──
   const timelineBottom = layout.bottomBand + 8;

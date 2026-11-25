@@ -313,6 +313,15 @@ describe('NotificationBell row navigation', () => {
     expect(mocks.navigate).toHaveBeenCalledWith(expected);
   });
 
+  it('in the phone sheet (which owns a history entry) the navigation replaces it', async () => {
+    mocks.isMobile = true;
+    setFeed([note({ id: 'a', link: '/threats/9', title: 'Go there' })]);
+    renderBell();
+    await openBell();
+    await userEvent.click(screen.getByRole('button', { name: /Go there/ }));
+    expect(mocks.navigate).toHaveBeenCalledWith('/threats/9', { replace: true });
+  });
+
   it('does not navigate for a row without a link', async () => {
     setFeed([note({ id: 'a', link: null, title: 'Go there' })]);
     renderBell();

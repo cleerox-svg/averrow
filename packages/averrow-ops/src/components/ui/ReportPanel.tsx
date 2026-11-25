@@ -3,7 +3,7 @@
 // Replaces raw markdown blobs across: AI Assessment, Intel briefings, Takedown detail.
 // Parses markdown-style headings, bold text, bullet points, and callout sections.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useId, useRef } from 'react';
 import { X } from 'lucide-react';
 
 export interface ReportPanelProps {
@@ -16,6 +16,8 @@ export interface ReportPanelProps {
   meta?:     React.ReactNode; // optional metadata row (date, source, etc.)
   actions?:  React.ReactNode; // optional action buttons in header
   footer?:   React.ReactNode; // optional interactive block rendered after the content
+  /** Where focus goes on close when the element that opened the panel is gone. */
+  returnFocusFallback?: () => HTMLElement | null;
 }
 
 // ── Markdown-to-styled-sections parser ────────────────────────────
@@ -239,8 +241,43 @@ export function ReportPanel({
   meta,
   actions,
   footer,
+  returnFocusFallback,
 }: ReportPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const opener = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
+  const fallbackRef = useRef(returnFocusFallback);
+  fallbackRef.current = returnFocusFallback;
+
+  // Focus: into the panel on open, back to whatever opened it on EVERY close path
+  // (X, scrim, Escape, a status change, the system Back), else the fallback.
+  useEffect(() => {
+    if (isOpen && !wasOpen.current) {
+      const active = document.activeElement;
+      opener.current = active instanceof HTMLElement && active !== document.body ? active : null;
+      closeRef.current?.focus();
+    } else if (!isOpen && wasOpen.current) {
+      const back = opener.current && opener.current.isConnected ? opener.current : fallbackRef.current?.() ?? null;
+      back?.focus();
+      opener.current = null;
+    }
+    wasOpen.current = isOpen;
+  }, [isOpen]);
+
+  // aria-modal: keep Tab inside the panel while it is open.
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!isOpen || e.key !== 'Tab') return;
+    const els = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
+    if (els.length === 0) return;
+    const first = els[0]!;
+    const last = els[els.length - 1]!;
+    const active = document.activeElement;
+    if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+  };
 
   // Reset scroll position when panel opens
   useEffect(() => {
@@ -281,6 +318,13 @@ export function ReportPanel({
 
       {/* Panel */}
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal={isOpen ? 'true' : undefined}
+        aria-labelledby={titleId}
+        aria-hidden={isOpen ? undefined : true}
+        {...(isOpen ? {} : ({ inert: '' } as Record<string, string>))}
+        onKeyDown={onKeyDown}
         style={{
           position:       'fixed',
           top:            0,
@@ -312,6 +356,7 @@ export function ReportPanel({
               {badge}
             </div>
             <button
+              ref={closeRef}
               onClick={onClose}
               aria-label="Close report"
               style={{
@@ -329,7 +374,7 @@ export function ReportPanel({
           </div>
 
           {/* Title */}
-          <h2 style={{
+          <h2 id={titleId} style={{
             fontSize: 18, fontWeight: 900,
             color: 'var(--text-primary)',
             letterSpacing: -0.3, margin: '0 0 4px',

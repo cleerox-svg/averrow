@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { OverlayEntry, OverlayNavLink, useHistoryDismiss } from '@averrow/shared/nav';
 import {
   LayoutDashboard, SquareTerminal, Mail, Inbox,
   Globe, Users, Cpu, Rss, ClipboardList, Bell, Target,
@@ -277,6 +278,11 @@ export function ShellV4() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const closeDrawer = () => setDrawerOpen(false);
+  // System Back closes the open drawer or the command palette (both modal): ONE
+  // same-URL entry while either is open, so opening the palette from the drawer
+  // never races a pop against a push.
+  const layerOpen = drawerOpen || paletteOpen;
+  useHistoryDismiss(layerOpen, () => { setDrawerOpen(false); setPaletteOpen(false); });
   const nav = buildV4Nav({
     isSuperAdmin,
     role: user?.role,
@@ -377,6 +383,7 @@ export function ShellV4() {
   }
 
   return (
+    <OverlayEntry active={layerOpen}>
     <div className={'shell-v4' + (drawerOpen ? ' drawer-open' : '')}>
       <aside
         id="v4-drawer"
@@ -418,7 +425,7 @@ export function ShellV4() {
               {group.items.map(item => {
                 const Icon = item.icon;
                 return (
-                  <NavLink key={item.to + item.label} to={item.to} end={item.end} className={navClass} onClick={closeDrawer}>
+                  <OverlayNavLink key={item.to + item.label} to={item.to} end={item.end} className={navClass} onClick={closeDrawer}>
                     <Icon strokeWidth={2} /> {item.label}
                     {item.count != null && item.count > 0 && (
                       <>
@@ -428,7 +435,7 @@ export function ShellV4() {
                         <span className="sr-only">{item.count} alerts awaiting triage</span>
                       </>
                     )}
-                  </NavLink>
+                  </OverlayNavLink>
                 );
               })}
             </div>
@@ -494,5 +501,6 @@ export function ShellV4() {
           passkey. Self-gates on user.passkey_required. */}
       <PasskeyEnrollmentGate />
     </div>
+    </OverlayEntry>
   );
 }
