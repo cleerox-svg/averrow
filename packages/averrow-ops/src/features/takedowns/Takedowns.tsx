@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { usePushedParam } from '@averrow/shared/nav';
+import { Link } from 'react-router-dom';
+import { usePushedParam, useSetSearchParamsKeepState } from '@averrow/shared/nav';
 import { useAdminTakedowns, useAdminTakedownsAll, useUpdateTakedown } from '@/hooks/useTakedowns';
 import type { Takedown, TakedownScope } from '@/hooks/useTakedowns';
 import { useToast } from '@/components/ui/Toast';
@@ -563,6 +563,20 @@ const TAKEDOWN_INTERNAL_NOTES_LABEL = 'Internal notes — not visible to custome
 const TAKEDOWN_CUSTOMER_NOTE_LABEL = "Customer's note";
 const DISCARD_STAFF_NOTES_PROMPT = 'Discard unsaved internal notes?';
 
+// The internal-notes draft is autosaved per takedown (session only), so a system
+// Back, a reload or a crash never silently loses it. Cleared on save / discard.
+const notesDraftKey = (id: string) => `takedown-notes-draft:${id}`;
+function readNotesDraft(id: string): string | null {
+  try { return window.sessionStorage.getItem(notesDraftKey(id)); } catch { return null; }
+}
+function writeNotesDraft(id: string, value: string): void {
+  try { window.sessionStorage.setItem(notesDraftKey(id), value); } catch { /* storage unavailable */ }
+}
+function clearNotesDraft(id: string): void {
+  try { window.sessionStorage.removeItem(notesDraftKey(id)); } catch { /* storage unavailable */ }
+}
+const NOTES_DRAFT_DEBOUNCE_MS = 300;
+
 function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
   takedown: Takedown;
   onSave: (id: string, staffNotes: string | null) => void;
@@ -572,7 +586,11 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const saved = takedown.staff_notes ?? '';
-  const [draft, setDraft] = useState(saved);
+  const [draft, setDraft] = useState(() => readNotesDraft(takedown.id) ?? saved);
+  const [restored, setRestored] = useState(() => {
+    const d = readNotesDraft(takedown.id);
+    return d !== null && d.trim() !== saved.trim();
+  });
   const fieldId = `takedown-staff-notes-${takedown.id}`;
   // Whitespace-only edits are not a change; a whitespace-only save clears.
   const dirty = draft.trim() !== saved.trim();
@@ -580,8 +598,30 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
+  // Autosave while dirty (debounced); flush on unmount so a Back right after typing keeps it.
+  const latest = useRef({ draft, dirty });
+  latest.current = { draft, dirty };
+  const skipFlush = useRef(false);
+  useEffect(() => {
+    if (!dirty) { clearNotesDraft(takedown.id); return; }
+    const t = setTimeout(() => { if (!skipFlush.current) writeNotesDraft(takedown.id, draft); }, NOTES_DRAFT_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [draft, dirty, takedown.id]);
+  useEffect(() => () => {
+    if (latest.current.dirty && !skipFlush.current) writeNotesDraft(takedown.id, latest.current.draft);
+  }, [takedown.id]);
+
+  const handleDiscardRestored = () => {
+    setDraft(saved);
+    setRestored(false);
+    clearNotesDraft(takedown.id);
+  };
+
   const handleSave = () => {
     const trimmed = draft.trim();
+    skipFlush.current = true;
+    clearNotesDraft(takedown.id);
+    setRestored(false);
     setDraft(trimmed);
     onSave(takedown.id, trimmed ? trimmed : null);
   };
@@ -618,13 +658,30 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
         <textarea
           id={fieldId}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => { skipFlush.current = false; setDraft(e.target.value); }}
           placeholder="Add internal notes..."
           rows={3}
           maxLength={4000}
           className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[color-mix(in_srgb,var(--primary)_25%,transparent)] resize-none font-mono"
           style={{ color: 'var(--text-primary)' }}
         />
+        {restored && dirty && (
+          <div
+            className="flex items-center gap-2 font-mono text-[11px]"
+            style={{ marginTop: 6, color: 'var(--text-secondary)' }}
+          >
+            <span>Restored unsaved draft</span>
+            <span aria-hidden="true">·</span>
+            <button
+              type="button"
+              onClick={handleDiscardRestored}
+              className="cursor-pointer border-0 bg-transparent p-0 underline"
+              style={{ color: 'var(--primary-text)' }}
+            >
+              Discard
+            </button>
+          </div>
+        )}
         {dirty && (
           <div style={{ marginTop: 6 }}>
             <Button
@@ -693,7 +750,7 @@ function TakedownActions({ takedown, onUpdate, isUpdating }: {
 // ─── Main page ─────────────────────────────────────────────────
 
 export function Takedowns() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSetSearchParamsKeepState();
 
   // Scope + brand deep-link params read live off the URL (single source of
   // truth — no mirrored local state to drift out of sync). `scope` defaults
@@ -714,21 +771,27 @@ export function Takedowns() {
   // gesture closes the drawer. Opening from the list pushes (marked in history
   // state), switching takedowns replaces, a close pops the entry this page
   // pushed and otherwise replaces the param away; a cold deep link opens it.
-  const location = useLocation();
   const takedownParam = usePushedParam('takedown', 'takedownPushed');
   const openId = takedownParam.value;
+  const openIdRef = useRef(openId);
+  openIdRef.current = openId;
   // Local snapshot of the open row: it carries the optimistic status / note
   // patches below (the list refetch doesn't replace it). A deep link adopts the
   // listed row once the list loads.
   const [snapshot, setSnapshot] = useState<Takedown | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  // Where focus lands when the drawer closes and the row that opened it is gone.
+  const listHeadingRef = useRef<HTMLDivElement | null>(null);
   // True while the open panel holds an unsaved internal-notes draft.
   const staffNotesDirtyRef = useRef(false);
   const handleStaffNotesDirty = useCallback((dirty: boolean) => { staffNotesDirtyRef.current = dirty; }, []);
   /** Switch/close the detail panel unless that would discard an unsaved
    *  staff-notes draft the user chooses to keep. */
   const selectTakedown = useCallback((next: Takedown | null) => {
-    if (staffNotesDirtyRef.current && !window.confirm(DISCARD_STAFF_NOTES_PROMPT)) return;
+    if (staffNotesDirtyRef.current) {
+      if (!window.confirm(DISCARD_STAFF_NOTES_PROMPT)) return;
+      if (openIdRef.current) clearNotesDraft(openIdRef.current); // an explicit discard
+    }
     staffNotesDirtyRef.current = false;
     if (next) {
       setSnapshot(next);
@@ -762,8 +825,8 @@ export function Takedowns() {
       const params = new URLSearchParams(prev);
       params.delete('brand');
       return params;
-    }, { replace: true, state: location.state });  // filter removal: REPLACE (keeps an open drawer's history mark)
-  }, [setSearchParams, location.state]);
+    }, { replace: true });  // filter removal: REPLACE (keeps an open drawer's history mark)
+  }, [setSearchParams]);
 
   // Authorized mode keeps the full filter/sort/search workflow, paginated
   // server-side at 100/page — the existing SOC queue behavior, unchanged.
@@ -826,7 +889,8 @@ export function Takedowns() {
     if (openId && !selectedTakedown && listSettled) dropOpenId();
   }, [openId, selectedTakedown, listSettled, dropOpenId]);
   // A Back / deep-link close discards the panel's notes draft with it.
-  useEffect(() => { if (!openId) staffNotesDirtyRef.current = false; }, [openId]);
+  // The notes draft itself is autosaved (TakedownNotes), so Back loses nothing.
+  useEffect(() => { if (!openId) { staffNotesDirtyRef.current = false; setSnapshot(null); } }, [openId]);
   // Mutation callbacks outlive the render that created them: close via the latest.
   const closeOpenRef = useRef(takedownParam.close);
   closeOpenRef.current = takedownParam.close;
@@ -902,7 +966,7 @@ export function Takedowns() {
           if (staffNotesDirtyRef.current) {
             setSnapshot((prev) => (prev && prev.id === id ? { ...prev, status } : prev));
           } else {
-            closeOpenRef.current();
+            if (openIdRef.current === id) closeOpenRef.current();
           }
         }
         // Keep the open panel's snapshot in step with the saved staff note
@@ -926,13 +990,15 @@ export function Takedowns() {
   return (
     <div className="animate-fade-in space-y-6">
       {/* Page header */}
-      <PageHeader
-        title="Takedowns"
-        subtitle={isProspect
-          ? `${stats.total} orgless drafts across ${prospectStats.brands} brands`
-          : `${stats.total} total requests`}
-        meta={<span className="font-mono text-[10px] text-white/55 uppercase tracking-wider">Sparrow Queue</span>}
-      />
+      <div ref={listHeadingRef} tabIndex={-1} className="outline-none">
+        <PageHeader
+          title="Takedowns"
+          subtitle={isProspect
+            ? `${stats.total} orgless drafts across ${prospectStats.brands} brands`
+            : `${stats.total} total requests`}
+          meta={<span className="font-mono text-[10px] text-white/55 uppercase tracking-wider">Sparrow Queue</span>}
+        />
+      </div>
 
       {/* ─── SCOPE TOGGLE ────────────────────────────── */}
       <Tabs
@@ -1127,6 +1193,7 @@ export function Takedowns() {
       {/* ─── DETAIL PANEL ─────────────────────────────── */}
       <ReportPanel
         isOpen={!!selectedTakedown}
+        returnFocusFallback={() => listHeadingRef.current}
         onClose={closePanel}
         title={selectedTakedown?.target_value ?? 'Takedown Request'}
         subtitle={

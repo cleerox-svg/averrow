@@ -176,6 +176,7 @@ function BrandOverrides({
       </SettingsGroup>
 
       <ConfirmDialog
+        dismissOnBack
         open={removing !== null}
         onOpenChange={(open) => { if (!open) setRemoving(null); }}
         title="Stop following this brand?"

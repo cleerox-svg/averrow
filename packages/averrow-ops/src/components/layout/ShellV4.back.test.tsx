@@ -44,6 +44,7 @@ const shellRoot = (c: HTMLElement) => c.querySelector('.shell-v4') as HTMLElemen
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Element.prototype.scrollIntoView = vi.fn();
   mocks.useAuth.mockReturnValue({
     user: { id: 'u1', email: 's@averrow.com', role: 'admin', display_name: 'Staff', passkey_count: 1 },
     isSuperAdmin: false,
@@ -91,5 +92,27 @@ describe('ShellV4 drawer and the system Back gesture', () => {
     await screen.findByText('console page');
     act(() => { void nav(-1); });
     await waitFor(() => expect(where).toBe('/'));
+  });
+
+  it('Back closes the command palette (a modal layer) and stays on the page', async () => {
+    renderShell();
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true })); });
+    await waitFor(() => expect(document.querySelector('.cmdk-overlay')).not.toBeNull());
+    act(() => { void nav(-1); });
+    await waitFor(() => expect(document.querySelector('.cmdk-overlay')).toBeNull());
+    expect(where).toBe('/');
+  });
+
+  it('opening the palette from the open drawer keeps one entry: one Back closes both', async () => {
+    const { container } = renderShell();
+    fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true })); });
+    await waitFor(() => expect(document.querySelector('.cmdk-overlay')).not.toBeNull());
+    expect(shellRoot(container)).not.toHaveClass('drawer-open');
+    act(() => { void nav(-1); });
+    await waitFor(() => expect(document.querySelector('.cmdk-overlay')).toBeNull());
+    expect(where).toBe('/');
+    act(() => { void nav(-1); });
+    await screen.findByText('PREV'); // exactly one entry was added
   });
 });

@@ -2,6 +2,7 @@
 // a deep link opens it, switching replaces, and filters / scope keep working.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -95,6 +96,27 @@ describe('Takedowns drawer in the URL', () => {
     expect(router.state.location.search).toBe('');
   });
 
+  it('a double click on View Detail pushes once: one Back closes the drawer', async () => {
+    const router = mount(['/prev', '/takedowns']);
+    const btn = screen.getAllByText('View Detail')[0]!;
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    back(router);
+    await waitFor(() => expect(drawerOpen()).toBe(false));
+    expect(router.state.location.pathname).toBe('/takedowns');
+  });
+
+  it('clearing the brand filter while the drawer is open keeps the drawer\'s history mark (pop still works)', async () => {
+    const router = mount(['/prev', '/takedowns?brand=brand_test']);
+    viewDetail(0);
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Close report' }));
+    await waitFor(() => expect(drawerOpen()).toBe(false));
+    expect(router.state.historyAction).toBe('POP');
+    expect(router.state.location.search).toBe('?brand=brand_test');
+  });
+
   it('an id that is not in the list is dropped with a replace (no pop, no stuck param)', async () => {
     const router = mount(['/prev', '/takedowns?takedown=td-gone']);
     await waitFor(() => expect(router.state.location.search).toBe(''));
@@ -111,5 +133,76 @@ describe('Takedowns drawer in the URL', () => {
     back(router);
     await waitFor(() => expect(drawerOpen()).toBe(false));
     expect(router.state.location.search).toBe('?brand=brand_test');
+  });
+});
+
+const NOTES = { name: /internal notes/i };
+
+describe('the notes draft survives the system Back', () => {
+  it('type a note, press Back, reopen: the draft is restored, with a Discard row', async () => {
+    const router = mount(['/prev', '/takedowns']);
+    viewDetail(0);
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    await userEvent.type(screen.getByRole('textbox', NOTES), 'half written');
+    back(router); // immediately: the unmount flush must keep it
+    await waitFor(() => expect(drawerOpen()).toBe(false));
+    expect(window.sessionStorage.getItem('takedown-notes-draft:td-001')).toBe('half written');
+
+    viewDetail(0);
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    expect(screen.getByRole('textbox', NOTES)).toHaveValue('half written');
+    expect(screen.getByText('Restored unsaved draft')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.getByRole('textbox', NOTES)).toHaveValue('');
+    expect(screen.queryByText('Restored unsaved draft')).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem('takedown-notes-draft:td-001')).toBeNull();
+  });
+
+  it('autosaves while typing (debounced) without closing', async () => {
+    mount(['/prev', '/takedowns']);
+    viewDetail(0);
+    await userEvent.type(screen.getByRole('textbox', NOTES), 'abc');
+    await waitFor(() => expect(window.sessionStorage.getItem('takedown-notes-draft:td-001')).toBe('abc'));
+  });
+
+  it('an untouched note leaves no draft behind', async () => {
+    const router = mount(['/prev', '/takedowns']);
+    viewDetail(0);
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    back(router);
+    await waitFor(() => expect(drawerOpen()).toBe(false));
+    expect(window.sessionStorage.getItem('takedown-notes-draft:td-001')).toBeNull();
+  });
+});
+
+describe('ReportPanel focus and semantics', () => {
+  it('is a labelled modal dialog while open and inert while closed', async () => {
+    mount(['/prev', '/takedowns']);
+    expect(screen.queryByRole('dialog')).toBeNull(); // closed: hidden from the a11y tree
+    viewDetail(0);
+    const dlg = await screen.findByRole('dialog', { name: 'phishing.test.com' });
+    expect(dlg).toHaveAttribute('aria-modal', 'true');
+  });
+
+  it('focuses Close on open and returns focus to the opener on a Back close', async () => {
+    const router = mount(['/prev', '/takedowns']);
+    const opener = screen.getAllByText('View Detail')[0]!;
+    opener.focus();
+    fireEvent.click(opener);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close report' })).toHaveFocus());
+    back(router);
+    await waitFor(() => expect(drawerOpen()).toBe(false));
+    expect(opener).toHaveFocus();
+  });
+
+  it('falls back to the list heading when the opener is gone', async () => {
+    const router = mount(['/prev', '/takedowns?takedown=td-001']); // deep link: no opener
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Close report' }));
+    await waitFor(() => expect(drawerOpen()).toBe(false));
+    expect(router.state.location.search).toBe('');
+    const heading = screen.getByText('Takedowns').closest('[tabindex="-1"]');
+    expect(heading).toHaveFocus();
   });
 });

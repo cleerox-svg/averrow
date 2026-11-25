@@ -487,6 +487,7 @@ export function SecuritySettings({
 
       {/* Dialogs */}
       <ConfirmDialog
+        dismissOnBack
         open={removeOpen}
         onOpenChange={setRemoveOpen}
         title="Remove this passkey?"
@@ -501,6 +502,7 @@ export function SecuritySettings({
         icon={<KeyIcon />}
       />
       <ConfirmDialog
+        dismissOnBack
         open={othersOpen}
         onOpenChange={setOthersOpen}
         tone="primary"
@@ -511,6 +513,7 @@ export function SecuritySettings({
         onConfirm={confirmSignOutOthers}
       />
       <ConfirmDialog
+        dismissOnBack
         open={everywhereOpen}
         onOpenChange={setEverywhereOpen}
         title="Sign out of all devices?"

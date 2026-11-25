@@ -336,6 +336,7 @@ function StaffTab() {
       )}
 
       <ConfirmDialog
+        dismissOnBack
         open={pending !== null}
         onOpenChange={(open) => { if (!open) setPending(null); }}
         {...confirmCopy(pending)}
@@ -504,6 +505,7 @@ function InvitesTab() {
       {list}
 
       <ConfirmDialog
+        dismissOnBack
         open={toRevoke !== null}
         onOpenChange={(open) => { if (!open) setToRevoke(null); }}
         title={`Revoke the invite for ${toRevoke?.email ?? ''}?`}

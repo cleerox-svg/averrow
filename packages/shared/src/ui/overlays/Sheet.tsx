@@ -5,6 +5,7 @@ import { Card } from '../Card';
 import { OverlayStyles } from './overlay-styles';
 import { OverlayHeader, type OverlayHeaderProps } from './parts';
 import { HistoryDismiss } from '../../nav/historyDismiss';
+import { OverlayEntry } from '../../nav/overlayEntry';
 
 // Mobile bottom sheet (ACCOUNT_DESIGN_SPEC §4.13). Radix Dialog supplies the
 // focus trap, Esc / scrim dismissal, scroll lock and aria wiring; we add the
@@ -49,7 +50,7 @@ export function Sheet({ open, defaultOpen = false, onOpenChange, children, dismi
       <DialogPrimitive.Root open={isOpen} onOpenChange={set}>
         <OverlayStyles />
         {dismissOnBack ? <HistoryDismiss open={isOpen} onClose={() => set(false)} /> : null}
-        {children}
+        <OverlayEntry active={dismissOnBack}>{children}</OverlayEntry>
       </DialogPrimitive.Root>
     </SheetContext.Provider>
   );

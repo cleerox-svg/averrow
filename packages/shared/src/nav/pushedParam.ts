@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useMemo, useRef } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { stateRecord, withoutKeys } from './historyState';
+import { usePopOnce } from './popOnce';
 
 export interface PushedParam {
   /** Current value of the param, or null. */
@@ -22,12 +24,16 @@ export interface PushedParam {
  */
 export function usePushedParam(param: string, marker: string): PushedParam {
   const [params, setParams] = useSearchParams();
-  const navigate = useNavigate();
   const location = useLocation();
-  const value = params.get(param);
+  const popOnce = usePopOnce();
+  // Live values: a second click in the same tick sees the first one's write.
+  const valueRef = useRef<string | null>(params.get(param));
+  valueRef.current = params.get(param);
+  const stateRef = useRef<unknown>(location.state);
+  stateRef.current = location.state;
   const pushed = (location.state as Record<string, unknown> | null)?.[marker] === true;
-  const popping = useRef(false);
-  useEffect(() => { popping.current = false; }, [location.key]);
+  const pushedRef = useRef(pushed);
+  pushedRef.current = pushed;
 
   const write = useCallback((id: string | null, replace: boolean, state: unknown) => {
     setParams((prev) => {
@@ -38,30 +44,27 @@ export function usePushedParam(param: string, marker: string): PushedParam {
   }, [setParams, param]);
 
   const open = useCallback((id: string) => {
-    if (value === null) write(id, false, { ...stateRecord(location.state), [marker]: true });
-    else write(id, true, location.state);
-  }, [value, write, marker, location.state]);
+    if (valueRef.current === null) {
+      write(id, false, { ...stateRecord(stateRef.current), [marker]: true });
+      stateRef.current = { ...stateRecord(stateRef.current), [marker]: true };
+      pushedRef.current = true;
+    } else {
+      write(id, true, stateRef.current);
+    }
+    valueRef.current = id;
+  }, [write, marker]);
 
-  const drop = useCallback(() => write(null, true, withoutMarker(location.state, marker)), [write, location.state, marker]);
+  const drop = useCallback(() => {
+    write(null, true, withoutKeys(stateRef.current, [marker]));
+    valueRef.current = null;
+  }, [write, marker]);
 
   const close = useCallback(() => {
-    if (value === null) return;
-    if (pushed) {
-      if (popping.current) return;
-      popping.current = true;
-      navigate(-1);
-      return;
-    }
+    if (valueRef.current === null) return;
+    if (pushedRef.current) { popOnce(); return; }
     drop();
-  }, [value, pushed, navigate, drop]);
+  }, [popOnce, drop]);
 
-  return { value, open, close, drop };
-}
-
-function stateRecord(state: unknown): Record<string, unknown> {
-  return state && typeof state === 'object' ? (state as Record<string, unknown>) : {};
-}
-function withoutMarker(state: unknown, marker: string): unknown {
-  const { [marker]: _gone, ...rest } = stateRecord(state);
-  return Object.keys(rest).length > 0 ? rest : undefined;
+  const value = params.get(param);
+  return useMemo(() => ({ value, open, close, drop }), [value, open, close, drop]);
 }

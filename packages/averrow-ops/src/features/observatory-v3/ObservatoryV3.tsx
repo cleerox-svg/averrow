@@ -658,6 +658,12 @@ export function ObservatoryV3() {
     }
   }, [liveQ.data, needs.live]);
   useEffect(() => () => { if (announceTimer.current) clearTimeout(announceTimer.current); }, []);
+  // A selection removed by Back, a close or a drop is announced (focus is restored by the drawer on unmount).
+  const hadDrill = useRef(false);
+  useEffect(() => {
+    if (hadDrill.current && !drill) setAnnouncement('Selection cleared');
+    hadDrill.current = !!drill;
+  }, [drill]);
 
   // ─── Intel feed: what a click on an event does ──
   // Fly to its place, apply its target (lens + `sel`, which opens the drill drawer or sheet), and — from the rail — ping the

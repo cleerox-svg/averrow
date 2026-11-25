@@ -11,6 +11,7 @@ import { Spinner } from '../Spinner';
 import { Sheet, SheetContent } from './Sheet';
 import { useIsCompact } from './useMediaQuery';
 import { HistoryDismiss } from '../../nav/historyDismiss';
+import { OverlayEntry } from '../../nav/overlayEntry';
 
 export type OverlayPresentation = 'auto' | 'dialog' | 'sheet';
 
@@ -50,7 +51,7 @@ export function Dialog({
 
   if (asSheet) {
     return (
-      <>
+      <OverlayEntry active={dismissOnBack}>
         {dismiss}
         <Sheet open={open} onOpenChange={onOpenChange}>
           <SheetContent
@@ -66,12 +67,12 @@ export function Dialog({
             {children}
           </SheetContent>
         </Sheet>
-      </>
+      </OverlayEntry>
     );
   }
 
   return (
-    <>
+    <OverlayEntry active={dismissOnBack}>
       {dismiss}
       <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
         <OverlayStyles />
@@ -112,7 +113,7 @@ export function Dialog({
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
-    </>
+    </OverlayEntry>
   );
 }
 

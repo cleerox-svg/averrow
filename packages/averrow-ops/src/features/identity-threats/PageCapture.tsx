@@ -111,6 +111,7 @@ function Viewer({ capture, open, onOpenChange }: { capture: PageCapture; open: b
   ];
   return (
     <Dialog
+      dismissOnBack
       open={open}
       onOpenChange={onOpenChange}
       title={decoy ? 'Page capture — decoy page' : 'Page capture'}

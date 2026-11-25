@@ -343,6 +343,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
       </SettingsGroup>
 
       <ConfirmDialog
+        dismissOnBack
         open={removing !== null}
         onOpenChange={(o) => { if (!o) setRemoving(null); }}
         title="Stop sending notifications to this device?"
@@ -356,6 +357,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
 
       {onClearCache && (
         <ConfirmDialog
+          dismissOnBack
           open={clearOpen}
           onOpenChange={setClearOpen}
           tone="primary"
@@ -368,6 +370,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
       )}
 
       <Dialog
+        dismissOnBack
         open={installSheet === 'ios'}
         onOpenChange={(o) => { if (!o) setInstallSheet(null); }}
         title={`Add ${product} to your Home Screen`}
@@ -379,6 +382,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
       </Dialog>
 
       <Dialog
+        dismissOnBack
         open={installSheet === 'manual'}
         onOpenChange={(o) => { if (!o) setInstallSheet(null); }}
         title={`Install ${product}`}

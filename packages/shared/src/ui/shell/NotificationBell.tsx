@@ -59,6 +59,8 @@ export interface ShellLinkRenderProps {
   children: ReactNode;
   'aria-label'?: string;
   title?: string;
+  /** True in the phone sheet, which owns a history entry: a router link must `replace` so Back never lands on a dead entry. */
+  replace?: boolean;
   /** Must be forwarded: it closes the panel. */
   onClick?: (e: MouseEvent<HTMLElement>) => void;
   'data-testid'?: string;
@@ -91,6 +93,12 @@ export interface NotificationBellFooterLink {
 export interface NotificationBellPanelContext {
   /** Close the popover / sheet (and reset the filter). */
   close: () => void;
+  /**
+   * True in the phone sheet (it owns a history entry that Back removes): navigate with
+   * `{ replace: true }` when the tap leaves the panel, so Back returns to the page the
+   * panel was opened on instead of a dead entry.
+   */
+  replace: boolean;
 }
 
 export interface NotificationBellProps<T extends ShellNotification> {
@@ -205,6 +213,7 @@ function NotificationPanel<T extends ShellNotification>({
               href: settingsHref,
               className: ICON_LINK,
               onClick: onClose,
+              replace: true,
               'aria-label': settingsLabel,
               title: settingsLabel,
               children: settingsIcon ?? <ShellSettingsIcon aria-hidden="true" className="h-[18px] w-[18px]" />,
@@ -233,7 +242,7 @@ function NotificationPanel<T extends ShellNotification>({
         </div>
       </div>
 
-      {renderBanner?.({ close: onClose })}
+      {renderBanner?.({ close: onClose, replace: isSheet })}
 
       {/* Body */}
       <div className="flex-1">
@@ -274,7 +283,7 @@ function NotificationPanel<T extends ShellNotification>({
                     notification={n}
                     actions={actions}
                     data-testid={rowTestId}
-                    onActivate={() => onActivate(n, { close: onClose })}
+                    onActivate={() => onActivate(n, { close: onClose, replace: isSheet })}
                     snoozeOptions={snoozeOptions}
                     onSnooze={onSnooze ? (hours) => onSnooze(n, hours) : undefined}
                     onDone={onDone ? () => onDone(n) : undefined}
@@ -299,6 +308,7 @@ function NotificationPanel<T extends ShellNotification>({
                 {renderLink({
                   href: link.href,
                   onClick: onClose,
+                  replace: isSheet,
                   'data-testid': link['data-testid'],
                   className: `${TEXT_LINK} ${primary
                     ? 'text-[var(--primary-text)]'
@@ -432,7 +442,7 @@ export function NotificationBell<T extends ShellNotification>(props: Notificatio
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{announcement}</div>
 
       {isMobile ? (
-        <Sheet open={open} onOpenChange={(next) => { if (next) changeOpen(true); else handleClose(); }}>
+        <Sheet open={open} dismissOnBack onOpenChange={(next) => { if (next) changeOpen(true); else handleClose(); }}>
           <SheetContent title="Notifications" labelledBy={PANEL_TITLE_ID} hideHandle fullHeight bodyClassName="p-0">
             <NotificationPanel {...props} onClose={handleClose} filter={filter} setFilter={setFilter} variant="sheet" />
           </SheetContent>

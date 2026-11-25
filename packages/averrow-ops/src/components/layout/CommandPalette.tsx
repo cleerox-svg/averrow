@@ -16,7 +16,7 @@
 // role-gating the sidebar applies — nothing here re-derives permissions.
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useOverlayNavigate } from '@averrow/shared/nav';
 import { Search, CornerDownLeft, Loader2, ArrowRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useGlobalSearch, type SearchResultType } from '@/hooks/useGlobalSearch';
@@ -70,7 +70,7 @@ interface FlatEntry {
 }
 
 export function CommandPalette({ open, onClose, commands }: CommandPaletteProps) {
-  const navigate = useNavigate();
+  const navigate = useOverlayNavigate();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);

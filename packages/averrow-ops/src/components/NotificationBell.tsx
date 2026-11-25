@@ -25,6 +25,7 @@ import { resolveNotificationLink } from '@/lib/notificationLink';
 const renderLink: ShellRenderLink = (p) => (
   <Link
     to={p.href}
+    replace={p.replace}
     className={p.className}
     onClick={p.onClick}
     aria-label={p['aria-label']}
@@ -35,7 +36,7 @@ const renderLink: ShellRenderLink = (p) => (
   </Link>
 );
 
-function TriageBanner({ onClose }: { onClose: () => void }) {
+function TriageBanner({ onClose, replace }: { onClose: () => void; replace: boolean }) {
   const navigate = useNavigate();
   // Same gate as Home: only edit_alerts roles triage, so others never fetch it.
   const { user } = useAuth();
@@ -50,7 +51,7 @@ function TriageBanner({ onClose }: { onClose: () => void }) {
   return (
     <button
       type="button"
-      onClick={() => { navigate('/console?tab=alerts&status=new'); onClose(); }}
+      onClick={() => { if (replace) navigate('/console?tab=alerts&status=new', { replace: true }); else navigate('/console?tab=alerts&status=new'); onClose(); }}
       className="mx-4 mt-3 flex min-h-[44px] cursor-pointer items-center justify-between gap-2 rounded-[10px] px-3 text-left"
       style={{
         background: criticalCount > 0 ? 'var(--sev-critical-bg)' : 'var(--sev-medium-bg)',
@@ -94,10 +95,12 @@ export function NotificationBell() {
   const snooze = useSnoozeNotification();
   const markDone = useMarkDone();
 
-  const handleActivate = (n: Notification, close: () => void) => {
+  const handleActivate = (n: Notification, close: () => void, replace: boolean) => {
     if (n.state === 'unread') markRead.mutate(n.id);
     if (n.link) {
-      navigate(resolveNotificationLink(n.link, '/notifications'));
+      const to = resolveNotificationLink(n.link, '/notifications');
+      if (replace) navigate(to, { replace: true });
+      else navigate(to);
       close();
     }
   };
@@ -113,12 +116,12 @@ export function NotificationBell() {
       errorHasStaleData={!!data}
       onRetry={() => { void refetch(); }}
       onMarkAllRead={() => markAllRead.mutate()}
-      onActivate={(n, { close }) => handleActivate(n, close)}
+      onActivate={(n, { close, replace }) => handleActivate(n, close, replace)}
       onSnooze={(n, hours) => snooze.mutate({ id: n.id, until: snoozeUntilIso(hours) })}
       snoozeOptions={SNOOZE_OPTIONS}
       onDone={(n) => markDone.mutate(n.id)}
       rowActions="kebab"
-      renderBanner={({ close }) => <TriageBanner onClose={close} />}
+      renderBanner={({ close, replace }) => <TriageBanner onClose={close} replace={replace} />}
       footerLinks={[
         { key: 'all', label: 'View all', href: '/notifications', tone: 'primary' },
         { key: 'settings', label: 'Notification settings', href: '/settings/notifications', tone: 'secondary' },

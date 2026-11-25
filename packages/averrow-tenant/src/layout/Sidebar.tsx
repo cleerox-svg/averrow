@@ -6,7 +6,7 @@
 // once that lands in Phase B).
 
 import type { Ref } from 'react';
-import { NavLink } from 'react-router-dom';
+import { OverlayEntry, OverlayNavLink } from '@averrow/shared/nav';
 import { X, Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Send, Sun, Moon, Laptop, ShieldAlert, SlidersHorizontal, ScrollText, LayoutDashboard, ListFilter, FolderSearch, UserCog, type LucideIcon } from 'lucide-react';
 import { useTenantModules, MODULE_LABELS, type ModuleKey } from '@/lib/modules';
 import { useCanViewAudit } from '@/lib/auditLog';
@@ -64,6 +64,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
   const locked = (data?.modules ?? []).filter((m) => m.status === 'not_entitled');
 
   return (
+    <OverlayEntry active={open}>
     <aside
       id="tenant-sidebar"
       {...(open ? { role: 'dialog', 'aria-modal': true, 'aria-label': 'Main navigation' } : {})}
@@ -112,34 +113,34 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
         onClick={(e) => { if ((e.target as Element).closest('a')) onClose?.(); }}
       >
         <Section label="Workspace">
-          <NavLink replace={open || undefined} to="/console" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <OverlayNavLink to="/console" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <LayoutDashboard size={16} />
             <span>Console</span>
-          </NavLink>
-          <NavLink replace={open || undefined} to="/" end className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          </OverlayNavLink>
+          <OverlayNavLink to="/" end className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Globe size={16} />
             <span>Overview</span>
-          </NavLink>
-          <NavLink replace={open || undefined} to="/threats" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          </OverlayNavLink>
+          <OverlayNavLink to="/threats" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <ShieldAlert size={16} />
             <span>Threats</span>
-          </NavLink>
-          <NavLink replace={open || undefined} to="/alerts" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          </OverlayNavLink>
+          <OverlayNavLink to="/alerts" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <AlertTriangle size={16} />
             <span>Alerts</span>
-          </NavLink>
-          <NavLink replace={open || undefined} to="/notifications" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          </OverlayNavLink>
+          <OverlayNavLink to="/notifications" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Bell size={16} />
             <span>Notifications</span>
-          </NavLink>
-          <NavLink replace={open || undefined} to="/takedowns" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          </OverlayNavLink>
+          <OverlayNavLink to="/takedowns" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Send size={16} />
             <span>Takedowns</span>
-          </NavLink>
-          <NavLink replace={open || undefined} to="/investigations" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          </OverlayNavLink>
+          <OverlayNavLink to="/investigations" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <FolderSearch size={16} />
             <span>Investigations</span>
-          </NavLink>
+          </OverlayNavLink>
         </Section>
 
         <Section label="Modules">
@@ -160,7 +161,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
               );
             }
             return (
-              <NavLink replace={open || undefined}
+              <OverlayNavLink
                 key={m.module_key}
                 to={MODULE_PATHS[m.module_key]}
                 className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}
@@ -170,7 +171,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
                 {m.status === 'trial' && (
                   <Badge status="running" size="xs" font="sans" label="Trial" className="shrink-0 !py-0 !leading-4" />
                 )}
-              </NavLink>
+              </OverlayNavLink>
             );
           })}
         </Section>
@@ -180,7 +181,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
             {locked.map((m) => {
               const Icon = MODULE_ICONS[m.module_key];
               return (
-                <NavLink replace={open || undefined}
+                <OverlayNavLink
                   key={m.module_key}
                   to={MODULE_PATHS[m.module_key]}
                   className={cn(NAV_BASE, 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]')}
@@ -188,35 +189,35 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
                   <Icon size={16} className="opacity-50" />
                   <span className="min-w-0 flex-1 truncate" title={MODULE_LABELS[m.module_key]}>{MODULE_LABELS[m.module_key]}</span>
                   <span className="shrink-0 text-[12px] font-medium text-[var(--text-tertiary)]">Upgrade</span>
-                </NavLink>
+                </OverlayNavLink>
               );
             })}
           </Section>
         )}
 
         <Section label="Account">
-          <NavLink replace={open || undefined} to="/automation-policy" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <OverlayNavLink to="/automation-policy" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <SlidersHorizontal size={16} />
             <span>Automation Policy</span>
-          </NavLink>
-          <NavLink replace={open || undefined} to="/settings/monitoring" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          </OverlayNavLink>
+          <OverlayNavLink to="/settings/monitoring" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <ListFilter size={16} />
             <span>Monitoring Rules</span>
-          </NavLink>
-          <NavLink replace={open || undefined} to="/settings/executives" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          </OverlayNavLink>
+          <OverlayNavLink to="/settings/executives" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <UserCog size={16} />
             <span>Executives</span>
-          </NavLink>
+          </OverlayNavLink>
           {canViewAudit && (
-            <NavLink replace={open || undefined} to="/audit-log" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+            <OverlayNavLink to="/audit-log" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
               <ScrollText size={16} />
               <span>Audit Log</span>
-            </NavLink>
+            </OverlayNavLink>
           )}
-          <NavLink replace={open || undefined} to="/settings" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
+          <OverlayNavLink to="/settings" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <Settings size={16} />
             <span>Settings</span>
-          </NavLink>
+          </OverlayNavLink>
         </Section>
       </nav>
       <div
@@ -226,6 +227,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
         {VERSION_LABEL} · {BUILD_SHA}
       </div>
     </aside>
+    </OverlayEntry>
   );
 }
 

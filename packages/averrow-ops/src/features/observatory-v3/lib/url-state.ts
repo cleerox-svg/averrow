@@ -20,7 +20,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { stateRecord, usePopOnce, withoutKeys } from '@averrow/shared/nav';
 import {
   LAYER_IDS, LENS_IDS, lensPreset, isLensId, noLayers, sameLayers,
   type LayerToggles, type LensId,
@@ -402,27 +403,19 @@ function viewKey(sp: URLSearchParams): string {
   out.sort();
   return out.toString();
 }
-function stateRecord(state: unknown): Record<string, unknown> {
-  return state && typeof state === 'object' ? (state as Record<string, unknown>) : {};
-}
-function withoutMarks(state: unknown): unknown {
-  const { [OBS_PUSHED]: _a, [OBS_BASE]: _b, ...rest } = stateRecord(state);
-  return Object.keys(rest).length > 0 ? rest : undefined;
-}
+const withoutMarks = (state: unknown) => withoutKeys(state, [OBS_PUSHED, OBS_BASE]);
 const hasSelection = (s: Pick<ObservatoryUrlState, 'node' | 'arc' | 'sel'>) => !!(s.node || s.arc || s.sel);
 
 export function useObservatoryUrlState() {
   const [sp, setSp] = useSearchParams();
-  const navigate = useNavigate();
   const location = useLocation();
+  const popOnce = usePopOnce();
   const state = useMemo(() => parseObservatoryParams(sp), [sp]);
   // Latest params / entry state for the callbacks, which must stay referentially stable.
   const spRef = useRef(sp);
   spRef.current = sp;
   const locStateRef = useRef<unknown>(location.state);
   locStateRef.current = location.state;
-  const popping = useRef(false);
-  useEffect(() => { popping.current = false; }, [location.key]);
 
   const update = useCallback(
     (patch: ObservatoryPatch, opts?: { replace?: boolean }) => {
@@ -464,14 +457,9 @@ export function useObservatoryUrlState() {
     const cur = spRef.current;
     const pushed = st[OBS_PUSHED] === true && hasSelection(parseObservatoryParams(cur))
       && st[OBS_BASE] === viewKey(cur);
-    if (pushed) {
-      if (popping.current) return;
-      popping.current = true;
-      navigate(-1);
-      return;
-    }
+    if (pushed) { popOnce(); return; }
     update({ node: null, arc: null, sel: null });
-  }, [navigate, update]);
+  }, [popOnce, update]);
 
   // Canonicalise hand-edited / stale URLs once they land.
   useEffect(() => {

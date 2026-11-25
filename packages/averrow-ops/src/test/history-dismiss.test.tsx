@@ -3,11 +3,11 @@
 // and closing an overlay from its own UI removes the entry it pushed.
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { BrowserRouter, Link, RouterProvider, createMemoryRouter, useLocation } from 'react-router-dom';
 import { useState } from 'react';
 import { ConfirmDialog, Dialog, Sheet, SheetContent } from '@averrow/shared/ui';
-import { HistoryDismiss, useHistoryDismiss } from '@averrow/shared/nav';
+import { HistoryDismiss, OverlayLink, useHistoryDismiss, useOverlayNavigate } from '@averrow/shared/nav';
 import { installDomStubs, stubViewport } from './shared-ui/overlays/helpers';
 
 type Router = ReturnType<typeof createMemoryRouter>;
@@ -258,5 +258,150 @@ describe('dismissOnBack with the real browser history (BrowserRouter)', () => {
     fireEvent.click(screen.getByText('Do it'));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await waitFor(() => expect((window.history.state as { idx: number }).idx).toBe(0));
+  });
+});
+
+// An OUTER overlay that is a hook in an ancestor (nav drawer style) with an inner
+// dismissOnBack Dialog: React runs the child's effect first, so the inner overlay
+// pops first. Closing both in one tick must still pop exactly two entries.
+function AncestorOuter() {
+  const [outer, setOuter] = useState(false);
+  const [inner, setInner] = useState(false);
+  useHistoryDismiss(outer, () => setOuter(false));
+  return (
+    <div>
+      <button type="button" onClick={() => setOuter(true)}>open outer</button>
+      <button type="button" onClick={() => setInner(true)}>open inner</button>
+      <button type="button" onClick={() => { setOuter(false); setInner(false); }}>close both</button>
+      <span data-testid="outer">{String(outer)}</span>
+      <Dialog open={inner} onOpenChange={setInner} dismissOnBack title="Inner" presentation="dialog" />
+    </div>
+  );
+}
+
+describe('nested overlays where the outer one is an ancestor hook', () => {
+  it('closing both in one tick pops two entries, not three (memory router)', async () => {
+    const router = mount(<AncestorOuter />);
+    const key0 = router.state.location.key;
+    fireEvent.click(screen.getByText('open outer'));
+    await waitFor(() => expect(overlays(router)).toBe(1));
+    fireEvent.click(screen.getByText('open inner'));
+    await screen.findByRole('dialog', { name: 'Inner' });
+    expect(overlays(router)).toBe(2);
+    fireEvent.click(screen.getByText('close both'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(router.state.location.key).toBe(key0));
+    expect(router.state.location.pathname).toBe('/');
+  });
+
+  it('same with the real browser history (async pops): idx returns to 0, never below', async () => {
+    window.history.replaceState(null, '', '/');
+    render(<BrowserRouter><AncestorOuter /></BrowserRouter>);
+    fireEvent.click(screen.getByText('open outer'));
+    await waitFor(() => expect((window.history.state as { idx: number }).idx).toBe(1));
+    fireEvent.click(screen.getByText('open inner'));
+    await screen.findByRole('dialog', { name: 'Inner' });
+    expect((window.history.state as { idx: number }).idx).toBe(2);
+    fireEvent.click(screen.getByText('close both'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect((window.history.state as { idx: number }).idx).toBe(0));
+    await new Promise((r) => setTimeout(r, 50)); // a stray third pop would land here
+    expect((window.history.state as { idx: number }).idx).toBe(0);
+  });
+});
+
+describe('a close the consumer refuses (pending confirm)', () => {
+  it('Back during a pending confirm re-pushes its entry; finishing then pops it', async () => {
+    let finish: () => void = () => {};
+    function Pending() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>open</button>
+          <ConfirmDialog open={open} onOpenChange={setOpen} dismissOnBack tone="primary" title="Sure?" confirmLabel="Do it"
+            onConfirm={() => new Promise<void>((res) => { finish = res; })} />
+        </>
+      );
+    }
+    const router = mount(<Pending />);
+    const key0 = router.state.location.key;
+    fireEvent.click(screen.getByText('open'));
+    await screen.findByRole('dialog', { name: 'Sure?' });
+    fireEvent.click(screen.getByText('Do it')); // pending: close is refused
+    back(router);
+    await waitFor(() => expect(overlays(router)).toBe(1)); // entry restored
+    expect(screen.getByRole('dialog', { name: 'Sure?' })).toBeInTheDocument();
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(router.state.location.key).toBe(key0));
+    expect(router.state.location.pathname).toBe('/');
+  });
+});
+
+describe('stale markers', () => {
+  it('opening an overlay strips ids no live overlay owns (reload / Forward) before pushing', async () => {
+    const router = createMemoryRouter(
+      [{ path: '/', element: <Page /> }],
+      { initialEntries: [{ pathname: '/', state: { overlays: ['ghost.1'], keep: 1 } }] },
+    );
+    render(<RouterProvider router={router} />);
+    fireEvent.click(screen.getByText('open'));
+    await screen.findByRole('dialog');
+    const ids = (router.state.location.state as { overlays: string[] }).overlays;
+    expect(ids).toHaveLength(1);
+    expect(ids).not.toContain('ghost.1');
+    expect(router.state.location.state).toMatchObject({ keep: 1 });
+    back(router);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect((router.state.location.state as { overlays: string[] }).overlays).toEqual([]);
+  });
+});
+
+describe('navigation out of an overlay replaces its entry', () => {
+  it('OverlayLink and useOverlayNavigate replace while inside a dismissOnBack dialog', async () => {
+    function Go() { const nav = useOverlayNavigate(); return <button type="button" onClick={() => nav('/other')}>nav-go</button>; }
+    function P() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>open</button>
+          <Dialog open={open} onOpenChange={setOpen} dismissOnBack title="D" presentation="dialog">
+            <OverlayLink to="/other">ol-go</OverlayLink><Go />
+          </Dialog>
+        </>
+      );
+    }
+    for (const label of ['ol-go', 'nav-go']) {
+      const router = mount(<P />);
+      fireEvent.click(screen.getByText('open'));
+      await screen.findByRole('dialog');
+      fireEvent.click(screen.getByText(label));
+      await screen.findByText('OTHER');
+      expect(router.state.historyAction).toBe('REPLACE');
+      back(router);
+      await waitFor(() => expect(router.state.location.pathname).toBe('/')); // where the dialog was opened
+      back(router);
+      await waitFor(() => expect(router.state.location.pathname).toBe('/prev')); // no dead entry between
+      cleanup();
+    }
+  });
+
+  it('outside any overlay the same link pushes', async () => {
+    const router = mount(<OverlayLink to="/other">plain-go</OverlayLink>);
+    fireEvent.click(screen.getByText('plain-go'));
+    await screen.findByText('OTHER');
+    expect(router.state.historyAction).toBe('PUSH');
+  });
+});
+
+describe('dismissOnBack without a Router', () => {
+  it('renders and works as a plain dialog', async () => {
+    function Bare() {
+      const [open, setOpen] = useState(false);
+      return <><button type="button" onClick={() => setOpen(true)}>open</button><Dialog open={open} onOpenChange={setOpen} dismissOnBack title="Bare" presentation="dialog" /></>;
+    }
+    render(<Bare />);
+    fireEvent.click(screen.getByText('open'));
+    expect(await screen.findByRole('dialog', { name: 'Bare' })).toBeInTheDocument();
   });
 });
