@@ -166,6 +166,48 @@ describe('the notes draft survives the system Back', () => {
     await waitFor(() => expect(window.sessionStorage.getItem('takedown-notes-draft:td-001')).toBe('abc'));
   });
 
+  it('an accepted discard on close sticks: reopening shows no restored draft', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mount(['/prev', '/takedowns']);
+    viewDetail(0);
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    await userEvent.type(screen.getByRole('textbox', NOTES), 'throw this away');
+    await userEvent.click(screen.getByRole('button', { name: 'Close report' }));
+    expect(confirm).toHaveBeenCalled();
+    await waitFor(() => expect(drawerOpen()).toBe(false));
+    expect(window.sessionStorage.getItem('takedown-notes-draft:td-001')).toBeNull();
+
+    viewDetail(0);
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    expect(screen.getByRole('textbox', NOTES)).toHaveValue('');
+    expect(screen.queryByText('Restored unsaved draft')).not.toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it('an accepted discard when switching takedowns sticks for the one left behind', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mount(['/prev', '/takedowns']);
+    viewDetail(0);
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    await userEvent.type(screen.getByRole('textbox', NOTES), 'not wanted');
+    viewDetail(1); // switch to td-002 while td-001 is dirty → confirm → discard
+    expect(confirm).toHaveBeenCalled();
+    await waitFor(() => expect(window.sessionStorage.getItem('takedown-notes-draft:td-001')).toBeNull());
+    confirm.mockRestore();
+  });
+
+  it('a declined discard keeps the panel open and the draft', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    mount(['/prev', '/takedowns']);
+    viewDetail(0);
+    await waitFor(() => expect(drawerOpen()).toBe(true));
+    await userEvent.type(screen.getByRole('textbox', NOTES), 'keep me');
+    await userEvent.click(screen.getByRole('button', { name: 'Close report' }));
+    expect(drawerOpen()).toBe(true);
+    expect(screen.getByRole('textbox', NOTES)).toHaveValue('keep me');
+    confirm.mockRestore();
+  });
+
   it('an untouched note leaves no draft behind', async () => {
     const router = mount(['/prev', '/takedowns']);
     viewDetail(0);

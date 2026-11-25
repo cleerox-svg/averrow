@@ -175,7 +175,11 @@ function popOverlayEntries(id: string, state: unknown, navigate: (delta: number)
     n += 1;
   }
   removed.add(id); // inner-first order: a later outer overlay skips this id
-  if (removed.size > 100) removed.clear();
+  // Keep only marks that can still matter: ids on the entry being popped. A mark
+  // for an id no longer on the current entry can never be consulted again (its
+  // entry is gone), so prune those instead of letting the set grow. Never clear
+  // wholesale: that could wipe the mark a nested partner still needs (over-pop).
+  for (const r of removed) if (!ids.includes(r)) removed.delete(r);
   schedulePop(n, navigate);
 }
 

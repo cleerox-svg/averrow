@@ -575,6 +575,14 @@ function writeNotesDraft(id: string, value: string): void {
 function clearNotesDraft(id: string): void {
   try { window.sessionStorage.removeItem(notesDraftKey(id)); } catch { /* storage unavailable */ }
 }
+// Ids whose draft the user explicitly discarded (accepted the confirm). The
+// closing TakedownNotes' unmount flush must not write that draft back; the flag
+// is consumed by that flush, or reset when a fresh TakedownNotes mounts.
+const discardedNotesDrafts = new Set<string>();
+function discardNotesDraft(id: string): void {
+  discardedNotesDrafts.add(id);
+  clearNotesDraft(id);
+}
 const NOTES_DRAFT_DEBOUNCE_MS = 300;
 
 function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
@@ -607,8 +615,13 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
     const t = setTimeout(() => { if (!skipFlush.current) writeNotesDraft(takedown.id, draft); }, NOTES_DRAFT_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [draft, dirty, takedown.id]);
-  useEffect(() => () => {
-    if (latest.current.dirty && !skipFlush.current) writeNotesDraft(takedown.id, latest.current.draft);
+  useEffect(() => {
+    // A fresh instance starts clean: an earlier discard flag no longer applies.
+    discardedNotesDrafts.delete(takedown.id);
+    return () => {
+      const discarded = discardedNotesDrafts.delete(takedown.id);
+      if (!discarded && latest.current.dirty && !skipFlush.current) writeNotesDraft(takedown.id, latest.current.draft);
+    };
   }, [takedown.id]);
 
   const handleDiscardRestored = () => {
@@ -790,7 +803,7 @@ export function Takedowns() {
   const selectTakedown = useCallback((next: Takedown | null) => {
     if (staffNotesDirtyRef.current) {
       if (!window.confirm(DISCARD_STAFF_NOTES_PROMPT)) return;
-      if (openIdRef.current) clearNotesDraft(openIdRef.current); // an explicit discard
+      if (openIdRef.current) discardNotesDraft(openIdRef.current); // an explicit discard: the unmount flush must not write it back
     }
     staffNotesDirtyRef.current = false;
     if (next) {

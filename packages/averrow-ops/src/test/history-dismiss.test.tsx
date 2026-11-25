@@ -310,6 +310,27 @@ describe('nested overlays where the outer one is an ancestor hook', () => {
   });
 });
 
+describe('long page life', () => {
+  it('after 100 single opens and closes (the old 100-entry reset boundary), a nested close still pops exactly two entries', async () => {
+    const router = mount(<Page nestedConfirm confirmClosesPanel />);
+    const key0 = router.state.location.key;
+    for (let i = 0; i < 100; i += 1) {
+      fireEvent.click(screen.getByText('open'));
+      await waitFor(() => expect(overlays(router)).toBe(1));
+      fireEvent.click(screen.getByText('Close panel'));
+      await waitFor(() => expect(router.state.location.key).toBe(key0));
+    }
+    fireEvent.click(screen.getByText('open'));
+    await screen.findByRole('dialog', { name: 'Panel' });
+    fireEvent.click(screen.getByText('ask'));
+    await screen.findByRole('dialog', { name: 'Sure?' });
+    fireEvent.click(screen.getByText('Do it'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(router.state.location.key).toBe(key0));
+    expect(router.state.location.pathname).toBe('/'); // not /prev: no over-pop
+  }, 30_000);
+});
+
 describe('a close the consumer refuses (pending confirm)', () => {
   it('Back during a pending confirm re-pushes its entry; finishing then pops it', async () => {
     let finish: () => void = () => {};
